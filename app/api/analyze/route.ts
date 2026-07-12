@@ -67,7 +67,7 @@ function unique(values: string[], limit = 12) {
   return [...new Set(values)].slice(0, limit);
 }
 
-function normalizeDomain(input: string) {
+export function normalizeDomain(input: string) {
   const candidate = input.trim();
   if (!candidate) throw new Error("Enter a domain to analyze.");
   const withProtocol = /^https?:\/\//i.test(candidate) ? candidate : `https://${candidate}`;
@@ -93,9 +93,9 @@ function safeDomain(input: string) {
 
 export function canonicalDomain(input: string) {
   try {
-    return normalizeDomain(input).hostname;
+    return normalizeDomain(input).hostname.replace(/^www\./, "");
   } catch {
-    return input.trim().toLowerCase().replace(/^https?:\/\//, "").split("/")[0];
+    return input.trim().toLowerCase().replace(/^https?:\/\//, "").split("/")[0].replace(/^www\./, "");
   }
 }
 
