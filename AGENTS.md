@@ -25,6 +25,8 @@ These rules govern work in this repository.
 - When a Fable 5 model identifier is available and authorized, use it for the review. Verify the identifier first.
 - The current environment rejected `fable-5`; do not silently substitute another model while claiming Fable 5 was used.
 - Record the Claude review scope and outcome in the PR body or task notes. Treat Claude as a reviewer, not as proof that tests passed.
+- Fable 5 is the merge gate and merge executor for product PRs. Keep a PR unmerged while Fable reports blockers. After Codex independently verifies tests and deployment and Fable returns a strict PASS, instruct the verified Fable 5 session to mark the PR ready and merge it in dependency order.
+- Never let Fable merge a draft with unresolved blockers, failing checks, or an unverified deployment. For stacked PRs, merge leaf-to-parent in dependency order so every reviewed change reaches the final target branch.
 
 ## Real public data
 

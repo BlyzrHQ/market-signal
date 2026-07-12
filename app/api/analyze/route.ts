@@ -1,3 +1,5 @@
+import { canonicalDomain, normalizeDomain } from "../../lib/domain";
+
 const MAX_DOCUMENT_BYTES = 1_500_000;
 const REQUEST_TIMEOUT_MS = 12_000;
 
@@ -8,6 +10,34 @@ type Evidence = {
   sourceUrl: string;
   observedAt: string;
   confidence: Confidence;
+};
+
+export type DomainAnalysis = {
+  ok: true;
+  live: true;
+  domain: string;
+  fetchedAt: string;
+  sourceUrl: string;
+  status: number;
+  title: string;
+  description: string;
+  language: string;
+  region: string;
+  headings: string[];
+  prices: string[];
+  socialLinks: string[];
+  internalLinks: string[];
+  wordCount: number;
+  truncated: boolean;
+  evidence: Evidence[];
+};
+
+export type DomainAnalysisError = {
+  ok: false;
+  live: false;
+  domain: string;
+  fetchedAt: string;
+  error: string;
 };
 
 function cleanText(value: string) {
@@ -39,20 +69,12 @@ function unique(values: string[], limit = 12) {
   return [...new Set(values)].slice(0, limit);
 }
 
-function normalizeDomain(input: string) {
-  const candidate = input.trim();
-  if (!candidate) throw new Error("Enter a domain to analyze.");
-  const withProtocol = /^https?:\/\//i.test(candidate) ? candidate : `https://${candidate}`;
-  const url = new URL(withProtocol);
-  if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("Only public HTTP domains can be analyzed.");
-  const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (hostname === "localhost" || hostname === "0.0.0.0" || hostname === "::1" || hostname === "169.254.169.254" || /^127\.|^10\.|^192\.168\.|^172\.(1[6-9]|2\d|3[01])\.|^169\.254\.|^(fc|fd|fe80):/i.test(hostname)) {
-    throw new Error("Private or local addresses cannot be analyzed.");
+function safeDomain(input: string) {
+  try {
+    return normalizeDomain(input).hostname;
+  } catch {
+    return input.trim() || "unknown domain";
   }
-  url.hash = "";
-  url.search = "";
-  url.pathname = "/";
-  return url;
 }
 
 function extractPriceSignals(text: string) {
@@ -86,11 +108,11 @@ function inferRegion(text: string, language: string) {
   return "Not enough public signal";
 }
 
-export async function GET(request: Request) {
+export async function analyzeDomain(input: string): Promise<DomainAnalysis | DomainAnalysisError> {
   const startedAt = new Date().toISOString();
+  const domain = safeDomain(input);
   try {
-    const requestUrl = new URL(request.url);
-    const target = normalizeDomain(requestUrl.searchParams.get("domain") ?? "");
+    const target = normalizeDomain(input);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     let response: Response;
@@ -128,16 +150,18 @@ export async function GET(request: Request) {
     const socialLinks = extractSocialLinks(document, target);
     const language = inferLanguage(document);
     const observedAt = new Date().toISOString();
+    const sourceUrl = response.url || target.toString();
     const evidence: Evidence[] = [
-      { claimType: "Observed", sourceUrl: response.url || target.toString(), observedAt, confidence: "High" },
-      { claimType: "Inferred", sourceUrl: response.url || target.toString(), observedAt, confidence: language === "unknown" ? "Low" : "Medium" },
+      { claimType: "Observed", sourceUrl, observedAt, confidence: "High" },
+      { claimType: "Inferred", sourceUrl, observedAt, confidence: language === "unknown" ? "Low" : "Medium" },
     ];
 
-    return Response.json({
+    return {
       ok: true,
       live: true,
+      domain: target.hostname,
       fetchedAt: startedAt,
-      sourceUrl: response.url || target.toString(),
+      sourceUrl,
       status: response.status,
       title,
       description: description || "No meta description was exposed on the public page.",
@@ -150,9 +174,23 @@ export async function GET(request: Request) {
       wordCount: readable ? readable.split(/\s+/).length : 0,
       truncated: buffer.byteLength > MAX_DOCUMENT_BYTES,
       evidence,
-    });
+    };
   } catch (error) {
     const message = error instanceof Error && error.name === "AbortError" ? "The public site took too long to respond." : error instanceof Error ? error.message : "Unable to analyze this public domain.";
-    return Response.json({ ok: false, live: false, error: message, fetchedAt: startedAt }, { status: 400 });
+    return { ok: false, live: false, domain, fetchedAt: startedAt, error: message };
   }
+}
+
+export async function GET(request: Request) {
+  const requestUrl = new URL(request.url);
+  const rawDomains = [
+    ...requestUrl.searchParams.getAll("domain"),
+    ...(requestUrl.searchParams.get("domains")?.split(",") ?? []),
+  ].map((domain) => domain.trim()).filter(Boolean);
+  const domains = [...new Set(rawDomains.map(canonicalDomain))].slice(0, 4);
+
+  if (!domains.length) return Response.json({ ok: false, live: false, error: "Enter a domain to analyze." }, { status: 400 });
+  const results = await Promise.all(domains.map(analyzeDomain));
+  if (results.length === 1) return Response.json(results[0], { status: results[0].ok ? 200 : 400 });
+  return Response.json({ ok: true, live: true, results });
 }
