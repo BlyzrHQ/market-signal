@@ -61,6 +61,51 @@ h1 { font-size: clamp(43px, 5vw, 67px); line-height: .98; letter-spacing: -.065e
   .brief-ledger { border-left: 0; border-top: 1px solid #eee4c9; padding: 15px 0 0; }
   .signal-card p { min-height: 0; }
 }
+
+/* Competitor-first report: collection diagnostics remain in the JSON document but
+   stay out of the decision surface. */
+.json-coverage,
+.json-company,
+.product-catalog-block,
+.json-evidence,
+.live-source-panel,
+.position-panel,
+.moves-panel,
+.live-comparison-panel,
+.live-pricing-panel {
+  display: none;
+}
+
+.market-profile-block {
+  display: grid;
+  grid-template-columns: minmax(220px, .8fr) 1.4fr;
+  gap: 28px;
+  align-items: start;
+  background: #101820;
+  color: #fff;
+}
+
+.market-profile-block h4 { color: #fff; margin: 8px 0; }
+.market-profile-block p { color: #b8c5cf; margin: 0; }
+.market-query-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.market-query-list span { padding: 8px 11px; border: 1px solid #33424e; border-radius: 999px; color: #dbe7ed; font-size: 12px; }
+
+.competitor-result-card { border-left: 4px solid #ff6b4a; }
+.competitor-result-top { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; }
+.competitor-result-top h4 { margin: 7px 0 3px; font-size: 27px; }
+.competitor-result-top a, .competitor-sources a { color: #176e91; font-weight: 700; }
+.verification-score { min-width: 92px; text-align: right; }
+.verification-score strong { display: block; font-size: 36px; line-height: 1; color: #ff5d3b; }
+.verification-score span { display: block; max-width: 90px; margin-top: 5px; color: #66727b; font-size: 10px; line-height: 1.2; text-transform: uppercase; letter-spacing: .08em; }
+.competitor-proof { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 10px; margin: 20px 0 12px; }
+.competitor-proof span { padding: 12px; background: #f4f7f8; border-radius: 8px; color: #53616b; font-size: 12px; }
+.competitor-proof b { color: #17242d; }
+.competitor-sources { display: flex; justify-content: space-between; align-items: center; margin-top: 18px; padding-top: 14px; border-top: 1px solid #e5eaed; }
+
+@media (max-width: 760px) {
+  .market-profile-block, .competitor-proof { grid-template-columns: 1fr; }
+  .competitor-result-top { align-items: center; }
+}
 .method-preview .preview-body { padding-bottom: 26px; }
 .method-preview-list { display: grid; gap: 14px; margin-top: 28px; }
 .method-preview-list > div { display: flex; align-items: flex-start; gap: 13px; border-top: 1px solid #e9eeeb; padding-top: 13px; }
