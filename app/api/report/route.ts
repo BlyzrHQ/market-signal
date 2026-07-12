@@ -1,4 +1,5 @@
-import { analyzeDomain, canonicalDomain } from "../analyze/route";
+import { analyzeDomain } from "../analyze/route";
+import { canonicalDomain } from "../../lib/domain";
 
 type ClaimType = "Observed" | "Inferred" | "Estimated" | "Recommended";
 type Confidence = "High" | "Medium" | "Low";
