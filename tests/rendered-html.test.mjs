@@ -28,13 +28,14 @@ test("server-renders the Market Signal product shell", async () => {
 });
 
 test("real-data route and product metadata are present", async () => {
-  const [route, crawl, report, page, layout, packageJson] = await Promise.all([
+  const [route, crawl, report, page, layout, packageJson, domainUtils] = await Promise.all([
     readFile(new URL("../app/api/analyze/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/crawl/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/report/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/domain.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(route, /MAX_DOCUMENT_BYTES/);
@@ -49,6 +50,10 @@ test("real-data route and product metadata are present", async () => {
   assert.match(crawl, /robots.txt/);
   assert.match(crawl, /possible market candidate/);
   assert.match(crawl, /buildDocument/);
+  assert.match(crawl, /buildProductComparison/);
+  assert.match(crawl, /extractProductsFromHtml/);
+  assert.match(crawl, /product-catalog/);
+  assert.match(crawl, /product-comparison/);
   assert.match(crawl, /claimIds/);
   assert.match(route, /REQUEST_TIMEOUT_MS/);
   assert.match(route, /sourceUrl/);
@@ -56,7 +61,7 @@ test("real-data route and product metadata are present", async () => {
   assert.match(route, /canonicalDomain/);
   assert.match(route, /new Set\(rawDomains\.map\(canonicalDomain\)\)/);
   assert.match(route, /Promise\.all\(domains\.map/);
-  assert.match(route, /Private or local addresses cannot be analyzed/);
+  assert.match(domainUtils, /Private or local addresses cannot be analyzed/);
   assert.match(route, /application\/xhtml\+xml/);
   assert.match(page, /fetch\("\/api\/crawl"/);
   assert.match(page, /fetch\("\/api\/report"/);
@@ -65,6 +70,9 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /grounded claims/);
   assert.match(page, /JSON report document/);
   assert.match(page, /POSSIBLE CANDIDATE/);
+  assert.match(page, /PRODUCT-BY-PRODUCT/);
+  assert.match(page, /Closest observed match/i);
+  assert.match(page, /No comparable public product observed/);
   assert.match(page, /Public source/);
   assert.match(page, /Optional comparison domains/);
   assert.match(page, /Public comparison/);
