@@ -22,10 +22,16 @@ type LiveAnalysis = {
   truncated: boolean;
 };
 
-type LiveAnalysisError = { ok: false; live: false; domain: string; error: string; fetchedAt: string };
 type BriefClaim = { id: string; text: string; sourceUrl: string; observedAt: string; claimType: ClaimType; confidence: "High" | "Medium" | "Low" };
 type MarketSignal = { label: string; text: string; implication: string; claimIds: string[] };
 type MarketBrief = { ok: true; headline: string; headlineClaimIds: string[]; summary: string; summaryClaimIds: string[]; signals: MarketSignal[]; nextChecks: string[]; claims: BriefClaim[]; model: string; generatedAt: string; aiGenerated: boolean };
+type ProductView = { id: string; domain: string; name: string; description: string; category: string; jsonLdType: string; priceSignals: Array<{ raw: string }>; attributes: string[]; ownership: string; extraction: string; confidence: "High" | "Medium"; sourceUrl: string; observedAt: string; claimIds: string[] };
+type CrawlPage = LiveAnalysis & { url: string; path: string; contentHash: string; claims: BriefClaim[]; products: ProductView[]; productGaps: string[]; thirdPartyProductCount: number };
+type CrawlDomain = { domain: string; role: "primary" | "submitted-comparison"; homepage: CrawlPage | null; pages: CrawlPage[]; products: ProductView[]; candidates: Array<{ domain: string; reason: string; sourceUrl: string; claimIds: string[] }>; gaps: Array<{ url: string; reason: string; observedAt: string }>; coverage: { pagesRequested: number; pagesFetched: number; maxPages: number; robotsChecked: boolean }; productCoverage: { scannedPages: number; thirdPartyReferenced: number }; fetchedAt: string };
+type JsonBlock = { type: string; id: string } & Record<string, unknown>;
+type JsonReportDocument = { version: "1"; generatedAt: string; blocks: JsonBlock[] };
+type CrawlPayload = { ok: true; live: true; primaryDomain: string; results: CrawlDomain[]; document: JsonReportDocument; crawl: { maxPagesPerDomain: number; robotsAware: boolean; generatedAt: string } };
+type CrawlFailure = { ok: false; live: false; error: string; results?: CrawlDomain[]; document?: JsonReportDocument };
 
 function getCompanyName(domain: string) {
   const clean = domain.replace(/^https?:\/\//, "").replace(/^www\./, "").split(".")[0];
@@ -57,12 +63,64 @@ function EvidenceTag({ type }: { type: ClaimType }) {
   return <span className={`evidence-tag evidence-${type.toLowerCase()}`}>{type}</span>;
 }
 
+function jsonText(block: JsonBlock, key: string, fallback = "") {
+  return typeof block[key] === "string" ? block[key] as string : fallback;
+}
+
+function jsonNumber(block: JsonBlock, key: string) {
+  return typeof block[key] === "number" ? block[key] as number : 0;
+}
+
+function jsonList(block: JsonBlock, key: string) {
+  return Array.isArray(block[key]) ? block[key] as unknown[] : [];
+}
+
+function object(value: unknown) {
+  return value && typeof value === "object" ? value as Record<string, unknown> : {};
+}
+
+function product(value: unknown) {
+  const item = object(value);
+  return { item, name: String(item.name || "Observed product"), domain: String(item.domain || ""), description: String(item.description || ""), category: String(item.category || "Uncategorized"), sourceUrl: String(item.sourceUrl || "#"), extraction: String(item.extraction || "page-signal"), confidence: String(item.confidence || "Medium"), prices: Array.isArray(item.priceSignals) ? item.priceSignals.map((signal) => String(object(signal).raw || "")).filter(Boolean) : [], attributes: Array.isArray(item.attributes) ? item.attributes.map(String) : [] };
+}
+
+function ProductCatalogBlock({ block }: { block: JsonBlock }) {
+  const items = jsonList(block, "products").map(product);
+  return <article className="json-block product-catalog-block" key={block.id}><div className="json-block-heading"><div><span className="json-block-type">OBSERVED PRODUCT CATALOG</span><h4>{jsonText(block, "domain")}</h4></div><span className="coverage-state coverage-live">{jsonNumber(block, "scannedPages")} pages</span></div><p className="product-coverage-note">{jsonText(block, "coverageNote")}</p>{jsonNumber(block, "thirdPartyReferenced") > 0 && <p className="product-third-party">{jsonNumber(block, "thirdPartyReferenced")} third-party product record{jsonNumber(block, "thirdPartyReferenced") === 1 ? " was" : "s were"} excluded from this company&apos;s own catalog.</p>}<div className="product-catalog-grid">{items.length ? items.map((entry, index) => <a className="product-card" href={entry.sourceUrl} target="_blank" rel="noreferrer" key={`${block.id}-product-${index}`}><div><span>{entry.extraction === "json-ld" ? "Structured" : "Page signal"}</span><b>{entry.confidence}</b></div><strong>{entry.name}</strong><p>{entry.description || "No public description was exposed."}</p><small>{entry.category}</small><div className="product-price-chips">{(entry.prices.length ? entry.prices : ["No public price observed"]).slice(0, 4).map((price) => <em key={price}>{price}</em>)}</div><footer>Open product source ↗</footer></a>) : <div className="product-empty"><strong>No attributable products observed</strong><span>The scan did not manufacture catalog items from generic pages.</span></div>}</div></article>;
+}
+
+function ProductComparisonBlock({ block }: { block: JsonBlock }) {
+  const rows = jsonList(block, "rows");
+  const competitors = jsonList(block, "comparisonDomains").map(String);
+  return <article className="json-block product-comparison-block" key={block.id}><div className="json-block-heading"><div><span className="json-block-type">PRODUCT-BY-PRODUCT</span><h4>Your products against the closest observed matches</h4></div><EvidenceTag type="Inferred" /></div><p className="product-coverage-note">Rows come from {jsonText(block, "primaryDomain")}. Matches are deterministic suggestions, not equivalence claims.</p><div className="product-matrix">{rows.map((row, rowIndex) => { const rowItem = object(row); const primary = product(rowItem.primary); const matches = Array.isArray(rowItem.matches) ? rowItem.matches : []; return <section className="product-comparison-row" key={`${block.id}-row-${rowIndex}`}><div className="primary-product-cell"><span>YOUR PRODUCT</span><strong>{primary.name}</strong><p>{primary.description || primary.category}</p><div className="product-price-chips">{(primary.prices.length ? primary.prices : ["No public price observed"]).slice(0, 3).map((price) => <em key={price}>{price}</em>)}</div><a href={primary.sourceUrl} target="_blank" rel="noreferrer">Primary source ↗</a></div><div className="competitor-match-grid">{competitors.map((domain, competitorIndex) => { const match = object(matches.find((candidate) => String(object(candidate).domain) === domain) || matches[competitorIndex]); const matchedProduct = match.product ? product(match.product) : null; const score = typeof match.score === "number" ? Math.round(match.score * 100) : 0; const sharedTerms = Array.isArray(match.sharedTerms) ? match.sharedTerms.map(String) : []; return <div className={`competitor-product-cell ${matchedProduct ? "has-match" : "no-match"}`} key={`${block.id}-${rowIndex}-${domain}`}><div className="competitor-match-heading"><span>{domain}</span>{matchedProduct && <b>{score}% signal overlap</b>}</div>{matchedProduct ? <><small>CLOSEST OBSERVED MATCH · INFERRED</small><strong>{matchedProduct.name}</strong><p>{matchedProduct.description || matchedProduct.category}</p><div className="product-price-chips">{(matchedProduct.prices.length ? matchedProduct.prices : ["No public price observed"]).slice(0, 3).map((price) => <em key={price}>{price}</em>)}</div><div className="shared-term-list">{sharedTerms.map((term) => <span key={term}>{term}</span>)}</div><a href={matchedProduct.sourceUrl} target="_blank" rel="noreferrer">Matched source ↗</a></> : <><small>NO FORCED MATCH</small><strong>No comparable public product observed</strong><p>The bounded crawl found no item above the evidence threshold for this row.</p></>}</div>; })}</div></section>; })}</div></article>;
+}
+
+function ProductUnmatchedBlock({ block }: { block: JsonBlock }) {
+  const items = jsonList(block, "products").map(product);
+  return <article className="json-block product-unmatched-block" key={block.id}><span className="json-block-type">UNMATCHED COMPETITOR PRODUCTS</span><h4>{jsonText(block, "domain")}</h4><p>{jsonText(block, "reason")}</p><div className="unmatched-product-list">{items.map((entry, index) => <a href={entry.sourceUrl} target="_blank" rel="noreferrer" key={`${block.id}-${index}`}><strong>{entry.name}</strong><span>{entry.category}</span></a>)}</div></article>;
+}
+
+function JsonReportRenderer({ document }: { document: JsonReportDocument }) {
+  return <section className="json-report" aria-label="JSON-rendered evidence report"><div className="json-report-header"><div><span className="eyebrow"><span className="pulse-dot" /> JSON report document</span><h3>Collected evidence, rendered from the scan</h3></div><span className="json-report-version">schema {document.version}</span></div><div className="json-blocks">{document.blocks.map((block) => {
+    if (block.type === "summary") return <article className="json-block json-summary" key={block.id}><span className="json-block-type">SUMMARY</span><h4>{jsonText(block, "title")}</h4><p>{jsonText(block, "body")}</p></article>;
+    if (block.type === "coverage") return <article className="json-block json-coverage" key={block.id}><div className="json-block-heading"><div><span className="json-block-type">COVERAGE</span><h4>{jsonText(block, "domain")}</h4></div><span className="coverage-state coverage-live">{jsonText(block, "role") === "primary" ? "Primary" : "Compared"}</span></div><div className="json-coverage-metrics"><span><b>{jsonNumber(block, "pagesFetched")}</b> pages fetched</span><span><b>{jsonNumber(block, "pagesRequested")}</b> requested</span><span><b>{jsonNumber(block, "maxPages")}</b> per-domain cap</span><span><b>{jsonText(block, "robotsChecked") === "true" || block.robotsChecked ? "Yes" : "No"}</b> robots checked</span></div>{jsonList(block, "gaps").map((gap, index) => { const item = gap as Record<string, unknown>; return <div className="json-gap" key={`${block.id}-gap-${index}`}><strong>Coverage gap</strong><span>{String(item.reason ?? "Page not collected")}</span></div>; })}</article>;
+    if (block.type === "company") return <article className="json-block json-company" key={block.id}><div className="json-block-heading"><div><span className="json-block-type">COMPANY PROFILE</span><h4>{jsonText(block, "domain")}</h4></div><EvidenceTag type="Observed" /></div><strong className="json-company-title">{jsonText(block, "title")}</strong><p>{jsonText(block, "description")}</p><div className="json-page-list">{jsonList(block, "pages").map((page, index) => { const item = page as Record<string, unknown>; return <a href={String(item.url ?? "#")} target="_blank" rel="noreferrer" key={`${block.id}-page-${index}`}><span>{String(item.path ?? "/")}</span><strong>{String(item.title ?? "Observed page")}</strong><small>{Array.isArray(item.claimIds) ? item.claimIds.length : 0} claims</small></a>; })}</div></article>;
+    if (block.type === "product-catalog") return <ProductCatalogBlock block={block} key={block.id} />;
+    if (block.type === "product-comparison") return <ProductComparisonBlock block={block} key={block.id} />;
+    if (block.type === "product-unmatched") return <ProductUnmatchedBlock block={block} key={block.id} />;
+    if (block.type === "candidate") return <article className="json-block json-candidate" key={block.id}><div className="json-block-heading"><div><span className="json-block-type">POSSIBLE CANDIDATE</span><h4>{jsonText(block, "domain")}</h4></div><EvidenceTag type="Inferred" /></div><p>{jsonText(block, "reason")}</p><a href={jsonText(block, "sourceUrl", "#")} target="_blank" rel="noreferrer">Open justifying source ↗</a></article>;
+    if (block.type === "evidence") return <article className="json-block json-evidence" key={block.id}><div><span className="json-block-type">{jsonText(block, "claimType", "Observed").toUpperCase()}</span><p>{jsonText(block, "text")}</p></div><div className="json-evidence-meta"><a href={jsonText(block, "sourceUrl", "#")} target="_blank" rel="noreferrer">Source ↗</a><span>{jsonText(block, "confidence")} confidence</span><time>{jsonText(block, "observedAt")}</time></div></article>;
+    return <article className="json-block json-gap" key={block.id}><div><span className="json-block-type">DATA GAP</span><h4>{jsonText(block, "domain") || "Collection gap"}</h4></div><p>{jsonText(block, "reason")}</p>{jsonText(block, "url") && <a href={jsonText(block, "url")} target="_blank" rel="noreferrer">Inspect requested URL ↗</a>}</article>;
+  })}</div></section>;
+}
+
 export default function Home() {
   const [domain, setDomain] = useState("");
   const [reportDomain, setReportDomain] = useState<string | null>(null);
   const [liveAnalysis, setLiveAnalysis] = useState<LiveAnalysis | null>(null);
   const [comparisonResults, setComparisonResults] = useState<LiveAnalysis[]>([]);
   const [comparisonDomains, setComparisonDomains] = useState<string[]>([]);
+  const [crawlDocument, setCrawlDocument] = useState<JsonReportDocument | null>(null);
   const [marketBrief, setMarketBrief] = useState<MarketBrief | null>(null);
   const [briefLoading, setBriefLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
@@ -79,20 +137,27 @@ export default function Home() {
     setAnalysisError("");
     setLiveAnalysis(null);
     setMarketBrief(null);
+    setCrawlDocument(null);
     setReportDomain(null);
     try {
-      const params = new URLSearchParams();
-      requestedDomains.forEach((value) => params.append("domain", value));
-      const response = await fetch(`/api/analyze?${params.toString()}`);
-      const payload = await response.json() as LiveAnalysis | LiveAnalysisError | { ok: true; live: true; results: Array<LiveAnalysis | LiveAnalysisError> };
-      const results = "results" in payload ? payload.results : [payload];
-      const successful = results.filter((result): result is LiveAnalysis => result.ok && result.live);
-      const failed = results.filter((result): result is LiveAnalysisError => !result.ok);
+      const response = await fetch("/api/crawl", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ primary: cleanDomain, domains: requestedDomains }) });
+      const payload = await response.json() as CrawlPayload | CrawlFailure;
+      if (!payload.ok) {
+        if (payload.document) setCrawlDocument(payload.document);
+        if (payload.results) setComparisonResults(payload.results.flatMap((result) => result.homepage ? [result.homepage] : []));
+        setReportDomain(cleanDomain);
+        setAnalysisError(payload.error || "The public crawl could not be completed.");
+        window.setTimeout(() => document.getElementById("report")?.scrollIntoView({ behavior: "smooth" }), 50);
+        return;
+      }
+      const crawlResults = payload.results;
+      const successful = crawlResults.flatMap((result) => result.homepage ? [result.homepage] : []);
       const primaryHost = getDomainHost(cleanDomain);
       const primaryResult = successful.find((result) => result.domain === primaryHost);
-      if (!primaryResult) throw new Error(`Primary domain ${cleanDomain} could not be read: ${failed.find((result) => result.domain === primaryHost)?.error || "no live result was returned"}`);
+      if (!primaryResult) throw new Error(`Primary domain ${cleanDomain} could not be crawled: ${crawlResults.find((result) => result.domain === primaryHost)?.gaps[0]?.reason || "no live result was returned"}`);
       setComparisonResults(successful);
       setLiveAnalysis(primaryResult);
+      setCrawlDocument(payload.document);
       setReportDomain(cleanDomain);
       setBriefLoading(true);
       try {
@@ -105,8 +170,8 @@ export default function Home() {
       } finally {
         setBriefLoading(false);
       }
-      const failedComparisonDomains = failed.filter((result) => result.domain !== primaryHost);
-      if (failedComparisonDomains.length) setAnalysisError(`${failedComparisonDomains.length} comparison domain${failedComparisonDomains.length === 1 ? "" : "s"} could not be read: ${failedComparisonDomains.map((result) => result.domain).join(", ")}. Successful sources are still shown.`);
+      const failedComparisonDomains = crawlResults.filter((result) => result.role === "submitted-comparison" && !result.homepage);
+      if (failedComparisonDomains.length) setAnalysisError(`${failedComparisonDomains.length} comparison domain${failedComparisonDomains.length === 1 ? "" : "s"} could not be crawled: ${failedComparisonDomains.map((result) => result.domain).join(", ")}. Successful sources are still shown.`);
       window.setTimeout(() => document.getElementById("report")?.scrollIntoView({ behavior: "smooth" }), 50);
     } catch (error) {
       setAnalysisError(error instanceof Error ? error.message : "Unable to analyze this domain.");
@@ -183,6 +248,8 @@ export default function Home() {
           <div className="metric-card"><span className="metric-label">Price patterns</span><strong>{liveAnalysis ? liveAnalysis.prices.length : "—"}</strong><div className="metric-trend">{liveAnalysis ? "Public HTML only" : "No source yet"}</div></div>
           <div className="metric-card accent-card"><span className="metric-label">Next collection step</span><strong>{liveAnalysis ? (liveAnalysis.prices.length ? "Verify" : "Collect") : "—"}</strong><div className="metric-trend">{liveAnalysis ? "Pricing surface" : "Waiting for scan"}</div></div>
         </div>
+
+        {crawlDocument && <JsonReportRenderer document={crawlDocument} />}
 
         {liveAnalysis && <section className="panel live-source-panel"><div className="panel-heading"><div><span className="section-number">LIVE</span><h3>Public source scan</h3></div><EvidenceTag type="Observed" /></div><div className="live-source-grid"><div className="live-source-main"><span className="live-source-label">Page title</span><strong>{liveAnalysis.title}</strong><p>{liveAnalysis.description}</p><a href={liveAnalysis.sourceUrl} target="_blank" rel="noreferrer">Open observed source ↗</a></div><div className="live-fact"><span className="live-source-label">Language</span><strong>{liveAnalysis.language}</strong><span>{liveAnalysis.region}</span></div><div className="live-fact"><span className="live-source-label">Page words</span><strong>{liveAnalysis.wordCount.toLocaleString()}</strong><span>{liveAnalysis.truncated ? "First 1.5 MB scanned" : "Public HTML scanned"}</span></div><div className="live-fact"><span className="live-source-label">Social links</span><strong>{liveAnalysis.socialLinks.length}</strong><span>{liveAnalysis.socialLinks.length ? "Public profiles linked" : "None exposed"}</span></div></div><div className="live-evidence-row"><div><span className="live-source-label">Observed headings</span><div className="heading-pills">{(liveAnalysis.headings.length ? liveAnalysis.headings : ["No H1–H3 headings exposed"]).slice(0, 6).map((heading) => <span key={heading}>{heading}</span>)}</div></div><div><span className="live-source-label">Observed pricing</span><div className="heading-pills">{(liveAnalysis.prices.length ? liveAnalysis.prices : ["No public price pattern found"]).map((price) => <span key={price}>{price}</span>)}</div></div></div></section>}
 
