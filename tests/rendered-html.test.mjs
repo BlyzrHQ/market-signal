@@ -1,11 +1,6 @@
 import assert from "node:assert/strict";
-import { access, readFile, readdir } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import test from "node:test";
-
-const developmentPreviewMeta =
-  /<meta(?=[^>]*\bname=["']codex-preview["'])(?=[^>]*\bcontent=["']development["'])[^>]*>/i;
-const templateRoot = new URL("../", import.meta.url);
-const previewRoot = new URL("../app/_sites-preview/", import.meta.url);
 
 async function render() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
@@ -13,75 +8,84 @@ async function render() {
   const { default: worker } = await import(workerUrl.href);
 
   return worker.fetch(
-    new Request("http://localhost/", {
-      headers: { accept: "text/html" },
-    }),
-    {
-      ASSETS: {
-        fetch: async () => new Response("Not found", { status: 404 }),
-      },
-    },
-    {
-      waitUntil() {},
-      passThroughOnException() {},
-    },
+    new Request("http://localhost/", { headers: { accept: "text/html" } }),
+    { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
+    { waitUntil() {}, passThroughOnException() {} },
   );
 }
 
-test("server-renders the starter loading skeleton", async () => {
+test("server-renders the Market Signal product shell", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, developmentPreviewMeta);
-  assert.match(html, /<title>Your site is taking shape<\/title>/i);
-  assert.match(html, /Codex is working/);
-  assert.match(html, /Your site is taking shape/);
-  assert.match(html, /Codex is building the first version/);
-  assert.match(html, /react-loading-skeleton/);
-  assert.match(html, /role="status"/);
+  assert.match(html, /<title>Market Signal — Know where your market is moving<\/title>/i);
+  assert.match(html, /Know where your market is moving/);
+  assert.match(html, /One free report/);
+  assert.match(html, /public signals only/);
+  assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/i);
 });
 
-test("keeps the loading skeleton scoped and disposable", async () => {
-  const [preview, css, page, layout, packageJson, files] = await Promise.all([
-    readFile(new URL("SkeletonPreview.tsx", previewRoot), "utf8"),
-    readFile(new URL("preview.css", previewRoot), "utf8"),
+test("real-data route and product metadata are present", async () => {
+  const [route, crawl, report, page, layout, packageJson, domainUtils] = await Promise.all([
+    readFile(new URL("../app/api/analyze/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/crawl/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/report/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
-    readdir(previewRoot),
+    readFile(new URL("../app/lib/domain.ts", import.meta.url), "utf8"),
   ]);
 
-  assert.deepEqual(files.sort(), ["SkeletonPreview.tsx", "preview.css"]);
-  assert.match(preview, /from "react-loading-skeleton"/);
-  assert.match(preview, /baseColor="#eceae7"/);
-  assert.match(preview, /highlightColor="#f9f8f6"/);
-  assert.match(preview, /duration=\{2\.8\}/);
-  assert.match(preview, /sites-skeleton-search-placeholder/);
-  assert.match(packageJson, /"react-loading-skeleton": "3\.5\.0"/);
-
-  const shellIndex = preview.indexOf('className="sites-skeleton-shell"');
-  const statusIndex = preview.indexOf('className="sites-skeleton-status"');
-  assert.ok(shellIndex >= 0 && statusIndex > shellIndex);
-  assert.match(css, /position:\s*fixed/);
-  assert.match(css, /inset:\s*0/);
-  assert.match(css, /opacity:\s*0\.52/);
-  assert.match(css, /prefers-reduced-motion:\s*reduce/);
-  assert.doesNotMatch(css, /#020617|canvas|pets|progress/i);
-  assert.doesNotMatch(
-    preview,
-    /loading-spinner|status-mark|status-progress|canvas|cookie|random/i,
-  );
-
-  assert.match(page, /export const metadata:\s*Metadata/);
-  assert.match(page, /"codex-preview": "development"/);
-  assert.match(page, /<SkeletonPreview \/>/);
-  assert.match(layout, /title:\s*"Starter Project"/);
-  assert.doesNotMatch(layout, /codex-preview|_sites-preview|themeColor|\bViewport\b/);
-  assert.doesNotMatch(css, /(^|\s)(html|body)\s*\{/m);
-
-  await assert.rejects(
-    access(new URL("public/_sites-preview", templateRoot)),
-  );
+  assert.match(route, /MAX_DOCUMENT_BYTES/);
+  assert.match(report, /buildClaims/);
+  assert.match(report, /OPENAI_API_KEY/);
+  assert.match(report, /claimIds/);
+  assert.match(report, /fallbackBrief/);
+  assert.match(report, /analyzeDomain/);
+  assert.match(report, /requestedDomains/);
+  assert.match(report, /headlineClaimIds/);
+  assert.match(crawl, /MAX_HTML_PAGES/);
+  assert.match(crawl, /robots.txt/);
+  assert.match(crawl, /possible market candidate/);
+  assert.match(crawl, /buildDocument/);
+  assert.match(crawl, /buildProductComparison/);
+  assert.match(crawl, /extractProductsFromHtml/);
+  assert.match(crawl, /product-catalog/);
+  assert.match(crawl, /product-comparison/);
+  assert.match(crawl, /claimIds/);
+  assert.match(route, /REQUEST_TIMEOUT_MS/);
+  assert.match(route, /sourceUrl/);
+  assert.match(route, /getAll\("domain"\)/);
+  assert.match(route, /canonicalDomain/);
+  assert.match(route, /new Set\(rawDomains\.map\(canonicalDomain\)\)/);
+  assert.match(route, /Promise\.all\(domains\.map/);
+  assert.match(domainUtils, /Private or local addresses cannot be analyzed/);
+  assert.match(route, /application\/xhtml\+xml/);
+  assert.match(page, /fetch\("\/api\/crawl"/);
+  assert.match(page, /fetch\("\/api\/report"/);
+  assert.match(page, /domains: successful\.map/);
+  assert.match(page, /What changed in your market/);
+  assert.match(page, /grounded claims/);
+  assert.match(page, /JSON report document/);
+  assert.match(page, /POSSIBLE CANDIDATE/);
+  assert.match(page, /PRODUCT-BY-PRODUCT/);
+  assert.match(page, /Closest observed match/i);
+  assert.match(page, /No comparable public product observed/);
+  assert.match(page, /Public source/);
+  assert.match(page, /Optional comparison domains/);
+  assert.match(page, /Public comparison/);
+  assert.match(page, /Public pricing signals/);
+  assert.match(page, /primaryResult/);
+  assert.match(page, /failedComparisonDomains/);
+  assert.match(page, /Public-source coverage/);
+  assert.match(page, /No ad volume or spend estimate is shown/);
+  assert.match(page, /Your company domain or URL/);
+  assert.match(page, /https:\/\/yourcompany\.com/);
+  assert.doesNotMatch(page, /<span>https:\/\/<\/span>/);
+  assert.doesNotMatch(page, /Northstar|Brightcart|Shopline|Illustrative competitor set|Own “easy”|11 total|acmecommerce\.com/);
+  assert.match(layout, /Market Signal — Know where your market is moving/);
+  assert.doesNotMatch(packageJson, /react-loading-skeleton/);
+  await assert.rejects(access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)));
 });
