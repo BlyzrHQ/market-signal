@@ -61,3 +61,14 @@ h1 { font-size: clamp(43px, 5vw, 67px); line-height: .98; letter-spacing: -.065e
   .brief-ledger { border-left: 0; border-top: 1px solid #eee4c9; padding: 15px 0 0; }
   .signal-card p { min-height: 0; }
 }
+.method-preview .preview-body { padding-bottom: 26px; }
+.method-preview-list { display: grid; gap: 14px; margin-top: 28px; }
+.method-preview-list > div { display: flex; align-items: flex-start; gap: 13px; border-top: 1px solid #e9eeeb; padding-top: 13px; }
+.method-preview-list b { color: var(--coral); font-size: 10px; letter-spacing: .08em; }
+.method-preview-list span { color: #71807a; font-size: 11px; line-height: 1.4; }
+.coverage-list { display: grid; gap: 0; margin-top: 11px; }
+.coverage-list > div { display: grid; grid-template-columns: 1fr auto; gap: 5px 12px; border-top: 1px solid #edf1ef; padding: 13px 0; }
+.coverage-list strong { font-size: 12px; }
+.coverage-list p { grid-column: 1 / -1; color: #7f8c87; font-size: 10px; line-height: 1.4; margin: 0; }
+.coverage-state { color: #a17d2c; background: #fbf2db; border-radius: 3px; padding: 4px 6px; font-size: 8px; text-transform: uppercase; letter-spacing: .08em; font-weight: 800; }
+.coverage-live { color: var(--green); background: #e7f3ee; }

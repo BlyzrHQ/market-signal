@@ -57,13 +57,15 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /domains: successful\.map/);
   assert.match(page, /What changed in your market/);
   assert.match(page, /grounded claims/);
-  assert.match(page, /Live source profile/);
+  assert.match(page, /Public source/);
   assert.match(page, /Optional comparison domains/);
   assert.match(page, /Public comparison/);
   assert.match(page, /Public pricing signals/);
   assert.match(page, /primaryResult/);
   assert.match(page, /failedComparisonDomains/);
-  assert.match(page, /Competitor and ad panels remain illustrative/);
+  assert.match(page, /Public-source coverage/);
+  assert.match(page, /No ad volume or spend estimate is shown/);
+  assert.doesNotMatch(page, /Northstar|Brightcart|Shopline|Illustrative competitor set|Own “easy”|11 total|acmecommerce\.com/);
   assert.match(layout, /Market Signal — Know where your market is moving/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   await assert.rejects(access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)));
