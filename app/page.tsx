@@ -27,10 +27,10 @@ type MarketSignal = { label: string; text: string; implication: string; claimIds
 type MarketBrief = { ok: true; headline: string; headlineClaimIds: string[]; summary: string; summaryClaimIds: string[]; signals: MarketSignal[]; nextChecks: string[]; claims: BriefClaim[]; model: string; generatedAt: string; aiGenerated: boolean };
 type ProductView = { id: string; domain: string; name: string; description: string; category: string; jsonLdType: string; priceSignals: Array<{ raw: string }>; attributes: string[]; ownership: string; extraction: string; confidence: "High" | "Medium"; sourceUrl: string; observedAt: string; claimIds: string[] };
 type CrawlPage = LiveAnalysis & { url: string; path: string; contentHash: string; claims: BriefClaim[]; products: ProductView[]; productGaps: string[]; thirdPartyProductCount: number };
-type CrawlDomain = { domain: string; role: "primary" | "submitted-comparison"; homepage: CrawlPage | null; pages: CrawlPage[]; products: ProductView[]; candidates: Array<{ domain: string; reason: string; sourceUrl: string; claimIds: string[] }>; gaps: Array<{ url: string; reason: string; observedAt: string }>; coverage: { pagesRequested: number; pagesFetched: number; maxPages: number; robotsChecked: boolean }; productCoverage: { scannedPages: number; thirdPartyReferenced: number }; fetchedAt: string };
+type CrawlDomain = { domain: string; role: "primary" | "submitted-comparison" | "discovered-competitor"; homepage: CrawlPage | null; pages: CrawlPage[]; products: ProductView[]; candidates: Array<{ domain: string; reason: string; sourceUrl: string; claimIds: string[] }>; gaps: Array<{ url: string; reason: string; observedAt: string }>; coverage: { pagesRequested: number; pagesFetched: number; maxPages: number; robotsChecked: boolean }; productCoverage: { scannedPages: number; thirdPartyReferenced: number }; fetchedAt: string; discovery?: { verificationScore: number; confidence: "High" | "Medium" | "Low"; overlapTerms: string[] } };
 type JsonBlock = { type: string; id: string } & Record<string, unknown>;
 type JsonReportDocument = { version: "1"; generatedAt: string; blocks: JsonBlock[] };
-type CrawlPayload = { ok: true; live: true; primaryDomain: string; results: CrawlDomain[]; document: JsonReportDocument; crawl: { maxPagesPerDomain: number; robotsAware: boolean; generatedAt: string } };
+type CrawlPayload = { ok: true; live: true; primaryDomain: string; results: CrawlDomain[]; document: JsonReportDocument; discovery: { available: boolean; category: string; region: string; queries: string[]; gap?: string }; crawl: { maxPagesPerDomain: number; robotsAware: boolean; generatedAt: string } };
 type CrawlFailure = { ok: false; live: false; error: string; results?: CrawlDomain[]; document?: JsonReportDocument };
 
 function getCompanyName(domain: string) {
@@ -101,8 +101,10 @@ function ProductUnmatchedBlock({ block }: { block: JsonBlock }) {
 }
 
 function JsonReportRenderer({ document }: { document: JsonReportDocument }) {
-  return <section className="json-report" aria-label="JSON-rendered evidence report"><div className="json-report-header"><div><span className="eyebrow"><span className="pulse-dot" /> JSON report document</span><h3>Collected evidence, rendered from the scan</h3></div><span className="json-report-version">schema {document.version}</span></div><div className="json-blocks">{document.blocks.map((block) => {
-    if (block.type === "summary") return <article className="json-block json-summary" key={block.id}><span className="json-block-type">SUMMARY</span><h4>{jsonText(block, "title")}</h4><p>{jsonText(block, "body")}</p></article>;
+  return <section className="json-report" aria-label="Adaptive competitor intelligence report"><div className="json-report-header"><div><span className="eyebrow"><span className="pulse-dot" /> Live competitor intelligence</span><h3>Who is competing for the same customer?</h3></div><span className="json-report-version">live evidence</span></div><div className="json-blocks">{document.blocks.map((block) => {
+    if (block.type === "summary") return <article className="json-block json-summary" key={block.id}><span className="json-block-type">MARKET RESULT</span><h4>{jsonText(block, "title")}</h4><p>{jsonText(block, "body")}</p></article>;
+    if (block.type === "market-profile") return <article className="json-block market-profile-block" key={block.id}><div><span className="json-block-type">INFERRED MARKET</span><h4>{jsonText(block, "category") || "Category needs more evidence"}</h4><p>{jsonText(block, "region")}</p></div><div className="market-query-list">{jsonList(block, "queries").map((query) => <span key={String(query)}>{String(query)}</span>)}</div>{jsonText(block, "gap") && <p className="json-gap">{jsonText(block, "gap")}</p>}</article>;
+    if (block.type === "competitor") return <article className="json-block competitor-result-card" key={block.id}><div className="competitor-result-top"><div><span className="json-block-type">VERIFIED COMPETITOR</span><h4>{jsonText(block, "companyName") || jsonText(block, "domain")}</h4><a href={jsonText(block, "websiteSourceUrl", "#")} target="_blank" rel="noreferrer">{jsonText(block, "domain")} ↗</a></div><div className="verification-score"><strong>{jsonNumber(block, "verificationScore")}</strong><span>verification score</span></div></div><p>{jsonText(block, "reason")}</p><div className="competitor-proof"><span>Found through <b>{jsonText(block, "searchQuery")}</b></span><span><b>{jsonNumber(block, "productCount")}</b> products observed</span><span><b>{jsonList(block, "overlapTerms").length}</b> shared market terms</span></div><div className="shared-term-list">{jsonList(block, "overlapTerms").slice(0, 8).map((term) => <span key={String(term)}>{String(term)}</span>)}</div><div className="competitor-sources"><a href={jsonText(block, "discoverySourceUrl", "#")} target="_blank" rel="noreferrer">Discovery evidence ↗</a><Confidence value={jsonText(block, "confidence", "Low")} /></div></article>;
     if (block.type === "coverage") return <article className="json-block json-coverage" key={block.id}><div className="json-block-heading"><div><span className="json-block-type">COVERAGE</span><h4>{jsonText(block, "domain")}</h4></div><span className="coverage-state coverage-live">{jsonText(block, "role") === "primary" ? "Primary" : "Compared"}</span></div><div className="json-coverage-metrics"><span><b>{jsonNumber(block, "pagesFetched")}</b> pages fetched</span><span><b>{jsonNumber(block, "pagesRequested")}</b> requested</span><span><b>{jsonNumber(block, "maxPages")}</b> per-domain cap</span><span><b>{jsonText(block, "robotsChecked") === "true" || block.robotsChecked ? "Yes" : "No"}</b> robots checked</span></div>{jsonList(block, "gaps").map((gap, index) => { const item = gap as Record<string, unknown>; return <div className="json-gap" key={`${block.id}-gap-${index}`}><strong>Coverage gap</strong><span>{String(item.reason ?? "Page not collected")}</span></div>; })}</article>;
     if (block.type === "company") return <article className="json-block json-company" key={block.id}><div className="json-block-heading"><div><span className="json-block-type">COMPANY PROFILE</span><h4>{jsonText(block, "domain")}</h4></div><EvidenceTag type="Observed" /></div><strong className="json-company-title">{jsonText(block, "title")}</strong><p>{jsonText(block, "description")}</p><div className="json-page-list">{jsonList(block, "pages").map((page, index) => { const item = page as Record<string, unknown>; return <a href={String(item.url ?? "#")} target="_blank" rel="noreferrer" key={`${block.id}-page-${index}`}><span>{String(item.path ?? "/")}</span><strong>{String(item.title ?? "Observed page")}</strong><small>{Array.isArray(item.claimIds) ? item.claimIds.length : 0} claims</small></a>; })}</div></article>;
     if (block.type === "product-catalog") return <ProductCatalogBlock block={block} key={block.id} />;
@@ -118,8 +120,7 @@ export default function Home() {
   const [domain, setDomain] = useState("");
   const [reportDomain, setReportDomain] = useState<string | null>(null);
   const [liveAnalysis, setLiveAnalysis] = useState<LiveAnalysis | null>(null);
-  const [comparisonResults, setComparisonResults] = useState<LiveAnalysis[]>([]);
-  const [comparisonDomains, setComparisonDomains] = useState<string[]>([]);
+  const [comparisonResults, setComparisonResults] = useState<CrawlPage[]>([]);
   const [crawlDocument, setCrawlDocument] = useState<JsonReportDocument | null>(null);
   const [marketBrief, setMarketBrief] = useState<MarketBrief | null>(null);
   const [briefLoading, setBriefLoading] = useState(false);
@@ -128,11 +129,12 @@ export default function Home() {
   const [toast, setToast] = useState("");
 
   const companyName = useMemo(() => getCompanyName(reportDomain ?? domain), [domain, reportDomain]);
+  const competitorResults = useMemo(() => comparisonResults.filter((result) => result.domain !== liveAnalysis?.domain), [comparisonResults, liveAnalysis]);
 
   async function analyze(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const cleanDomain = domain.trim();
-    const requestedDomains = [cleanDomain, ...comparisonDomains.map((value) => value.trim()).filter(Boolean)];
+    const requestedDomains = [cleanDomain];
     setIsAnalyzing(true);
     setAnalysisError("");
     setLiveAnalysis(null);
@@ -170,22 +172,12 @@ export default function Home() {
       } finally {
         setBriefLoading(false);
       }
-      const failedComparisonDomains = crawlResults.filter((result) => result.role === "submitted-comparison" && !result.homepage);
-      if (failedComparisonDomains.length) setAnalysisError(`${failedComparisonDomains.length} comparison domain${failedComparisonDomains.length === 1 ? "" : "s"} could not be crawled: ${failedComparisonDomains.map((result) => result.domain).join(", ")}. Successful sources are still shown.`);
       window.setTimeout(() => document.getElementById("report")?.scrollIntoView({ behavior: "smooth" }), 50);
     } catch (error) {
       setAnalysisError(error instanceof Error ? error.message : "Unable to analyze this domain.");
     } finally {
       setIsAnalyzing(false);
     }
-  }
-
-  function addComparisonDomain() {
-    if (comparisonDomains.length < 3) setComparisonDomains([...comparisonDomains, ""]);
-  }
-
-  function updateComparisonDomain(index: number, value: string) {
-    setComparisonDomains(comparisonDomains.map((domainValue, domainIndex) => domainIndex === index ? value : domainValue));
   }
 
   function showToast(message: string) {
@@ -216,10 +208,9 @@ export default function Home() {
           <form className="domain-form" onSubmit={analyze}>
             <label htmlFor="domain">Your company domain or URL</label>
             <div className="input-row">
-              <div className="domain-input"><input id="domain" value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="https://yourcompany.com" /></div>
-              <button className="primary-button" type="submit" disabled={isAnalyzing}>{isAnalyzing ? "Reading public site…" : "Analyze market"} <span>{isAnalyzing ? "·" : "→"}</span></button>
+              <div className="domain-input"><input id="domain" value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="yourcompany.com or paste the full URL" /></div>
+              <button className="primary-button" type="submit" disabled={isAnalyzing}>{isAnalyzing ? "Finding and verifying rivals…" : "Find my competitors"} <span>{isAnalyzing ? "·" : "→"}</span></button>
             </div>
-            <div className="comparison-inputs"><div className="comparison-label"><span>Optional comparison domains</span><small>Up to 3 · public pages only</small></div>{comparisonDomains.map((comparisonDomain, index) => <div className="comparison-input-row" key={`comparison-${index}`}><span>{index + 1}</span><input value={comparisonDomain} onChange={(event) => updateComparisonDomain(index, event.target.value)} placeholder="competitor.com" aria-label={`Comparison domain ${index + 1}`} /></div>)}{comparisonDomains.length < 3 && <button className="add-comparison" type="button" onClick={addComparisonDomain}>+ Add a comparison domain</button>}</div>
             <div className="form-note"><span className="lock">◇</span> One free report · no account required · public signals only</div>
             {analysisError && <div className="analysis-error" role="alert">{analysisError}</div>}
           </form>
@@ -238,15 +229,15 @@ export default function Home() {
 
       <section className={`report-section shell ${reportDomain ? "report-visible" : ""}`} id="report" aria-live="polite">
         <div className="report-header">
-          <div><div className="eyebrow"><span className="pulse-dot" /> Competitive landscape report</div><h2>{liveAnalysis ? `${companyName} has a live public-source profile.` : "A report that starts with one URL."}</h2><p>{liveAnalysis ? `Observed facts below were fetched from ${liveAnalysis.sourceUrl}. Comparisons appear only when their domains are separately scanned.` : "Submit a domain to collect public evidence. No market result is shown before the scan completes."}</p></div>
+          <div><div className="eyebrow"><span className="pulse-dot" /> Competitive landscape report</div><h2>{liveAnalysis ? `${companyName} against the market.` : "A report that starts with one URL."}</h2><p>{liveAnalysis ? `We searched the inferred market, verified candidate websites, and compared the public products we could attribute.` : "Submit one domain. Market Signal finds and verifies the competitors for you."}</p></div>
           <div className="report-actions"><button className="secondary-button" onClick={() => showToast("Export is ready when live evidence is connected.")}>Export report <span>↓</span></button><button className="secondary-button" onClick={() => showToast("Weekly monitoring is available in the next release.")}>Set cadence <span>⌄</span></button></div>
         </div>
 
         <div className="metric-grid">
-          <div className="metric-card"><span className="metric-label">Public source</span><strong>{liveAnalysis ? "LIVE" : "—"}</strong><div className="metric-trend positive">{liveAnalysis ? "Fetched on submission" : "Waiting for scan"}</div></div>
-          <div className="metric-card"><span className="metric-label">Headings observed</span><strong>{liveAnalysis ? liveAnalysis.headings.length : "—"}</strong><div className="metric-trend">{liveAnalysis ? "H1–H3 on the scanned page" : "No source yet"}</div></div>
-          <div className="metric-card"><span className="metric-label">Price patterns</span><strong>{liveAnalysis ? liveAnalysis.prices.length : "—"}</strong><div className="metric-trend">{liveAnalysis ? "Public HTML only" : "No source yet"}</div></div>
-          <div className="metric-card accent-card"><span className="metric-label">Next collection step</span><strong>{liveAnalysis ? (liveAnalysis.prices.length ? "Verify" : "Collect") : "—"}</strong><div className="metric-trend">{liveAnalysis ? "Pricing surface" : "Waiting for scan"}</div></div>
+          <div className="metric-card"><span className="metric-label">Verified competitors</span><strong>{liveAnalysis ? competitorResults.length : "—"}</strong><div className="metric-trend positive">{liveAnalysis ? "Discovered and crawled" : "Waiting for market search"}</div></div>
+          <div className="metric-card"><span className="metric-label">Sites investigated</span><strong>{liveAnalysis ? comparisonResults.length : "—"}</strong><div className="metric-trend">{liveAnalysis ? "Primary plus verified rivals" : "No search yet"}</div></div>
+          <div className="metric-card"><span className="metric-label">Products observed</span><strong>{liveAnalysis ? comparisonResults.reduce((sum, result) => sum + result.products.length, 0) : "—"}</strong><div className="metric-trend">{liveAnalysis ? "Attributable public records" : "No crawl yet"}</div></div>
+          <div className="metric-card accent-card"><span className="metric-label">Evidence mode</span><strong>{liveAnalysis ? "LIVE" : "—"}</strong><div className="metric-trend">Search + independent crawl</div></div>
         </div>
 
         {crawlDocument && <JsonReportRenderer document={crawlDocument} />}
