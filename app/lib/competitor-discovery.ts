@@ -36,9 +36,10 @@ function outputText(payload: Record<string, unknown>) {
   const output = Array.isArray(payload.output) ? payload.output : [];
   for (const item of output) {
     if (!item || typeof item !== "object") continue;
+    if ((item as { type?: unknown }).type !== "message") continue;
     const content = Array.isArray((item as { content?: unknown }).content) ? (item as { content: unknown[] }).content : [];
     for (const part of content) {
-      if (part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string") return (part as { text: string }).text;
+      if (part && typeof part === "object" && (part as { type?: unknown }).type === "output_text" && typeof (part as { text?: unknown }).text === "string") return (part as { text: string }).text;
     }
   }
   return "";

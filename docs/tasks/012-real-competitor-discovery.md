@@ -8,7 +8,7 @@ A customer submits one domain. Market Signal infers the business category and re
 
 - Comparison domains are not requested from the customer.
 - AI search proposes candidates; it does not confirm them.
-- A confirmed competitor must have a successfully crawled public site plus a 45-point minimum from independent search, lexical, regional, and product-overlap signals.
+- A confirmed competitor must have a successfully crawled public site, a 45-point minimum, and either four meaningful shared market terms or a genuinely eligible product-pair match.
 - Every competitor card includes the discovery query, source, verification score, and explicit confidence.
 - Missing search credentials or provider failures are shown as coverage gaps, never replaced by fixtures.
 

@@ -1,5 +1,5 @@
 import { canonicalDomain, normalizeDomain } from "../../lib/domain";
-import { buildProductComparison, extractProductsFromHtml, selectPreferredProducts, type ProductRecord } from "../../lib/product-intelligence";
+import { buildProductComparison, extractProductsFromHtml, scoreProductPair, selectPreferredProducts, type ProductRecord } from "../../lib/product-intelligence";
 import { parseRobots } from "../../lib/robots";
 import { discoverCompetitors, type DiscoveryCandidate, type DiscoveryResult } from "../../lib/competitor-discovery";
 
@@ -54,7 +54,7 @@ type DomainCrawl = {
   coverage: { pagesRequested: number; pagesFetched: number; maxPages: number; robotsChecked: boolean };
   productCoverage: { scannedPages: number; thirdPartyReferenced: number };
   fetchedAt: string;
-  discovery?: DiscoveryCandidate & { verificationScore: number; confidence: Confidence; overlapTerms: string[] };
+  discovery?: DiscoveryCandidate & { verificationScore: number; confidence: Confidence; overlapTerms: string[]; hasProductOverlap?: boolean };
 };
 
 type ReportBlock = Record<string, unknown> & { type: string; id: string };
@@ -79,11 +79,12 @@ function verifyDiscoveredCompetitor(primary: DomainCrawl, candidate: DomainCrawl
   const candidateTerms = marketTerms(candidate);
   const overlapTerms = [...primaryTerms].filter((term) => candidateTerms.has(term)).slice(0, 12);
   const lexicalScore = Math.min(40, overlapTerms.length * 5);
-  const productScore = primary.products.length && candidate.products.length ? 10 : 0;
-  const regionScore = primary.homepage?.region && candidate.homepage?.region === primary.homepage.region ? 10 : 0;
+  const hasProductOverlap = primary.products.some((left) => candidate.products.some((right) => scoreProductPair(left, right).eligible));
+  const productScore = hasProductOverlap ? 20 : 0;
+  const regionScore = primary.homepage?.region && candidate.homepage?.region === primary.homepage.region ? 5 : 0;
   const verificationScore = Math.min(100, 25 + lexicalScore + productScore + regionScore);
   const confidence: Confidence = verificationScore >= 75 ? "High" : verificationScore >= 50 ? "Medium" : "Low";
-  return { ...candidate, discovery: { ...discovery, verificationScore, confidence, overlapTerms } };
+  return { ...candidate, discovery: { ...discovery, verificationScore, confidence, overlapTerms, hasProductOverlap } };
 }
 
 function productPathPriority(path: string) {
@@ -291,7 +292,7 @@ async function crawlDomain(input: string, role: DomainCrawl["role"]): Promise<Do
   return { domain, role, homepage, pages, products, candidates, gaps, coverage: { pagesRequested: 1 + paths.length, pagesFetched: pages.length, maxPages: MAX_HTML_PAGES, robotsChecked: robotsResult.ok }, productCoverage: { scannedPages: pages.length, thirdPartyReferenced: pages.reduce((sum, page) => sum + page.thirdPartyProductCount, 0) }, fetchedAt: startedAt };
 }
 
-function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?: DiscoveryResult): { version: "1"; generatedAt: string; blocks: ReportBlock[] } {
+function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?: DiscoveryResult, investigated: Array<DomainCrawl | null> = []): { version: "1"; generatedAt: string; blocks: ReportBlock[] } {
   const discovered = results.filter((result) => result.role === "discovered-competitor" && result.homepage && result.discovery);
   const blocks: ReportBlock[] = [{ type: "summary", id: "scan-summary", title: discovered.length ? `We found ${discovered.length} verified market rival${discovered.length === 1 ? "" : "s"}` : "Competitor discovery needs more evidence", body: discovered.length ? `Market Signal searched ${discovery?.queries.length || 0} regional category queries, then crawled each candidate before including it here.` : discovery?.gap || "No searched candidate passed public-site verification." }];
   if (discovery) blocks.push({ type: "market-profile", id: "market-profile", category: discovery.category, region: discovery.region, queries: discovery.queries, provider: discovery.provider, model: discovery.model, available: discovery.available, gap: discovery.gap || "" });
@@ -315,6 +316,10 @@ function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?
     blocks.push({ type: "gap", id: "product-coverage-gap", domain: primary.domain, url: primary.homepage.sourceUrl, reason: `No attributable public product or service record was observed across ${primary.productCoverage.scannedPages} scanned page${primary.productCoverage.scannedPages === 1 ? "" : "s"}. No product comparison was generated.`, observedAt: new Date().toISOString() });
   }
   if (discovered.length === 0) blocks.push({ type: "gap", id: "candidate-gap", domain: primary?.domain || primaryDomain, url: primary?.homepage?.sourceUrl || "", reason: discovery?.gap || "No searched candidate passed independent public-site verification.", observedAt: new Date().toISOString() });
+  for (const candidate of investigated) {
+    if (!candidate || results.includes(candidate)) continue;
+    blocks.push({ type: "gap", id: `investigation-gap-${candidate.domain}`, domain: candidate.domain, url: candidate.homepage?.sourceUrl || candidate.discovery?.sourceUrl || "", reason: candidate.homepage ? `Investigated but not confirmed: verification score ${candidate.discovery?.verificationScore || 0}/100 did not meet the overlap rule.` : `Investigated but not confirmed: ${candidate.gaps[0]?.reason || "the public site could not be verified."}`, observedAt: candidate.fetchedAt });
+  }
   return { version: "1", generatedAt: new Date().toISOString(), blocks };
 }
 
@@ -338,9 +343,12 @@ export async function POST(request: Request) {
     } catch (error) {
       discovery = { available: false, provider: "unavailable", model: process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini", category: "", region: primary.homepage.region, queries: [], candidates: [], gap: error instanceof Error ? error.message : "Web competitor discovery failed." };
     }
-    const discoveredResults = await Promise.all(discovery.candidates.filter((candidate) => !domains.includes(candidate.domain)).map(async (candidate) => verifyDiscoveredCompetitor(primary, await crawlDomain(candidate.domain, "discovered-competitor"), candidate)));
-    const results = [...submittedResults, ...discoveredResults.filter((result) => result.homepage && (result.discovery?.verificationScore || 0) >= 45)];
-    return Response.json({ ok: true, live: true, primaryDomain, results, discovery, document: buildDocument(results, primaryDomain, discovery), crawl: { maxPagesPerDomain: MAX_HTML_PAGES, robotsAware: true, generatedAt: new Date().toISOString() } });
+    const discoveredResults = await Promise.all(discovery.candidates.filter((candidate) => !domains.includes(candidate.domain)).map(async (candidate) => {
+      try { return verifyDiscoveredCompetitor(primary, await crawlDomain(candidate.domain, "discovered-competitor"), candidate); } catch { return null; }
+    }));
+    const confirmed = discoveredResults.filter((result): result is DomainCrawl => Boolean(result?.homepage && ((result.discovery?.overlapTerms.length || 0) >= 4 || result.discovery?.hasProductOverlap) && (result.discovery?.verificationScore || 0) >= 45));
+    const results = [...submittedResults, ...confirmed];
+    return Response.json({ ok: true, live: true, primaryDomain, results, discovery, document: buildDocument(results, primaryDomain, discovery, discoveredResults), crawl: { maxPagesPerDomain: MAX_HTML_PAGES, robotsAware: true, generatedAt: new Date().toISOString() } });
   } catch (error) {
     return Response.json({ ok: false, live: false, error: error instanceof Error ? error.message : "Unable to crawl the submitted domains." }, { status: 400 });
   }
