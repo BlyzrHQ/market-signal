@@ -69,7 +69,11 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /What changed in your market/);
   assert.match(page, /grounded claims/);
   assert.match(page, /Live competitor intelligence/);
-  assert.match(page, /POSSIBLE CANDIDATE/);
+  assert.doesNotMatch(page, /POSSIBLE CANDIDATE/);
+  assert.doesNotMatch(page, /block\.type === "evidence"\) return <article/);
+  assert.match(page, /DATA COVERAGE NOTE/);
+  assert.match(page, /Discovery evidence ↗/);
+  assert.match(page, /websiteSourceUrl/);
   assert.match(page, /PRODUCT-BY-PRODUCT/);
   assert.match(page, /Closest observed match/i);
   assert.match(page, /No comparable public product observed/);
