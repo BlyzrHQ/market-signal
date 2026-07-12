@@ -28,6 +28,12 @@ Enter a company domain and receive an evidence-backed competitive intelligence r
 - The product is global by intent; regional context should be inferred from public signals and remain overridable.
 - Monitoring cadence is customer-configurable rather than fixed.
 - The initial data boundary is public information about the submitted domain and competitors.
+- The first monitoring channels are Meta, Google, and TikTok.
+- Competitors are selected automatically in v1; there is no manual approval step.
+- The first report may show estimated spend ranges, but never exact spend, and every estimate carries confidence and methodology.
+- The free experience allows one report per browser or email with optional email capture; it is not gated by an account.
+- English is the launch language; regional and language inference is visible and overridable.
+- Paid data providers are deferred, but remain an explicit budget-dependent option.
 - The business model is a free trial followed by subscription tiers.
 - The first release needs a dashboard/report surface, exports, recommendations, and alerts, while keeping sign-up friction low.
 
@@ -37,6 +43,21 @@ Enter a company domain and receive an evidence-backed competitive intelligence r
 - “Ad spend” must not be presented as exact when it is not publicly observable; estimates need a confidence label and methodology.
 - Scraping must respect applicable site terms, robots directives, rate limits, and platform access rules. Where a platform provides an official public library or API, prefer it.
 - The report must distinguish observed facts, inferred comparisons, estimates, and recommendations.
+
+### Shared evidence schema
+
+Every material report item should carry:
+
+- `claimType`: `observed`, `inferred`, `estimated`, or `recommended`;
+- `sourceUrl`: the public source supporting the item;
+- `observedAt`: when the source was captured or checked;
+- `confidence`: `high`, `medium`, or `low`;
+- `methodology`: required for estimates and useful for inferences;
+- `region` and `language`: the context in which the item applies.
+
+### Initial source-adapter contract
+
+Meta, Google, and TikTok adapters should return normalized evidence records rather than provider-specific UI data. Each adapter must declare its access method, coverage limits, request/rate-limit posture, and whether a field is directly observed or estimated. Official public libraries or APIs are preferred; permitted scraping is a fallback only when it respects applicable terms, robots directives, and rate limits.
 
 ## MVP task sequence
 
@@ -50,9 +71,4 @@ Enter a company domain and receive an evidence-backed competitive intelligence r
 
 ## Open decisions before data implementation
 
-- First social and ad channels.
-- Whether the MVP reports observed public ads only or also includes estimated spend.
-- The exact competitor approval/editing flow after automatic discovery.
-- The first launch language(s) and regional fallback behavior.
-- The lead-capture rule for a no-account report.
 - Monthly budget available for paid data providers, if public sources are insufficient.
