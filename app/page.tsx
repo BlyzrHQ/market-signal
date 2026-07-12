@@ -12,6 +12,9 @@ type Evidence = {
 };
 
 type LiveAnalysis = {
+  ok: true;
+  live: true;
+  domain: string;
   sourceUrl: string;
   fetchedAt: string;
   title: string;
@@ -25,6 +28,8 @@ type LiveAnalysis = {
   wordCount: number;
   truncated: boolean;
 };
+
+type LiveAnalysisError = { ok: false; live: false; domain: string; error: string; fetchedAt: string };
 
 const competitors = [
   { name: "Northstar", domain: "northstar.co", score: 82, color: "coral", signal: "Messaging overlap" },
@@ -57,6 +62,14 @@ function getCompanyName(domain: string) {
   return clean.charAt(0).toUpperCase() + clean.slice(1);
 }
 
+function getDomainHost(domain: string) {
+  try {
+    return new URL(/^https?:\/\//i.test(domain) ? domain : `https://${domain}`).hostname.toLowerCase();
+  } catch {
+    return domain.trim().toLowerCase().replace(/^https?:\/\//, "").split("/")[0];
+  }
+}
+
 function Confidence({ value }: { value: string }) {
   return <span className={`confidence confidence-${value.toLowerCase()}`}><span />{value} confidence</span>;
 }
@@ -69,6 +82,8 @@ export default function Home() {
   const [domain, setDomain] = useState("acmecommerce.com");
   const [reportDomain, setReportDomain] = useState<string | null>(null);
   const [liveAnalysis, setLiveAnalysis] = useState<LiveAnalysis | null>(null);
+  const [comparisonResults, setComparisonResults] = useState<LiveAnalysis[]>([]);
+  const [comparisonDomains, setComparisonDomains] = useState<string[]>([]);
   const [analysisError, setAnalysisError] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [toast, setToast] = useState("");
@@ -78,22 +93,41 @@ export default function Home() {
   async function analyze(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const cleanDomain = domain.replace(/^https?:\/\//, "").replace(/\/$/, "");
+    const requestedDomains = [cleanDomain, ...comparisonDomains.map((value) => value.replace(/^https?:\/\//, "").replace(/\/$/, "")).filter(Boolean)];
     setIsAnalyzing(true);
     setAnalysisError("");
     setLiveAnalysis(null);
     setReportDomain(null);
     try {
-      const response = await fetch(`/api/analyze?domain=${encodeURIComponent(cleanDomain)}`);
-      const payload = await response.json() as LiveAnalysis & { ok?: boolean; error?: string };
-      if (!response.ok || !payload.ok) throw new Error(payload.error || "Unable to analyze this domain.");
-      setLiveAnalysis(payload);
+      const params = new URLSearchParams();
+      requestedDomains.forEach((value) => params.append("domain", value));
+      const response = await fetch(`/api/analyze?${params.toString()}`);
+      const payload = await response.json() as LiveAnalysis | LiveAnalysisError | { ok: true; live: true; results: Array<LiveAnalysis | LiveAnalysisError> };
+      const results = "results" in payload ? payload.results : [payload];
+      const successful = results.filter((result): result is LiveAnalysis => result.ok && result.live);
+      const failed = results.filter((result): result is LiveAnalysisError => !result.ok);
+      const primaryHost = getDomainHost(cleanDomain);
+      const primaryResult = successful.find((result) => result.domain === primaryHost);
+      if (!primaryResult) throw new Error(`Primary domain ${cleanDomain} could not be read: ${failed.find((result) => result.domain === primaryHost)?.error || "no live result was returned"}`);
+      setComparisonResults(successful);
+      setLiveAnalysis(primaryResult);
       setReportDomain(cleanDomain);
+      const failedComparisonDomains = failed.filter((result) => result.domain !== primaryHost);
+      if (failedComparisonDomains.length) setAnalysisError(`${failedComparisonDomains.length} comparison domain${failedComparisonDomains.length === 1 ? "" : "s"} could not be read: ${failedComparisonDomains.map((result) => result.domain).join(", ")}. Successful sources are still shown.`);
       window.setTimeout(() => document.getElementById("report")?.scrollIntoView({ behavior: "smooth" }), 50);
     } catch (error) {
       setAnalysisError(error instanceof Error ? error.message : "Unable to analyze this domain.");
     } finally {
       setIsAnalyzing(false);
     }
+  }
+
+  function addComparisonDomain() {
+    if (comparisonDomains.length < 3) setComparisonDomains([...comparisonDomains, ""]);
+  }
+
+  function updateComparisonDomain(index: number, value: string) {
+    setComparisonDomains(comparisonDomains.map((domainValue, domainIndex) => domainIndex === index ? value : domainValue));
   }
 
   function showToast(message: string) {
@@ -127,6 +161,7 @@ export default function Home() {
               <div className="domain-input"><span>https://</span><input id="domain" value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="yourcompany.com" /></div>
               <button className="primary-button" type="submit" disabled={isAnalyzing}>{isAnalyzing ? "Reading public site…" : "Analyze market"} <span>{isAnalyzing ? "·" : "→"}</span></button>
             </div>
+            <div className="comparison-inputs"><div className="comparison-label"><span>Optional comparison domains</span><small>Up to 3 · public pages only</small></div>{comparisonDomains.map((comparisonDomain, index) => <div className="comparison-input-row" key={`comparison-${index}`}><span>{index + 1}</span><input value={comparisonDomain} onChange={(event) => updateComparisonDomain(index, event.target.value)} placeholder="competitor.com" aria-label={`Comparison domain ${index + 1}`} /></div>)}{comparisonDomains.length < 3 && <button className="add-comparison" type="button" onClick={addComparisonDomain}>+ Add a comparison domain</button>}</div>
             <div className="form-note"><span className="lock">◇</span> One free report · no account required · public signals only</div>
             {analysisError && <div className="analysis-error" role="alert">{analysisError}</div>}
           </form>
@@ -163,14 +198,17 @@ export default function Home() {
           <section className="panel moves-panel"><div className="panel-heading"><div><span className="section-number">02</span><h3>Recommended moves</h3></div><EvidenceTag type="Recommended" /></div><ol className="move-list"><li><span>01</span><div><strong>Make “easy” a product promise.</strong><p>Three competitors lead with power. None own the low-friction outcome.</p></div></li><li><span>02</span><div><strong>Defend the $39–$49 buying moment.</strong><p>Your current entry price sits in the highest comparison density.</p></div></li><li><span>03</span><div><strong>Turn proof into a repeatable ad asset.</strong><p>Social proof is present in competitor creative, but not yet saturated.</p></div></li></ol><button className="text-button" onClick={() => showToast("Recommendation detail will open with live evidence.")}>See the reasoning <span>→</span></button></section>
         </div>
 
-        <section className="panel competitor-panel"><div className="panel-heading"><div><span className="section-number">03</span><h3>Competitive set</h3></div><span className="panel-note">Automatically inferred · 11 total</span></div><div className="competitor-list">{competitors.map((competitor) => <div className="competitor-row" key={competitor.name}><span className={`competitor-avatar ${competitor.color}`}>{competitor.name.charAt(0)}</span><div className="competitor-name"><strong>{competitor.name}</strong><span>{competitor.domain}</span></div><div className="competitor-signal"><span>{competitor.signal}</span><div className="mini-track"><i className={competitor.color} style={{ width: `${competitor.score}%` }} /></div></div><strong className="competitor-score">{competitor.score}</strong><button className="row-action" aria-label={`View ${competitor.name} evidence`} onClick={() => showToast(`${competitor.name} evidence will open in the next release.`)}>↗</button></div>)}</div><div className="panel-footer"><Confidence value="High" /><span>Discovery combines category language, search overlap, pricing proximity, and audience signals.</span><button className="text-button">View all 11 <span>→</span></button></div></section>
+        <section className={`panel competitor-panel ${comparisonResults.length > 1 ? "fixture-only" : ""}`}><div className="panel-heading"><div><span className="section-number">03</span><h3>Competitive set</h3></div><span className="panel-note">Automatically inferred · 11 total</span></div><div className="competitor-list">{competitors.map((competitor) => <div className="competitor-row" key={competitor.name}><span className={`competitor-avatar ${competitor.color}`}>{competitor.name.charAt(0)}</span><div className="competitor-name"><strong>{competitor.name}</strong><span>{competitor.domain}</span></div><div className="competitor-signal"><span>{competitor.signal}</span><div className="mini-track"><i className={competitor.color} style={{ width: `${competitor.score}%` }} /></div></div><strong className="competitor-score">{competitor.score}</strong><button className="row-action" aria-label={`View ${competitor.name} evidence`} onClick={() => showToast(`${competitor.name} evidence will open in the next release.`)}>↗</button></div>)}</div><div className="panel-footer"><Confidence value="High" /><span>Discovery combines category language, search overlap, pricing proximity, and audience signals.</span><button className="text-button">View all 11 <span>→</span></button></div></section>
+{comparisonResults.length > 1 && <section className="panel live-comparison-panel"><div className="panel-heading"><div><span className="section-number">LIVE</span><h3>Public comparison</h3></div><EvidenceTag type="Observed" /></div><p className="panel-intro">These comparison domains were fetched from their public homepages. Each card links back to the source that was observed.</p><div className="live-compare-grid">{comparisonResults.map((result) => <article className="live-compare-card" key={result.domain}><div className="live-compare-heading"><span className="competitor-avatar blue">{getCompanyName(result.domain).charAt(0)}</span><div><strong>{getCompanyName(result.domain)}</strong><span>{result.domain}</span></div><EvidenceTag type="Observed" /></div><p>{result.description}</p><div className="live-compare-facts"><span><b>{result.prices.length}</b> pricing signals</span><span><b>{result.headings.length}</b> headings</span><span><b>{result.socialLinks.length}</b> social links</span></div><a href={result.sourceUrl} target="_blank" rel="noreferrer">Open observed source ↗</a></article>)}</div><div className="panel-footer"><Confidence value="High" /><span>Observed from public HTML; no market score is implied.</span></div></section>}
 
         <div className="report-grid two-col lower-grid">
-          <section className="panel pricing-panel"><div className="panel-heading"><div><span className="section-number">04</span><h3>Products & pricing</h3></div><EvidenceTag type="Observed" /></div><div className="table-wrap"><table><thead><tr><th>Signal</th><th>You</th><th>Northstar</th><th>Brightcart</th></tr></thead><tbody>{products.map((row) => <tr key={row.label}><td>{row.label}</td><td className="you-cell">{row.company}</td><td>{row.northstar}</td><td>{row.brightcart}</td></tr>)}</tbody></table></div><div className="panel-footer"><span className="source-chip">Homepage · Pricing pages · 12 sources</span><span>Observed today</span></div></section>
+          <section className={`panel pricing-panel ${comparisonResults.length > 1 ? "fixture-only" : ""}`}><div className="panel-heading"><div><span className="section-number">04</span><h3>Products & pricing</h3></div><EvidenceTag type="Observed" /></div><div className="table-wrap"><table><thead><tr><th>Signal</th><th>You</th><th>Northstar</th><th>Brightcart</th></tr></thead><tbody>{products.map((row) => <tr key={row.label}><td>{row.label}</td><td className="you-cell">{row.company}</td><td>{row.northstar}</td><td>{row.brightcart}</td></tr>)}</tbody></table></div><div className="panel-footer"><span className="source-chip">Homepage · Pricing pages · 12 sources</span><span>Observed today</span></div></section>
+{comparisonResults.length > 1 && <section className="panel pricing-panel live-pricing-panel"><div className="panel-heading"><div><span className="section-number">LIVE</span><h3>Public pricing signals</h3></div><EvidenceTag type="Observed" /></div><div className="table-wrap"><table><thead><tr><th>Observed signal</th>{comparisonResults.map((result) => <th key={result.domain}>{getCompanyName(result.domain)}</th>)}</tr></thead><tbody><tr><td>Price patterns</td>{comparisonResults.map((result) => <td key={result.domain} className={result === comparisonResults[0] ? "you-cell" : ""}>{result.prices.length ? result.prices.join(", ") : "None found"}</td>)}</tr><tr><td>Language</td>{comparisonResults.map((result) => <td key={result.domain}>{result.language}</td>)}</tr><tr><td>Social presence</td>{comparisonResults.map((result) => <td key={result.domain}>{result.socialLinks.length ? `${result.socialLinks.length} public links` : "None exposed"}</td>)}</tr></tbody></table></div><div className="panel-footer"><span className="source-chip">Live homepage evidence</span><span>Observed on submission</span></div></section>}
           <section className="panel ads-panel"><div className="panel-heading"><div><span className="section-number">05</span><h3>Public ad signals</h3></div><EvidenceTag type="Estimated" /></div><div className="ad-list">{adSignals.map((signal) => <div className="ad-row" key={signal.channel}><span className={`channel-icon ${signal.color}`}>{signal.glyph}</span><div className="ad-copy"><div><strong>{signal.channel}</strong><span>{signal.ads}</span></div><p>{signal.copy}</p></div><div className="ad-range"><strong>{signal.range}</strong><Confidence value={signal.confidence} /></div></div>)}</div><div className="estimate-note">Spend ranges are estimates from public creative volume, placement, and reach signals — never exact spend.</div></section>
         </div>
 
-        <section className="evidence-strip" id="method"><div><span className="section-number">06</span><strong>Evidence ledger</strong><span className="evidence-sub">Everything has a trail.</span></div><div className="evidence-items">{evidence.map((item) => <div className="evidence-item" key={item.source}><EvidenceTag type={item.claimType} /><strong>{item.source}</strong><span>{item.date}</span><Confidence value={item.confidence} /></div>)}</div></section>
+        <section className={`evidence-strip ${comparisonResults.length > 1 ? "fixture-only" : ""}`} id={comparisonResults.length > 1 ? undefined : "method"}><div><span className="section-number">06</span><strong>Evidence ledger</strong><span className="evidence-sub">Everything has a trail.</span></div><div className="evidence-items">{evidence.map((item) => <div className="evidence-item" key={item.source}><EvidenceTag type={item.claimType} /><strong>{item.source}</strong><span>{item.date}</span><Confidence value={item.confidence} /></div>)}</div></section>
+{comparisonResults.length > 1 && <section className="evidence-strip live-evidence-strip" id="method"><div><span className="section-number">LIVE</span><strong>Observed sources</strong><span className="evidence-sub">One trail per domain.</span></div><div className="evidence-items">{comparisonResults.map((result) => <div className="evidence-item" key={result.domain}><EvidenceTag type="Observed" /><strong>{result.domain}</strong><span>{new Date(result.fetchedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span><Confidence value="High" /></div>)}</div></section>}
       </section>
 
       <section className="method-section shell"><div className="method-copy"><div className="eyebrow">The signal, not the spectacle</div><h2>See what we know.<br /><em>See how we know it.</em></h2><p>Market Signal separates public observations from AI inferences, estimates, and recommendations. That is how a fast answer becomes a useful one.</p></div><div className="method-steps"><div><span>01</span><strong>Collect</strong><p>Public websites, pricing pages, search landscapes, and ad libraries.</p></div><div><span>02</span><strong>Connect</strong><p>Normalize evidence across regions, channels, and competitor patterns.</p></div><div><span>03</span><strong>Explain</strong><p>Turn the signal into a decision your team can act on this week.</p></div></div></section>
