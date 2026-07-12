@@ -65,6 +65,9 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /failedComparisonDomains/);
   assert.match(page, /Public-source coverage/);
   assert.match(page, /No ad volume or spend estimate is shown/);
+  assert.match(page, /Your company domain or URL/);
+  assert.match(page, /https:\/\/yourcompany\.com/);
+  assert.doesNotMatch(page, /<span>https:\/\/<\/span>/);
   assert.doesNotMatch(page, /Northstar|Brightcart|Shopline|Illustrative competitor set|Own “easy”|11 total|acmecommerce\.com/);
   assert.match(layout, /Market Signal — Know where your market is moving/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);

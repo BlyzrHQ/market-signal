@@ -73,8 +73,8 @@ export default function Home() {
 
   async function analyze(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const cleanDomain = domain.replace(/^https?:\/\//, "").replace(/\/$/, "");
-    const requestedDomains = [cleanDomain, ...comparisonDomains.map((value) => value.replace(/^https?:\/\//, "").replace(/\/$/, "")).filter(Boolean)];
+    const cleanDomain = domain.trim();
+    const requestedDomains = [cleanDomain, ...comparisonDomains.map((value) => value.trim()).filter(Boolean)];
     setIsAnalyzing(true);
     setAnalysisError("");
     setLiveAnalysis(null);
@@ -149,9 +149,9 @@ export default function Home() {
           <h1>Know where your market is moving <em>before it moves you.</em></h1>
           <p className="hero-lede">Enter a domain. Get the competitive picture behind the noise: who is gaining ground, what they sell, what they charge, and how they show up in public.</p>
           <form className="domain-form" onSubmit={analyze}>
-            <label htmlFor="domain">Your company domain</label>
+            <label htmlFor="domain">Your company domain or URL</label>
             <div className="input-row">
-              <div className="domain-input"><span>https://</span><input id="domain" value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="yourcompany.com" /></div>
+              <div className="domain-input"><input id="domain" value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="https://yourcompany.com" /></div>
               <button className="primary-button" type="submit" disabled={isAnalyzing}>{isAnalyzing ? "Reading public site…" : "Analyze market"} <span>{isAnalyzing ? "·" : "→"}</span></button>
             </div>
             <div className="comparison-inputs"><div className="comparison-label"><span>Optional comparison domains</span><small>Up to 3 · public pages only</small></div>{comparisonDomains.map((comparisonDomain, index) => <div className="comparison-input-row" key={`comparison-${index}`}><span>{index + 1}</span><input value={comparisonDomain} onChange={(event) => updateComparisonDomain(index, event.target.value)} placeholder="competitor.com" aria-label={`Comparison domain ${index + 1}`} /></div>)}{comparisonDomains.length < 3 && <button className="add-comparison" type="button" onClick={addComparisonDomain}>+ Add a comparison domain</button>}</div>
