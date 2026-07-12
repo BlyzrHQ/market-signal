@@ -1,5 +1,6 @@
 import { canonicalDomain, normalizeDomain } from "../../lib/domain";
 import { buildProductComparison, extractProductsFromHtml, selectPreferredProducts, type ProductRecord } from "../../lib/product-intelligence";
+import { parseRobots } from "../../lib/robots";
 
 type ClaimType = "Observed" | "Inferred";
 type Confidence = "High" | "Medium" | "Low";
@@ -140,32 +141,6 @@ async function fetchText(url: string, accept: string) {
   }
 }
 
-function parseRobots(text: string) {
-  const disallows: string[] = [];
-  const sitemaps: string[] = [];
-  let applies = false;
-  let hasRules = false;
-  for (const rawLine of text.split(/\r?\n/)) {
-    const line = rawLine.split("#")[0].trim();
-    const separator = line.indexOf(":");
-    if (separator < 0) continue;
-    const key = line.slice(0, separator).trim().toLowerCase();
-    const value = line.slice(separator + 1).trim();
-    if (key === "user-agent") applies = value === "*";
-    if (key === "disallow" && applies && value) { disallows.push(value); hasRules = true; }
-    if (key === "sitemap" && /^https?:\/\//i.test(value)) sitemaps.push(value);
-  }
-  return {
-    disallows,
-    sitemaps,
-    hasRules,
-    allows: (path: string) => !disallows.some((rule) => {
-      const conservativePrefix = rule.split(/[\*$]/, 1)[0];
-      return conservativePrefix ? path.startsWith(conservativePrefix) : true;
-    }),
-  };
-}
-
 function extractLinks(document: string, baseUrl: URL, domain: string) {
   const paths: string[] = [];
   const candidates = new Map<string, { domain: string; text: string; sourceUrl: string }>();
@@ -241,7 +216,7 @@ async function crawlDomain(input: string, role: DomainCrawl["role"]): Promise<Do
   const domain = base.hostname;
   const gaps: Gap[] = [];
   const robotsResult = await fetchText(new URL("/robots.txt", base).toString(), "text/plain");
-  const robots = robotsResult.ok ? parseRobots(robotsResult.text) : { disallows: [], sitemaps: [], hasRules: false, allows: () => true };
+  const robots = robotsResult.ok ? parseRobots(robotsResult.text) : { sitemaps: [], hasRules: false, allows: () => true };
   if (!robotsResult.ok) gaps.push({ url: new URL("/robots.txt", base).toString(), reason: "robots.txt could not be read; expansion is limited to the homepage.", observedAt: startedAt });
   if (robotsResult.ok && !robots.allows("/")) {
     gaps.push({ url: base.toString(), reason: "robots.txt disallows the homepage for this scanner.", observedAt: startedAt });
@@ -328,7 +303,11 @@ export async function POST(request: Request) {
     const primaryDomain = canonicalDomain(typeof payload.primary === "string" ? payload.primary : domains[0]);
     const results = await Promise.all(domains.map((domain) => crawlDomain(domain, domain === primaryDomain ? "primary" : "submitted-comparison")));
     const primary = results.find((result) => result.domain === primaryDomain);
-    if (!primary?.homepage) return Response.json({ ok: false, live: false, error: "The primary domain could not be crawled.", results, document: buildDocument(results, primaryDomain) }, { status: 400 });
+    if (!primary?.homepage) {
+      const reason = primary?.gaps[0]?.reason;
+      const error = reason ? `The primary domain could not be crawled: ${reason}` : "The primary domain could not be crawled.";
+      return Response.json({ ok: false, live: false, error, results, document: buildDocument(results, primaryDomain) }, { status: 400 });
+    }
     return Response.json({ ok: true, live: true, primaryDomain, results, document: buildDocument(results, primaryDomain), crawl: { maxPagesPerDomain: MAX_HTML_PAGES, robotsAware: true, generatedAt: new Date().toISOString() } });
   } catch (error) {
     return Response.json({ ok: false, live: false, error: error instanceof Error ? error.message : "Unable to crawl the submitted domains." }, { status: 400 });
