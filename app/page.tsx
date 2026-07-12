@@ -11,6 +11,21 @@ type Evidence = {
   confidence: "High" | "Medium" | "Low";
 };
 
+type LiveAnalysis = {
+  sourceUrl: string;
+  fetchedAt: string;
+  title: string;
+  description: string;
+  language: string;
+  region: string;
+  headings: string[];
+  prices: string[];
+  socialLinks: string[];
+  internalLinks: string[];
+  wordCount: number;
+  truncated: boolean;
+};
+
 const competitors = [
   { name: "Northstar", domain: "northstar.co", score: 82, color: "coral", signal: "Messaging overlap" },
   { name: "Brightcart", domain: "brightcart.io", score: 76, color: "blue", signal: "Price pressure" },
@@ -53,14 +68,32 @@ function EvidenceTag({ type }: { type: ClaimType }) {
 export default function Home() {
   const [domain, setDomain] = useState("acmecommerce.com");
   const [reportDomain, setReportDomain] = useState<string | null>(null);
+  const [liveAnalysis, setLiveAnalysis] = useState<LiveAnalysis | null>(null);
+  const [analysisError, setAnalysisError] = useState("");
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [toast, setToast] = useState("");
 
   const companyName = useMemo(() => getCompanyName(reportDomain ?? domain), [domain, reportDomain]);
 
-  function analyze(event: FormEvent<HTMLFormElement>) {
+  async function analyze(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setReportDomain(domain.replace(/^https?:\/\//, "").replace(/\/$/, ""));
-    window.setTimeout(() => document.getElementById("report")?.scrollIntoView({ behavior: "smooth" }), 50);
+    const cleanDomain = domain.replace(/^https?:\/\//, "").replace(/\/$/, "");
+    setIsAnalyzing(true);
+    setAnalysisError("");
+    setLiveAnalysis(null);
+    setReportDomain(null);
+    try {
+      const response = await fetch(`/api/analyze?domain=${encodeURIComponent(cleanDomain)}`);
+      const payload = await response.json() as LiveAnalysis & { ok?: boolean; error?: string };
+      if (!response.ok || !payload.ok) throw new Error(payload.error || "Unable to analyze this domain.");
+      setLiveAnalysis(payload);
+      setReportDomain(cleanDomain);
+      window.setTimeout(() => document.getElementById("report")?.scrollIntoView({ behavior: "smooth" }), 50);
+    } catch (error) {
+      setAnalysisError(error instanceof Error ? error.message : "Unable to analyze this domain.");
+    } finally {
+      setIsAnalyzing(false);
+    }
   }
 
   function showToast(message: string) {
@@ -92,9 +125,10 @@ export default function Home() {
             <label htmlFor="domain">Your company domain</label>
             <div className="input-row">
               <div className="domain-input"><span>https://</span><input id="domain" value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="yourcompany.com" /></div>
-              <button className="primary-button" type="submit">Analyze market <span>→</span></button>
+              <button className="primary-button" type="submit" disabled={isAnalyzing}>{isAnalyzing ? "Reading public site…" : "Analyze market"} <span>{isAnalyzing ? "·" : "→"}</span></button>
             </div>
             <div className="form-note"><span className="lock">◇</span> One free report · no account required · public signals only</div>
+            {analysisError && <div className="analysis-error" role="alert">{analysisError}</div>}
           </form>
           <div className="trusted-row"><span>Built for teams who need an unfair amount of context</span><span className="trusted-line" /><span>STARTUPS</span><span>AGENCIES</span><span>ECOMMERCE</span></div>
         </div>
@@ -111,16 +145,18 @@ export default function Home() {
 
       <section className={`report-section shell ${reportDomain ? "report-visible" : ""}`} id="report" aria-live="polite">
         <div className="report-header">
-          <div><div className="eyebrow"><span className="pulse-dot" /> Competitive landscape report</div><h2>{reportDomain ? `${companyName} is playing in a busy, winnable market.` : "A report that starts with one URL."}</h2><p>{reportDomain ? `Generated from public market signals for ${reportDomain}. The strongest opening: differentiate on speed-to-value, not feature count.` : "See the complete picture your team usually assembles across tabs, spreadsheets, and half-remembered screenshots."}</p></div>
+          <div><div className="eyebrow"><span className="pulse-dot" /> Competitive landscape report</div><h2>{liveAnalysis ? `${companyName} now has a live source profile.` : reportDomain ? `${companyName} is playing in a busy, winnable market.` : "A report that starts with one URL."}</h2><p>{liveAnalysis ? `Live facts below were fetched from ${liveAnalysis.sourceUrl}. Competitor and ad panels remain illustrative until their public-source adapters are connected.` : reportDomain ? `Generated from public market signals for ${reportDomain}. The strongest opening: differentiate on speed-to-value, not feature count.` : "See the complete picture your team usually assembles across tabs, spreadsheets, and half-remembered screenshots."}</p></div>
           <div className="report-actions"><button className="secondary-button" onClick={() => showToast("Export is ready when live evidence is connected.")}>Export report <span>↓</span></button><button className="secondary-button" onClick={() => showToast("Weekly monitoring is available in the next release.")}>Set cadence <span>⌄</span></button></div>
         </div>
 
         <div className="metric-grid">
-          <div className="metric-card"><span className="metric-label">Market position</span><strong>84<span>/100</span></strong><div className="metric-trend positive">↑ 6 pts vs. last read</div></div>
-          <div className="metric-card"><span className="metric-label">Competitors surfaced</span><strong>11</strong><div className="metric-trend">Across 3 regional clusters</div></div>
-          <div className="metric-card"><span className="metric-label">Observed signals</span><strong>68</strong><div className="metric-trend">31 public sources checked</div></div>
+          <div className="metric-card"><span className="metric-label">Live source profile</span><strong>{liveAnalysis ? Math.min(99, 40 + (liveAnalysis.title ? 15 : 0) + (liveAnalysis.description ? 15 : 0) + (liveAnalysis.headings.length ? 15 : 0) + (liveAnalysis.prices.length ? 10 : 0) + (liveAnalysis.socialLinks.length ? 5 : 0)) : "84"}<span>/100</span></strong><div className="metric-trend positive">{liveAnalysis ? "Based on public HTML signals" : "Demo profile completeness"}</div></div>
+          <div className="metric-card"><span className="metric-label">Public headings found</span><strong>{liveAnalysis ? liveAnalysis.headings.length : "11"}</strong><div className="metric-trend">{liveAnalysis ? "H1–H3 signals observed" : "Illustrative competitor set"}</div></div>
+          <div className="metric-card"><span className="metric-label">Pricing signals</span><strong>{liveAnalysis ? liveAnalysis.prices.length : "68"}</strong><div className="metric-trend">{liveAnalysis ? "Currency patterns observed" : "Illustrative source count"}</div></div>
           <div className="metric-card accent-card"><span className="metric-label">Next best move</span><strong>Own “easy”</strong><div className="metric-trend">The clearest open position</div></div>
         </div>
+
+        {liveAnalysis && <section className="panel live-source-panel"><div className="panel-heading"><div><span className="section-number">LIVE</span><h3>Public source scan</h3></div><EvidenceTag type="Observed" /></div><div className="live-source-grid"><div className="live-source-main"><span className="live-source-label">Page title</span><strong>{liveAnalysis.title}</strong><p>{liveAnalysis.description}</p><a href={liveAnalysis.sourceUrl} target="_blank" rel="noreferrer">Open observed source ↗</a></div><div className="live-fact"><span className="live-source-label">Language</span><strong>{liveAnalysis.language}</strong><span>{liveAnalysis.region}</span></div><div className="live-fact"><span className="live-source-label">Page words</span><strong>{liveAnalysis.wordCount.toLocaleString()}</strong><span>{liveAnalysis.truncated ? "First 1.5 MB scanned" : "Public HTML scanned"}</span></div><div className="live-fact"><span className="live-source-label">Social links</span><strong>{liveAnalysis.socialLinks.length}</strong><span>{liveAnalysis.socialLinks.length ? "Public profiles linked" : "None exposed"}</span></div></div><div className="live-evidence-row"><div><span className="live-source-label">Observed headings</span><div className="heading-pills">{(liveAnalysis.headings.length ? liveAnalysis.headings : ["No H1–H3 headings exposed"]).slice(0, 6).map((heading) => <span key={heading}>{heading}</span>)}</div></div><div><span className="live-source-label">Observed pricing</span><div className="heading-pills">{(liveAnalysis.prices.length ? liveAnalysis.prices : ["No public price pattern found"]).map((price) => <span key={price}>{price}</span>)}</div></div></div></section>}
 
         <div className="report-grid two-col">
           <section className="panel position-panel"><div className="panel-heading"><div><span className="section-number">01</span><h3>Market position</h3></div><EvidenceTag type="Inferred" /></div><p className="panel-intro">You are visible enough to compete, but your message is being filed next to “more features.” The white space is a faster path from first visit to first win.</p><div className="position-bars"><div><span>You</span><div className="bar-track"><i style={{ width: "72%" }} /></div><b>72</b></div><div><span>Northstar</span><div className="bar-track coral-bar"><i style={{ width: "82%" }} /></div><b>82</b></div><div><span>Brightcart</span><div className="bar-track blue-bar"><i style={{ width: "76%" }} /></div><b>76</b></div><div><span>Shopline</span><div className="bar-track violet-bar"><i style={{ width: "69%" }} /></div><b>69</b></div></div><div className="panel-footer"><Confidence value="High" /><span>Based on search visibility, category language, and public positioning.</span></div></section>
