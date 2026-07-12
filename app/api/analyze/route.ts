@@ -91,7 +91,7 @@ function safeDomain(input: string) {
   }
 }
 
-function canonicalDomain(input: string) {
+export function canonicalDomain(input: string) {
   try {
     return normalizeDomain(input).hostname;
   } catch {
@@ -130,7 +130,7 @@ function inferRegion(text: string, language: string) {
   return "Not enough public signal";
 }
 
-async function analyzeDomain(input: string): Promise<DomainAnalysis | DomainAnalysisError> {
+export async function analyzeDomain(input: string): Promise<DomainAnalysis | DomainAnalysisError> {
   const startedAt = new Date().toISOString();
   const domain = safeDomain(input);
   try {

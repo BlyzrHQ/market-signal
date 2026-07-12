@@ -30,6 +30,9 @@ type LiveAnalysis = {
 };
 
 type LiveAnalysisError = { ok: false; live: false; domain: string; error: string; fetchedAt: string };
+type BriefClaim = { id: string; text: string; sourceUrl: string; observedAt: string; claimType: ClaimType; confidence: "High" | "Medium" | "Low" };
+type MarketSignal = { label: string; text: string; implication: string; claimIds: string[] };
+type MarketBrief = { ok: true; headline: string; headlineClaimIds: string[]; summary: string; summaryClaimIds: string[]; signals: MarketSignal[]; nextChecks: string[]; claims: BriefClaim[]; model: string; generatedAt: string; aiGenerated: boolean };
 
 const competitors = [
   { name: "Northstar", domain: "northstar.co", score: 82, color: "coral", signal: "Messaging overlap" },
@@ -84,6 +87,8 @@ export default function Home() {
   const [liveAnalysis, setLiveAnalysis] = useState<LiveAnalysis | null>(null);
   const [comparisonResults, setComparisonResults] = useState<LiveAnalysis[]>([]);
   const [comparisonDomains, setComparisonDomains] = useState<string[]>([]);
+  const [marketBrief, setMarketBrief] = useState<MarketBrief | null>(null);
+  const [briefLoading, setBriefLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [toast, setToast] = useState("");
@@ -97,6 +102,7 @@ export default function Home() {
     setIsAnalyzing(true);
     setAnalysisError("");
     setLiveAnalysis(null);
+    setMarketBrief(null);
     setReportDomain(null);
     try {
       const params = new URLSearchParams();
@@ -112,6 +118,17 @@ export default function Home() {
       setComparisonResults(successful);
       setLiveAnalysis(primaryResult);
       setReportDomain(cleanDomain);
+      setBriefLoading(true);
+      try {
+        const briefResponse = await fetch("/api/report", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ primary: primaryResult.domain, domains: successful.map((result) => result.domain) }) });
+        const briefPayload = await briefResponse.json() as MarketBrief | { ok: false; error?: string };
+        if (briefPayload.ok) setMarketBrief(briefPayload);
+        else setAnalysisError(briefPayload.error || "The source scan completed, but the market brief was unavailable.");
+      } catch {
+        setAnalysisError("The source scan completed, but the market brief was unavailable.");
+      } finally {
+        setBriefLoading(false);
+      }
       const failedComparisonDomains = failed.filter((result) => result.domain !== primaryHost);
       if (failedComparisonDomains.length) setAnalysisError(`${failedComparisonDomains.length} comparison domain${failedComparisonDomains.length === 1 ? "" : "s"} could not be read: ${failedComparisonDomains.map((result) => result.domain).join(", ")}. Successful sources are still shown.`);
       window.setTimeout(() => document.getElementById("report")?.scrollIntoView({ behavior: "smooth" }), 50);
@@ -192,6 +209,8 @@ export default function Home() {
         </div>
 
         {liveAnalysis && <section className="panel live-source-panel"><div className="panel-heading"><div><span className="section-number">LIVE</span><h3>Public source scan</h3></div><EvidenceTag type="Observed" /></div><div className="live-source-grid"><div className="live-source-main"><span className="live-source-label">Page title</span><strong>{liveAnalysis.title}</strong><p>{liveAnalysis.description}</p><a href={liveAnalysis.sourceUrl} target="_blank" rel="noreferrer">Open observed source ↗</a></div><div className="live-fact"><span className="live-source-label">Language</span><strong>{liveAnalysis.language}</strong><span>{liveAnalysis.region}</span></div><div className="live-fact"><span className="live-source-label">Page words</span><strong>{liveAnalysis.wordCount.toLocaleString()}</strong><span>{liveAnalysis.truncated ? "First 1.5 MB scanned" : "Public HTML scanned"}</span></div><div className="live-fact"><span className="live-source-label">Social links</span><strong>{liveAnalysis.socialLinks.length}</strong><span>{liveAnalysis.socialLinks.length ? "Public profiles linked" : "None exposed"}</span></div></div><div className="live-evidence-row"><div><span className="live-source-label">Observed headings</span><div className="heading-pills">{(liveAnalysis.headings.length ? liveAnalysis.headings : ["No H1–H3 headings exposed"]).slice(0, 6).map((heading) => <span key={heading}>{heading}</span>)}</div></div><div><span className="live-source-label">Observed pricing</span><div className="heading-pills">{(liveAnalysis.prices.length ? liveAnalysis.prices : ["No public price pattern found"]).map((price) => <span key={price}>{price}</span>)}</div></div></div></section>}
+
+        {liveAnalysis && <section className="panel ai-brief-panel"><div className="panel-heading"><div><span className="section-number">AI</span><h3>What changed in your market?</h3></div><span className={`brief-mode ${marketBrief?.aiGenerated ? "brief-mode-ai" : ""}`}>{briefLoading ? "Synthesizing…" : marketBrief?.aiGenerated ? "Standard model" : "Grounded demo"}</span></div>{briefLoading && <div className="brief-loading"><span className="pulse-dot" /> Connecting observed claims into a decision-ready brief.</div>}{marketBrief && <><div className="brief-hero"><h4>{marketBrief.headline}</h4><p>{marketBrief.summary}</p></div><div className="signal-grid">{marketBrief.signals.map((signal) => <article className="signal-card" key={signal.label}><div className="signal-card-label">{signal.label}</div><p>{signal.text}</p><strong>Why it matters</strong><span>{signal.implication}</span><div className="signal-sources">{signal.claimIds.map((claimId) => { const claim = marketBrief.claims.find((item) => item.id === claimId); return claim ? <a href={claim.sourceUrl} target="_blank" rel="noreferrer" key={claim.id} title={claim.text}>Source {marketBrief.claims.indexOf(claim) + 1} ↗</a> : null; })}</div></article>)}</div><div className="brief-footer"><div><span className="live-source-label">Next evidence to collect</span><ul>{marketBrief.nextChecks.map((check) => <li key={check}>{check}</li>)}</ul></div><div className="brief-ledger"><span className="live-source-label">Evidence ledger</span><strong>{marketBrief.claims.length} grounded claims</strong><span>Every insight above resolves to a public source.</span></div></div></>}</section>}
 
         <div className="report-grid two-col">
           <section className="panel position-panel"><div className="panel-heading"><div><span className="section-number">01</span><h3>Market position</h3></div><EvidenceTag type="Inferred" /></div><p className="panel-intro">You are visible enough to compete, but your message is being filed next to “more features.” The white space is a faster path from first visit to first win.</p><div className="position-bars"><div><span>You</span><div className="bar-track"><i style={{ width: "72%" }} /></div><b>72</b></div><div><span>Northstar</span><div className="bar-track coral-bar"><i style={{ width: "82%" }} /></div><b>82</b></div><div><span>Brightcart</span><div className="bar-track blue-bar"><i style={{ width: "76%" }} /></div><b>76</b></div><div><span>Shopline</span><div className="bar-track violet-bar"><i style={{ width: "69%" }} /></div><b>69</b></div></div><div className="panel-footer"><Confidence value="High" /><span>Based on search visibility, category language, and public positioning.</span></div></section>
