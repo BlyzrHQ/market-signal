@@ -1,7 +1,63 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildOfficialAdSearches, queryMetaAdLibrary, scanOfficialAdLibraries } from "../app/lib/ad-intelligence.ts";
+import { attributableFacebookUrl, buildOfficialAdSearches, queryMetaAdLibrary, queryMetapiAdvertiser, resolveFacebookPageIdentity, scanOfficialAdLibraries } from "../app/lib/ad-intelligence.ts";
+
+test("accepts only attributable Facebook company-profile links", () => {
+  assert.equal(attributableFacebookUrl(["https://www.facebook.com/sharer/sharer.php?u=x", "https://m.facebook.com/MyJamFood/?ref=footer"]), "https://www.facebook.com/MyJamFood");
+  assert.equal(attributableFacebookUrl(["https://example.com/facebook.com/brand", "https://facebook.com/groups/123"]), "");
+});
+
+test("preserves a numeric Page ID explicitly linked by the company website", async () => {
+  const identity = await resolveFacebookPageIdentity("https://facebook.com/1148679501654585", async () => new Response('<meta property="al:android:url" content="fb://profile/999999999"><meta property="og:title" content="Exact Brand">'));
+  assert.equal(identity.pageId, "1148679501654585");
+  assert.equal(identity.pageName, "Exact Brand");
+});
+
+test("queries Metapi by exact company Page ID and groups duplicate placements into useful concepts", async () => {
+  const requests = [];
+  const result = await queryMetapiAdvertiser({ domain: "rival.example", brand: "Rival Foods", facebookUrl: "https://facebook.com/RivalFoods" }, "United Kingdom", "temporary-secret", async (url, init = {}) => {
+    requests.push({ url: String(url), init });
+    if (String(url) === "https://www.facebook.com/RivalFoods") return new Response('<meta property="al:android:url" content="fb://profile/123456789"><meta property="og:title" content="Rival Foods">');
+    if (String(url).endsWith("/tasks")) {
+      assert.equal(String(init.headers?.Authorization || ""), "Bearer temporary-secret");
+      const body = JSON.parse(init.body);
+      assert.equal(body.advertiser_id, "123456789");
+      assert.equal(body.country, "GB");
+      assert.equal(body.active_status, "active");
+      assert.equal("q" in body, false);
+      return Response.json({ task_id: "task-1" });
+    }
+    if (String(url).endsWith("/tasks/task-1/status")) return Response.json({ status: "succeeded" });
+    return Response.json({ data: [
+      { provider_id: 7001, provider_page_id: "123456789", provider_page_name: "Rival Foods", bodies: ["Fresh bread delivered today"], captions: ["Order bakery"], cta_text: "Shop now", original_image_url: "https://cdn.example/ad.jpg", delivery_start_time: "2026-07-01" },
+      { provider_id: 7002, provider_page_id: "123456789", provider_page_name: "Rival Foods", bodies: ["Fresh bread delivered today"], captions: ["Order bakery"], cta_text: "Shop now", original_image_url: "https://cdn.example/ad-2.jpg", delivery_start_time: "2026-07-02" },
+      { provider_id: 9999, provider_page_id: "999999999", provider_page_name: "Wrong Advertiser", bodies: ["Must be rejected"] },
+    ] });
+  }, async () => {});
+  assert.equal(result.status, "verified-active");
+  assert.equal(result.activeCreativeCount, 2);
+  assert.equal(result.creativeConceptCount, 1);
+  assert.equal(result.creativeConcepts[0].placementCount, 2);
+  assert.equal(result.creativeConcepts[0].pageId, "123456789");
+  assert.deepEqual(result.evidenceUrls, ["https://www.facebook.com/ads/library/?id=7001", "https://www.facebook.com/ads/library/?id=7002"]);
+  assert.equal(JSON.stringify(requests).includes("temporary-secret"), true);
+  assert.equal(JSON.stringify(result).includes("temporary-secret"), false);
+  assert.equal(JSON.stringify(result).includes("9999"), false);
+});
+
+test("does not turn cross-advertiser Metapi records into competitor activity", async () => {
+  const result = await queryMetapiAdvertiser({ domain: "rival.example", brand: "Rival", facebookUrl: "https://facebook.com/Rival" }, "United Kingdom", "secret", async (url) => {
+    if (String(url) === "https://www.facebook.com/Rival") return new Response('<meta property="al:android:url" content="fb://profile/123456789">');
+    if (String(url).endsWith("/tasks")) return Response.json({ task_id: "task-2" });
+    if (String(url).endsWith("/status")) return Response.json({ status: "succeeded" });
+    return Response.json({ data: [{ provider_id: 8001, provider_page_id: "444444444", bodies: ["Unrelated ad"] }] });
+  }, async () => {});
+  assert.equal(result.status, "access-limited");
+  assert.equal(result.activeCreativeCount, 0);
+  assert.equal(result.creativeConceptCount, undefined);
+  assert.match(result.message, /all were discarded as unsafe attribution/i);
+});
 
 test("builds direct official-library searches for the inferred region", () => {
   const searches = buildOfficialAdSearches("MyJam Food", "United Kingdom (inferred)");

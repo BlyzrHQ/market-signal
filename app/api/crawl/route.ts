@@ -2,7 +2,7 @@ import { canonicalDomain, normalizeDomain } from "../../lib/domain";
 import { buildProductComparison, extractProductsFromHtml, extractProductsFromSitemap, scoreProductPair, selectPreferredProducts, type ProductRecord } from "../../lib/product-intelligence";
 import { parseRobots } from "../../lib/robots";
 import { discoverCompetitors, type DiscoveryCandidate, type DiscoveryResult } from "../../lib/competitor-discovery";
-import { scanOfficialAdLibraries, type AdIntelligenceResult } from "../../lib/ad-intelligence";
+import { attributableFacebookUrl, scanOfficialAdLibraries, type AdIntelligenceResult } from "../../lib/ad-intelligence";
 
 type ClaimType = "Observed" | "Inferred";
 type Confidence = "High" | "Medium" | "Low";
@@ -372,7 +372,7 @@ function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?
 export async function POST(request: Request) {
   try {
     const payload = await request.json() as { primary?: unknown; domains?: unknown };
-    const rawDomains = Array.isArray(payload.domains) ? payload.domains.filter((domain): domain is string => typeof domain === "string" && domain.trim()).map((domain) => canonicalDomain(domain)) : [];
+    const rawDomains = Array.isArray(payload.domains) ? payload.domains.filter((domain): domain is string => typeof domain === "string" && Boolean(domain.trim())).map((domain) => canonicalDomain(domain)) : [];
     const domains = [...new Set(rawDomains)].slice(0, MAX_DOMAINS);
     if (!domains.length) return Response.json({ ok: false, live: false, error: "Enter at least one public domain to crawl." }, { status: 400 });
     const primaryDomain = canonicalDomain(typeof payload.primary === "string" ? payload.primary : domains[0]);
@@ -392,9 +392,14 @@ export async function POST(request: Request) {
     const discoveredResults = await Promise.all(discovery.candidates.filter((candidate) => !domains.includes(candidate.domain)).map(async (candidate) => {
       try { return verifyDiscoveredCompetitor(primary, await crawlDomain(candidate.domain, "discovered-competitor", [candidate.matchedProductUrl]), candidate); } catch { return null; }
     }));
-    const confirmed = discoveredResults.filter((result): result is DomainCrawl => Boolean(result?.homepage && result.discovery?.hasProductOverlap && result.discovery?.regionMatch && (result.discovery?.verificationScore || 0) >= 40));
+    const confirmed: DomainCrawl[] = discoveredResults.filter((result): result is NonNullable<typeof result> => Boolean(result?.homepage && result.discovery?.hasProductOverlap && result.discovery?.regionMatch && (result.discovery?.verificationScore || 0) >= 40));
     const results = [...submittedResults, ...confirmed];
-    const ads = await scanOfficialAdLibraries(confirmed.map((result) => ({ domain: result.domain, brand: result.discovery?.companyName || result.homepage?.title.split(/\s[–—-]\s|\|/)[0].trim() || result.domain })), discovery.region || primary.homepage.region);
+    const adTargets = [primary, ...confirmed].filter((result, index, all) => all.findIndex((candidate) => candidate.domain === result.domain) === index);
+    const ads = await scanOfficialAdLibraries(adTargets.map((result) => ({
+      domain: result.domain,
+      brand: result.discovery?.companyName || result.homepage?.title.split(/\s[–—-]\s|\|/)[0].trim() || result.domain,
+      facebookUrl: attributableFacebookUrl(result.pages.flatMap((page) => page.socialLinks)),
+    })), discovery.region || primary.homepage.region);
     return Response.json({ ok: true, live: true, primaryDomain, results, discovery, ads, document: buildDocument(results, primaryDomain, discovery, discoveredResults, ads), crawl: { maxPagesPerDomain: MAX_HTML_PAGES, robotsAware: true, generatedAt: new Date().toISOString() } });
   } catch (error) {
     return Response.json({ ok: false, live: false, error: error instanceof Error ? error.message : "Unable to crawl the submitted domains." }, { status: 400 });
