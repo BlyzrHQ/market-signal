@@ -52,6 +52,7 @@ export type AdIntelligenceResult = {
 
 export type CompanyAdInput = { domain: string; brand: string; facebookUrl?: string };
 type CompanyInput = CompanyAdInput;
+type CompanyAdPair = readonly [string, AdPlatformResult];
 type JsonRecord = Record<string, unknown>;
 type MetaAdRecord = { id?: string; ad_creative_bodies?: string[] };
 
@@ -461,20 +462,31 @@ export async function scanOfficialAdLibraries(companies: CompanyInput[], region:
   const uniqueCompanies = [...new Map(companies.map((company) => [company.domain, company])).values()].slice(0, 6);
   const fallback = uniqueCompanies.map((company) => fallbackCompany(company, region));
   const metapiKey = process.env.METAPI_API_KEY || "";
-  const metapiResults = metapiKey ? await Promise.all(uniqueCompanies.map(async (company) => [company.domain, await queryMetapiAdvertiser(company, region, metapiKey)] as const)) : [];
-  const metapiByDomain = new Map(metapiResults);
   const metaToken = process.env.META_AD_LIBRARY_ACCESS_TOKEN || "";
-  const metaResults = metaToken ? await Promise.all(uniqueCompanies.map(async (company) => [company.domain, await queryMetaAdLibrary(company, region, metaToken)] as const)) : [];
-  const metaByDomain = new Map(metaResults);
-  const withMeta = (results: CompanyAdResult[]) => compareAdStrategies(results.map((company) => {
-    const official = mergeMetaResult(company, metaByDomain.get(company.domain));
-    return mergeMetaResult(official, metapiByDomain.get(company.domain), "Exact Page check");
-  }));
-  const metapiAvailable = metapiResults.some(([, result]) => result.status !== "access-limited");
-  const metaAvailable = metaResults.some(([, result]) => result.status !== "access-limited");
+  const providerResults: Promise<[CompanyAdPair[], CompanyAdPair[]]> = Promise.all([
+    metapiKey ? Promise.all(uniqueCompanies.map(async (company) => [company.domain, await queryMetapiAdvertiser(company, region, metapiKey)] as const)) : Promise.resolve([] as CompanyAdPair[]),
+    metaToken ? Promise.all(uniqueCompanies.map(async (company) => [company.domain, await queryMetaAdLibrary(company, region, metaToken)] as const)) : Promise.resolve([] as CompanyAdPair[]),
+  ]);
+  const withProviders = async (results: CompanyAdResult[]) => {
+    const [metapiResults, metaResults] = await providerResults;
+    const metapiByDomain = new Map(metapiResults);
+    const metaByDomain = new Map(metaResults);
+    const companiesWithProviders = compareAdStrategies(results.map((company) => {
+      const official = mergeMetaResult(company, metaByDomain.get(company.domain));
+      return mergeMetaResult(official, metapiByDomain.get(company.domain), "Exact Page check");
+    }));
+    return {
+      companies: companiesWithProviders,
+      metapiAvailable: metapiResults.some(([, result]) => result.status !== "access-limited"),
+      metaAvailable: metaResults.some(([, result]) => result.status !== "access-limited"),
+    };
+  };
   const apiKey = process.env.OPENAI_API_KEY;
   const limitation = "Commercial ad libraries do not provide exact spend for ordinary ads. Exact-Page Meta results use a temporary unofficial provider and are accepted only when the advertiser Page is linked from the company's own website and every returned Page ID matches. Google automatic API coverage is region-limited; TikTok API access requires approval and begins with EU data.";
-  if (!apiKey || !uniqueCompanies.length) return { available: metapiAvailable || metaAvailable, provider: metapiAvailable ? "metapi-exact-page" : metaAvailable ? "meta-api" : "official-links-only", model, observedAt, regionCode: regionCode(region), companies: withMeta(fallback), limitation };
+  if (!apiKey || !uniqueCompanies.length) {
+    const merged = await withProviders(fallback);
+    return { available: merged.metapiAvailable || merged.metaAvailable, provider: merged.metapiAvailable ? "metapi-exact-page" : merged.metaAvailable ? "meta-api" : "official-links-only", model, observedAt, regionCode: regionCode(region), companies: merged.companies, limitation };
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30_000);
@@ -508,8 +520,10 @@ export async function scanOfficialAdLibraries(companies: CompanyInput[], region:
     const parsed = JSON.parse(outputText(await response.json() as JsonRecord) || "{}") as JsonRecord;
     const returned = Array.isArray(parsed.companies) ? parsed.companies : [];
     const sanitized = uniqueCompanies.map((company) => sanitizeCompany(returned.find((item) => item && typeof item === "object" && (item as JsonRecord).domain === company.domain), company, region));
-    return { available: true, provider: metapiAvailable ? "metapi-exact-page-and-official-search" : metaAvailable ? "meta-api-and-official-search" : "openai-official-library-search", model, observedAt, regionCode: regionCode(region), companies: withMeta(sanitized), limitation };
+    const merged = await withProviders(sanitized);
+    return { available: true, provider: merged.metapiAvailable ? "metapi-exact-page-and-official-search" : merged.metaAvailable ? "meta-api-and-official-search" : "openai-official-library-search", model, observedAt, regionCode: regionCode(region), companies: merged.companies, limitation };
   } catch {
-    return { available: metapiAvailable || metaAvailable, provider: metapiAvailable ? "metapi-exact-page" : metaAvailable ? "meta-api" : "official-links-only", model, observedAt, regionCode: regionCode(region), companies: withMeta(fallback), limitation };
+    const merged = await withProviders(fallback);
+    return { available: merged.metapiAvailable || merged.metaAvailable, provider: merged.metapiAvailable ? "metapi-exact-page" : merged.metaAvailable ? "meta-api" : "official-links-only", model, observedAt, regionCode: regionCode(region), companies: merged.companies, limitation };
   } finally { clearTimeout(timeout); }
 }

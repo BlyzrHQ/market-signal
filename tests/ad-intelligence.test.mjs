@@ -59,6 +59,40 @@ test("does not turn cross-advertiser Metapi records into competitor activity", a
   assert.match(result.message, /all were discarded as unsafe attribution/i);
 });
 
+test("runs the exact-Page provider concurrently with the official-library search", { timeout: 2_000 }, async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousMetapi = process.env.METAPI_API_KEY;
+  const previousMeta = process.env.META_AD_LIBRARY_ACCESS_TOKEN;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "openai-test";
+  process.env.METAPI_API_KEY = "metapi-test";
+  delete process.env.META_AD_LIBRARY_ACCESS_TOKEN;
+  let releaseProfile;
+  const profileResponse = new Promise((resolve) => { releaseProfile = resolve; });
+  globalThis.fetch = async (url) => {
+    const href = String(url);
+    if (href === "https://www.facebook.com/Rival") return profileResponse;
+    if (href.endsWith("/responses")) {
+      releaseProfile(new Response('<meta property="al:android:url" content="fb://profile/123456789">'));
+      return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ companies: [] }) }] }] });
+    }
+    if (href.endsWith("/tasks")) return Response.json({ task_id: "parallel-task" });
+    if (href.endsWith("/status")) return Response.json({ status: "succeeded" });
+    if (href.includes("/results")) return Response.json({ data: [] });
+    throw new Error(`Unexpected request: ${href}`);
+  };
+  try {
+    const result = await scanOfficialAdLibraries([{ domain: "rival.example", brand: "Rival", facebookUrl: "https://facebook.com/Rival" }], "United Kingdom");
+    assert.equal(result.provider, "metapi-exact-page-and-official-search");
+    assert.equal(result.companies[0].platforms[0].status, "no-verified-result");
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+    if (previousMetapi) process.env.METAPI_API_KEY = previousMetapi; else delete process.env.METAPI_API_KEY;
+    if (previousMeta) process.env.META_AD_LIBRARY_ACCESS_TOKEN = previousMeta; else delete process.env.META_AD_LIBRARY_ACCESS_TOKEN;
+  }
+});
+
 test("builds direct official-library searches for the inferred region", () => {
   const searches = buildOfficialAdSearches("MyJam Food", "United Kingdom (inferred)");
   assert.equal(searches.regionCode, "GB");
