@@ -2,6 +2,7 @@
 /* eslint-disable @next/next/no-img-element -- remote competitor images are evidence URLs with unknown hosts */
 
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { postJson } from "./lib/json-response";
 import { comparablePriceDelta, isDefensibleProductMatch } from "./lib/report-presentation";
 
 type ClaimType = "Observed" | "Inferred" | "Estimated" | "Recommended";
@@ -203,8 +204,7 @@ export default function Home() {
     setCrawlDocument(null);
     setReportDomain(null);
     try {
-      const response = await fetch("/api/crawl", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ primary: cleanDomain, domains: requestedDomains }) });
-      const payload = await response.json() as CrawlPayload | CrawlFailure;
+      const payload = await postJson<CrawlPayload | CrawlFailure>("/api/crawl", { primary: cleanDomain, domains: requestedDomains }, "The competitor scan");
       if (!payload.ok) {
         if (payload.document) setCrawlDocument(payload.document);
         setReportDomain(cleanDomain);
@@ -222,8 +222,7 @@ export default function Home() {
       setReportDomain(cleanDomain);
       setBriefLoading(true);
       try {
-        const briefResponse = await fetch("/api/report", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ primary: primaryResult.domain, domains: successful.map((result) => result.domain) }) });
-        const briefPayload = await briefResponse.json() as MarketBrief | { ok: false; error?: string };
+        const briefPayload = await postJson<MarketBrief | { ok: false; error?: string }>("/api/report", { primary: primaryResult.domain, domains: successful.map((result) => result.domain) }, "The market brief");
         if (briefPayload.ok) setMarketBrief(briefPayload);
         else setAnalysisError(("error" in briefPayload ? briefPayload.error : "") || "The source scan completed, but the market brief was unavailable.");
       } catch {
