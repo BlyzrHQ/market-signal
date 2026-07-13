@@ -80,7 +80,7 @@ function verifyDiscoveredCompetitor(primary: DomainCrawl, candidate: DomainCrawl
   const candidateTerms = marketTerms(candidate);
   const overlapTerms = [...primaryTerms].filter((term) => candidateTerms.has(term)).slice(0, 12);
   const lexicalScore = Math.min(40, overlapTerms.length * 5);
-  const comparableUrl = (value: string) => { try { const url = new URL(value); return `${canonicalDomain(url.hostname)}${url.pathname.replace(/\/$/, "") || "/"}${url.search}`; } catch { return ""; } };
+  const comparableUrl = (value: string) => { try { const url = new URL(value); for (const key of [...url.searchParams.keys()]) if (/^(?:utm_.+|fbclid|gclid|msclkid)$/i.test(key)) url.searchParams.delete(key); url.searchParams.sort(); return `${canonicalDomain(url.hostname)}${url.pathname.replace(/\/$/, "") || "/"}${url.search}`; } catch { return ""; } };
   const fetchedRivalUrls = new Set(candidate.pages.map((page) => comparableUrl(page.sourceUrl)));
   const citedProductFetched = fetchedRivalUrls.has(comparableUrl(discovery.matchedProductUrl));
   const productPairs = primary.products.flatMap((left) => candidate.products.map((right) => ({ left, right, ...scoreProductPair(left, right) }))).filter((pair) => pair.eligible && citedProductFetched && fetchedRivalUrls.has(comparableUrl(pair.right.sourceUrl))).sort((left, right) => right.score - left.score);
