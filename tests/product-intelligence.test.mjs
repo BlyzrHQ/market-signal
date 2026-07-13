@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildProductComparison, extractProductsFromHtml, scoreProductPair, selectPreferredProducts } from "../app/lib/product-intelligence.ts";
+import { buildProductComparison, extractProductsFromHtml, extractProductsFromSitemap, scoreProductPair, selectPreferredProducts } from "../app/lib/product-intelligence.ts";
 
 function extraction(overrides = {}) {
   return extractProductsFromHtml({
@@ -32,6 +32,7 @@ function product(id, domain, name, category = "inventory", description = "invent
     extraction: "json-ld",
     confidence: "High",
     sourceUrl: `https://${domain}/${id}`,
+    imageUrl: "",
     observedAt: "2026-07-12T00:00:00.000Z",
     claimIds: [`${id}-observed`],
   };
@@ -114,16 +115,61 @@ test("malformed JSON-LD becomes a visible extraction gap without throwing", () =
   assert.match(result.gaps[0], /Malformed JSON-LD/);
 });
 
+test("keeps third-party brands when the store is actually selling them on a product path", () => {
+  const document = `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Patchi Mixed Baklawa 500G", brand: { name: "Patchi" }, offers: { price: "12.99", priceCurrency: "GBP" } })}</script>`;
+  const result = extraction({ document, sourceUrl: "https://grocer.example/products/patchi-mixed-baklawa-500g" });
+  assert.equal(result.products.length, 1);
+  assert.equal(result.products[0].ownership, "path-inferred");
+});
+
+test("discovers real product records from a Shopify child sitemap", () => {
+  const sitemap = `<?xml version="1.0"?><urlset xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"><url><loc>https://myjam.co.uk/products/halal-lamb-chops-500g</loc><image:image><image:title>Halal Lamb Chops 500g</image:title><image:caption>Fresh halal lamb chops</image:caption></image:image></url><url><loc>https://myjam.co.uk/collections/meat</loc><image:image><image:title>Meat</image:title></image:image></url></urlset>`;
+  const products = extractProductsFromSitemap(sitemap, "myjam.co.uk", "2026-07-13T00:00:00.000Z");
+  assert.equal(products.length, 1);
+  assert.equal(products[0].name, "Halal Lamb Chops 500g");
+  assert.equal(products[0].extraction, "sitemap");
+  assert.equal(products[0].sourceUrl, "https://myjam.co.uk/products/halal-lamb-chops-500g");
+});
+
+test("uses matching product-image filenames as supporting identity evidence", () => {
+  const left = { ...product("image-a", "a.com", "Premium Chops"), imageUrl: "https://cdn.a.com/products/halal-lamb-chops-500g.jpg" };
+  const right = { ...product("image-b", "b.com", "Fresh Meat Pack"), imageUrl: "https://cdn.b.com/catalog/halal-lamb-chops-500g.webp" };
+  const result = scoreProductPair(left, right);
+  assert.ok(result.imageScore >= 0.75);
+  assert.equal(result.eligible, false);
+});
+
+test("never treats generic image filenames or shared pack-size words as product identity", () => {
+  const meat = { ...product("meat-a", "a.com", "Halal Lamb Chops 500g"), imageUrl: "https://a.com/logo.png" };
+  const poultry = { ...product("meat-b", "b.com", "Halal Chicken Wings 500g"), imageUrl: "https://b.com/logo.png" };
+  const result = scoreProductPair(meat, poultry);
+  assert.equal(result.imageScore, 0);
+  assert.equal(result.eligible, false);
+});
+
+test("matching preserves Arabic product words instead of stripping them", () => {
+  const left = product("arabic-a", "a.com", "عسل سدر سعودي", "عسل", "عسل طبيعي من السعودية");
+  const right = product("arabic-b", "b.com", "عسل سدر فاخر", "عسل", "عسل طبيعي أصلي");
+  const result = scoreProductPair(left, right);
+  assert.equal(result.eligible, true);
+  assert.ok(result.sharedTerms.includes("عسل"));
+  assert.ok(result.sharedTerms.includes("سدر"));
+});
+
 test("matching rejects generic-only and low-similarity pairs", () => {
   const generic = scoreProductPair(product("a", "a.com", "Pro Plan", "software", "team software"), product("b", "b.com", "Pro Suite", "commerce", "online sales"));
+  const identicalPricing = scoreProductPair(product("pricing-a", "a.com", "Pricing", "pricing", "plans"), product("pricing-b", "b.com", "Pricing", "pricing", "plans"));
+  const identicalGenericPlan = scoreProductPair(product("plan-a", "a.com", "Pro Plan", "plans", "software"), product("plan-b", "b.com", "Pro Plan", "plans", "software"));
   const unrelated = scoreProductPair(product("c", "a.com", "Inventory Forecasting"), product("d", "b.com", "Email Campaign Builder", "marketing", "email automation"));
   assert.equal(generic.eligible, false);
+  assert.equal(identicalPricing.eligible, false);
+  assert.equal(identicalGenericPlan.eligible, false);
   assert.equal(unrelated.eligible, false);
 });
 
 test("matching removes each company brand token before comparing product names", () => {
-  const left = product("billing-a", "chargebee.com", "Chargebee Billing", "billing", "subscription billing infrastructure");
-  const right = product("billing-b", "paddle.com", "Paddle Billing", "billing", "subscription billing platform");
+  const left = product("billing-a", "chargebee.com", "Chargebee Subscription Billing", "billing", "subscription billing infrastructure");
+  const right = product("billing-b", "paddle.com", "Paddle Subscription Billing", "billing", "subscription billing platform");
   const result = scoreProductPair(left, right);
   assert.equal(result.eligible, true);
   assert.ok(result.score >= 0.35);
@@ -138,6 +184,7 @@ test("matching is deterministic and one-to-one per competitor", () => {
   const second = buildProductComparison("a.com", [{ domain: "a.com", products: [primaryB, primaryA] }, { domain: "b.com", products: [candidate] }]);
   assert.deepEqual(first, second);
   assert.equal(first.rows.find((row) => row.primary.id === "primary-a").matches[0].product.id, "candidate-a");
+  assert.match(first.rows.find((row) => row.primary.id === "primary-a").matches[0].decision.recommendedMove, /Compare|price|offer/i);
   assert.equal(first.rows.find((row) => row.primary.id === "primary-b").matches[0].product, null);
   assert.equal(first.unmatched[0].products.length, 0);
 });
