@@ -290,7 +290,8 @@ export function extractProductsFromSitemap(document: string, domain: string, obs
     if (!sourceUrl) continue;
     let url: URL;
     try { url = new URL(sourceUrl); } catch { continue; }
-    if (canonicalHost(url.hostname) !== canonicalHost(domain) || !/^\/products?\//i.test(url.pathname)) continue;
+    const catalogPath = /\/(?:products?|shop|store)\//i.test(url.pathname);
+    if (canonicalHost(url.hostname) !== canonicalHost(domain) || !catalogPath) continue;
     const sitemapTitle = clean(entry.match(/<(?:image:)?title>\s*([\s\S]*?)\s*<\/(?:image:)?title>/i)?.[1] || "");
     const name = sitemapTitle || clean(url.pathname.split("/").filter(Boolean).at(-1)?.replace(/[-_]+/g, " ") || "");
     if (!name) continue;
@@ -321,11 +322,17 @@ export function extractProductsFromSitemap(document: string, domain: string, obs
 }
 
 export function selectPreferredProducts(items: ProductRecord[]) {
+  const quality = (item: ProductRecord) =>
+    (item.extraction === "json-ld" ? 40 : item.extraction === "page-signal" ? 20 : 10)
+    + (item.confidence === "High" ? 20 : 0)
+    + (item.priceSignals.length ? 15 : 0)
+    + (item.description ? 5 : 0)
+    + (item.imageUrl ? 3 : 0);
   const selected = new Map<string, ProductRecord>();
   for (const item of items) {
     const key = `${item.domain}|${item.normalizedName}`;
     const current = selected.get(key);
-    if (!current || (item.confidence === "High" && current.confidence !== "High")) selected.set(key, item);
+    if (!current || quality(item) > quality(current)) selected.set(key, item);
   }
   return [...selected.values()];
 }

@@ -131,6 +131,12 @@ test("discovers real product records from a Shopify child sitemap", () => {
   assert.equal(products[0].sourceUrl, "https://myjam.co.uk/products/halal-lamb-chops-500g");
 });
 
+test("discovers locale-prefixed product and shop records from public sitemaps", () => {
+  const sitemap = `<?xml version="1.0"?><urlset><url><loc>https://shop.example/en-gb/product/sidr-honey-500g</loc><image:title>Sidr Honey 500g</image:title></url><url><loc>https://shop.example/ar/shop/baklava-box</loc><image:title>Baklava Box</image:title></url><url><loc>https://shop.example/en-gb/blog/honey-guide</loc></url></urlset>`;
+  const products = extractProductsFromSitemap(sitemap, "shop.example", "2026-07-14T00:00:00.000Z");
+  assert.deepEqual(products.map((item) => item.name), ["Sidr Honey 500g", "Baklava Box"]);
+});
+
 test("uses matching product-image filenames as supporting identity evidence", () => {
   const left = { ...product("image-a", "a.com", "Premium Chops"), imageUrl: "https://cdn.a.com/products/halal-lamb-chops-500g.jpg" };
   const right = { ...product("image-b", "b.com", "Fresh Meat Pack"), imageUrl: "https://cdn.b.com/catalog/halal-lamb-chops-500g.webp" };

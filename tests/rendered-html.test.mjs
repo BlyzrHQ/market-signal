@@ -67,8 +67,8 @@ test("real-data route and product metadata are present", async () => {
   assert.match(route, /Promise\.all\(domains\.map/);
   assert.match(domainUtils, /Private or local addresses cannot be analyzed/);
   assert.match(route, /application\/xhtml\+xml/);
-  assert.match(page, /postJson<CrawlPayload \| CrawlFailure>\("\/api\/crawl"/);
-  assert.match(page, /postJson<MarketBrief \| \{ ok: false; error\?: string \}>\("\/api\/report"/);
+  assert.match(page, /postJson<CrawlPayload \| CrawlFailure>[\s\S]{0,80}"\/api\/crawl"/);
+  assert.match(page, /postJson<[\s\S]{0,100}MarketBrief \| \{ ok: false; error\?: string \}[\s\S]{0,80}"\/api\/report"/);
   assert.match(page, /domains: successful\.map/);
   assert.match(page, /THE VERDICT/);
   assert.match(page, /START WITH THE STRONGEST THREAT/);

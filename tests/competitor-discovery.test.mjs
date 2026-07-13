@@ -100,7 +100,7 @@ test("recovers a search-source candidate when the AI structured candidate array 
   }
 });
 
-test("does not expose an upstream JSON parser error when discovery returns HTML", async () => {
+test("retains a visible lane gap instead of exposing an upstream JSON parser error", async () => {
   const previousKey = process.env.OPENAI_API_KEY;
   const previousFetch = globalThis.fetch;
   process.env.OPENAI_API_KEY = "test-only";
@@ -109,11 +109,32 @@ test("does not expose an upstream JSON parser error when discovery returns HTML"
     headers: { "content-type": "text/html" },
   });
   try {
-    await assert.rejects(discoverCompetitors(profile), (error) => {
-      assert.match(error.message, /unreadable response.*Run the scan again/i);
-      assert.doesNotMatch(error.message, /Unexpected token|JSON/i);
-      return true;
-    });
+    const result = await discoverCompetitors(profile);
+    assert.equal(result.candidates.length, 0);
+    assert.ok(result.gaps.length >= 1);
+    assert.match(result.gaps.join(" "), /unreadable response/i);
+    assert.doesNotMatch(result.gaps.join(" "), /Unexpected token|JSON/i);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
+test("retains successful entity candidates when other discovery lanes fail", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  let call = 0;
+  globalThis.fetch = async () => {
+    call += 1;
+    if (call !== 1) return new Response("<!DOCTYPE html><title>Gateway error</title>", { status: 200, headers: { "content-type": "text/html" } });
+    return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: ["MyJam alternatives UK"], candidates: [{ domain: "rival.example", companyName: "Rival", reason: "Same grocery market", searchQuery: "MyJam alternatives UK", websiteUrl: "https://rival.example/", evidenceUrl: "https://rival.example/", evidenceTitle: "Rival halal grocery", marketCategory: "Halal grocery", relationship: "direct", sharedOfferings: ["halal grocery"], matchedPrimaryProductName: "", matchedProductUrl: "" }] }) }] }] });
+  };
+  try {
+    const result = await discoverCompetitors(profile);
+    assert.equal(result.available, true);
+    assert.deepEqual(result.candidates.map((candidate) => candidate.domain), ["rival.example"]);
+    assert.equal(result.gaps.length, 2);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
