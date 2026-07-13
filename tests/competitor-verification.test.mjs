@@ -102,3 +102,12 @@ test("uses comparable products as a confidence booster and returns the strongest
   assert.equal(result.provenPrimaryProduct.name, primaryProduct.name);
   assert.equal(result.provenRivalProduct.name, rivalProduct.name);
 });
+
+test("uses both agencies' first-party capability headings for category alignment", () => {
+  const primary = { ...site("studio.example", "Digital Product Studio", "We make digital experiences", "Global market (inferred)"), headings: ["Product strategy", "UX and UI design", "Web and mobile development"] };
+  const rival = { ...site("rival.example", "Product design and engineering agency", "Digital products for ambitious companies", "United States (inferred)"), headings: ["Product strategy", "UX design", "Mobile app development"] };
+  const result = verifyCompetitorEntity(primary, rival, discovery({ marketCategory: "digital product design and development agency", sharedOfferings: ["product strategy", "UX design", "mobile development"] }));
+  assert.equal(result.categoryAlignment, true);
+  assert.equal(result.regionCompatibility, true);
+  assert.equal(result.accepted, true);
+});

@@ -1,10 +1,11 @@
 import { canonicalDomain, normalizeDomain } from "../../lib/domain";
-import { buildProductComparison, extractProductsFromHtml, extractProductsFromSitemap, selectPreferredProducts, type ProductRecord } from "../../lib/product-intelligence";
+import { buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, selectPreferredProducts, type ProductRecord } from "../../lib/product-intelligence";
 import { parseRobots } from "../../lib/robots";
 import { discoverCompetitors, type DiscoveryCandidate, type DiscoveryResult } from "../../lib/competitor-discovery";
 import { attributableFacebookUrl, scanOfficialAdLibraries, type AdIntelligenceResult } from "../../lib/ad-intelligence";
 import { verifyCompetitorEntity, type CompetitorVerification } from "../../lib/competitor-verification";
-import { displayRegion, inferRegion as inferRegionEvidence, type RegionSignal } from "../../lib/region-inference";
+import { inferBusinessProfile } from "../../lib/business-profile";
+import { combineRegionSignals, displayRegion, inferRegion as inferRegionEvidence, type RegionSignal } from "../../lib/region-inference";
 
 type ClaimType = "Observed" | "Inferred";
 type Confidence = "High" | "Medium" | "Low";
@@ -84,7 +85,7 @@ function verifyDiscoveredCompetitor(primary: DomainCrawl, candidate: DomainCrawl
 }
 
 function productPathPriority(path: string) {
-  if (/\/(?:products?|shop|store|collections?|catalog|solutions?|services?|platform|features?)(?:\/|$)/i.test(path)) return 0;
+  if (/\/(?:boxes?|bundles?|subscriptions?|products?|shop|store|collections?|catalog|solutions?|services?|capabilities|expertise|platform|features?)(?:\/|$)/i.test(path)) return 0;
   if (/\/(?:pricing|plans?)(?:\/|$)/i.test(path)) return 10;
   if (/^\/[^/]+\/?$/.test(path) && !/\/(?:about|blog|careers?|contact|customers?|docs?|help|login|news|press|privacy|resources?|support|terms)(?:\/|$)/i.test(path)) return 30;
   const exact = PRIORITY_PATHS.indexOf(path);
@@ -303,8 +304,35 @@ async function crawlDomain(input: string, role: DomainCrawl["role"], seededProdu
     seenHashes.add(page.contentHash);
     return true;
   });
+  const combinedRegion = combineRegionSignals(pages.flatMap((page) => page.regionSignals));
+  if (combinedRegion.countryCode) {
+    homepage.region = displayRegion(combinedRegion);
+    homepage.regionCountryCode = combinedRegion.countryCode;
+    homepage.regionConfidence = combinedRegion.confidence;
+    homepage.regionSignals = combinedRegion.signals;
+  }
   for (const page of pages) for (const reason of page.productGaps) gaps.push({ url: page.sourceUrl, reason, observedAt: page.fetchedAt });
-  const products = selectPreferredProducts([...sitemapProducts, ...pages.flatMap((page) => page.products)]);
+  const observedProducts = selectPreferredProducts([...sitemapProducts, ...pages.flatMap((page) => page.products)]);
+  const business = inferBusinessProfile({
+    domain,
+    title: homepage.title,
+    description: homepage.description,
+    region: homepage.region,
+    language: homepage.language,
+    products: observedProducts,
+    pages: pages.map((page) => ({ title: page.title, description: page.description, path: page.path, sourceUrl: page.sourceUrl, headings: page.headings })),
+  });
+  const fallbackOfferings = observedProducts.length >= 5 ? [] : extractFirstPartyOfferings({
+    domain,
+    observedAt: startedAt,
+    businessType: business.businessType,
+    pages: pages.map((page) => ({ sourceUrl: page.sourceUrl, title: page.title, description: page.description, headings: page.headings })),
+  });
+  for (const offering of fallbackOfferings) {
+    const page = pages.find((candidate) => candidate.sourceUrl === offering.sourceUrl);
+    if (page && !page.claims.some((claim) => claim.id === offering.claimIds[0])) page.claims.push({ id: offering.claimIds[0], claimType: "Observed", text: `${domain} presents “${offering.name}” as a first-party ${business.businessType === "ecommerce" ? "subscription or product option" : "service or capability"}.`, sourceUrl: offering.sourceUrl, observedAt: offering.observedAt, confidence: "Medium" });
+  }
+  const products = selectPreferredProducts([...observedProducts, ...fallbackOfferings]);
   return { domain, role, homepage, pages, products, candidates, gaps, coverage: { pagesRequested: 1 + paths.length, pagesFetched: pages.length, maxPages: MAX_HTML_PAGES, robotsChecked: robotsResult.ok }, productCoverage: { scannedPages: pages.length, catalogProductsDiscovered: sitemapProducts.length, thirdPartyReferenced: pages.reduce((sum, page) => sum + page.thirdPartyProductCount, 0) }, fetchedAt: startedAt };
 }
 

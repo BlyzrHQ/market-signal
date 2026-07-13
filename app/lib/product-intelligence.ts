@@ -58,6 +58,9 @@ const PRODUCT_PATH = /\/(?:billing|checkout|invoices?|payments?|subscriptions?|p
 const EXCLUDED_PATH = /\/(?:about|articles?|blog|careers?|case-studies|company|contact|customers?|docs?|events?|guides?|help|jobs?|legal|news|partners?|press|privacy|resources?|security|stories|support|terms)(?:\/|$)/i;
 const PRODUCT_HEADING = /\b(?:billing|checkout|invoices?|payments?|plan|pricing|subscriptions?|tier|package|product|service|solution|feature|includes?|built for)\b/i;
 const PRICING_PATH = /\/(?:pricing|plans?)(?:\/|$)/i;
+const OFFERING_PATH = /\/(?:boxes?|bundles?|subscriptions?|products?|features?|solutions?|services?|capabilities|expertise|platform|pricing|plans?)(?:\/|$)/i;
+const OFFERING_WORDS = /\b(?:analytics?|automation|boxes?|brand|campaigns?|collaboration|content|design|development|engineering|engagement|fruit|innovation|landing page|mobile|performance|planning|posts?|prototyping|publishing|research|scheduling|social media|strategy|subscriptions?|user experience|ux|vegetables?|veg|web)\b/i;
+const GENERIC_OFFERING_HEADING = /^(?:all features|benefits|built for .+|customer stories|everything you need|get started|how it works|learn more|our (?:features|products|services|work)|pricing|services|solutions|what we do|why .+)$/i;
 const STOPWORDS = new Set([
   "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "is", "it", "of", "on", "or", "our", "the", "their", "this", "to", "with", "your",
 ]);
@@ -280,6 +283,66 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
   }
   const dedupe = (items: ProductRecord[]) => [...new Map(items.map((item) => [`${item.domain}|${item.normalizedName}|${item.sourceUrl}`, item])).values()];
   return { products: dedupe(products), thirdPartyReferenced: dedupe(thirdPartyReferenced), gaps: [...new Set(gaps)] };
+}
+
+export type FirstPartyOfferingInput = {
+  domain: string;
+  observedAt: string;
+  businessType: "ecommerce" | "saas" | "agency" | "unknown";
+  pages: Array<{ sourceUrl: string; title: string; description: string; headings: string[] }>;
+};
+
+function usefulOfferingName(value: string) {
+  const name = clean(value);
+  const terms = normalized(name).split(/\s+/).filter(Boolean);
+  if (!name || name.length > 120 || terms.length < 2 || terms.length > 14 || GENERIC_OFFERING_HEADING.test(name)) return "";
+  return name;
+}
+
+export function extractFirstPartyOfferings(input: FirstPartyOfferingInput) {
+  if (input.businessType === "unknown") return [];
+  const candidates: Array<{ name: string; page: FirstPartyOfferingInput["pages"][number]; category: string }> = [];
+  for (const page of input.pages) {
+    let path = "/";
+    try { path = new URL(page.sourceUrl).pathname; } catch { continue; }
+    const offeringPage = OFFERING_PATH.test(path);
+    const category = path.split("/").filter(Boolean)[0] || input.businessType;
+    const headings = page.headings.map(usefulOfferingName).filter(Boolean).filter((heading) => OFFERING_WORDS.test(heading) || (offeringPage && /\bbox(?:es)?\b/i.test(heading)));
+    for (const name of headings) candidates.push({ name, page, category });
+
+    const pathParts = path.split("/").filter(Boolean);
+    if (offeringPage && headings.length === 0 && pathParts.length >= 2) {
+      const title = usefulOfferingName(page.title.split(/\s+(?:\||—|–|-)\s+/)[0] || page.title);
+      if (title) candidates.push({ name: title, page, category });
+    }
+  }
+
+  const selected = new Map<string, ProductRecord>();
+  for (const candidate of candidates) {
+    const key = normalized(candidate.name);
+    if (!key || selected.has(key)) continue;
+    const id = makeId(input.domain, candidate.name, candidate.page.sourceUrl);
+    selected.set(key, {
+      id,
+      domain: canonicalHost(input.domain),
+      name: candidate.name,
+      normalizedName: key,
+      description: clean(candidate.page.description || `${candidate.name} is presented as a first-party offering.`).slice(0, 400),
+      category: candidate.category,
+      jsonLdType: "Service",
+      priceSignals: [],
+      attributes: [],
+      ownership: "path-inferred",
+      extraction: "page-signal",
+      confidence: "Medium",
+      sourceUrl: candidate.page.sourceUrl,
+      imageUrl: "",
+      observedAt: input.observedAt,
+      claimIds: [`${id}-observed`],
+    });
+    if (selected.size >= 12) break;
+  }
+  return [...selected.values()];
 }
 
 export function extractProductsFromSitemap(document: string, domain: string, observedAt: string) {

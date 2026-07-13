@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildProductComparison, extractProductsFromHtml, extractProductsFromSitemap, scoreProductPair, selectPreferredProducts } from "../app/lib/product-intelligence.ts";
+import { buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, scoreProductPair, selectPreferredProducts } from "../app/lib/product-intelligence.ts";
 
 function extraction(overrides = {}) {
   return extractProductsFromHtml({
@@ -135,6 +135,35 @@ test("discovers locale-prefixed product and shop records from public sitemaps", 
   const sitemap = `<?xml version="1.0"?><urlset><url><loc>https://shop.example/en-gb/product/sidr-honey-500g</loc><image:title>Sidr Honey 500g</image:title></url><url><loc>https://shop.example/ar/shop/baklava-box</loc><image:title>Baklava Box</image:title></url><url><loc>https://shop.example/en-gb/blog/honey-guide</loc></url></urlset>`;
   const products = extractProductsFromSitemap(sitemap, "shop.example", "2026-07-14T00:00:00.000Z");
   assert.deepEqual(products.map((item) => item.name), ["Sidr Honey 500g", "Baklava Box"]);
+});
+
+test("turns first-party SaaS capability headings into attributable service records", () => {
+  const offerings = extractFirstPartyOfferings({
+    domain: "buffer.com",
+    observedAt: "2026-07-14T00:00:00.000Z",
+    businessType: "saas",
+    pages: [
+      { sourceUrl: "https://buffer.com/", title: "Buffer: Social media management for everyone", description: "Manage social media in one place", headings: ["Publish and schedule posts", "Analyze social media performance", "Engage with your audience"] },
+      { sourceUrl: "https://buffer.com/features", title: "Social media management features | Buffer", description: "Tools for creators and teams", headings: ["Plan your content calendar", "Collaborate on campaigns", "Build a landing page"] },
+    ],
+  });
+  assert.ok(offerings.length >= 5);
+  assert.ok(offerings.every((offering) => offering.sourceUrl.startsWith("https://buffer.com/")));
+  assert.ok(offerings.some((offering) => /schedule posts/i.test(offering.name)));
+});
+
+test("recognizes first-party subscription box pages without inventing physical SKUs", () => {
+  const offerings = extractFirstPartyOfferings({
+    domain: "oddbox.co.uk",
+    observedAt: "2026-07-14T00:00:00.000Z",
+    businessType: "ecommerce",
+    pages: [
+      { sourceUrl: "https://oddbox.co.uk/boxes", title: "Fruit and veg boxes | Oddbox", description: "Choose a rescued produce box", headings: ["Small Fruit & Veg Box", "Medium Fruit & Veg Box", "Large Fruit & Veg Box", "Fruit Booster Box", "Veg Booster Box"] },
+    ],
+  });
+  assert.equal(offerings.length, 5);
+  assert.ok(offerings.every((offering) => offering.jsonLdType === "Service"));
+  assert.ok(offerings.every((offering) => offering.confidence === "Medium"));
 });
 
 test("uses matching product-image filenames as supporting identity evidence", () => {

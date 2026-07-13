@@ -55,7 +55,7 @@ export function verifyCompetitorEntity(primary: VerificationSite, candidate: Ver
   const pair = strongestProductPair(primary.products, candidate.products);
   const hasProductOverlap = Boolean(pair);
 
-  const primaryCore = profileTerms(`${primary.title} ${primary.description}`).filter((term) => !GENERIC.has(term));
+  const primaryCore = profileTerms(`${primary.title} ${primary.description} ${(primary.headings || []).slice(0, 8).join(" ")}`).filter((term) => !GENERIC.has(term));
   const candidateCore = profileTerms(`${candidate.title} ${candidate.description} ${(candidate.headings || []).slice(0, 8).join(" ")}`).filter((term) => !GENERIC.has(term));
   const coreOverlap = primaryCore.filter((term) => candidateCore.includes(term));
   const accessoryOnly = ACCESSORY.test(`${candidate.title} ${candidate.description}`) && coreOverlap.length < 2;
@@ -63,7 +63,7 @@ export function verifyCompetitorEntity(primary: VerificationSite, candidate: Ver
 
   const primaryRegion = regionCode(primary.region);
   const candidateRegion = regionCode(candidate.region);
-  const regionCompatibility = !primaryRegion || !candidateRegion || primaryRegion === candidateRegion;
+  const regionCompatibility = !primaryRegion || !candidateRegion || primaryRegion === candidateRegion || primaryRegion === "GLOBAL" || candidateRegion === "GLOBAL";
 
   const categoryScore = categoryAlignment ? Math.min(45, 30 + (coreOverlap.length * 4)) : 0;
   const productScore = pair ? Math.min(25, 14 + Math.round(pair.score * 20)) : Math.min(10, ownSiteDiscoveryOverlap.length * 3);

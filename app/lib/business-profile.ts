@@ -50,8 +50,10 @@ function businessType(input: BusinessProfileInput): BusinessType {
   const text = `${input.title} ${input.description} ${pageText}`;
   const productPages = (input.pages || []).filter((page) => /\/(?:products?|shop|store|collections?)(?:\/|$)/i.test(page.path)).length;
   if (input.products.filter((product) => product.jsonLdType === "Product").length >= 2 || productPages >= 2) return "ecommerce";
-  if (/\b(?:agency|consultancy|consulting|digital product studio|design studio|client services|fractional leadership)\b/i.test(text) || (input.pages || []).some((page) => /\/(?:services?|work|case-studies|capabilities)(?:\/|$)/i.test(page.path))) return "agency";
+  if (/\b(?:boxes?|bundles?|groceries|grocery|food|shoes?|apparel|grooming|nut butter|tea)\b/i.test(text) && /\b(?:buy|cart|checkout|delivered|delivery|shop|subscribe|subscription)\b/i.test(text)) return "ecommerce";
+  if (/\b(?:agency|consultancy|consulting|digital product studio|design studio|client services|fractional leadership)\b/i.test(text)) return "agency";
   if (/\b(?:saas|software|platform|social media management|project management|product development system|cloud-based|workflow)\b/i.test(text) || (input.pages || []).some((page) => /\/(?:pricing|features?|integrations?|platform)(?:\/|$)/i.test(page.path))) return "saas";
+  if ((input.pages || []).some((page) => /\/(?:services?|work|case-studies|capabilities)(?:\/|$)/i.test(page.path))) return "agency";
   return input.products.length >= 3 ? "ecommerce" : "unknown";
 }
 
