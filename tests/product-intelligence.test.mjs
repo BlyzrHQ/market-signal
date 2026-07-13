@@ -93,12 +93,14 @@ test("rejects generic shallow pages while preserving evidence-backed product pag
   const industries = extraction({ ...details, sourceUrl: "https://acme.com/industries", pageTitle: "Industries | Acme", headings: ["Industries we serve", "Retail", "Healthcare", "Fintech"] });
   const community = extraction({ ...details, sourceUrl: "https://acme.com/community", pageTitle: "Community | Acme", headings: ["Community", "Built for teams", "Product features", "Pricing plans"], pagePriceSignals: ["$20/month"] });
   const payments = extraction({ ...details, sourceUrl: "https://acme.com/payments", pageTitle: "Acme Payments", headings: ["Acme Payments", "Accept payments online", "Optimize checkout", "Fight fraud"] });
+  const features = extraction({ sourceUrl: "https://acme.com/features", pageTitle: "Features", headings: ["Product features", "Useful features", "Built for teams"] });
   assert.equal(customers.products.length, 0);
   assert.equal(jobs.products.length, 0);
   assert.equal(team.products.length, 0);
   assert.equal(industries.products.length, 0);
   assert.equal(community.products.length, 0);
   assert.equal(payments.products.length, 1);
+  assert.equal(features.products.length, 0);
 });
 
 test("catalog deduplication preserves high-confidence structured evidence", () => {
@@ -143,13 +145,14 @@ test("turns first-party SaaS capability headings into attributable service recor
     observedAt: "2026-07-14T00:00:00.000Z",
     businessType: "saas",
     pages: [
-      { sourceUrl: "https://buffer.com/", title: "Buffer: Social media management for everyone", description: "Manage social media in one place", headings: ["Publish and schedule posts", "Analyze social media performance", "Engage with your audience"] },
+      { sourceUrl: "https://buffer.com/", title: "Buffer: Social media management for everyone", description: "Manage social media in one place", headings: ["Publish and schedule posts", "Analyze social media performance", "Engage with your audience", "How to Run a Successful PR Agency in the Age of Social Media"] },
       { sourceUrl: "https://buffer.com/features", title: "Social media management features | Buffer", description: "Tools for creators and teams", headings: ["Plan your content calendar", "Collaborate on campaigns", "Build a landing page"] },
     ],
   });
   assert.ok(offerings.length >= 5);
   assert.ok(offerings.every((offering) => offering.sourceUrl.startsWith("https://buffer.com/")));
   assert.ok(offerings.some((offering) => /schedule posts/i.test(offering.name)));
+  assert.ok(offerings.every((offering) => !/PR Agency/i.test(offering.name)));
 });
 
 test("recognizes first-party subscription box pages without inventing physical SKUs", () => {
@@ -158,7 +161,7 @@ test("recognizes first-party subscription box pages without inventing physical S
     observedAt: "2026-07-14T00:00:00.000Z",
     businessType: "ecommerce",
     pages: [
-      { sourceUrl: "https://oddbox.co.uk/boxes", title: "Fruit and veg boxes | Oddbox", description: "Choose a rescued produce box", headings: ["Small Fruit & Veg Box", "Medium Fruit & Veg Box", "Large Fruit & Veg Box", "Fruit Booster Box", "Veg Booster Box"] },
+      { sourceUrl: "https://oddbox.co.uk/boxes", title: "Fruit and veg boxes | Oddbox", description: "Choose a rescued produce box", headings: ["Small Fruit & Veg Box", "Medium Fruit & Veg Box", "Large Fruit & Veg Box", "Fruit Booster Box", "Veg Booster Box", "Wake up to fruit, veg & more", "The faces behind the fruit & veg"] },
     ],
   });
   assert.equal(offerings.length, 5);

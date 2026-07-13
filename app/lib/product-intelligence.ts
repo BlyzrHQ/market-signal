@@ -59,8 +59,12 @@ const EXCLUDED_PATH = /\/(?:about|articles?|blog|careers?|case-studies|company|c
 const PRODUCT_HEADING = /\b(?:billing|checkout|invoices?|payments?|plan|pricing|subscriptions?|tier|package|product|service|solution|feature|includes?|built for)\b/i;
 const PRICING_PATH = /\/(?:pricing|plans?)(?:\/|$)/i;
 const OFFERING_PATH = /\/(?:boxes?|bundles?|subscriptions?|products?|features?|solutions?|services?|capabilities|expertise|platform|pricing|plans?)(?:\/|$)/i;
-const OFFERING_WORDS = /\b(?:analytics?|automation|boxes?|brand|campaigns?|collaboration|content|design|development|engineering|engagement|fruit|innovation|landing page|mobile|performance|planning|posts?|prototyping|publishing|research|scheduling|social media|strategy|subscriptions?|user experience|ux|vegetables?|veg|web)\b/i;
+const SAAS_OFFERING_WORDS = /\b(?:analy(?:s(?:e|is)|tics?)|automat(?:e|ion)|campaigns?|collaborat(?:e|ion)|content creation|engag(?:e|ement)|landing page|mobile app|performance|plan(?:ning)?|posts?|publish(?:ing)?|schedul(?:e|ing)|social media|workflow)\b/i;
+const AGENCY_OFFERING_WORDS = /\b(?:brand|design|development|engineering|innovation|mobile|product strategy|prototyping|research|strategy|user experience|ux|web)\b/i;
+const ECOMMERCE_OFFERING_WORDS = /\b(?:box(?:es)?|bundles?|delivery|membership|subscriptions?)\b/i;
 const GENERIC_OFFERING_HEADING = /^(?:all features|benefits|built for .+|customer stories|everything you need|get started|how it works|learn more|our (?:features|products|services|work)|pricing|services|solutions|what we do|why .+)$/i;
+const GENERIC_PAGE_NAME = /^(?:features?|platform|pricing|products?|services?|solutions?|plans?)$/i;
+const EDITORIAL_HEADING = /^(?:a guide to|case study|how (?:do|to)|news|our story|the faces behind|what is|why )\b|\b(?:case study|customer stor(?:y|ies)|in the age of)\b/i;
 const STOPWORDS = new Set([
   "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "is", "it", "of", "on", "or", "our", "the", "their", "this", "to", "with", "your",
 ]);
@@ -259,7 +263,7 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
     const titleName = clean(input.pageTitle.split(/\s+(?:\||—|–|-)\s+/)[0] || input.pageTitle);
     const observedHeading = input.headings.find((heading) => !/\b(?:logo|menu|skip navigation|home)\b/i.test(heading));
     const name = titleName && !/\b(?:logo|home)\b/i.test(titleName) ? titleName : clean(observedHeading || input.pageTitle);
-    if (name) {
+    if (name && !GENERIC_PAGE_NAME.test(name)) {
       const id = makeId(input.domain, name, input.sourceUrl);
       products.push({
         id,
@@ -293,10 +297,22 @@ export type FirstPartyOfferingInput = {
 };
 
 function usefulOfferingName(value: string) {
-  const name = clean(value);
+  let name = clean(value);
+  const words = name.split(/\s+/);
+  if (words.length % 2 === 0) {
+    const midpoint = words.length / 2;
+    if (words.slice(0, midpoint).join(" ").toLowerCase() === words.slice(midpoint).join(" ").toLowerCase()) name = words.slice(0, midpoint).join(" ");
+  }
   const terms = normalized(name).split(/\s+/).filter(Boolean);
-  if (!name || name.length > 120 || terms.length < 2 || terms.length > 14 || GENERIC_OFFERING_HEADING.test(name)) return "";
+  if (!name || name.length > 120 || terms.length < 2 || terms.length > 14 || GENERIC_OFFERING_HEADING.test(name) || EDITORIAL_HEADING.test(name)) return "";
   return name;
+}
+
+function matchesOfferingType(name: string, businessType: FirstPartyOfferingInput["businessType"]) {
+  if (businessType === "ecommerce") return ECOMMERCE_OFFERING_WORDS.test(name);
+  if (businessType === "saas") return SAAS_OFFERING_WORDS.test(name);
+  if (businessType === "agency") return AGENCY_OFFERING_WORDS.test(name);
+  return false;
 }
 
 export function extractFirstPartyOfferings(input: FirstPartyOfferingInput) {
@@ -305,9 +321,10 @@ export function extractFirstPartyOfferings(input: FirstPartyOfferingInput) {
   for (const page of input.pages) {
     let path = "/";
     try { path = new URL(page.sourceUrl).pathname; } catch { continue; }
+    if (EXCLUDED_PATH.test(path)) continue;
     const offeringPage = OFFERING_PATH.test(path);
     const category = path.split("/").filter(Boolean)[0] || input.businessType;
-    const headings = page.headings.map(usefulOfferingName).filter(Boolean).filter((heading) => OFFERING_WORDS.test(heading) || (offeringPage && /\bbox(?:es)?\b/i.test(heading)));
+    const headings = page.headings.map(usefulOfferingName).filter(Boolean).filter((heading) => matchesOfferingType(heading, input.businessType));
     for (const name of headings) candidates.push({ name, page, category });
 
     const pathParts = path.split("/").filter(Boolean);

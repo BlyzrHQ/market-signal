@@ -48,9 +48,12 @@ function brandName(input: BusinessProfileInput) {
 function businessType(input: BusinessProfileInput): BusinessType {
   const pageText = (input.pages || []).flatMap((page) => [page.title, page.description, page.path, ...(page.headings || [])]).join(" ");
   const text = `${input.title} ${input.description} ${pageText}`;
+  const coreText = `${input.title} ${input.description}`;
   const productPages = (input.pages || []).filter((page) => /\/(?:products?|shop|store|collections?)(?:\/|$)/i.test(page.path)).length;
   if (input.products.filter((product) => product.jsonLdType === "Product").length >= 2 || productPages >= 2) return "ecommerce";
   if (/\b(?:boxes?|bundles?|groceries|grocery|food|shoes?|apparel|grooming|nut butter|tea)\b/i.test(text) && /\b(?:buy|cart|checkout|delivered|delivery|shop|subscribe|subscription)\b/i.test(text)) return "ecommerce";
+  if (/\b(?:agency|consultancy|consulting|digital product studio|design studio|client services|fractional leadership)\b/i.test(coreText)) return "agency";
+  if (/\b(?:saas|software|platform|social media management|project management|product development system|cloud-based|workflow)\b/i.test(coreText)) return "saas";
   if (/\b(?:agency|consultancy|consulting|digital product studio|design studio|client services|fractional leadership)\b/i.test(text)) return "agency";
   if (/\b(?:saas|software|platform|social media management|project management|product development system|cloud-based|workflow)\b/i.test(text) || (input.pages || []).some((page) => /\/(?:pricing|features?|integrations?|platform)(?:\/|$)/i.test(page.path))) return "saas";
   if ((input.pages || []).some((page) => /\/(?:services?|work|case-studies|capabilities)(?:\/|$)/i.test(page.path))) return "agency";
@@ -60,14 +63,11 @@ function businessType(input: BusinessProfileInput): BusinessType {
 function category(input: BusinessProfileInput, type: BusinessType) {
   const segments = input.title.split(/\s+(?:\||—|–)\s+/).map((part) => part.trim()).filter(Boolean);
   const domainTokens = new Set(profileTerms(input.domain.split(".")[0]));
-  const descriptive = segments.find((segment) => {
-    const terms = profileTerms(segment);
-    return terms.length >= 2 && !GENERIC_TITLES.test(segment) && terms.some((term) => !domainTokens.has(term));
-  });
-  const productCategories = input.products.map((product) => product.category).filter((value) => value && !/^(?:product|products|shop|store|uncategorized)$/i.test(value));
+  const descriptive = segments.map((segment) => ({ segment, terms: profileTerms(segment) })).filter(({ segment, terms }) => terms.length >= 2 && !GENERIC_TITLES.test(segment) && terms.some((term) => !domainTokens.has(term))).sort((left, right) => right.terms.length - left.terms.length)[0]?.segment;
+  const productCategories = input.products.map((product) => product.category).filter((value) => value && !/^(?:agency|ecommerce|features?|plans?|product|products|saas|services?|shop|store|uncategorized)$/i.test(value));
   const frequentCategory = [...new Map(productCategories.map((value) => [value, productCategories.filter((candidate) => candidate === value).length])).entries()].sort((left, right) => right[1] - left[1])[0]?.[0];
   const fallback = type === "agency" ? "digital product design and development agency" : type === "saas" ? "business software platform" : type === "ecommerce" ? "online retail" : "business";
-  return (frequentCategory || descriptive || input.description || fallback).replace(/\s+/g, " ").trim().slice(0, 180);
+  return (descriptive || frequentCategory || input.description || fallback).replace(/\s+/g, " ").trim().slice(0, 180);
 }
 
 export function inferBusinessProfile(input: BusinessProfileInput): BusinessProfile {
