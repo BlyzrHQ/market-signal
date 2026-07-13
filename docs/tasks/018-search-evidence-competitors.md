@@ -29,10 +29,13 @@ Treat directly cited seller product pages as deterministic discovery evidence. A
 
 Fable 5 completed two strict read-only reviews. The first returned `PASS` but required primary-subdomain exclusion and an integration test for the exact empty-model-candidates regression before merge. Those changes were implemented together with tracking-only URL normalization, obvious recipe/article rejection, and source recovery when structured output is missing. The second review independently ran all 46 tests and returned `FABLE_GATE: PASS` with no blockers.
 
-## Validation so far
+## Validation evidence
 
 - Baseline production MyJam run: 404 real products crawled, seven product-specific UK searches generated, zero candidates returned because the structured AI candidate array was empty.
 - `npm test`: 46/46 passing, including the exact empty-candidate/source-present regression.
 - `npm run lint`: passing.
 - Focused crawl and discovery TypeScript check: passing.
-- Live post-deployment MyJam verification remains required before merge.
+- Sites version 18 deployed from commit `43561dd3b0ad89f10d0fba4bb3ecbf6f77d2b3e8` and returned 10 real seller candidates for MyJam.
+- Two sellers passed independent product and region verification: `cambridgehalalmeat.com` and `tomhixson.co.uk`.
+- Both sellers matched MyJam's `Halal Tomahawk Steak Apx 1KG` to a directly fetched rival product page with a 69/100 verification score and medium confidence.
+- The product comparison observed Cambridge Halal Meat's public `GBP 26.99` price; no comparable public MyJam price was observed, so the recommendation is explicitly limited to improving price visibility rather than claiming a sales cause.
