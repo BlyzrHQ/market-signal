@@ -5,6 +5,7 @@ export type AdPlatformResult = {
   platform: AdPlatform;
   status: AdScanStatus;
   activeCreativeCount: number;
+  activeCreativeCountIsLowerBound?: boolean;
   message: string;
   themes: string[];
   evidenceUrls: string[];
@@ -21,7 +22,7 @@ export type CompanyAdResult = {
 
 export type AdIntelligenceResult = {
   available: boolean;
-  provider: "openai-official-library-search" | "official-links-only";
+  provider: "meta-api-and-official-search" | "meta-api" | "openai-official-library-search" | "official-links-only";
   model: string;
   observedAt: string;
   regionCode: string;
@@ -31,6 +32,12 @@ export type AdIntelligenceResult = {
 
 type CompanyInput = { domain: string; brand: string };
 type JsonRecord = Record<string, unknown>;
+type MetaAdRecord = { id?: string; ad_creative_bodies?: string[] };
+
+const META_GRAPH_VERSION = "v24.0";
+const META_PAGE_LIMIT = 25;
+const META_TIMEOUT_MS = 12_000;
+const META_COMMERCIAL_API_COUNTRIES = new Set(["DE", "FR"]);
 
 function regionCode(region: string) {
   if (/united kingdom|\buk\b/i.test(region)) return "GB";
@@ -82,6 +89,50 @@ function officialUrl(value: unknown, platform: AdPlatform) {
   } catch { return ""; }
 }
 
+function metaAuthorizationMessage(error: JsonRecord) {
+  const code = typeof error.code === "number" ? error.code : 0;
+  const subcode = typeof error.error_subcode === "number" ? error.error_subcode : 0;
+  if (code === 10 && subcode === 2332002) return "Meta API authorization is required for this app (error 10/2332002). Complete Meta Ad Library API access, then retry.";
+  if (code === 190) return "The Meta access token is invalid or expired (error 190). Replace the server-side token, then retry.";
+  return code ? `Meta Ads Archive access was limited (error ${code}${subcode ? `/${subcode}` : ""}).` : "Meta Ads Archive could not be reached automatically.";
+}
+
+export async function queryMetaAdLibrary(company: CompanyInput, region: string, accessToken: string, fetcher: typeof fetch = fetch): Promise<AdPlatformResult> {
+  const searches = buildOfficialAdSearches(company.brand, region);
+  if (!accessToken) return fallbackCompany(company, region).platforms[0];
+  if (searches.regionCode === "ALL") return { platform: "Meta", status: "access-limited", activeCreativeCount: 0, message: "A specific country is required before querying Meta Ads Archive.", themes: [], evidenceUrls: [], searchUrl: searches.Meta };
+  if (!META_COMMERCIAL_API_COUNTRIES.has(searches.regionCode)) return { platform: "Meta", status: "access-limited", activeCreativeCount: 0, message: `Meta's API does not provide ordinary commercial-ad coverage for ${searches.regionCode}. Use the public Meta Ad Library search; an empty API result would not mean zero active ads.`, themes: [], evidenceUrls: [], searchUrl: searches.Meta };
+
+  const endpoint = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/ads_archive`);
+  endpoint.searchParams.set("ad_reached_countries", JSON.stringify([searches.regionCode]));
+  endpoint.searchParams.set("search_terms", company.brand);
+  endpoint.searchParams.set("ad_active_status", "ACTIVE");
+  endpoint.searchParams.set("ad_type", "ALL");
+  endpoint.searchParams.set("fields", "id,ad_creative_bodies");
+  endpoint.searchParams.set("limit", String(META_PAGE_LIMIT));
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), META_TIMEOUT_MS);
+  try {
+    const response = await fetcher(endpoint, { headers: { Authorization: `Bearer ${accessToken}` }, signal: controller.signal });
+    const payload = await response.json() as JsonRecord;
+    const error = payload.error && typeof payload.error === "object" ? payload.error as JsonRecord : null;
+    if (!response.ok || error) {
+      return { platform: "Meta", status: "access-limited", activeCreativeCount: 0, message: metaAuthorizationMessage(error || {}), themes: [], evidenceUrls: [], searchUrl: searches.Meta };
+    }
+
+    const data = Array.isArray(payload.data) ? payload.data as MetaAdRecord[] : [];
+    const evidenceUrls = [...new Set(data.map((ad) => typeof ad.id === "string" && /^\d+$/.test(ad.id) ? `https://www.facebook.com/ads/library/?id=${ad.id}` : "").filter(Boolean))];
+    const themes = [...new Set(data.flatMap((ad) => Array.isArray(ad.ad_creative_bodies) ? ad.ad_creative_bodies : []).map((text) => text.replace(/\s+/g, " ").trim().slice(0, 160)).filter(Boolean))].slice(0, 5);
+    const hasMore = Boolean(payload.paging && typeof payload.paging === "object" && (payload.paging as JsonRecord).next);
+    if (!data.length) return { platform: "Meta", status: "no-verified-result", activeCreativeCount: 0, message: `Meta API returned no active commercial ads for “${company.brand}” in ${searches.regionCode}. This scoped query is not proof of zero advertising under other names or in other regions.`, themes: [], evidenceUrls: [], searchUrl: searches.Meta };
+    if (!evidenceUrls.length) return { platform: "Meta", status: "access-limited", activeCreativeCount: 0, message: `Meta returned ${data.length} ad record${data.length === 1 ? "" : "s"}, but no usable public ad IDs were available for direct evidence links.`, themes, evidenceUrls: [], searchUrl: searches.Meta };
+    return { platform: "Meta", status: "verified-active", activeCreativeCount: evidenceUrls.length, activeCreativeCountIsLowerBound: hasMore, message: `${hasMore ? "At least " : ""}${evidenceUrls.length} active Meta ad${evidenceUrls.length === 1 ? "" : "s"} returned by the Ads Archive API.`, themes, evidenceUrls, searchUrl: searches.Meta };
+  } catch {
+    return { platform: "Meta", status: "access-limited", activeCreativeCount: 0, message: "Meta Ads Archive could not be reached automatically.", themes: [], evidenceUrls: [], searchUrl: searches.Meta };
+  } finally { clearTimeout(timeout); }
+}
+
 function fallbackCompany(company: CompanyInput, region: string): CompanyAdResult {
   const searches = buildOfficialAdSearches(company.brand, region);
   return {
@@ -129,14 +180,33 @@ function sanitizeCompany(raw: unknown, company: CompanyInput, region: string): C
   };
 }
 
+function mergeMetaResult(company: CompanyAdResult, meta: AdPlatformResult | undefined) {
+  if (!meta) return company;
+  const existingMeta = company.platforms.find((platform) => platform.platform === "Meta");
+  const shouldReplaceMeta = meta.status === "verified-active" || existingMeta?.status !== "verified-active";
+  const platforms = company.platforms.map((platform) => platform.platform === "Meta" && shouldReplaceMeta ? meta : platform);
+  const metaNote = `Meta API: ${meta.message}`;
+  return {
+    ...company,
+    summary: `${company.summary} ${metaNote}`.slice(0, 640),
+    recommendedAction: meta.status === "verified-active" && !company.platforms.some((platform) => platform.status === "verified-active") ? "Open the returned Meta ad records and compare their offer, creative, and landing-page pattern with yours." : company.recommendedAction,
+    platforms,
+  };
+}
+
 export async function scanOfficialAdLibraries(companies: CompanyInput[], region: string): Promise<AdIntelligenceResult> {
   const observedAt = new Date().toISOString();
   const model = process.env.MARKET_SIGNAL_AD_MODEL || process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini";
   const uniqueCompanies = [...new Map(companies.map((company) => [company.domain, company])).values()].slice(0, 6);
   const fallback = uniqueCompanies.map((company) => fallbackCompany(company, region));
+  const metaToken = process.env.META_AD_LIBRARY_ACCESS_TOKEN || "";
+  const metaResults = metaToken ? await Promise.all(uniqueCompanies.map(async (company) => [company.domain, await queryMetaAdLibrary(company, region, metaToken)] as const)) : [];
+  const metaByDomain = new Map(metaResults);
+  const withMeta = (results: CompanyAdResult[]) => results.map((company) => mergeMetaResult(company, metaByDomain.get(company.domain)));
+  const metaAvailable = metaResults.some(([, result]) => result.status !== "access-limited");
   const apiKey = process.env.OPENAI_API_KEY;
   const limitation = "Commercial ad libraries do not provide exact spend for ordinary ads. Meta exposes current active commercial ads publicly; Google automatic API coverage is region-limited; TikTok API access requires approval and begins with EU data.";
-  if (!apiKey || !uniqueCompanies.length) return { available: false, provider: "official-links-only", model, observedAt, regionCode: regionCode(region), companies: fallback, limitation };
+  if (!apiKey || !uniqueCompanies.length) return { available: metaAvailable, provider: metaAvailable ? "meta-api" : "official-links-only", model, observedAt, regionCode: regionCode(region), companies: withMeta(fallback), limitation };
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30_000);
@@ -170,8 +240,8 @@ export async function scanOfficialAdLibraries(companies: CompanyInput[], region:
     const parsed = JSON.parse(outputText(await response.json() as JsonRecord) || "{}") as JsonRecord;
     const returned = Array.isArray(parsed.companies) ? parsed.companies : [];
     const sanitized = uniqueCompanies.map((company) => sanitizeCompany(returned.find((item) => item && typeof item === "object" && (item as JsonRecord).domain === company.domain), company, region));
-    return { available: true, provider: "openai-official-library-search", model, observedAt, regionCode: regionCode(region), companies: sanitized, limitation };
+    return { available: true, provider: metaAvailable ? "meta-api-and-official-search" : "openai-official-library-search", model, observedAt, regionCode: regionCode(region), companies: withMeta(sanitized), limitation };
   } catch {
-    return { available: false, provider: "official-links-only", model, observedAt, regionCode: regionCode(region), companies: fallback, limitation };
+    return { available: metaAvailable, provider: metaAvailable ? "meta-api" : "official-links-only", model, observedAt, regionCode: regionCode(region), companies: withMeta(fallback), limitation };
   } finally { clearTimeout(timeout); }
 }

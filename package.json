@@ -10,7 +10,7 @@
     "build": "vinext build",
     "start": "vinext start",
     "test": "npm run typecheck && npm run build && node --test tests/*.test.mjs",
-    "typecheck": "tsc --noEmit --allowImportingTsExtensions --jsx react-jsx --moduleResolution bundler --module esnext --target es2022 --lib dom,es2022 --skipLibCheck app/page.tsx app/lib/report-presentation.ts",
+    "typecheck": "tsc --noEmit --allowImportingTsExtensions --jsx react-jsx --moduleResolution bundler --module esnext --target es2022 --lib dom,es2022 --skipLibCheck app/page.tsx app/lib/report-presentation.ts app/lib/ad-intelligence.ts",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },
