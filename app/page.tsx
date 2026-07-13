@@ -103,6 +103,18 @@ function AdEvidenceLinks({ company, locale }: { company?: Record<string, unknown
   const ar = locale === "ar";
   const platforms = Array.isArray(company?.platforms) ? company.platforms.map(object) : [];
   const records = platforms.flatMap((platform) => (Array.isArray(platform.evidenceUrls) ? platform.evidenceUrls : []).map(String).map((url, index) => ({ url, platform: String(platform.platform), index })));
+  const meta = platforms.find((platform) => platform.platform === "Meta");
+  const concepts = Array.isArray(meta?.creativeConcepts) ? meta.creativeConcepts.map(object).slice(0, 3) : [];
+  const comparison = object(company?.comparisonToPrimary);
+  if (concepts.length || comparison.headline) return <div className="ad-strategy-panel">
+    <div className="ad-strategy-verdict"><span>{ar ? "الفجوة الإعلانية" : "PAID ATTENTION GAP"}</span><strong dir="auto">{String(comparison.headline || (ar ? "نشاط إعلاني موثق" : "Verified active creative"))}</strong><p dir="auto">{String(comparison.implication || meta?.message || "")}</p></div>
+    {concepts.length > 0 && <div className="ad-concept-grid">{concepts.map((concept, index) => <article className="ad-concept-card" key={String(concept.id || index)}>
+      {typeof concept.mediaUrl === "string" && concept.mediaUrl && <img src={concept.mediaUrl} alt="" loading="lazy" />}
+      <div><span>{ar ? `رسالة ${index + 1}` : `MESSAGE CONCEPT ${index + 1}`}</span><strong dir="auto">{String(concept.message || concept.caption || (ar ? "إعلان مرئي بدون نص عام" : "Visual creative without public copy"))}</strong><p dir="auto">{[concept.caption, concept.callToAction].map(String).filter(Boolean).join(" · ")}</p><small>{Number(concept.placementCount || 1)} {ar ? "موضع" : "placement"}{Number(concept.placementCount || 1) === 1 ? "" : "s"}{concept.startDate ? ` · ${String(concept.startDate).slice(0, 10)}` : ""}</small></div>
+      <SafeExternalLink href={String(concept.evidenceUrl || "")}>{ar ? "شاهد الإعلان ↗" : "View exact ad ↗"}</SafeExternalLink>
+    </article>)}</div>}
+    <div className="ad-attribution"><span>{ar ? "إسناد المعلن" : "EXACT ADVERTISER"}</span><SafeExternalLink href={String(meta?.attributionUrl || meta?.searchUrl || "")}>{String(meta?.attributionLabel || (ar ? "تحقق من الصفحة" : "Verify Page attribution"))} ↗</SafeExternalLink><em>{ar ? "مزود مؤقت غير رسمي؛ الدليل مرتبط بسجل Meta العام." : "Temporary unofficial provider; evidence links to the public Meta record."}</em></div>
+  </div>;
   if (!records.length) return null;
   return <div className="dossier-ad-evidence">{records.map((record) => <a href={record.url} target="_blank" rel="noreferrer" key={`${record.platform}-${record.url}`}>{ar ? `سجل ${record.platform} ${record.index + 1} ↗` : `${record.platform} direct record ${record.index + 1} ↗`}</a>)}</div>;
 }
