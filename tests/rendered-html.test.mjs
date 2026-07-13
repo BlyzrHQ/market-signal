@@ -28,9 +28,10 @@ test("server-renders the Market Signal product shell", async () => {
 });
 
 test("real-data route and product metadata are present", async () => {
-  const [route, crawl, report, page, layout, packageJson, domainUtils] = await Promise.all([
+  const [route, crawl, ads, report, page, layout, packageJson, domainUtils] = await Promise.all([
     readFile(new URL("../app/api/analyze/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/crawl/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/ads/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/report/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
@@ -55,7 +56,11 @@ test("real-data route and product metadata are present", async () => {
   assert.match(crawl, /buildProductComparison/);
   assert.match(crawl, /extractProductsFromHtml/);
   assert.match(crawl, /extractProductsFromSitemap/);
-  assert.match(crawl, /scanOfficialAdLibraries/);
+  assert.doesNotMatch(crawl, /await scanOfficialAdLibraries/);
+  assert.match(crawl, /adRequest/);
+  assert.match(crawl, /MAX_DISCOVERED_HTML_PAGES = 3/);
+  assert.match(ads, /scanOfficialAdLibraries/);
+  assert.match(ads, /Verified companies are required/);
   assert.match(crawl, /product-catalog/);
   assert.match(crawl, /product-comparison/);
   assert.match(crawl, /claimIds/);
@@ -68,6 +73,9 @@ test("real-data route and product metadata are present", async () => {
   assert.match(domainUtils, /Private or local addresses cannot be analyzed/);
   assert.match(route, /application\/xhtml\+xml/);
   assert.match(page, /postJson<CrawlPayload \| CrawlFailure>[\s\S]{0,80}"\/api\/crawl"/);
+  assert.match(page, /postJson<AdScanPayload>\("\/api\/ads"/);
+  assert.match(page, /adLoading/);
+  assert.match(page, /not scanned/);
   assert.match(page, /postJson<[\s\S]{0,100}MarketBrief \| \{ ok: false; error\?: string \}[\s\S]{0,80}"\/api\/report"/);
   assert.match(page, /domains: successful\.map/);
   assert.match(page, /THE VERDICT/);

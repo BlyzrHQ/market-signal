@@ -129,12 +129,18 @@ type CrawlPayload = {
     queries: string[];
     gap?: string;
   };
+  adRequest: {
+    region: string;
+    companies: Array<{ domain: string; brand: string; facebookUrl?: string }>;
+  };
   crawl: {
     maxPagesPerDomain: number;
+    maxPagesPerDiscoveredCompetitor: number;
     robotsAware: boolean;
     generatedAt: string;
   };
 };
+type AdScanPayload = { ok: true; block: JsonBlock } | { ok: false; error?: string };
 type CrawlFailure = {
   ok: false;
   live: false;
@@ -261,7 +267,7 @@ function PricePicture({ battle, locale }: { battle: BattleView; locale: Locale }
   );
 }
 
-function PlatformPulse({ company, locale, showEvidence = true }: { company?: Record<string, unknown>; locale: Locale; showEvidence?: boolean }) {
+function PlatformPulse({ company, locale, showEvidence = true, loading = false }: { company?: Record<string, unknown>; locale: Locale; showEvidence?: boolean; loading?: boolean }) {
   const ar = locale === "ar";
   const platforms = Array.isArray(company?.platforms) ? company.platforms.map(object) : [];
   return (
@@ -270,6 +276,8 @@ function PlatformPulse({ company, locale, showEvidence = true }: { company?: Rec
         {["Meta", "Google", "TikTok"].map((name) => {
           const platform = platforms.find((item) => item.platform === name);
           const status = String(platform?.status || "no-verified-result");
+          const pending = !company && loading;
+          const notScanned = !company && !loading;
           const active = status === "verified-active";
           const limited = status === "access-limited";
           const evidence = Array.isArray(platform?.evidenceUrls) ? platform.evidenceUrls.map(String) : [];
@@ -278,15 +286,15 @@ function PlatformPulse({ company, locale, showEvidence = true }: { company?: Rec
             <>
               <i />
               <span>{name}</span>
-              <b>{active ? `${Number(platform?.activeCreativeCount || 0)}${platform?.activeCreativeCountIsLowerBound ? "+" : ""} ${ar ? "إعلان نشط" : "active"}` : limited ? (ar ? "محدود" : "limited") : ar ? "غير موثق" : "unverified"}</b>
+              <b>{pending ? (ar ? "جارٍ الفحص" : "scanning") : notScanned ? (ar ? "لم يُفحص" : "not scanned") : active ? `${Number(platform?.activeCreativeCount || 0)}${platform?.activeCreativeCountIsLowerBound ? "+" : ""} ${ar ? "إعلان نشط" : "active"}` : limited ? (ar ? "محدود" : "limited") : ar ? "غير موثق" : "unverified"}</b>
             </>
           );
           return href ? (
-            <a className={`platform-chip ${active ? "platform-active" : limited ? "platform-limited" : "platform-empty"}`} href={href} target="_blank" rel="noreferrer" key={name}>
+            <a className={`platform-chip ${pending ? "platform-scanning" : active ? "platform-active" : limited || notScanned ? "platform-limited" : "platform-empty"}`} href={href} target="_blank" rel="noreferrer" key={name}>
               {content}
             </a>
           ) : (
-            <span className={`platform-chip ${active ? "platform-active" : limited ? "platform-limited" : "platform-empty"}`} key={name}>
+            <span className={`platform-chip ${pending ? "platform-scanning" : active ? "platform-active" : limited || notScanned ? "platform-limited" : "platform-empty"}`} key={name}>
               {content}
             </span>
           );
@@ -387,7 +395,7 @@ function PositioningComparison({ competitor, locale }: { competitor: JsonBlock; 
   );
 }
 
-function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading }: { document: JsonReportDocument; locale: Locale; marketBrief: MarketBrief | null; briefLoading: boolean }) {
+function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading, adLoading, adError }: { document: JsonReportDocument; locale: Locale; marketBrief: MarketBrief | null; briefLoading: boolean; adLoading: boolean; adError: string }) {
   const ar = locale === "ar";
   const summary = doc.blocks.find((block) => block.type === "summary");
   const profile = doc.blocks.find((block) => block.type === "market-profile");
@@ -512,7 +520,7 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
                         </div>
                         <span>{score}/100</span>
                       </div>
-                      <PlatformPulse company={adFor(domain)} locale={locale} showEvidence={false} />
+                      <PlatformPulse company={adFor(domain)} locale={locale} showEvidence={false} loading={adLoading} />
                       <a className="threat-arrow" href={`#dossier-${domain}`} aria-label={ar ? `افتح ملف ${domain}` : `Open ${domain} dossier`}>
                         {ar ? "←" : "→"}
                       </a>
@@ -609,9 +617,9 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
                       <div className="dossier-ad-row">
                         <div>
                           <span>{ar ? "نبض الإعلانات" : "AD PULSE"}</span>
-                          <PlatformPulse company={companyAds} locale={locale} />
+                          <PlatformPulse company={companyAds} locale={locale} loading={adLoading} />
                         </div>
-                        <p dir="auto">{String(companyAds?.summary || (ar ? "لم يتم توثيق إعلان نشط تلقائياً؛ افتح المكتبات للتحقق يدوياً." : "No active creative was automatically verified; open the libraries to inspect manually."))}</p>
+                        <p dir="auto">{String(companyAds?.summary || (adLoading ? (ar ? "نفحص الآن مكتبات إعلانات Meta وGoogle وTikTok لهذا المنافس." : "Checking Meta, Google, and TikTok ad libraries for this verified competitor now.") : adError || (ar ? "لم يكتمل فحص الإعلانات لهذا المنافس." : "The ad-library scan did not complete for this competitor.")))}</p>
                       </div>
                       <div className="dossier-next">
                         <span>{ar ? "خطوتك الأولى" : "FIRST MOVE"}</span>
@@ -651,7 +659,7 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
                   )}
                 </article>
               ))}
-              <p className="appendix-note">{adLimitation || (ar ? "تعرض الرسومات فقط قيماً عامة قابلة للتحليل. لا نستنتج إنفاقاً إعلانياً أو نشاطاً غير موثق." : "Charts render only parseable public values. We never infer ad spend or unverified activity.")}</p>
+              <p className="appendix-note">{adLimitation || adError || (adLoading ? (ar ? "فحص مكتبات الإعلانات العامة جارٍ كمرحلة مستقلة." : "The public ad-library scan is still running as a separate report phase.") : ar ? "تعرض الرسومات فقط قيماً عامة قابلة للتحليل. لا نستنتج إنفاقاً إعلانياً أو نشاطاً غير موثق." : "Charts render only parseable public values. We never infer ad spend or unverified activity.")}</p>
             </div>
           </details>
         </div>
@@ -668,6 +676,8 @@ export default function Home() {
   const [crawlDocument, setCrawlDocument] = useState<JsonReportDocument | null>(null);
   const [marketBrief, setMarketBrief] = useState<MarketBrief | null>(null);
   const [briefLoading, setBriefLoading] = useState(false);
+  const [adLoading, setAdLoading] = useState(false);
+  const [adError, setAdError] = useState("");
   const [analysisError, setAnalysisError] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [toast, setToast] = useState("");
@@ -690,6 +700,8 @@ export default function Home() {
     setMarketBrief(null);
     setCrawlDocument(null);
     setReportDomain(null);
+    setAdLoading(false);
+    setAdError("");
     try {
       const payload = await postJson<CrawlPayload | CrawlFailure>("/api/crawl", { primary: cleanDomain, domains: requestedDomains }, "The competitor scan");
       if (!payload.ok) {
@@ -708,23 +720,41 @@ export default function Home() {
       setCrawlDocument(payload.document);
       setReportDomain(cleanDomain);
       setBriefLoading(true);
-      try {
-        const briefPayload = await postJson<MarketBrief | { ok: false; error?: string }>(
-          "/api/report",
-          {
-            primary: primaryResult.domain,
-            domains: successful.map((result) => result.domain),
-          },
-          "The market brief",
-        );
-        if (briefPayload.ok) setMarketBrief(briefPayload);
-        else setAnalysisError(("error" in briefPayload ? briefPayload.error : "") || "The source scan completed, but the market brief was unavailable.");
-      } catch {
-        setAnalysisError("The source scan completed, but the market brief was unavailable.");
-      } finally {
-        setBriefLoading(false);
-      }
+      setAdLoading(true);
       window.setTimeout(() => document.getElementById("report")?.scrollIntoView({ behavior: "smooth" }), 50);
+      const briefWork = (async () => {
+        try {
+          const briefPayload = await postJson<MarketBrief | { ok: false; error?: string }>(
+            "/api/report",
+            {
+              primary: primaryResult.domain,
+              domains: successful.map((result) => result.domain),
+            },
+            "The market brief",
+          );
+          if (briefPayload.ok) setMarketBrief(briefPayload);
+          else setAnalysisError(("error" in briefPayload ? briefPayload.error : "") || "The source scan completed, but the market brief was unavailable.");
+        } catch {
+          setAnalysisError("The source scan completed, but the market brief was unavailable.");
+        } finally {
+          setBriefLoading(false);
+        }
+      })();
+      const adWork = (async () => {
+        try {
+          const adPayload = await postJson<AdScanPayload>("/api/ads", payload.adRequest, "The ad-library scan");
+          if (!adPayload.ok) {
+            setAdError(("error" in adPayload ? adPayload.error : "") || "The market report is ready, but the public ad-library scan was unavailable.");
+            return;
+          }
+          setCrawlDocument((current) => current ? { ...current, blocks: [...current.blocks.filter((block) => block.type !== "ad-intelligence"), adPayload.block] } : current);
+        } catch (error) {
+          setAdError(error instanceof Error ? error.message : "The market report is ready, but the public ad-library scan was unavailable.");
+        } finally {
+          setAdLoading(false);
+        }
+      })();
+      await Promise.all([briefWork, adWork]);
     } catch (error) {
       setAnalysisError(error instanceof Error ? error.message : "Unable to analyze this domain.");
     } finally {
@@ -868,7 +898,7 @@ export default function Home() {
         </div>
 
         {crawlDocument ? (
-          <GuidedReportRenderer document={crawlDocument} locale={locale} marketBrief={marketBrief} briefLoading={briefLoading} />
+          <GuidedReportRenderer document={crawlDocument} locale={locale} marketBrief={marketBrief} briefLoading={briefLoading} adLoading={adLoading} adError={adError} />
         ) : (
           <div className="report-empty-state">
             <span>01 → 02 → 03 → 04</span>

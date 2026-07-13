@@ -52,6 +52,13 @@ Move to an entity-first pipeline:
   and optional offering overlap.
 - Add service/plan/catalog fallbacks and suppress prose-derived prices.
 - Add entity-positioning evidence to competitor report blocks and UI dossiers.
+- Split accepted-company ad intelligence into a second visible report phase so
+  the verified market and product result is not lost when an ad provider is
+  slow. The UI must distinguish scanning, unverified, and not-scanned states.
+- Keep the primary crawl at five representative HTML pages and four sitemap
+  documents. Bound each discovered-company verification crawl to three HTML
+  pages and two sitemap documents, and expose the role-specific limits in
+  coverage metadata.
 
 ## Validation
 
@@ -62,6 +69,12 @@ Move to an entity-first pipeline:
 - Strict Fable 5 architecture decision: `ARCHITECTURE_GATE: PASS`.
 - Strict Fable 5 code review must return PASS before deployment.
 - Deploy the exact reviewed commit privately and rerun the same ten-domain panel.
+
+The first exact no-retry production run on commit `b04af1b` returned useful
+reports for 9/10 domains, but `allbirds.com` ended in a hosting HTTP 500 after
+62.9 seconds. Successful requests still took 41.3–80.7 seconds. This run is a
+failed reliability gate and is retained as evidence for the staged-report fix;
+it is not counted as completion.
 
 ## Acceptance gate
 
@@ -80,4 +93,8 @@ Move to an entity-first pipeline:
 - First code review: Fable 5 blocked a product-overlap path that could admit a same-region accessory seller.
 - Resolution: category alignment now requires at least two non-generic terms shared by the companies' own core descriptions. Product overlap can raise confidence but cannot establish competitor status. A same-region tea-shop-versus-mug-shop regression test covers the former bypass.
 - Final code review: Fable 5 returned `CODE_REVIEW: PASS` after inspecting the revised diff and independently running 63 tests plus lint.
+- Follow-up content review: Fable 5 returned `FOLLOWUP_REVIEW: PASS`; the local gate then passed 69 tests, build, and lint.
+- Generic-offering cleanup review: Fable 5 returned `FINAL_CLEANUP_REVIEW: PASS`; the exact local gate passed 72 tests, build, and lint before Sites version 23.
+- Performance design review: Fable 5 returned `PERFORMANCE_DESIGN: BLOCK` for speculative pre-verification ad scans because rejected candidates could consume the company cap and create false ad non-results. That design was discarded.
+- Staged-flow review: Fable 5 returned `STAGED_CODE_REVIEW: PASS` after verifying that ad requests contain only the primary and accepted competitors, the seven-company cap covers primary plus all six candidates, private/local domains are rejected, and the UI exposes scanning versus not-scanned states. Fable independently ran 74 tests and lint successfully.
 - Merge remains blocked until the exact commit is deployed and the ten-site live quality gate above is recorded.

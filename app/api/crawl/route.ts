@@ -2,7 +2,7 @@ import { canonicalDomain, normalizeDomain } from "../../lib/domain";
 import { buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, selectPreferredProducts, type ProductRecord } from "../../lib/product-intelligence";
 import { parseRobots } from "../../lib/robots";
 import { discoverCompetitors, type DiscoveryCandidate, type DiscoveryResult } from "../../lib/competitor-discovery";
-import { attributableFacebookUrl, scanOfficialAdLibraries, type AdIntelligenceResult } from "../../lib/ad-intelligence";
+import { attributableFacebookUrl, type AdIntelligenceResult } from "../../lib/ad-intelligence";
 import { verifyCompetitorEntity, type CompetitorVerification } from "../../lib/competitor-verification";
 import { inferBusinessProfile } from "../../lib/business-profile";
 import { combineRegionSignals, displayRegion, inferRegion as inferRegionEvidence, type RegionSignal } from "../../lib/region-inference";
@@ -68,6 +68,9 @@ type ReportBlock = Record<string, unknown> & { type: string; id: string };
 
 const MAX_DOMAINS = 4;
 const MAX_HTML_PAGES = 5;
+const MAX_DISCOVERED_HTML_PAGES = 3;
+const MAX_SITEMAP_DOCUMENTS = 4;
+const MAX_DISCOVERED_SITEMAP_DOCUMENTS = 2;
 const MAX_DOCUMENT_BYTES = 1_500_000;
 const REQUEST_TIMEOUT_MS = 6_000;
 const USER_AGENT = "MarketSignalPublicScanner/0.1";
@@ -198,11 +201,11 @@ function parseSitemapUrls(text: string, domain: string) {
   }), 500);
 }
 
-async function collectSitemapEvidence(sitemapUrl: string, domain: string, observedAt: string) {
+async function collectSitemapEvidence(sitemapUrl: string, domain: string, observedAt: string, maxDocuments = MAX_SITEMAP_DOCUMENTS) {
   const root = await fetchText(sitemapUrl, "application/xml,text/xml,text/plain", domain);
   if (!root.ok) return { paths: [] as string[], products: [] as ProductRecord[] };
   const rootUrls = parseSitemapUrls(root.text, domain);
-  const childSitemaps = rootUrls.filter((value) => /sitemap[^/]*\.xml/i.test(new URL(value).pathname)).sort((left, right) => Number(!/products?/i.test(left)) - Number(!/products?/i.test(right))).slice(0, 4);
+  const childSitemaps = rootUrls.filter((value) => /sitemap[^/]*\.xml/i.test(new URL(value).pathname)).sort((left, right) => Number(!/products?/i.test(left)) - Number(!/products?/i.test(right))).slice(0, maxDocuments);
   const documents = childSitemaps.length ? await Promise.all(childSitemaps.map(async (url) => ({ url, result: await fetchText(url, "application/xml,text/xml,text/plain", domain) }))) : [{ url: sitemapUrl, result: root }];
   const urls = documents.flatMap(({ result }) => result.ok ? parseSitemapUrls(result.text, domain) : []);
   const products = documents.flatMap(({ result }) => result.ok ? extractProductsFromSitemap(result.text, domain, observedAt) : []);
@@ -241,12 +244,14 @@ async function parsePage(document: string, sourceUrl: string, fetchedAt: string,
 
 async function crawlDomain(input: string, role: DomainCrawl["role"], seededProductUrls: string[] = []): Promise<DomainCrawl> {
   const startedAt = new Date().toISOString();
+  const maxHtmlPages = role === "discovered-competitor" ? MAX_DISCOVERED_HTML_PAGES : MAX_HTML_PAGES;
+  const maxSitemapDocuments = role === "discovered-competitor" ? MAX_DISCOVERED_SITEMAP_DOCUMENTS : MAX_SITEMAP_DOCUMENTS;
   let base: URL;
   try {
     base = normalizeDomain(input);
   } catch (error) {
     const domain = canonicalDomain(input);
-    return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps: [{ url: input, reason: error instanceof Error ? error.message : "invalid or private domain.", observedAt: startedAt }], coverage: { pagesRequested: 0, pagesFetched: 0, maxPages: MAX_HTML_PAGES, robotsChecked: false }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt };
+    return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps: [{ url: input, reason: error instanceof Error ? error.message : "invalid or private domain.", observedAt: startedAt }], coverage: { pagesRequested: 0, pagesFetched: 0, maxPages: maxHtmlPages, robotsChecked: false }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt };
   }
   const domain = base.hostname;
   const gaps: Gap[] = [];
@@ -255,17 +260,17 @@ async function crawlDomain(input: string, role: DomainCrawl["role"], seededProdu
   if (!robotsResult.ok) gaps.push({ url: new URL("/robots.txt", base).toString(), reason: "robots.txt could not be read; expansion is limited to the homepage.", observedAt: startedAt });
   if (robotsResult.ok && !robots.allows("/")) {
     gaps.push({ url: base.toString(), reason: "robots.txt disallows the homepage for this scanner.", observedAt: startedAt });
-    return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: 0, pagesFetched: 0, maxPages: MAX_HTML_PAGES, robotsChecked: true }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt };
+    return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: 0, pagesFetched: 0, maxPages: maxHtmlPages, robotsChecked: true }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt };
   }
   const homepageResult = await fetchText(base.toString(), "text/html,application/xhtml+xml", domain);
   if (!homepageResult.ok || !/text\/html|application\/xhtml\+xml/i.test(homepageResult.contentType)) {
     gaps.push({ url: base.toString(), reason: homepageResult.error || `homepage returned HTTP ${homepageResult.status}.`, observedAt: startedAt });
-    return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: 1, pagesFetched: 0, maxPages: MAX_HTML_PAGES, robotsChecked: robotsResult.ok }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt };
+    return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: 1, pagesFetched: 0, maxPages: maxHtmlPages, robotsChecked: robotsResult.ok }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt };
   }
   const homepageHost = new URL(homepageResult.url).hostname.toLowerCase().replace(/^www\./, "");
   if (homepageHost !== domain.replace(/^www\./, "")) {
     gaps.push({ url: base.toString(), reason: "homepage redirected off the submitted domain.", observedAt: startedAt });
-    return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: 1, pagesFetched: 0, maxPages: MAX_HTML_PAGES, robotsChecked: robotsResult.ok }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt };
+    return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: 1, pagesFetched: 0, maxPages: maxHtmlPages, robotsChecked: robotsResult.ok }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt };
   }
   const homepage = await parsePage(homepageResult.text, homepageResult.url, startedAt, domain, homepageResult.truncated);
   const discovered = extractLinks(homepageResult.text, new URL(homepageResult.url), domain);
@@ -273,7 +278,7 @@ async function crawlDomain(input: string, role: DomainCrawl["role"], seededProdu
   let sitemapProducts: ProductRecord[] = [];
   const sitemapUrl = (() => { try { const candidate = new URL(robots.sitemaps[0] || "/sitemap.xml", base); return canonicalDomain(candidate.hostname) === canonicalDomain(domain) && /^https?:$/.test(candidate.protocol) ? candidate.toString() : new URL("/sitemap.xml", base).toString(); } catch { return new URL("/sitemap.xml", base).toString(); } })();
   if (robotsResult.ok) {
-    const sitemapEvidence = await collectSitemapEvidence(sitemapUrl, domain, startedAt);
+    const sitemapEvidence = await collectSitemapEvidence(sitemapUrl, domain, startedAt, maxSitemapDocuments);
     sitemapPaths = sitemapEvidence.paths;
     sitemapProducts = sitemapEvidence.products;
   }
@@ -284,7 +289,7 @@ async function crawlDomain(input: string, role: DomainCrawl["role"], seededProdu
   const sortedObservedPaths = observedPaths.sort((left, right) => {
     return productPathPriority(left) - productPathPriority(right) || left.localeCompare(right);
   });
-  const expandablePaths = unique([...seededPaths, ...sortedObservedPaths], MAX_HTML_PAGES - 1);
+  const expandablePaths = unique([...seededPaths, ...sortedObservedPaths], maxHtmlPages - 1);
   const paths = expandablePaths.filter((path) => robots.allows(new URL(path, base).pathname));
   for (const path of expandablePaths) if (!robots.allows(new URL(path, base).pathname)) gaps.push({ url: new URL(path, base).toString(), reason: "robots.txt disallows this crawl path.", observedAt: startedAt });
   const fetchedPages = await Promise.all(paths.map(async (path) => {
@@ -333,7 +338,7 @@ async function crawlDomain(input: string, role: DomainCrawl["role"], seededProdu
     if (page && !page.claims.some((claim) => claim.id === offering.claimIds[0])) page.claims.push({ id: offering.claimIds[0], claimType: "Observed", text: `${domain} presents “${offering.name}” as a first-party ${business.businessType === "ecommerce" ? "subscription or product option" : "service or capability"}.`, sourceUrl: offering.sourceUrl, observedAt: offering.observedAt, confidence: "Medium" });
   }
   const products = selectPreferredProducts([...observedProducts, ...fallbackOfferings]);
-  return { domain, role, homepage, pages, products, candidates, gaps, coverage: { pagesRequested: 1 + paths.length, pagesFetched: pages.length, maxPages: MAX_HTML_PAGES, robotsChecked: robotsResult.ok }, productCoverage: { scannedPages: pages.length, catalogProductsDiscovered: sitemapProducts.length, thirdPartyReferenced: pages.reduce((sum, page) => sum + page.thirdPartyProductCount, 0) }, fetchedAt: startedAt };
+  return { domain, role, homepage, pages, products, candidates, gaps, coverage: { pagesRequested: 1 + paths.length, pagesFetched: pages.length, maxPages: maxHtmlPages, robotsChecked: robotsResult.ok }, productCoverage: { scannedPages: pages.length, catalogProductsDiscovered: sitemapProducts.length, thirdPartyReferenced: pages.reduce((sum, page) => sum + page.thirdPartyProductCount, 0) }, fetchedAt: startedAt };
 }
 
 function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?: DiscoveryResult, investigated: Array<DomainCrawl | null> = [], ads?: AdIntelligenceResult): { version: "1"; generatedAt: string; blocks: ReportBlock[] } {
@@ -398,12 +403,15 @@ export async function POST(request: Request) {
     const confirmed: DomainCrawl[] = discoveredResults.filter((result): result is NonNullable<typeof result> => Boolean(result?.homepage && result.discovery?.accepted));
     const results = [...submittedResults, ...confirmed];
     const adTargets = [primary, ...confirmed].filter((result, index, all) => all.findIndex((candidate) => candidate.domain === result.domain) === index);
-    const ads = await scanOfficialAdLibraries(adTargets.map((result) => ({
-      domain: result.domain,
-      brand: result.discovery?.companyName || result.homepage?.title.split(/\s[–—-]\s|\|/)[0].trim() || result.domain,
-      facebookUrl: attributableFacebookUrl(result.pages.flatMap((page) => page.socialLinks)),
-    })), discovery.region || primary.homepage.region);
-    return Response.json({ ok: true, live: true, primaryDomain, results, discovery, ads, document: buildDocument(results, primaryDomain, discovery, discoveredResults, ads), crawl: { maxPagesPerDomain: MAX_HTML_PAGES, robotsAware: true, generatedAt: new Date().toISOString() } });
+    const adRequest = {
+      region: discovery.region || primary.homepage.region,
+      companies: adTargets.map((result) => ({
+        domain: result.domain,
+        brand: result.discovery?.companyName || result.homepage?.title.split(/\s[–—-]\s|\|/)[0].trim() || result.domain,
+        facebookUrl: attributableFacebookUrl(result.pages.flatMap((page) => page.socialLinks)),
+      })),
+    };
+    return Response.json({ ok: true, live: true, primaryDomain, results, discovery, adRequest, document: buildDocument(results, primaryDomain, discovery, discoveredResults), crawl: { maxPagesPerDomain: MAX_HTML_PAGES, maxPagesPerDiscoveredCompetitor: MAX_DISCOVERED_HTML_PAGES, robotsAware: true, generatedAt: new Date().toISOString() } });
   } catch (error) {
     return Response.json({ ok: false, live: false, error: error instanceof Error ? error.message : "Unable to crawl the submitted domains." }, { status: 400 });
   }

@@ -459,7 +459,7 @@ function compareAdStrategies(companies: CompanyAdResult[]) {
 export async function scanOfficialAdLibraries(companies: CompanyInput[], region: string): Promise<AdIntelligenceResult> {
   const observedAt = new Date().toISOString();
   const model = process.env.MARKET_SIGNAL_AD_MODEL || process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini";
-  const uniqueCompanies = [...new Map(companies.map((company) => [company.domain, company])).values()].slice(0, 6);
+  const uniqueCompanies = [...new Map(companies.map((company) => [company.domain, company])).values()].slice(0, 7);
   const fallback = uniqueCompanies.map((company) => fallbackCompany(company, region));
   const metapiKey = process.env.METAPI_API_KEY || "";
   const metaToken = process.env.META_AD_LIBRARY_ACCESS_TOKEN || "";

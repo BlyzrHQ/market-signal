@@ -196,3 +196,21 @@ test("rejects same-domain, publisher, social, and weak one-word source matches",
   };
   assert.deepEqual(candidatesFromSearchEvidence(payload, profile), []);
 });
+
+test("caps ranked candidate investigations to six companies", () => {
+  const payload = {
+    output: [{
+      type: "web_search_call",
+      action: {
+        query: "UK buy halal beef sirloin steak 500g",
+        sources: Array.from({ length: 9 }, (_, index) => ({
+          title: `Halal Beef Sirloin Steak 500g | Rival ${index + 1}`,
+          url: `https://rival-${index + 1}.co.uk/products/halal-beef-sirloin-steak-500g`,
+        })),
+      },
+    }],
+  };
+  const candidates = candidatesFromSearchEvidence(payload, profile);
+  assert.equal(candidates.length, 6);
+  assert.deepEqual(candidates.map((candidate) => candidate.domain), Array.from({ length: 6 }, (_, index) => `rival-${index + 1}.co.uk`));
+});

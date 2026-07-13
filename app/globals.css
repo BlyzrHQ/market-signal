@@ -296,6 +296,8 @@ h1 { font-size: clamp(43px, 5vw, 67px); line-height: .98; letter-spacing: -.065e
 .platform-chip i { width: 6px; height: 6px; border: 1px solid #aab5b0; border-radius: 50%; }.platform-chip span { font-weight: 800; }.platform-chip b { color: #929d98; font-weight: 600; }
 .platform-active { border-color: #b9ddce; background: #eaf6f1; color: #176d51; }.platform-active i { border-color: #27876a; background: #27876a; }.platform-active b { color: #176d51; }
 .platform-limited { border-color: #e5d3a7; background: #fff8e6; color: #896825; }.platform-limited i { border-color: #d1a33d; }.platform-limited b { color: #9b7931; }
+.platform-scanning { border-color: #bfd6e7; background: #eef7fc; color: #2d607d; }.platform-scanning i { border-color: #4c91b8; background: #4c91b8; animation: ad-scan-pulse 1.1s ease-in-out infinite; }.platform-scanning b { color: #2d607d; }
+@keyframes ad-scan-pulse { 50% { opacity: .35; transform: scale(.72); } }
 .dossier-list { display: grid; gap: 10px; }
 .rival-dossier { scroll-margin-top: 20px; overflow: hidden; border: 1px solid #dfe3df; border-radius: 12px; background: #fbfcfa; }
 .rival-dossier[open] { border-color: #bcd3c9; box-shadow: 0 15px 35px rgba(31, 65, 52, .08); }

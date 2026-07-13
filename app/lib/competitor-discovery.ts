@@ -44,7 +44,7 @@ type SearchLane = "entity" | "category" | "product";
 type SearchSource = { url: string; title: string; query: string };
 type LaneResult = { lane: SearchLane; category: string; region: string; queries: string[]; candidates: DiscoveryCandidate[]; gap?: string };
 
-const MAX_CANDIDATES = 8;
+const MAX_CANDIDATES = 6;
 const SEARCH_TIMEOUT_MS = 32_000;
 const SEARCH_SOURCE_STOPWORDS = new Set([
   "apx", "approximately", "buy", "delivered", "delivery", "fresh", "halal", "home", "online", "order", "price", "product", "products", "shop", "store", "uk",
