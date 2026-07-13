@@ -1,7 +1,8 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- remote competitor images are evidence URLs with unknown hosts */
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { comparablePriceDelta, isDefensibleProductMatch } from "./lib/report-presentation";
 
 type ClaimType = "Observed" | "Inferred" | "Estimated" | "Recommended";
 type Locale = "en" | "ar";
@@ -64,41 +65,99 @@ function object(value: unknown) {
 
 function product(value: unknown) {
   const item = object(value);
-  return { item, name: String(item.name || "Observed product"), domain: String(item.domain || ""), description: String(item.description || ""), category: String(item.category || "Uncategorized"), sourceUrl: String(item.sourceUrl || "#"), imageUrl: String(item.imageUrl || ""), extraction: String(item.extraction || "page-signal"), confidence: String(item.confidence || "Medium"), prices: Array.isArray(item.priceSignals) ? item.priceSignals.map((signal) => String(object(signal).raw || "")).filter(Boolean) : [], attributes: Array.isArray(item.attributes) ? item.attributes.map(String) : [] };
+  return { item, name: String(item.name || "Observed product"), domain: String(item.domain || ""), description: String(item.description || ""), category: String(item.category || "Uncategorized"), sourceUrl: String(item.sourceUrl || ""), imageUrl: String(item.imageUrl || ""), extraction: String(item.extraction || "page-signal"), confidence: String(item.confidence || "Medium"), prices: Array.isArray(item.priceSignals) ? item.priceSignals.map((signal) => String(object(signal).raw || "")).filter(Boolean) : [], attributes: Array.isArray(item.attributes) ? item.attributes.map(String) : [] };
 }
 
-function ProductComparisonBlock({ block, locale }: { block: JsonBlock; locale: Locale }) {
-  const decisions = jsonList(block, "rows").flatMap((row) => {
+
+type BattleView = { primary: ReturnType<typeof product>; match: Record<string, unknown>; rival: ReturnType<typeof product>; decision: Record<string, unknown> };
+
+function productBattles(block: JsonBlock | undefined) {
+  if (!block) return [] as BattleView[];
+  return jsonList(block, "rows").flatMap((row) => {
     const rowItem = object(row);
-    const matches = Array.isArray(rowItem.matches) ? rowItem.matches.map(object).filter((match) => match.product) : [];
-    const best = [...matches].sort((left, right) => Number(right.score || 0) - Number(left.score || 0))[0];
-    return best ? [{ primary: product(rowItem.primary), match: best, rival: product(best.product), decision: object(best.decision) }] : [];
-  }).slice(0, 10);
-  const ar = locale === "ar";
-  return <article className="json-block product-comparison-block" key={block.id}><div className="json-block-heading"><div><span className="json-block-type">{ar ? "قرارات المنتجات" : "PRODUCT DECISIONS"}</span><h4>{ar ? "أين يمكن لمنتج منافس أن يتفوق على منتجك؟" : "Where a competing product can beat yours"}</h4></div><span className="decision-count">{ar ? `${decisions.length} مقارنات مدعومة بالأدلة` : `${decisions.length} evidence-backed match${decisions.length === 1 ? "" : "es"}`}</span></div><p className="product-coverage-note">{ar ? "نعرض فقط أقوى المقارنات التي تدعمها الأدلة، مع رابط إلى صفحتي المنتج." : "Only the strongest defensible product matches are shown. Every row links back to both public product pages."}</p>{decisions.length ? <div className="product-matrix">{decisions.map(({ primary, match, rival, decision }, rowIndex) => <section className="product-battle" key={`${block.id}-battle-${rowIndex}`}><header><div className="product-identity">{primary.imageUrl && <img src={primary.imageUrl} alt="" loading="lazy" />}<div><span>{ar ? "منتجك" : "YOUR PRODUCT"}</span><strong dir="auto">{primary.name}</strong></div></div><div className="battle-vs">{ar ? "مقابل" : "VS"}</div><div className="product-identity">{rival.imageUrl && <img src={rival.imageUrl} alt="" loading="lazy" />}<div><span>{String(match.domain)}</span><strong dir="auto">{rival.name}</strong></div></div></header><div className="battle-facts"><div><span>{ar ? "سعرك المعلن" : "Your public price"}</span><strong dir="auto">{primary.prices[0] || (ar ? "غير متاح" : "Not observed")}</strong></div><div><span>{ar ? "سعر المنافس المعلن" : "Rival public price"}</span><strong dir="auto">{rival.prices[0] || (ar ? "غير متاح" : "Not observed")}</strong></div><div><span>{ar ? "ثقة المقارنة" : "Comparison confidence"}</span><strong>{Math.round(Number(match.score || 0) * 100)}%</strong></div></div><div className="battle-verdict"><div><span>{ar ? "حكم السعر والعرض" : "PRICE / OFFER VERDICT"}</span><strong>{String(decision.priceVerdict || (ar ? "لا يمكن مقارنة الأسعار العامة حتى الآن." : "Public prices are not comparable yet."))}</strong></div><div><span>{ar ? "لماذا قد يفوز المنافس؟" : "WHY THEY MAY WIN"}</span><p>{String(decision.whyTheyMayWin || (ar ? "هذا هو أقرب بديل ظاهر في البيانات العامة." : "The rival is the closest observable product alternative."))}</p></div><div className="battle-action"><span>{ar ? "ماذا تفعل؟" : "WHAT TO DO"}</span><p>{String(decision.recommendedMove || (ar ? "تحقق من حجم العبوة والسعر النهائي قبل تغيير عرضك." : "Validate pack size and landed price before changing your offer."))}</p></div></div><footer><a href={primary.sourceUrl} target="_blank" rel="noreferrer">{ar ? "مصدر منتجك ↗" : "Your product source ↗"}</a><a href={rival.sourceUrl} target="_blank" rel="noreferrer">{ar ? "مصدر منتج المنافس ↗" : "Rival product source ↗"}</a></footer></section>)}</div> : <div className="product-decision-empty"><strong>{ar ? "لا توجد مقارنة موثوقة حتى الآن" : "No defensible product match yet"}</strong><p>{ar ? "وجد الزاحف منتجات، لكن التشابه غير كافٍ لإصدار مقارنة شرائية دون تخمين." : "The crawler found products, but none were similar enough to support a buying-decision comparison without guessing."}</p></div>}</article>;
+    const primary = product(rowItem.primary);
+    return (Array.isArray(rowItem.matches) ? rowItem.matches : []).map(object).filter((match) => match.product && isDefensibleProductMatch(match.score, match.confidence)).map((match) => ({ primary, match, rival: product(match.product), decision: object(match.decision) }));
+  }).sort((left, right) => Number(right.match.score || 0) - Number(left.match.score || 0));
 }
 
-function AdIntelligenceBlock({ block, locale }: { block: JsonBlock; locale: Locale }) {
-  const primaryDomain = jsonText(block, "primaryDomain");
-  const companies = jsonList(block, "companies").map(object).filter((company) => String(company.domain) !== primaryDomain);
-  const verifiedCount = companies.reduce((sum, company) => sum + (Array.isArray(company.platforms) ? company.platforms.map(object).filter((platform) => platform.status === "verified-active").length : 0), 0);
+function PricePicture({ battle, locale }: { battle: BattleView; locale: Locale }) {
   const ar = locale === "ar";
-  return <article className="json-block ad-intelligence-block" key={block.id}><div className="json-block-heading"><div><span className="json-block-type">{ar ? "مكتبات الإعلانات الرسمية" : "OFFICIAL AD LIBRARIES"}</span><h4>{ar ? "ما الذي يروّج له منافسوك الآن؟" : "What your competitors are actively promoting"}</h4></div><span className={`ad-scan-state ${verifiedCount ? "has-ads" : ""}`}>{verifiedCount ? (ar ? `${verifiedCount} نتائج موثقة` : `${verifiedCount} verified platform result${verifiedCount === 1 ? "" : "s"}`) : (ar ? "لم يتم توثيق إعلان تلقائياً" : "No creative verified automatically")}</span></div><p className="product-coverage-note">{ar ? "بحثنا في مكتبات Meta وGoogle وTikTok الرسمية. عدم العثور على نتيجة لا يعني عدم وجود إعلانات." : "Searched Meta Ad Library, Google Ads Transparency Center, and TikTok Commercial Content Library. A missing result is never treated as zero advertising."}</p><div className="ad-company-grid">{companies.map((company) => <section className="ad-company-card" key={String(company.domain)}><header><div><span>{ar ? "منافس" : "COMPETITOR"}</span><strong>{String(company.brand || company.domain)}</strong><small>{String(company.domain)}</small></div></header><p dir="auto">{String(company.summary || (ar ? "لم يتم توثيق إعلان نشط بشكل مستقل." : "No active creative was independently verified."))}</p><div className="ad-platform-list">{(Array.isArray(company.platforms) ? company.platforms : []).map((value) => { const platform = object(value); const active = platform.status === "verified-active"; const evidenceUrls = Array.isArray(platform.evidenceUrls) ? platform.evidenceUrls.map(String) : []; return <div className={active ? "ad-platform-active" : ""} key={String(platform.platform)}><div><strong>{String(platform.platform)}</strong><span>{active ? (ar ? `${Number(platform.activeCreativeCount || 0)} إعلانات نشطة` : `${Number(platform.activeCreativeCount || 0)} active creative${Number(platform.activeCreativeCount || 0) === 1 ? "" : "s"}`) : platform.status === "access-limited" ? (ar ? "الوصول محدود" : "Access limited") : (ar ? "غير موثق" : "Not verified")}</span></div>{Array.isArray(platform.themes) && platform.themes.length > 0 && <p>{platform.themes.map(String).join(" · ")}</p>}{active && evidenceUrls.length > 0 && <div className="ad-record-links">{evidenceUrls.map((url, index) => <a href={url} target="_blank" rel="noreferrer" key={url}>{ar ? `دليل الإعلان ${index + 1} ↗` : `Direct ad record ${index + 1} ↗`}</a>)}</div>}<a href={String(platform.searchUrl || "#")} target="_blank" rel="noreferrer">{ar ? "افتح بحث المكتبة ↗" : "Open library search ↗"}</a></div>; })}</div><div className="ad-recommendation"><span>{ar ? "خطوتك التالية" : "YOUR NEXT MOVE"}</span><p dir="auto">{String(company.recommendedAction || (ar ? "راجع نتائج المكتبات الرسمية قبل اتخاذ قرار إعلاني." : "Review the official library searches before making a campaign decision."))}</p></div></section>)}</div><footer className="ad-limit-note">{ar ? "لا توفر مكتبات الإعلانات إنفاقاً دقيقاً للإعلانات التجارية العادية. بعض المنصات والمناطق تقيّد الوصول الآلي؛ لذلك نعرض فقط سجلات الإعلانات المباشرة التي أمكن توثيقها." : jsonText(block, "limitation")}</footer></article>;
+  const yourRaw = battle.primary.prices[0] || "";
+  const rivalRaw = battle.rival.prices[0] || "";
+  const comparison = comparablePriceDelta(yourRaw, rivalRaw);
+  if (!comparison) return <div className="price-fallback"><div><span>{ar ? "سعرك المعلن" : "YOUR PUBLIC PRICE"}</span><strong dir="auto">{yourRaw || (ar ? "غير متاح" : "Not observed")}</strong></div><div><span>{ar ? "سعر المنافس" : "RIVAL PUBLIC PRICE"}</span><strong dir="auto">{rivalRaw || (ar ? "غير متاح" : "Not observed")}</strong></div></div>;
+  const maximum = Math.max(comparison.primary.amount, comparison.rival.amount) * 1.15 || 1;
+  const yourPosition = Math.max(6, Math.min(94, (comparison.primary.amount / maximum) * 100));
+  const rivalPosition = Math.max(6, Math.min(94, (comparison.rival.amount / maximum) * 100));
+  const delta = comparison.percent;
+  return <div className="price-picture" dir="ltr"><div className="price-axis"><span className="price-line" /><span className="price-dot your-dot" style={{ left: `${yourPosition}%` }}><b>{yourRaw}</b><small>{ar ? "أنت" : "YOU"}</small></span><span className="price-dot rival-dot" style={{ left: `${rivalPosition}%` }}><b>{rivalRaw}</b><small>{ar ? "المنافس" : "RIVAL"}</small></span></div><p dir="auto">{comparison.equal ? (ar ? "السعران المعلنان متساويان" : "Observed prices are equal") : delta === 0 ? (ar ? "فرق السعر أقل من 1٪" : "Price difference is under 1%") : delta < 0 ? (ar ? `المنافس أرخص بنسبة ${Math.abs(delta)}٪` : `Rival is ${Math.abs(delta)}% cheaper`) : (ar ? `أنت أرخص بنسبة ${delta}٪` : `You are ${delta}% cheaper`)}</p></div>;
 }
 
-function JsonReportRenderer({ document, locale }: { document: JsonReportDocument; locale: Locale }) {
+function PlatformPulse({ company, locale, showEvidence = true }: { company?: Record<string, unknown>; locale: Locale; showEvidence?: boolean }) {
   const ar = locale === "ar";
-  return <section className="json-report" aria-label={ar ? "تقرير المنافسين" : "Adaptive competitor intelligence report"}><div className="json-report-header"><div><span className="eyebrow"><span className="pulse-dot" /> {ar ? "معلومات تنافسية مباشرة" : "Live competitor intelligence"}</span><h3>{ar ? "من ينافسك على العميل نفسه؟" : "Who is competing for the same customer?"}</h3></div><span className="json-report-version">{ar ? "أدلة مباشرة" : "live evidence"}</span></div><div className="json-blocks">{document.blocks.map((block) => {
-    if (block.type === "summary") return <article className="json-block json-summary" key={block.id}><span className="json-block-type">{ar ? "نتيجة السوق" : "MARKET RESULT"}</span><h4 dir="auto">{jsonText(block, "title")}</h4><p dir="auto">{jsonText(block, "body")}</p></article>;
-    if (block.type === "market-profile") return <article className="json-block market-profile-block" key={block.id}><div><span className="json-block-type">{ar ? "نطاق البحث" : "PRODUCT SEARCH SCOPE"}</span><h4>{jsonText(block, "category") || (ar ? "نحتاج أدلة إضافية لتحديد الفئة" : "Category needs more evidence")}</h4><p>{ar ? `نبحث عن بائعين يعرضون منتجات مماثلة في ${jsonText(block, "region")}.` : `Looking for sellers with matching products in ${jsonText(block, "region")}.`}</p></div>{jsonText(block, "gap") && <p className="json-gap">{jsonText(block, "gap")}</p>}</article>;
-    if (block.type === "competitor") return <article className="json-block competitor-result-card" key={block.id}><div className="competitor-result-top"><div><span className="json-block-type">{ar ? "منافس بمنتج مطابق" : "PRODUCT-VERIFIED COMPETITOR"}</span><h4>{jsonText(block, "companyName") || jsonText(block, "domain")}</h4><a href={jsonText(block, "websiteSourceUrl", "#")} target="_blank" rel="noreferrer">{jsonText(block, "domain")} ↗</a></div><div className="verification-score"><strong>{jsonNumber(block, "verificationScore")}</strong><span>{ar ? "درجة التحقق" : "verification score"}</span></div></div><p dir="auto">{jsonText(block, "reason")}</p><div className="matched-product-proof"><span>{ar ? "زوج المنتجات الذي أثبت المنافسة" : "PRODUCT PAIR THAT PROVED THE COMPETITION"}</span><strong dir="auto">{jsonText(block, "matchedPrimaryProductName")} ↔ {jsonText(block, "matchedProductName")}</strong><a href={jsonText(block, "matchedProductUrl", "#")} target="_blank" rel="noreferrer">{ar ? "افتح منتج المنافس ↗" : "Open proven rival product ↗"}</a></div><div className="competitor-proof"><span><b>{jsonNumber(block, "productCount")}</b> {ar ? "منتجات عامة تم العثور عليها" : "public products discovered"}</span></div><div className="competitor-sources"><a href={jsonText(block, "discoverySourceUrl", "#")} target="_blank" rel="noreferrer">{ar ? "دليل البحث ↗" : "Search evidence ↗"}</a><Confidence value={jsonText(block, "confidence", "Low")} locale={locale} /></div></article>;
-    if (block.type === "coverage" || block.type === "company" || block.type === "product-catalog" || block.type === "candidate" || block.type === "evidence") return null;
-    if (block.type === "product-comparison") return <ProductComparisonBlock block={block} locale={locale} key={block.id} />;
-    if (block.type === "product-unmatched") return null;
-    if (block.type === "ad-intelligence") return <AdIntelligenceBlock block={block} locale={locale} key={block.id} />;
-    if (block.type === "gap") return <article className="json-block json-gap" key={block.id}><div><span className="json-block-type">{ar ? "ملاحظة عن تغطية البيانات" : "DATA COVERAGE NOTE"}</span><h4>{jsonText(block, "domain") || (ar ? "فجوة في الجمع" : "Collection gap")}</h4></div><p dir="auto">{jsonText(block, "reason")}</p>{jsonText(block, "url") && <a href={jsonText(block, "url")} target="_blank" rel="noreferrer">{ar ? "افحص الرابط المطلوب ↗" : "Inspect requested URL ↗"}</a>}</article>;
-    return null;
-  })}</div></section>;
+  const platforms = Array.isArray(company?.platforms) ? company.platforms.map(object) : [];
+  return <div className="platform-pulse-wrap"><div className="platform-pulse">{["Meta", "Google", "TikTok"].map((name) => { const platform = platforms.find((item) => item.platform === name); const status = String(platform?.status || "no-verified-result"); const active = status === "verified-active"; const limited = status === "access-limited"; const evidence = Array.isArray(platform?.evidenceUrls) ? platform.evidenceUrls.map(String) : []; const href = active && evidence.length ? evidence[0] : typeof platform?.searchUrl === "string" ? platform.searchUrl : ""; const content = <><i /><span>{name}</span><b>{active ? `${Number(platform?.activeCreativeCount || 0)} ${ar ? "إعلان نشط" : "active"}` : limited ? (ar ? "محدود" : "limited") : (ar ? "غير موثق" : "unverified")}</b></>; return href ? <a className={`platform-chip ${active ? "platform-active" : limited ? "platform-limited" : "platform-empty"}`} href={href} target="_blank" rel="noreferrer" key={name}>{content}</a> : <span className={`platform-chip ${active ? "platform-active" : limited ? "platform-limited" : "platform-empty"}`} key={name}>{content}</span>; })}</div>{showEvidence && <AdEvidenceLinks company={company} locale={locale} />}</div>;
+}
+
+function AdEvidenceLinks({ company, locale }: { company?: Record<string, unknown>; locale: Locale }) {
+  const ar = locale === "ar";
+  const platforms = Array.isArray(company?.platforms) ? company.platforms.map(object) : [];
+  const records = platforms.flatMap((platform) => (Array.isArray(platform.evidenceUrls) ? platform.evidenceUrls : []).map(String).map((url, index) => ({ url, platform: String(platform.platform), index })));
+  if (!records.length) return null;
+  return <div className="dossier-ad-evidence">{records.map((record) => <a href={record.url} target="_blank" rel="noreferrer" key={`${record.platform}-${record.url}`}>{ar ? `سجل ${record.platform} ${record.index + 1} ↗` : `${record.platform} direct record ${record.index + 1} ↗`}</a>)}</div>;
+}
+
+function SafeExternalLink({ href, children }: { href: string; children: ReactNode }) {
+  if (!href || href === "#") return <span className="missing-evidence">{children}</span>;
+  return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
+}
+
+function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading }: { document: JsonReportDocument; locale: Locale; marketBrief: MarketBrief | null; briefLoading: boolean }) {
+  const ar = locale === "ar";
+  const summary = doc.blocks.find((block) => block.type === "summary");
+  const profile = doc.blocks.find((block) => block.type === "market-profile");
+  const competitors = doc.blocks.filter((block) => block.type === "competitor").sort((left, right) => jsonNumber(right, "verificationScore") - jsonNumber(left, "verificationScore"));
+  const comparison = doc.blocks.find((block) => block.type === "product-comparison");
+  const allBattles = productBattles(comparison);
+  const competitorDomains = new Set(competitors.map((competitor) => jsonText(competitor, "domain")));
+  const battles = allBattles.filter((battle) => competitorDomains.has(String(battle.match.domain)));
+  const ads = doc.blocks.find((block) => block.type === "ad-intelligence");
+  const adCompanies = jsonList(ads || { type: "", id: "" }, "companies").map(object);
+  const adLimitation = jsonText(ads || { type: "", id: "" }, "limitation");
+  const gaps = doc.blocks.filter((block) => block.type === "gap");
+  const battlesFor = (domain: string) => battles.filter((battle) => String(battle.match.domain) === domain);
+  const adFor = (domain: string) => adCompanies.find((company) => String(company.domain) === domain);
+  const strongest = competitors[0];
+  const strongestDomain = strongest ? jsonText(strongest, "domain") : "";
+  const [openDossiers, setOpenDossiers] = useState<Set<string>>(() => {
+    const hashId = typeof window !== "undefined" && window.location.hash.startsWith("#dossier-") ? window.location.hash.slice(1) : "";
+    const dossierId = hashId || (strongestDomain ? `dossier-${strongestDomain}` : "");
+    return new Set(dossierId ? [dossierId] : []);
+  });
+
+  function setDossierOpen(dossierId: string, open: boolean) {
+    setOpenDossiers((current) => {
+      if (current.has(dossierId) === open) return current;
+      const next = new Set(current);
+      if (open) next.add(dossierId);
+      else next.delete(dossierId);
+      return next;
+    });
+  }
+
+  const headline = marketBrief?.headline || jsonText(summary || { type: "", id: "" }, "title", ar ? "جارٍ بناء صورة السوق" : "Building your market picture");
+  const summaryText = marketBrief?.summary || jsonText(summary || { type: "", id: "" }, "body");
+  return <section className="guided-report" aria-label={ar ? "تقرير منافسين موجه" : "Guided competitor report"} onClick={(event) => { const anchor = (event.target as Element).closest<HTMLAnchorElement>('a[href^="#dossier-"]'); if (!anchor) return; const dossierId = anchor.hash.slice(1); setDossierOpen(dossierId, true); window.setTimeout(() => globalThis.document.getElementById(dossierId)?.scrollIntoView({ behavior: "smooth", block: "start" }), 0); }}>
+    <section className="verdict-band" id="market-verdict"><div className="verdict-copy"><span className="chapter-kicker">01 · {ar ? "الخلاصة" : "THE VERDICT"}</span><h3 dir="auto">{headline}</h3><p dir="auto">{briefLoading && !marketBrief ? (ar ? "نربط الأدلة في خلاصة تساعدك على القرار…" : "Connecting the evidence into a decision-ready verdict…") : summaryText}</p><div className="scope-line"><span>{jsonText(profile || { type: "", id: "" }, "category", ar ? "السوق المستنتج" : "Inferred market")}</span><i /> <span>{jsonText(profile || { type: "", id: "" }, "region", ar ? "المنطقة المستنتجة" : "Inferred region")}</span></div></div><div className="verdict-numbers"><div><strong>{competitors.length}</strong><span>{ar ? "منافسون موثقون" : "verified rivals"}</span></div><div><strong>{battles.length}</strong><span>{ar ? "مواجهات منتجات" : "product battles"}</span></div></div>{strongest && <a className="verdict-focus" href={`#dossier-${jsonText(strongest, "domain")}`}><span>{ar ? "ابدأ بأقوى تهديد" : "START WITH THE STRONGEST THREAT"}</span><strong>{jsonText(strongest, "companyName") || jsonText(strongest, "domain")}</strong><b>{jsonNumber(strongest, "verificationScore")}/100 {ar ? "←" : "→"}</b></a>}</section>
+
+    <div className="report-story-layout"><nav className="story-rail" aria-label={ar ? "فصول التقرير" : "Report chapters"}><a href="#market-verdict"><b>01</b><span>{ar ? "الخلاصة" : "Verdict"}</span></a><a href="#threat-board"><b>02</b><span>{ar ? "خريطة المنافسين" : "Threat map"}</span></a><a href="#rival-dossiers"><b>03</b><span>{ar ? "ملفات المنافسين" : "Rival dossiers"}</span></a><a href="#evidence-appendix"><b>04</b><span>{ar ? "الأدلة" : "Evidence"}</span></a></nav><div className="story-content">
+      <section className="story-chapter" id="threat-board"><div className="chapter-heading"><div><span className="chapter-kicker">02 · {ar ? "خريطة المنافسين" : "THREAT MAP"}</span><h3>{ar ? "من يستحق انتباهك أولاً؟" : "Who deserves your attention first?"}</h3></div><p>{ar ? "الترتيب مبني على تحقق المنتج والمنطقة، وليس على شهرة العلامة." : "Ranked by product and region verification—not brand popularity."}</p></div>{competitors.length ? <div className="threat-board">{competitors.map((competitor, index) => { const domain = jsonText(competitor, "domain"); const score = jsonNumber(competitor, "verificationScore"); const rivalBattles = battlesFor(domain); return <div className="threat-row" key={competitor.id}><span className="threat-rank">{String(index + 1).padStart(2, "0")}</span><a className="threat-name" href={`#dossier-${domain}`}><strong>{jsonText(competitor, "companyName") || domain}</strong><span>{rivalBattles.length ? (ar ? `${rivalBattles.length} مواجهة منتجات موثوقة` : `${rivalBattles.length} defensible product battle${rivalBattles.length === 1 ? "" : "s"}`) : (ar ? "لا توجد مواجهة منتجات موثوقة بعد" : "No defensible product battle yet")}</span></a><div className="threat-score"><div><i style={{ width: `${score}%` }} /></div><span>{score}/100</span></div><PlatformPulse company={adFor(domain)} locale={locale} showEvidence={false} /><a className="threat-arrow" href={`#dossier-${domain}`} aria-label={ar ? `افتح ملف ${domain}` : `Open ${domain} dossier`}>{ar ? "←" : "→"}</a></div>; })}</div> : <div className="empty-story"><strong>{ar ? "لا يوجد منافس اجتاز التحقق بعد" : "No rival passed verification yet"}</strong><p>{summaryText}</p></div>}</section>
+
+      <section className="story-chapter" id="rival-dossiers"><div className="chapter-heading"><div><span className="chapter-kicker">03 · {ar ? "ملفات المنافسين" : "RIVAL DOSSIERS"}</span><h3>{ar ? "الدليل، الفرق، والخطوة التالية" : "Proof, difference, and next move"}</h3></div><p>{ar ? "افتح أي منافس لرؤية القصة كاملة دون تشتيت." : "Open a rival to follow the full story without the noise."}</p></div><div className="dossier-list">{competitors.map((competitor, index) => { const domain = jsonText(competitor, "domain"); const rivalBattles = battlesFor(domain); const companyAds = adFor(domain); const firstAction = String(rivalBattles[0]?.decision.recommendedMove || companyAds?.recommendedAction || (ar ? "راقب المنتج المثبت قبل تغيير عرضك." : "Monitor the proven product before changing your offer.")); return <details className="rival-dossier" id={`dossier-${domain}`} key={competitor.id} open={openDossiers.has(`dossier-${domain}`)} onToggle={(event) => setDossierOpen(`dossier-${domain}`, event.currentTarget.open)}><summary><span className="dossier-rank">{String(index + 1).padStart(2, "0")}</span><div><strong>{jsonText(competitor, "companyName") || domain}</strong><span>{jsonText(competitor, "matchedPrimaryProductName")} ↔ {jsonText(competitor, "matchedProductName")}</span></div><div className="dossier-score"><b>{jsonNumber(competitor, "verificationScore")}</b><span>{ar ? "درجة التحقق" : "verification"}</span></div><i className="dossier-toggle" /></summary><div className="dossier-body"><div className="proof-strip"><div><span>{ar ? "لماذا هو منافس حقيقي" : "WHY THIS IS A REAL RIVAL"}</span><p dir="auto">{jsonText(competitor, "reason")}</p></div><SafeExternalLink href={jsonText(competitor, "matchedProductUrl")}>{ar ? "افتح منتج الإثبات ↗" : "Open proving product ↗"}</SafeExternalLink></div><div className="dossier-battles">{rivalBattles.map((battle, battleIndex) => <article className="guided-battle" key={`${domain}-${battleIndex}`}><div className="battle-product-head"><div className="battle-product your-product">{battle.primary.imageUrl && <img src={battle.primary.imageUrl} alt="" loading="lazy" />}<span>{ar ? "منتجك" : "YOUR PRODUCT"}</span><strong dir="auto">{battle.primary.name}</strong></div><div className="battle-connector"><span>{Math.round(Number(battle.match.score || 0) * 100)}%</span><i /></div><div className="battle-product rival-product">{battle.rival.imageUrl && <img src={battle.rival.imageUrl} alt="" loading="lazy" />}<span>{ar ? "منتج المنافس" : "RIVAL PRODUCT"}</span><strong dir="auto">{battle.rival.name}</strong></div></div><PricePicture battle={battle} locale={locale} /><div className="decision-path"><div><span>{ar ? "ما نراه" : "WHAT WE SEE"}</span><p>{String(battle.decision.priceVerdict || (ar ? "لم نرصد سعرين عامين قابلين للمقارنة بعد." : "Two comparable public prices were not observed yet."))}</p></div><div><span>{ar ? "لماذا قد يفوز" : "WHY THEY MAY WIN"}</span><p>{String(battle.decision.whyTheyMayWin || (ar ? "لا يوجد دليل كافٍ لادعاء أفضلية لهذا المنتج بعد." : "There is not enough evidence to claim an advantage for this product yet."))}</p></div><div className="decision-action"><span>{ar ? "قرارك التالي" : "YOUR NEXT DECISION"}</span><p>{String(battle.decision.recommendedMove || (ar ? "تحقق من العرضين قبل تغيير السعر أو الرسالة." : "Verify both offers before changing price or messaging."))}</p></div></div><footer><SafeExternalLink href={battle.primary.sourceUrl}>{ar ? "مصدر منتجك ↗" : "Your source ↗"}</SafeExternalLink><SafeExternalLink href={battle.rival.sourceUrl}>{ar ? "مصدر المنافس ↗" : "Rival source ↗"}</SafeExternalLink></footer></article>)}</div><div className="dossier-ad-row"><div><span>{ar ? "نبض الإعلانات" : "AD PULSE"}</span><PlatformPulse company={companyAds} locale={locale} /></div><p dir="auto">{String(companyAds?.summary || (ar ? "لم يتم توثيق إعلان نشط تلقائياً؛ افتح المكتبات للتحقق يدوياً." : "No active creative was automatically verified; open the libraries to inspect manually."))}</p></div><div className="dossier-next"><span>{ar ? "خطوتك الأولى" : "FIRST MOVE"}</span><strong dir="auto">{firstAction}</strong></div><div className="dossier-sources"><SafeExternalLink href={jsonText(competitor, "websiteSourceUrl")}>{domain} ↗</SafeExternalLink><SafeExternalLink href={jsonText(competitor, "discoverySourceUrl")}>{ar ? "دليل الاكتشاف ↗" : "Discovery evidence ↗"}</SafeExternalLink><Confidence value={jsonText(competitor, "confidence", "Low")} locale={locale} /></div></div></details>; })}</div></section>
+
+      <details className="evidence-appendix" id="evidence-appendix"><summary><div><span className="chapter-kicker">04 · {ar ? "الأدلة والتغطية" : "EVIDENCE & COVERAGE"}</span><strong>{ar ? "اعرض الفجوات والمنهج" : "Show gaps and methodology"}</strong></div><span>{gaps.length} {ar ? "ملاحظات" : "notes"}</span></summary><div>{gaps.map((gap) => <article key={gap.id}><strong>{jsonText(gap, "domain")}</strong><p dir="auto">{jsonText(gap, "reason")}</p>{jsonText(gap, "url") && <a href={jsonText(gap, "url")} target="_blank" rel="noreferrer">{ar ? "افحص المصدر ↗" : "Inspect source ↗"}</a>}</article>)}<p className="appendix-note">{adLimitation || (ar ? "تعرض الرسومات فقط قيماً عامة قابلة للتحليل. لا نستنتج إنفاقاً إعلانياً أو نشاطاً غير موثق." : "Charts render only parseable public values. We never infer ad spend or unverified activity.")}</p></div></details>
+    </div></div>
+  </section>;
 }
 
 export default function Home() {
@@ -106,7 +165,6 @@ export default function Home() {
   const [domain, setDomain] = useState("");
   const [reportDomain, setReportDomain] = useState<string | null>(null);
   const [liveAnalysis, setLiveAnalysis] = useState<LiveAnalysis | null>(null);
-  const [comparisonResults, setComparisonResults] = useState<CrawlPage[]>([]);
   const [crawlDocument, setCrawlDocument] = useState<JsonReportDocument | null>(null);
   const [marketBrief, setMarketBrief] = useState<MarketBrief | null>(null);
   const [briefLoading, setBriefLoading] = useState(false);
@@ -115,7 +173,6 @@ export default function Home() {
   const [toast, setToast] = useState("");
 
   const companyName = useMemo(() => getCompanyName(reportDomain ?? domain), [domain, reportDomain]);
-  const competitorResults = useMemo(() => comparisonResults.filter((result) => result.domain !== liveAnalysis?.domain), [comparisonResults, liveAnalysis]);
   const ar = locale === "ar";
 
   useEffect(() => {
@@ -133,15 +190,13 @@ export default function Home() {
     setMarketBrief(null);
     setCrawlDocument(null);
     setReportDomain(null);
-    setComparisonResults([]);
     try {
       const response = await fetch("/api/crawl", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ primary: cleanDomain, domains: requestedDomains }) });
       const payload = await response.json() as CrawlPayload | CrawlFailure;
       if (!payload.ok) {
         if (payload.document) setCrawlDocument(payload.document);
-        if (payload.results) setComparisonResults(payload.results.flatMap((result) => result.homepage ? [result.homepage] : []));
         setReportDomain(cleanDomain);
-        setAnalysisError(payload.error || "The public crawl could not be completed.");
+        setAnalysisError(("error" in payload ? payload.error : "") || "The public crawl could not be completed.");
         window.setTimeout(() => document.getElementById("report")?.scrollIntoView({ behavior: "smooth" }), 50);
         return;
       }
@@ -150,7 +205,6 @@ export default function Home() {
       const primaryHost = payload.primaryDomain;
       const primaryResult = successful.find((result) => result.domain === primaryHost);
       if (!primaryResult) throw new Error(`Primary domain ${cleanDomain} could not be crawled: ${crawlResults.find((result) => result.domain === primaryHost)?.gaps[0]?.reason || "no live result was returned"}`);
-      setComparisonResults(successful);
       setLiveAnalysis(primaryResult);
       setCrawlDocument(payload.document);
       setReportDomain(cleanDomain);
@@ -159,7 +213,7 @@ export default function Home() {
         const briefResponse = await fetch("/api/report", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ primary: primaryResult.domain, domains: successful.map((result) => result.domain) }) });
         const briefPayload = await briefResponse.json() as MarketBrief | { ok: false; error?: string };
         if (briefPayload.ok) setMarketBrief(briefPayload);
-        else setAnalysisError(briefPayload.error || "The source scan completed, but the market brief was unavailable.");
+        else setAnalysisError(("error" in briefPayload ? briefPayload.error : "") || "The source scan completed, but the market brief was unavailable.");
       } catch {
         setAnalysisError("The source scan completed, but the market brief was unavailable.");
       } finally {
@@ -224,21 +278,9 @@ export default function Home() {
       <section className={`report-section shell ${reportDomain ? "report-visible" : ""}`} id="report" aria-live="polite">
         <div className="report-header">
           <div><div className="eyebrow"><span className="pulse-dot" /> {ar ? "تقرير المشهد التنافسي" : "Competitive landscape report"}</div><h2>{liveAnalysis ? (ar ? `${companyName} في مواجهة السوق.` : `${companyName} against the market.`) : (ar ? "تقرير يبدأ برابط واحد." : "A report that starts with one URL.")}</h2><p>{liveAnalysis ? (ar ? "بحثنا في السوق المتوقع، وتحققنا من مواقع المنافسين، وقارنّا المنتجات العامة المنسوبة إليهم." : "We searched the inferred market, verified candidate websites, and compared the public products we could attribute.") : (ar ? "أرسل نطاقاً واحداً وسنجد المنافسين ونتحقق منهم نيابةً عنك." : "Submit one domain. Market Signal finds and verifies the competitors for you.")}</p></div>
-          <div className="report-actions"><button className="secondary-button" onClick={() => showToast(ar ? "سيصبح التصدير متاحاً عند اكتمال ربط الأدلة المباشرة." : "Export is ready when live evidence is connected.")}>{ar ? "تصدير التقرير" : "Export report"} <span>↓</span></button><button className="secondary-button" onClick={() => showToast(ar ? "ستتوفر المراقبة الأسبوعية في الإصدار القادم." : "Weekly monitoring is available in the next release.")}>{ar ? "تحديد وتيرة المتابعة" : "Set cadence"} <span>⌄</span></button></div>
         </div>
 
-        <div className="metric-grid">
-          <div className="metric-card"><span className="metric-label">{ar ? "منافسون موثقون" : "Verified competitors"}</span><strong>{liveAnalysis ? competitorResults.length : "—"}</strong><div className="metric-trend positive">{liveAnalysis ? (ar ? "تم العثور عليهم وزحف مواقعهم" : "Discovered and crawled") : (ar ? "بانتظار البحث" : "Waiting for market search")}</div></div>
-          <div className="metric-card"><span className="metric-label">{ar ? "مواقع تم فحصها" : "Sites investigated"}</span><strong>{liveAnalysis ? comparisonResults.length : "—"}</strong><div className="metric-trend">{liveAnalysis ? (ar ? "موقعك والمنافسون الموثقون" : "Primary plus verified rivals") : (ar ? "لم يبدأ البحث" : "No search yet")}</div></div>
-          <div className="metric-card"><span className="metric-label">{ar ? "منتجات تم رصدها" : "Products observed"}</span><strong>{liveAnalysis ? comparisonResults.reduce((sum, result) => sum + result.products.length, 0) : "—"}</strong><div className="metric-trend">{liveAnalysis ? (ar ? "سجلات عامة منسوبة للمصدر" : "Attributable public records") : (ar ? "لم يبدأ الزحف" : "No crawl yet")}</div></div>
-          <div className="metric-card accent-card"><span className="metric-label">{ar ? "وضع الأدلة" : "Evidence mode"}</span><strong>{liveAnalysis ? (ar ? "مباشر" : "LIVE") : "—"}</strong><div className="metric-trend">{ar ? "بحث وزحف مستقل" : "Search + independent crawl"}</div></div>
-        </div>
-
-        {crawlDocument && <JsonReportRenderer document={crawlDocument} locale={locale} />}
-
-        {liveAnalysis && <section className="panel ai-brief-panel"><div className="panel-heading"><div><span className="section-number">AI</span><h3>{ar ? "ما الذي تغير في سوقك؟" : "What changed in your market?"}</h3></div><span className={`brief-mode ${marketBrief?.aiGenerated ? "brief-mode-ai" : ""}`}>{briefLoading ? (ar ? "جارٍ التحليل…" : "Synthesizing…") : marketBrief?.aiGenerated ? (ar ? "نموذج قياسي" : "Standard model") : (ar ? "تحليل مؤسس على الأدلة" : "Grounded demo")}</span></div>{briefLoading && <div className="brief-loading"><span className="pulse-dot" /> {ar ? "نربط الأدلة المرصودة في ملخص يساعدك على القرار." : "Connecting observed claims into a decision-ready brief."}</div>}{marketBrief && <><div className="brief-hero" dir="auto"><h4>{marketBrief.headline}</h4><p>{marketBrief.summary}</p></div><div className="signal-grid">{marketBrief.signals.map((signal) => <article className="signal-card" key={signal.label} dir="auto"><div className="signal-card-label">{signal.label}</div><p>{signal.text}</p><strong>{ar ? "لماذا يهم؟" : "Why it matters"}</strong><span>{signal.implication}</span><div className="signal-sources">{signal.claimIds.map((claimId) => { const claim = marketBrief.claims.find((item) => item.id === claimId); return claim ? <a href={claim.sourceUrl} target="_blank" rel="noreferrer" key={claim.id} title={claim.text}>{ar ? "المصدر" : "Source"} {marketBrief.claims.indexOf(claim) + 1} ↗</a> : null; })}</div></article>)}</div><div className="brief-footer"><div><span className="live-source-label">{ar ? "الأدلة التالية المطلوب جمعها" : "Next evidence to collect"}</span><ul dir="auto">{marketBrief.nextChecks.map((check) => <li key={check}>{check}</li>)}</ul></div><div className="brief-ledger"><span className="live-source-label">{ar ? "سجل الأدلة" : "Evidence ledger"}</span><strong>{ar ? `${marketBrief.claims.length} ادعاءات مؤسسة على أدلة` : `${marketBrief.claims.length} grounded claims`}</strong><span>{ar ? "كل استنتاج أعلاه يعود إلى مصدر عام." : "Every insight above resolves to a public source."}</span></div></div></>}</section>}
-
-        {comparisonResults.length > 0 && <section className="evidence-strip live-evidence-strip" id="method"><div><span className="section-number">{ar ? "مباشر" : "LIVE"}</span><strong>{ar ? "المصادر المرصودة" : "Observed sources"}</strong><span className="evidence-sub">{ar ? "مسار لكل نطاق تم فحصه." : "One trail per scanned domain."}</span></div><div className="evidence-items">{comparisonResults.map((result) => <div className="evidence-item" key={result.domain}><span className="evidence-tag evidence-observed">{ar ? "مرصود" : "Observed"}</span><strong>{result.domain}</strong><span>{new Date(result.fetchedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span><Confidence value="High" locale={locale} /></div>)}</div></section>}
+        {crawlDocument ? <GuidedReportRenderer document={crawlDocument} locale={locale} marketBrief={marketBrief} briefLoading={briefLoading} /> : <div className="report-empty-state"><span>01 → 02 → 03 → 04</span><strong>{ar ? "أرسل نطاقك لبدء التحقيق" : "Submit your domain to start the investigation"}</strong><p>{ar ? "سنوجهك من الخلاصة إلى المنافسين ثم مواجهات المنتجات وخطواتك التالية." : "We will guide you from verdict to rivals, product battles, and your next move."}</p></div>}
       </section>
 
       <section className="method-section shell"><div className="method-copy"><div className="eyebrow">{ar ? "الإشارة، لا الضوضاء" : "The signal, not the spectacle"}</div><h2>{ar ? <>شاهد ما نعرفه.<br /><em>وشاهد كيف عرفناه.</em></> : <>See what we know.<br /><em>See how we know it.</em></>}</h2><p>{ar ? "يفصل Market Signal بين الرصد العام واستنتاجات الذكاء الاصطناعي والتقديرات والتوصيات، ليحوّل الإجابة السريعة إلى قرار مفيد." : "Market Signal separates public observations from AI inferences, estimates, and recommendations. That is how a fast answer becomes a useful one."}</p></div><div className="method-steps"><div><span>01</span><strong>{ar ? "نجمع" : "Collect"}</strong><p>{ar ? "المواقع العامة وصفحات الأسعار ونتائج البحث ومكتبات الإعلانات." : "Public websites, pricing pages, search landscapes, and ad libraries."}</p></div><div><span>02</span><strong>{ar ? "نربط" : "Connect"}</strong><p>{ar ? "نوحد الأدلة بين المناطق والقنوات وأنماط المنافسين." : "Normalize evidence across regions, channels, and competitor patterns."}</p></div><div><span>03</span><strong>{ar ? "نشرح" : "Explain"}</strong><p>{ar ? "نحوّل الإشارة إلى قرار يمكنك تنفيذه هذا الأسبوع." : "Turn the signal into a decision your team can act on this week."}</p></div></div></section>
