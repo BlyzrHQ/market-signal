@@ -29,7 +29,7 @@ test("sanitizes, deduplicates, and excludes the primary domain from searched can
     assert.deepEqual(request.tools, [{ type: "web_search" }]);
     assert.equal(request.text.format.type, "json_schema");
     return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "International grocery delivery", region: "United Kingdom", queries: ["international grocery delivery UK"], candidates: [
-      { domain: "https://rival.example/shop", companyName: "Rival", reason: "Sells overlapping products", searchQuery: "international grocery delivery UK", sourceUrl: "https://rival.example/shop" },
+      { domain: "https://rival.example/shop", companyName: "Rival", reason: "Sells Halal Lamb Chops 500g", searchQuery: "Halal Lamb Chops 500g UK", sourceUrl: "https://rival.example/products/halal-lamb-chops", matchedPrimaryProductName: "Halal Lamb Chops 500g", matchedProductUrl: "https://rival.example/products/halal-lamb-chops" },
       { domain: "rival.example", companyName: "Duplicate", reason: "Duplicate", searchQuery: "same", sourceUrl: "https://rival.example/" },
       { domain: "myjam.co.uk", companyName: "Primary", reason: "Self", searchQuery: "same", sourceUrl: "https://myjam.co.uk/" },
       { domain: "bad.example", companyName: "Bad source", reason: "No evidence", searchQuery: "same", sourceUrl: "javascript:alert(1)" },
@@ -40,6 +40,8 @@ test("sanitizes, deduplicates, and excludes the primary domain from searched can
     assert.equal(result.available, true);
     assert.equal(result.model, "test-search-model");
     assert.deepEqual(result.candidates.map((candidate) => candidate.domain), ["rival.example"]);
+    assert.equal(result.candidates[0].matchedPrimaryProductName, "Halal Lamb Chops 500g");
+    assert.match(result.candidates[0].matchedProductUrl, /products\/halal-lamb-chops/);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
