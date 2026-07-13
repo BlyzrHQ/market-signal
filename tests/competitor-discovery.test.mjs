@@ -100,6 +100,26 @@ test("recovers a search-source candidate when the AI structured candidate array 
   }
 });
 
+test("does not expose an upstream JSON parser error when discovery returns HTML", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  globalThis.fetch = async () => new Response("<!DOCTYPE html><title>Gateway error</title>", {
+    status: 200,
+    headers: { "content-type": "text/html" },
+  });
+  try {
+    await assert.rejects(discoverCompetitors(profile), (error) => {
+      assert.match(error.message, /unreadable response.*Run the scan again/i);
+      assert.doesNotMatch(error.message, /Unexpected token|JSON/i);
+      return true;
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
 test("turns direct web-search product sources into deterministic seller candidates", () => {
   const payload = {
     output: [{

@@ -216,7 +216,12 @@ export async function discoverCompetitors(profile: DiscoveryProfile): Promise<Di
     clearTimeout(timeout);
   }
   if (!response.ok) throw new Error(`Web discovery returned HTTP ${response.status}.`);
-  const payload = await response.json() as Record<string, unknown>;
+  let payload: Record<string, unknown>;
+  try {
+    payload = await response.json() as Record<string, unknown>;
+  } catch {
+    throw new Error("Web discovery returned an unreadable response. Run the scan again.");
+  }
   const raw = outputText(payload);
   let parsed: Record<string, unknown> = {};
   if (raw) {
