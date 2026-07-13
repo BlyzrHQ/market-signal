@@ -9,6 +9,7 @@ export type DiscoveryCandidate = {
   sourceUrl: string;
   matchedPrimaryProductName: string;
   matchedProductUrl: string;
+  evidenceMethod?: "model-summarized" | "search-source";
 };
 
 export type DiscoveryProfile = {
@@ -32,6 +33,10 @@ export type DiscoveryResult = {
 };
 
 const MAX_CANDIDATES = 10;
+const SEARCH_SOURCE_STOPWORDS = new Set([
+  "apx", "approximately", "buy", "delivered", "delivery", "fresh", "halal", "home", "online", "order", "price", "product", "products", "shop", "store", "uk",
+]);
+const NON_SELLER_HOSTS = ["facebook.com", "gov.uk", "instagram.com", "linkedin.com", "pinterest.com", "reddit.com", "tiktok.com", "wikipedia.org", "youtube.com"];
 
 function outputText(payload: Record<string, unknown>) {
   if (typeof payload.output_text === "string") return payload.output_text;
@@ -58,14 +63,101 @@ function safeHttpUrl(value: unknown) {
   }
 }
 
+function cleanSearchUrl(value: unknown) {
+  const safe = safeHttpUrl(value);
+  if (!safe) return "";
+  const url = new URL(safe);
+  for (const key of [...url.searchParams.keys()]) if (/^(?:utm_.+|fbclid|gclid|msclkid)$/i.test(key)) url.searchParams.delete(key);
+  url.hash = "";
+  return url.toString();
+}
+
+function normalizedTokens(value: string) {
+  return [...new Set(value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").split(/\s+/).filter((token) => token.length > 1 && !SEARCH_SOURCE_STOPWORDS.has(token) && !/^\d+(?:\.\d+)?(?:g|kg|ml|l|oz|lb|pk|pack|pcs?)?$/i.test(token)))];
+}
+
+function productMatchFromSource(title: string, url: string, products: ProductRecord[]) {
+  const pathText = (() => { try { const parsed = new URL(url); return decodeURIComponent(`${parsed.pathname} ${parsed.search}`); } catch { return ""; } })();
+  if (/\/(?:articles?|blog|guides?|news|recipes?|reviews?|wiki)(?:\/|$)/i.test(pathText) || /\b(?:how to|recipe|review)\b/i.test(title)) return undefined;
+  const sourceTokens = normalizedTokens(`${title} ${pathText}`);
+  return products.flatMap((product) => {
+    const productTokens = normalizedTokens(product.name);
+    const shared = productTokens.filter((token) => sourceTokens.includes(token));
+    const coverage = shared.length / Math.max(1, Math.min(productTokens.length, sourceTokens.length));
+    if (shared.length < 2 || coverage < 0.5) return [];
+    return [{ product, score: shared.length * 10 + coverage }];
+  }).sort((left, right) => right.score - left.score || left.product.name.localeCompare(right.product.name))[0];
+}
+
+type SearchSource = { url: string; title: string; query: string };
+
+function searchSources(payload: Record<string, unknown>): SearchSource[] {
+  const found: SearchSource[] = [];
+  const output = Array.isArray(payload.output) ? payload.output : [];
+  for (const item of output) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    if (record.type === "web_search_call" && record.action && typeof record.action === "object") {
+      const action = record.action as Record<string, unknown>;
+      const query = typeof action.query === "string" ? action.query : Array.isArray(action.queries) ? action.queries.map(String).join("; ") : "";
+      for (const source of Array.isArray(action.sources) ? action.sources : []) {
+        if (!source || typeof source !== "object") continue;
+        const value = source as Record<string, unknown>;
+        found.push({ url: String(value.url || ""), title: String(value.title || ""), query });
+      }
+    }
+    if (record.type !== "message") continue;
+    for (const part of Array.isArray(record.content) ? record.content : []) {
+      if (!part || typeof part !== "object") continue;
+      for (const annotation of Array.isArray((part as Record<string, unknown>).annotations) ? (part as { annotations: unknown[] }).annotations : []) {
+        if (!annotation || typeof annotation !== "object" || (annotation as Record<string, unknown>).type !== "url_citation") continue;
+        const value = annotation as Record<string, unknown>;
+        found.push({ url: String(value.url || ""), title: String(value.title || ""), query: "" });
+      }
+    }
+  }
+  return found;
+}
+
+export function candidatesFromSearchEvidence(payload: Record<string, unknown>, profile: DiscoveryProfile, queries: string[] = []) {
+  const primaryDomain = canonicalDomain(profile.domain);
+  const ranked = searchSources(payload).flatMap((source) => {
+    const url = cleanSearchUrl(source.url);
+    if (!url) return [];
+    const domain = canonicalDomain(url);
+    if (!domain || domain === primaryDomain || domain.endsWith(`.${primaryDomain}`) || NON_SELLER_HOSTS.some((host) => domain === host || domain.endsWith(`.${host}`))) return [];
+    const match = productMatchFromSource(source.title, url, profile.products);
+    if (!match) return [];
+    return [{
+      score: match.score,
+      candidate: {
+        domain,
+        companyName: domain,
+        reason: `A current web search returned the directly crawlable product page “${(source.title || new URL(url).pathname).slice(0, 180)}”, matching “${match.product.name}”.`,
+        searchQuery: (source.query || queries.find((query) => normalizedTokens(query).some((token) => normalizedTokens(match.product.name).includes(token))) || `“${match.product.name}” ${profile.region}`).slice(0, 180),
+        sourceUrl: url,
+        matchedPrimaryProductName: match.product.name,
+        matchedProductUrl: url,
+        evidenceMethod: "search-source" as const,
+      },
+    }];
+  }).sort((left, right) => right.score - left.score || left.candidate.domain.localeCompare(right.candidate.domain));
+  const seen = new Set<string>();
+  return ranked.flatMap(({ candidate }) => {
+    if (seen.has(candidate.domain)) return [];
+    seen.add(candidate.domain);
+    return [candidate];
+  }).slice(0, MAX_CANDIDATES);
+}
+
 function sanitizeCandidate(value: unknown, primaryDomain: string): DiscoveryCandidate | null {
   if (!value || typeof value !== "object") return null;
   const item = value as Record<string, unknown>;
   try {
     const domain = canonicalDomain(String(item.domain || ""));
-    if (!domain || domain === primaryDomain) return null;
-    const sourceUrl = safeHttpUrl(item.sourceUrl);
-    const matchedProductUrl = safeHttpUrl(item.matchedProductUrl || item.sourceUrl);
+    if (!domain || domain === primaryDomain || domain.endsWith(`.${primaryDomain}`)) return null;
+    const sourceUrl = cleanSearchUrl(item.sourceUrl);
+    const matchedProductUrl = cleanSearchUrl(item.matchedProductUrl || item.sourceUrl);
     if (!sourceUrl || !matchedProductUrl || canonicalDomain(matchedProductUrl) !== domain) return null;
     return {
       domain,
@@ -75,6 +167,7 @@ function sanitizeCandidate(value: unknown, primaryDomain: string): DiscoveryCand
       sourceUrl,
       matchedPrimaryProductName: String(item.matchedPrimaryProductName || "").slice(0, 180),
       matchedProductUrl,
+      evidenceMethod: "model-summarized",
     };
   } catch {
     return null;
@@ -125,14 +218,20 @@ export async function discoverCompetitors(profile: DiscoveryProfile): Promise<Di
   if (!response.ok) throw new Error(`Web discovery returned HTTP ${response.status}.`);
   const payload = await response.json() as Record<string, unknown>;
   const raw = outputText(payload);
-  if (!raw) throw new Error("Web discovery returned no structured result.");
-  const parsed = JSON.parse(raw) as Record<string, unknown>;
+  let parsed: Record<string, unknown> = {};
+  if (raw) {
+    try { parsed = JSON.parse(raw) as Record<string, unknown>; } catch { parsed = {}; }
+  }
+  const queries = (Array.isArray(parsed.queries) ? parsed.queries : []).map(String).slice(0, 8);
   const seen = new Set<string>();
-  const candidates = (Array.isArray(parsed.candidates) ? parsed.candidates : []).flatMap((item) => {
+  const modelCandidates = (Array.isArray(parsed.candidates) ? parsed.candidates : []).flatMap((item) => {
     const candidate = sanitizeCandidate(item, profile.domain);
     if (!candidate || seen.has(candidate.domain)) return [];
     seen.add(candidate.domain);
     return [candidate];
-  }).slice(0, MAX_CANDIDATES);
-  return { available: true, provider: "openai-web-search", model, category: String(parsed.category || "").slice(0, 160), region: String(parsed.region || profile.region).slice(0, 160), queries: (Array.isArray(parsed.queries) ? parsed.queries : []).map(String).slice(0, 8), candidates };
+  });
+  const observedCandidates = candidatesFromSearchEvidence(payload, profile, queries).filter((candidate) => !seen.has(candidate.domain));
+  const candidates = [...modelCandidates, ...observedCandidates].slice(0, MAX_CANDIDATES);
+  if (!raw && candidates.length === 0) throw new Error("Web discovery returned no structured result or directly matchable search source.");
+  return { available: true, provider: "openai-web-search", model, category: String(parsed.category || "").slice(0, 160), region: String(parsed.region || profile.region).slice(0, 160), queries, candidates, ...(candidates.length ? {} : { gap: "Product-specific searches ran, but no directly crawlable seller product page could be matched to the catalog evidence." }) };
 }
