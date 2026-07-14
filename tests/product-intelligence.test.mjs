@@ -371,6 +371,23 @@ test("matching is deterministic and one-to-one per competitor", () => {
   assert.equal(first.unmatched[0].products.length, 0);
 });
 
+test("comparison scans the crawled catalog beyond the first sixteen products and reports bounded coverage", () => {
+  const primaryFillers = Array.from({ length: 24 }, (_, index) => product(`a-primary-${index}`, "shop.test", `Unrelated Primary ${index}`));
+  const rivalFillers = Array.from({ length: 30 }, (_, index) => product(`a-rival-${index}`, "rival.test", `Different Rival ${index}`));
+  const primaryMatch = product("z-primary-match", "shop.test", "Halal Lamb Ribs");
+  const rivalMatch = product("z-rival-match", "rival.test", "Lamb Ribs Halal");
+  const comparison = buildProductComparison("shop.test", [
+    { domain: "shop.test", products: [...primaryFillers, primaryMatch] },
+    { domain: "rival.test", products: [...rivalFillers, rivalMatch] },
+  ]);
+  const matchedRow = comparison.rows.find((row) => row.primary.id === primaryMatch.id);
+  assert.equal(matchedRow.matches[0].product.id, rivalMatch.id);
+  assert.equal(comparison.coverage.primaryProductsScanned, 25);
+  assert.equal(comparison.coverage.competitorProductsScanned, 31);
+  assert.equal(comparison.coverage.verifiedPairCount, 1);
+  assert.ok(comparison.unmatched[0].products.length <= 24);
+});
+
 test("price enrichment targets are physical product pages, competitor-diverse, and globally capped", () => {
   const primary = [
     { ...product("tea", "shop.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/lemon-ginger-tea", extraction: "sitemap", confidence: "Medium" },

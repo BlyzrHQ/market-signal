@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { verifyCompetitorEntity } from "../app/lib/competitor-verification.ts";
+import { compareVerifiedCompetitors, verifyCompetitorEntity } from "../app/lib/competitor-verification.ts";
 
 function product(domain, name, category, type = "Product") {
   return {
@@ -110,4 +110,12 @@ test("uses both agencies' first-party capability headings for category alignment
   assert.equal(result.categoryAlignment, true);
   assert.equal(result.regionCompatibility, true);
   assert.equal(result.accepted, true);
+});
+
+test("ranks a verified product-backed rival ahead only after entity acceptance", () => {
+  const base = { verificationScore: 90, accepted: true, hasProductOverlap: false };
+  const productBacked = { ...base, verificationScore: 70, hasProductOverlap: true };
+  const rejectedProductLead = { ...productBacked, accepted: false, verificationScore: 99 };
+  assert.ok(compareVerifiedCompetitors(base, productBacked) > 0);
+  assert.ok(compareVerifiedCompetitors(base, rejectedProductLead) < 0);
 });

@@ -50,6 +50,17 @@ export type ProductComparison = {
   comparisonDomains: string[];
   rows: Array<{ primary: ProductRecord; matches: ProductMatch[] }>;
   unmatched: Array<{ domain: string; products: ProductRecord[] }>;
+  coverage: {
+    primaryProductsAvailable: number;
+    primaryProductsScanned: number;
+    competitorProductsAvailable: number;
+    competitorProductsScanned: number;
+    assignedPairCount: number;
+    verifiedPairCount: number;
+    rowsReturned: number;
+    rowLimit: number;
+    truncated: boolean;
+  };
 };
 
 export type ProductEnrichmentTarget = {
@@ -675,17 +686,55 @@ function productDecision(primary: ProductRecord, candidate: ProductRecord, score
 
 export function buildProductComparison(primaryDomain: string, catalogs: Array<{ domain: string; products: ProductRecord[] }>, requiredSourceUrls: Record<string, string[]> = {}): ProductComparison {
   const canonicalPrimary = canonicalHost(primaryDomain);
+  const maxProductsPerCatalog = 400;
+  const rowLimit = 80;
+  const minimumCoverageRows = 16;
+  const maxUnmatchedProductsPerDomain = 24;
   const rank = (product: ProductRecord) => Number(product.confidence === "High") * 4 + Number(product.priceSignals.length > 0) * 2 + Number(product.extraction === "json-ld");
   const selectForComparison = (domain: string, products: ProductRecord[]) => {
     const required = new Set((requiredSourceUrls[canonicalHost(domain)] || []).map((url) => url.split("#")[0]));
-    return [...products].sort((left, right) => Number(required.has(right.sourceUrl.split("#")[0])) - Number(required.has(left.sourceUrl.split("#")[0])) || rank(right) - rank(left) || left.id.localeCompare(right.id)).slice(0, 16);
+    return [...products].sort((left, right) => Number(required.has(right.sourceUrl.split("#")[0])) - Number(required.has(left.sourceUrl.split("#")[0])) || rank(right) - rank(left) || left.id.localeCompare(right.id)).slice(0, maxProductsPerCatalog);
   };
-  const primaryProducts = selectForComparison(canonicalPrimary, catalogs.find((catalog) => canonicalHost(catalog.domain) === canonicalPrimary)?.products || []);
+  const primaryCatalog = catalogs.find((catalog) => canonicalHost(catalog.domain) === canonicalPrimary)?.products || [];
+  const primaryProducts = selectForComparison(canonicalPrimary, primaryCatalog);
   const competitors = catalogs.filter((catalog) => canonicalHost(catalog.domain) !== canonicalPrimary).map((catalog) => ({ ...catalog, domain: canonicalHost(catalog.domain), products: selectForComparison(catalog.domain, catalog.products) }));
   const rows = primaryProducts.map((primary) => ({ primary, matches: [] as ProductMatch[] }));
   const unmatched: ProductComparison["unmatched"] = [];
   for (const competitor of competitors) {
-    const pairs = primaryProducts.flatMap((primary) => competitor.products.map((product) => ({ primary, product, ...scoreProductPair(primary, product) }))).filter((pair) => pair.eligible).sort((left, right) => right.score - left.score || Number(right.primary.jsonLdType === right.product.jsonLdType) - Number(left.primary.jsonLdType === left.product.jsonLdType) || left.primary.id.localeCompare(right.primary.id) || left.product.id.localeCompare(right.product.id));
+    const competitorTokenIndex = new Map<string, ProductRecord[]>();
+    for (const product of competitor.products) {
+      for (const token of fieldTokens(product, product.name)) {
+        const entries = competitorTokenIndex.get(token) || [];
+        entries.push(product);
+        competitorTokenIndex.set(token, entries);
+      }
+    }
+    const nearbyProductsByToken = new Map<string, ProductRecord[]>();
+    const nearbyProducts = (primaryToken: string) => {
+      const cached = nearbyProductsByToken.get(primaryToken);
+      if (cached) return cached;
+      const found = new Map<string, ProductRecord>();
+      for (const [competitorToken, products] of competitorTokenIndex) {
+        if (!editDistanceAtMostOne(primaryToken, competitorToken)) continue;
+        for (const product of products) found.set(product.id, product);
+      }
+      const result = [...found.values()];
+      nearbyProductsByToken.set(primaryToken, result);
+      return result;
+    };
+    const pairs = primaryProducts.flatMap((primary) => {
+      const hitCounts = new Map<string, { product: ProductRecord; count: number }>();
+      for (const token of fieldTokens(primary, primary.name)) {
+        for (const product of nearbyProducts(token)) {
+          const hit = hitCounts.get(product.id);
+          hitCounts.set(product.id, { product, count: (hit?.count || 0) + 1 });
+        }
+      }
+      const candidates = primary.category.startsWith("saas-plan")
+        ? competitor.products.filter((product) => product.category.startsWith("saas-plan"))
+        : [...hitCounts.values()].filter((hit) => hit.count >= 2).map((hit) => hit.product);
+      return candidates.map((product) => ({ primary, product, ...scoreProductPair(primary, product) }));
+    }).filter((pair) => pair.eligible).sort((left, right) => right.score - left.score || Number(right.primary.jsonLdType === right.product.jsonLdType) - Number(left.primary.jsonLdType === left.product.jsonLdType) || left.primary.id.localeCompare(right.primary.id) || left.product.id.localeCompare(right.product.id));
     const usedPrimary = new Set<string>();
     const usedProducts = new Set<string>();
     const assignments = new Map<string, typeof pairs[number]>();
@@ -699,9 +748,32 @@ export function buildProductComparison(primaryDomain: string, catalogs: Array<{ 
       const pair = assignments.get(row.primary.id);
       row.matches.push(pair ? { domain: competitor.domain, product: pair.product, score: pair.score, confidence: pair.score >= 0.55 ? "Medium" : "Low", sharedTerms: pair.sharedTerms.slice(0, 8), claimIds: [...row.primary.claimIds, ...pair.product.claimIds], decision: productDecision(row.primary, pair.product, pair.score) } : { domain: competitor.domain, product: null, score: 0, confidence: null, sharedTerms: [], claimIds: row.primary.claimIds, decision: null });
     }
-    unmatched.push({ domain: competitor.domain, products: competitor.products.filter((product) => !usedProducts.has(product.id)) });
+    unmatched.push({ domain: competitor.domain, products: competitor.products.filter((product) => !usedProducts.has(product.id)).slice(0, maxUnmatchedProductsPerDomain) });
   }
-  return { primaryDomain: canonicalPrimary, comparisonDomains: competitors.map((competitor) => competitor.domain), rows, unmatched };
+  const matchedRows = rows
+    .filter((row) => row.matches.some((match) => match.product))
+    .sort((left, right) => Math.max(...right.matches.map((match) => match.score)) - Math.max(...left.matches.map((match) => match.score)) || left.primary.id.localeCompare(right.primary.id));
+  const unmatchedRows = rows.filter((row) => row.matches.every((match) => !match.product));
+  const returnedRows = [...matchedRows.slice(0, rowLimit), ...unmatchedRows.slice(0, Math.max(0, minimumCoverageRows - matchedRows.length))];
+  const assignedPairCount = rows.reduce((sum, row) => sum + row.matches.filter((match) => match.product).length, 0);
+  const verifiedPairCount = rows.reduce((sum, row) => sum + row.matches.filter((match) => match.product && match.confidence === "Medium").length, 0);
+  return {
+    primaryDomain: canonicalPrimary,
+    comparisonDomains: competitors.map((competitor) => competitor.domain),
+    rows: returnedRows,
+    unmatched,
+    coverage: {
+      primaryProductsAvailable: primaryCatalog.length,
+      primaryProductsScanned: primaryProducts.length,
+      competitorProductsAvailable: catalogs.filter((catalog) => canonicalHost(catalog.domain) !== canonicalPrimary).reduce((sum, catalog) => sum + catalog.products.length, 0),
+      competitorProductsScanned: competitors.reduce((sum, competitor) => sum + competitor.products.length, 0),
+      assignedPairCount,
+      verifiedPairCount,
+      rowsReturned: returnedRows.length,
+      rowLimit,
+      truncated: matchedRows.length > rowLimit,
+    },
+  };
 }
 
 function hasComparablePublicPrice(product: ProductRecord) {
