@@ -128,6 +128,8 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /No defensible product pair was verified yet/);
   assert.match(page, /لم يتم التحقق من زوج منتجات قابل للدفاع عنه بعد/);
   assert.match(page, /ProductBattleCard/);
+  assert.match(page, /battle\.primary\.imageUrl \? "has-image" : "no-image"/);
+  assert.match(page, /battle\.rival\.imageUrl \? "has-image" : "no-image"/);
   assert.match(page, /catalog-scan-summary/);
   assert.match(page, /of your products scanned/);
   assert.match(page, /rival products scanned/);
@@ -148,6 +150,8 @@ test("real-data route and product metadata are present", async () => {
   assert.match(styles, /\.ad-creative-copy strong, \.ad-creative-copy p, \.ad-creative-copy small \{[^}]*overflow-wrap: anywhere/);
   assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.ad-creative-feed \{ grid-template-columns: 1fr/);
   assert.match(styles, /\.app-root\[dir="rtl"\]/);
+  assert.match(styles, /\.battle-product\.no-image \{ grid-template-columns: minmax\(0, 1fr\); \}/);
+  assert.match(styles, /\.battle-product\.no-image strong \{ grid-column: 1; \}/);
   assert.doesNotMatch(page, /className="metric-grid"/);
   assert.doesNotMatch(page, /className="report-actions"/);
   assert.doesNotMatch(page, /This scan did not collect ad-library/);

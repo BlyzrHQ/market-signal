@@ -282,7 +282,7 @@ function ProductBattleCard({ battle, locale, rivalLabel }: { battle: BattleView;
     <article className="guided-battle">
       {rivalLabel && <div className="battle-rival-label"><span>{ar ? "المنافس" : "COMPETITOR"}</span><strong>{rivalLabel}</strong></div>}
       <div className="battle-product-head">
-        <div className="battle-product your-product">
+        <div className={`battle-product your-product ${battle.primary.imageUrl ? "has-image" : "no-image"}`}>
           {battle.primary.imageUrl && <img src={battle.primary.imageUrl} alt="" loading="lazy" />}
           <span>{ar ? "منتجك" : "YOUR PRODUCT"}</span>
           <strong dir="auto">{battle.primary.name}</strong>
@@ -291,7 +291,7 @@ function ProductBattleCard({ battle, locale, rivalLabel }: { battle: BattleView;
           <span>{planTierOf(battle.primary) && planTierOf(battle.primary) === planTierOf(battle.rival) ? (ar ? "نفس الفئة" : "SAME TIER") : `${Math.round(Number(battle.match.score || 0) * 100)}%`}</span>
           <i />
         </div>
-        <div className="battle-product rival-product">
+        <div className={`battle-product rival-product ${battle.rival.imageUrl ? "has-image" : "no-image"}`}>
           {battle.rival.imageUrl && <img src={battle.rival.imageUrl} alt="" loading="lazy" />}
           <span>{ar ? "منتج المنافس" : "RIVAL PRODUCT"}</span>
           <strong dir="auto">{battle.rival.name}</strong>
