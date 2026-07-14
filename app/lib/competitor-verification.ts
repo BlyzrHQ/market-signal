@@ -88,3 +88,9 @@ export function verifyCompetitorEntity(primary: VerificationSite, candidate: Ver
     provenRivalProduct: pair?.right,
   };
 }
+
+export function compareVerifiedCompetitors(left: CompetitorVerification, right: CompetitorVerification) {
+  return Number(right.accepted) - Number(left.accepted)
+    || Number(right.accepted && right.hasProductOverlap) - Number(left.accepted && left.hasProductOverlap)
+    || right.verificationScore - left.verificationScore;
+}

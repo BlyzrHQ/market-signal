@@ -109,6 +109,13 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /GuidedReportRenderer/);
   assert.match(page, /THREAT MAP/);
   assert.match(page, /RIVAL DOSSIERS/);
+  assert.match(page, /PRODUCT COMPARISON/);
+  assert.match(page, /id="product-comparison"/);
+  assert.match(page, /No defensible product pair was verified yet/);
+  assert.match(page, /لم يتم التحقق من زوج منتجات قابل للدفاع عنه بعد/);
+  assert.match(page, /ProductBattleCard/);
+  assert.match(page, /SAME TIER/);
+  assert.match(page, /href=\{`#dossier-\$\{rivalDomain\}`\}/);
   assert.match(page, /price-picture/);
   assert.doesNotMatch(page, /comparablePriceDelta/);
   assert.match(page, /isDefensibleProductMatch/);

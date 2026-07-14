@@ -3,7 +3,7 @@ import { buildProductComparison, extractFirstPartyOfferings, extractProductsFrom
 import { parseRobots } from "../../lib/robots";
 import { discoverCompetitors, type DiscoveryCandidate, type DiscoveryResult } from "../../lib/competitor-discovery";
 import { attributableFacebookUrl, type AdIntelligenceResult } from "../../lib/ad-intelligence";
-import { verifyCompetitorEntity, type CompetitorVerification } from "../../lib/competitor-verification";
+import { compareVerifiedCompetitors, verifyCompetitorEntity, type CompetitorVerification } from "../../lib/competitor-verification";
 import { inferBusinessProfile } from "../../lib/business-profile";
 import { combineRegionSignals, displayRegion, inferRegion as inferRegionEvidence, type RegionSignal } from "../../lib/region-inference";
 
@@ -460,9 +460,9 @@ export async function POST(request: Request) {
       discovery = { available: false, provider: "unavailable", model: process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini", category: "", region: primary.homepage.region, businessType: "unknown", queries: [], candidates: [], gaps: [gap], gap };
     }
     const discoveredResults = await Promise.all(discovery.candidates.filter((candidate) => !domains.includes(candidate.domain)).map(async (candidate) => {
-      try { return verifyDiscoveredCompetitor(primary, await crawlDomain(candidate.domain, "discovered-competitor", [candidate.matchedProductUrl || candidate.websiteUrl]), candidate); } catch { return null; }
+      try { return verifyDiscoveredCompetitor(primary, await crawlDomain(candidate.domain, "discovered-competitor", candidate.matchedProductUrls?.length ? candidate.matchedProductUrls : [candidate.matchedProductUrl || candidate.websiteUrl]), candidate); } catch { return null; }
     }));
-    const confirmed: DomainCrawl[] = discoveredResults.filter((result): result is NonNullable<typeof result> => Boolean(result?.homepage && result.discovery?.accepted));
+    const confirmed: DomainCrawl[] = discoveredResults.filter((result): result is NonNullable<typeof result> => Boolean(result?.homepage && result.discovery?.accepted)).sort((left, right) => compareVerifiedCompetitors(left.discovery!, right.discovery!));
     const results = await enrichMatchedProductPages([...submittedResults, ...confirmed], primaryDomain);
     const enrichedPrimary = results.find((result) => result.domain === primaryDomain) || primary;
     const enrichedConfirmed = results.filter((result) => result.role === "discovered-competitor");

@@ -188,6 +188,7 @@ function product(value: unknown) {
   const item = object(value);
   return {
     item,
+    id: String(item.id || item.sourceUrl || item.name || "observed-product"),
     name: String(item.name || "Observed product"),
     domain: String(item.domain || ""),
     description: String(item.description || ""),
@@ -196,6 +197,7 @@ function product(value: unknown) {
     imageUrl: String(item.imageUrl || ""),
     extraction: String(item.extraction || "page-signal"),
     confidence: String(item.confidence || "Medium"),
+    observedAt: String(item.observedAt || ""),
     prices: Array.isArray(item.priceSignals) ? item.priceSignals.map((signal) => String(object(signal).raw || "")).filter(Boolean) : [],
     attributes: Array.isArray(item.attributes) ? item.attributes.map(String) : [],
   };
@@ -210,7 +212,7 @@ type BattleView = {
 
 function productBattles(block: JsonBlock | undefined) {
   if (!block) return [] as BattleView[];
-  return jsonList(block, "rows")
+  const battles = jsonList(block, "rows")
     .flatMap((row) => {
       const rowItem = object(row);
       const primary = product(rowItem.primary);
@@ -225,6 +227,7 @@ function productBattles(block: JsonBlock | undefined) {
         }));
     })
     .sort((left, right) => Number(right.match.score || 0) - Number(left.match.score || 0));
+  return [...new Map(battles.map((battle) => [`${battle.primary.id}|${battle.rival.id}`, battle])).values()];
 }
 
 function planTierOf(item: ReturnType<typeof product>) {
@@ -268,6 +271,58 @@ function PricePicture({ battle, locale }: { battle: BattleView; locale: Locale }
       </div>
       <p dir="auto">{comparison.equal ? (ar ? "السعران المعلنان متساويان" : "Observed prices are equal") : delta === 0 ? (ar ? "فرق السعر أقل من 1٪" : "Price difference is under 1%") : delta < 0 ? (ar ? `المنافس أرخص بنسبة ${Math.abs(delta)}٪` : `Rival is ${Math.abs(delta)}% cheaper`) : ar ? `أنت أرخص بنسبة ${delta}٪` : `You are ${delta}% cheaper`}</p>
     </div>
+  );
+}
+
+function ProductBattleCard({ battle, locale, rivalLabel }: { battle: BattleView; locale: Locale; rivalLabel?: string }) {
+  const ar = locale === "ar";
+  const observedDates = [...new Set([battle.primary.observedAt, battle.rival.observedAt].filter(Boolean).map((value) => value.slice(0, 10)))];
+  const rivalDomain = String(battle.match.domain || battle.rival.domain || "");
+  return (
+    <article className="guided-battle">
+      {rivalLabel && <div className="battle-rival-label"><span>{ar ? "المنافس" : "COMPETITOR"}</span><strong>{rivalLabel}</strong></div>}
+      <div className="battle-product-head">
+        <div className="battle-product your-product">
+          {battle.primary.imageUrl && <img src={battle.primary.imageUrl} alt="" loading="lazy" />}
+          <span>{ar ? "منتجك" : "YOUR PRODUCT"}</span>
+          <strong dir="auto">{battle.primary.name}</strong>
+        </div>
+        <div className="battle-connector">
+          <span>{planTierOf(battle.primary) && planTierOf(battle.primary) === planTierOf(battle.rival) ? (ar ? "نفس الفئة" : "SAME TIER") : `${Math.round(Number(battle.match.score || 0) * 100)}%`}</span>
+          <i />
+        </div>
+        <div className="battle-product rival-product">
+          {battle.rival.imageUrl && <img src={battle.rival.imageUrl} alt="" loading="lazy" />}
+          <span>{ar ? "منتج المنافس" : "RIVAL PRODUCT"}</span>
+          <strong dir="auto">{battle.rival.name}</strong>
+        </div>
+      </div>
+      <PricePicture battle={battle} locale={locale} />
+      <div className="battle-evidence-meta">
+        <Confidence value={String(battle.match.confidence || "Medium")} locale={locale} />
+        <span>{ar ? "أساس المطابقة: أسماء متقاربة وصفحتا منتج من الطرف الأول" : "MATCH BASIS: aligned names + two first-party product pages"}</span>
+        {observedDates.length > 0 && <span>{ar ? "تاريخ الرصد" : "OBSERVED"}: {observedDates.join(" / ")}</span>}
+      </div>
+      <div className="decision-path">
+        <div>
+          <span>{ar ? "ما نراه" : "WHAT WE SEE"}</span>
+          <p>{String(battle.decision.priceVerdict || (ar ? "لم نرصد سعرين عامين قابلين للمقارنة بعد." : "Two comparable public prices were not observed yet."))}</p>
+        </div>
+        <div>
+          <span>{ar ? "لماذا قد يفوز" : "WHY THEY MAY WIN"}</span>
+          <p>{String(battle.decision.whyTheyMayWin || (ar ? "لا يوجد دليل كافٍ لادعاء أفضلية لهذا المنتج بعد." : "There is not enough evidence to claim an advantage for this product yet."))}</p>
+        </div>
+        <div className="decision-action">
+          <span>{ar ? "قرارك التالي" : "YOUR NEXT DECISION"}</span>
+          <p>{String(battle.decision.recommendedMove || (ar ? "تحقق من العرضين قبل تغيير السعر أو الرسالة." : "Verify both offers before changing price or messaging."))}</p>
+        </div>
+      </div>
+      <footer>
+        <SafeExternalLink href={battle.primary.sourceUrl}>{ar ? "مصدر منتجك ↗" : "Your source ↗"}</SafeExternalLink>
+        <SafeExternalLink href={battle.rival.sourceUrl}>{ar ? "مصدر المنافس ↗" : "Rival source ↗"}</SafeExternalLink>
+        {rivalDomain && <a href={`#dossier-${rivalDomain}`}>{ar ? "ملف المنافس ↓" : "Rival dossier ↓"}</a>}
+      </footer>
+    </article>
   );
 }
 
@@ -408,6 +463,8 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
   const allBattles = productBattles(comparison);
   const competitorDomains = new Set(competitors.map((competitor) => jsonText(competitor, "domain")));
   const battles = allBattles.filter((battle) => competitorDomains.has(String(battle.match.domain)));
+  const visibleBattles = battles.slice(0, 8);
+  const remainingBattles = battles.slice(8);
   const ads = doc.blocks.find((block) => block.type === "ad-intelligence");
   const adCompanies = jsonList(ads || { type: "", id: "" }, "companies").map(object);
   const adLimitation = jsonText(ads || { type: "", id: "" }, "limitation");
@@ -487,12 +544,16 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
             <b>02</b>
             <span>{ar ? "خريطة المنافسين" : "Threat map"}</span>
           </a>
-          <a href="#rival-dossiers">
+          <a href="#product-comparison">
             <b>03</b>
+            <span>{ar ? "مقارنة المنتجات" : "Product comparison"}</span>
+          </a>
+          <a href="#rival-dossiers">
+            <b>04</b>
             <span>{ar ? "ملفات المنافسين" : "Rival dossiers"}</span>
           </a>
           <a href="#evidence-appendix">
-            <b>04</b>
+            <b>05</b>
             <span>{ar ? "الأدلة" : "Evidence"}</span>
           </a>
         </nav>
@@ -540,10 +601,47 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
             )}
           </section>
 
+          <section className="story-chapter product-battles-chapter" id="product-comparison">
+            <div className="chapter-heading">
+              <div>
+                <span className="chapter-kicker">03 · {ar ? "مقارنة المنتجات" : "PRODUCT COMPARISON"}</span>
+                <h3>{ar ? "ما الذي يبيعه المنافس مقابل منتجك؟" : "What are rivals selling against your products?"}</h3>
+              </div>
+              <p>{ar ? "تظهر هنا فقط الأزواج التي اجتازت مطابقة الاسم والصفحة ومصدر الطرف الأول." : "Only pairs backed by matching names and crawled first-party product pages appear here."}</p>
+            </div>
+            {battles.length > 0 && <div className="battle-pair-count">{battles.length} {ar ? "أزواج موثقة" : `verified pair${battles.length === 1 ? "" : "s"}`}</div>}
+            {battles.length ? (
+              <div className="product-battle-list">
+                {visibleBattles.map((battle, index) => {
+                  const domain = String(battle.match.domain || "");
+                  const competitor = competitors.find((item) => jsonText(item, "domain") === domain);
+                  return <ProductBattleCard battle={battle} locale={locale} rivalLabel={jsonText(competitor || { type: "", id: "" }, "companyName") || domain} key={`${domain}-${battle.primary.sourceUrl}-${index}`} />;
+                })}
+                {remainingBattles.length > 0 && (
+                  <details className="more-product-battles">
+                    <summary>{ar ? `اعرض ${remainingBattles.length} مقارنة إضافية` : `Show ${remainingBattles.length} more verified comparison${remainingBattles.length === 1 ? "" : "s"}`}</summary>
+                    <div>
+                      {remainingBattles.map((battle, index) => {
+                        const domain = String(battle.match.domain || "");
+                        const competitor = competitors.find((item) => jsonText(item, "domain") === domain);
+                        return <ProductBattleCard battle={battle} locale={locale} rivalLabel={jsonText(competitor || { type: "", id: "" }, "companyName") || domain} key={`${domain}-${battle.primary.sourceUrl}-more-${index}`} />;
+                      })}
+                    </div>
+                  </details>
+                )}
+              </div>
+            ) : (
+              <div className="product-coverage-state">
+                <strong>{ar ? "لم يتم التحقق من زوج منتجات قابل للدفاع عنه بعد" : "No defensible product pair was verified yet"}</strong>
+                <p>{ar ? "اكتملت مقارنة كتالوجات المنافسين المؤكدين، لكن لا توجد صفحتا منتج من الطرف الأول متشابهتان بما يكفي لعرضهما كحقيقة. سنُظهر الزوج هنا عند العثور عليه، ولن نخترع مقارنة." : "The confirmed competitor catalogs were compared, but no two first-party product pages were similar enough to present as fact. A pair will appear here when verified; Market Signal will not manufacture one."}</p>
+              </div>
+            )}
+          </section>
+
           <section className="story-chapter" id="rival-dossiers">
             <div className="chapter-heading">
               <div>
-                <span className="chapter-kicker">03 · {ar ? "ملفات المنافسين" : "RIVAL DOSSIERS"}</span>
+                <span className="chapter-kicker">04 · {ar ? "ملفات المنافسين" : "RIVAL DOSSIERS"}</span>
                 <h3>{ar ? "الدليل، الفرق، والخطوة التالية" : "Proof, difference, and next move"}</h3>
               </div>
               <p>{ar ? "افتح أي منافس لرؤية القصة كاملة دون تشتيت." : "Open a rival to follow the full story without the noise."}</p>
@@ -578,45 +676,7 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
                       </div>
                       <div className="dossier-battles">
                         {rivalBattles.length === 0 && <PositioningComparison competitor={competitor} locale={locale} />}
-                        {rivalBattles.map((battle, battleIndex) => (
-                          <article className="guided-battle" key={`${domain}-${battleIndex}`}>
-                            <div className="battle-product-head">
-                              <div className="battle-product your-product">
-                                {battle.primary.imageUrl && <img src={battle.primary.imageUrl} alt="" loading="lazy" />}
-                                <span>{ar ? "منتجك" : "YOUR PRODUCT"}</span>
-                                <strong dir="auto">{battle.primary.name}</strong>
-                              </div>
-                              <div className="battle-connector">
-                                <span>{planTierOf(battle.primary) && planTierOf(battle.primary) === planTierOf(battle.rival) ? (ar ? "نفس الفئة" : "SAME TIER") : `${Math.round(Number(battle.match.score || 0) * 100)}%`}</span>
-                                <i />
-                              </div>
-                              <div className="battle-product rival-product">
-                                {battle.rival.imageUrl && <img src={battle.rival.imageUrl} alt="" loading="lazy" />}
-                                <span>{ar ? "منتج المنافس" : "RIVAL PRODUCT"}</span>
-                                <strong dir="auto">{battle.rival.name}</strong>
-                              </div>
-                            </div>
-                            <PricePicture battle={battle} locale={locale} />
-                            <div className="decision-path">
-                              <div>
-                                <span>{ar ? "ما نراه" : "WHAT WE SEE"}</span>
-                                <p>{String(battle.decision.priceVerdict || (ar ? "لم نرصد سعرين عامين قابلين للمقارنة بعد." : "Two comparable public prices were not observed yet."))}</p>
-                              </div>
-                              <div>
-                                <span>{ar ? "لماذا قد يفوز" : "WHY THEY MAY WIN"}</span>
-                                <p>{String(battle.decision.whyTheyMayWin || (ar ? "لا يوجد دليل كافٍ لادعاء أفضلية لهذا المنتج بعد." : "There is not enough evidence to claim an advantage for this product yet."))}</p>
-                              </div>
-                              <div className="decision-action">
-                                <span>{ar ? "قرارك التالي" : "YOUR NEXT DECISION"}</span>
-                                <p>{String(battle.decision.recommendedMove || (ar ? "تحقق من العرضين قبل تغيير السعر أو الرسالة." : "Verify both offers before changing price or messaging."))}</p>
-                              </div>
-                            </div>
-                            <footer>
-                              <SafeExternalLink href={battle.primary.sourceUrl}>{ar ? "مصدر منتجك ↗" : "Your source ↗"}</SafeExternalLink>
-                              <SafeExternalLink href={battle.rival.sourceUrl}>{ar ? "مصدر المنافس ↗" : "Rival source ↗"}</SafeExternalLink>
-                            </footer>
-                          </article>
-                        ))}
+                        {rivalBattles.length > 0 && <a className="product-pair-link" href="#product-comparison">{ar ? `اعرض ${rivalBattles.length} مقارنة منتجات موثقة` : `View ${rivalBattles.length} verified product comparison${rivalBattles.length === 1 ? "" : "s"}`} {ar ? "←" : "→"}</a>}
                       </div>
                       <div className="dossier-ad-row">
                         <div>
@@ -644,7 +704,7 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
           <details className="evidence-appendix" id="evidence-appendix">
             <summary>
               <div>
-                <span className="chapter-kicker">04 · {ar ? "الأدلة والتغطية" : "EVIDENCE & COVERAGE"}</span>
+                <span className="chapter-kicker">05 · {ar ? "الأدلة والتغطية" : "EVIDENCE & COVERAGE"}</span>
                 <strong>{ar ? "اعرض الفجوات والمنهج" : "Show gaps and methodology"}</strong>
               </div>
               <span>
