@@ -77,7 +77,11 @@ The report currently reduces ad intelligence to small status chips and links, wh
 ## Validation record
 
 - Fable 5 strict plan review: `PLAN_PASS`; the reviewer confirmed the exact-attribution, safety, state, rendering, responsive, and real-control validation plan resolved its blockers.
-- Local implementation validation: typecheck passed, production build passed, lint passed, and 98/98 automated tests passed on 2026-07-14.
+- Local implementation validation: typecheck passed, production build passed, lint passed, and 99/99 automated tests passed on 2026-07-14.
 - Browser visual validation: pending; the in-app browser runtime failed during connection setup and is not counted as passed.
-- Real-data validation, exact private Sites deployment, strict implementation review, and PR merge: pending.
-- Live MyJam validation on Sites v35 exposed one provider result with a 2025 delivery-stop date despite an active filter; it is recorded as a failed quality check and triggered the stale-record exclusion now under validation. A separate Nike control returned a numeric exact Page and grouped public records dated through the 2026-07-14 observation date.
+- Quality-gate incident: Sites v35 exposed a Halalo provider record with a 2025 delivery-stop date despite an active filter. The stale-record exclusion was added, regression-tested, and verified on v36 before completion review.
+- Exact private deployment: Sites v36 successfully deployed commit `f71390a24fb89c9ae77c400c6d27c6656cad911c` to the owner-only production URL.
+- Exact-commit MyJam run: 36,015 ms crawl plus 24,878 ms ad scan. Halalo and ISHOPDESI were accepted as company competitors. MyJam and ISHOPDESI remained access-limited; Halalo resolved to exact Page `105325241469178` but its one provider record was correctly excluded as stale and the UI state became `no-verified-result`.
+- Active control: Nike resolved through the bounded identity probe to Nike Football Page `51212153078`; 18 exact-Page records grouped into 9 concepts, with six bounded concepts returned to the UI, direct archive records, real Meta-hosted media, and zero cross-Page/stale records. The control is not inserted into the MyJam report.
+- Full structured evidence is in `docs/tasks/023-live-evidence.json`.
+- Strict implementation review and PR merge: pending.
