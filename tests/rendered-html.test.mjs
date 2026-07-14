@@ -106,6 +106,7 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /Open destination ↗/);
   assert.match(page, /View public Meta record ↗/);
   assert.match(page, /cross-Page records discarded/);
+  assert.match(page, /stale records excluded/);
   assert.match(page, /identity-probe records/);
   assert.match(page, /We do not infer spend or turn limited access into zero activity/);
   assert.doesNotMatch(page, /estimated spend|ESTIMATED SPEND|impression estimate|reach estimate/i);

@@ -436,7 +436,7 @@ function AdCompanyActivity({ company, locale, observedAt, primary }: { company: 
         </div>
         <div>
           <span>{ar ? "تغطية البيانات" : "DATA COVERAGE"}</span>
-          <p>{Number(meta?.discardedRecordCount || 0)} {ar ? "سجل مستبعد لعدم تطابق الصفحة" : "cross-Page records discarded"} · {Number(meta?.identityProbeRecordCount || 0)} {ar ? "سجل في فحص الهوية" : "identity-probe records"}</p>
+          <p>{Number(meta?.discardedRecordCount || 0)} {ar ? "سجل مستبعد لعدم تطابق الصفحة" : "cross-Page records discarded"} · {Number(meta?.inactiveRecordCount || 0)} {ar ? "سجل منتهي مستبعد" : "stale records excluded"} · {Number(meta?.identityProbeRecordCount || 0)} {ar ? "سجل في فحص الهوية" : "identity-probe records"}</p>
         </div>
         <div>
           <span>{ar ? "تاريخ الرصد" : "OBSERVED"}</span>

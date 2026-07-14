@@ -19,6 +19,7 @@ export type AdPlatformResult = {
   exactPageName?: string;
   discardedRecordCount?: number;
   identityProbeRecordCount?: number;
+  inactiveRecordCount?: number;
 };
 
 export type MetaCreativeConcept = {
@@ -364,6 +365,14 @@ function groupCreativeConcepts(records: MetapiAdRecord[], identity: MetapiPageId
   return { placements, concepts: [...grouped.values()].sort((a, b) => b.placementCount - a.placementCount || b.startDate.localeCompare(a.startDate)) };
 }
 
+function currentDeliveryRecord(record: MetapiAdRecord, observedAt = new Date()) {
+  const rawStop = firstText(record.delivery_stop_time ?? record.stop_date, 32);
+  if (!rawStop) return true;
+  const stop = new Date(rawStop);
+  if (!Number.isFinite(stop.getTime())) return false;
+  return stop.toISOString().slice(0, 10) >= observedAt.toISOString().slice(0, 10);
+}
+
 type MetapiTaskResult = { ok: true; records: MetapiAdRecord[] } | { ok: false; message: string };
 
 async function runMetapiTask(
@@ -485,23 +494,31 @@ export async function queryMetapiAdvertiser(
   if ("message" in exactTask) return { ...metapiError(company, country, exactTask.message, identity), identityProbeRecordCount };
   try {
     const allRecords = exactTask.records;
-    const exactRecords = allRecords.filter((record) => String(record.provider_page_id || "") === identity.pageId);
-    const discardedRecordCount = allRecords.length - exactRecords.length;
+    const pageRecords = allRecords.filter((record) => String(record.provider_page_id || "") === identity.pageId);
+    const discardedRecordCount = allRecords.length - pageRecords.length;
+    const exactRecords = pageRecords.filter((record) => currentDeliveryRecord(record));
+    const inactiveRecordCount = pageRecords.length - exactRecords.length;
     const searchUrl = exactMetaSearch(identity.pageId, country);
-    if (allRecords.length && !exactRecords.length) return {
+    if (allRecords.length && !pageRecords.length) return {
       ...metapiError(company, country, `The provider returned ${allRecords.length} record${allRecords.length === 1 ? "" : "s"}, but none matched exact Page ${identity.pageId}; all were discarded as unsafe attribution.`, identity),
-      exactPageId: identity.pageId, exactPageName: identity.pageName, discardedRecordCount, identityProbeRecordCount,
+      exactPageId: identity.pageId, exactPageName: identity.pageName, discardedRecordCount, identityProbeRecordCount, inactiveRecordCount,
+    };
+    if (pageRecords.length && !exactRecords.length) return {
+      platform: "Meta", status: "no-verified-result", activeCreativeCount: 0,
+      message: `${pageRecords.length} exact-Page record${pageRecords.length === 1 ? " was" : "s were"} returned, but every public delivery-stop date had elapsed before this check. No currently active record was verified in ${country}.`,
+      themes: [], evidenceUrls: [], searchUrl, sourceProvider: "metapi-exact-page", attributionUrl: identity.profileUrl, attributionLabel: `${identity.pageName || company.brand} · Page ${identity.pageId}`, creativeConceptCount: 0, creativeConcepts: [],
+      exactPageId: identity.pageId, exactPageName: identity.pageName || company.brand, discardedRecordCount, identityProbeRecordCount, inactiveRecordCount,
     };
     if (!exactRecords.length) return {
       platform: "Meta", status: "no-verified-result", activeCreativeCount: 0,
       message: `No active Meta ads were observed for exact Page ${identity.pageId} in ${country} at this check. This does not prove zero activity in other regions, time periods, or Pages.`,
       themes: [], evidenceUrls: [], searchUrl, sourceProvider: "metapi-exact-page", attributionUrl: identity.profileUrl, attributionLabel: `${identity.pageName || company.brand} · Page ${identity.pageId}`, creativeConceptCount: 0, creativeConcepts: [],
-      exactPageId: identity.pageId, exactPageName: identity.pageName || company.brand, discardedRecordCount, identityProbeRecordCount,
+      exactPageId: identity.pageId, exactPageName: identity.pageName || company.brand, discardedRecordCount, identityProbeRecordCount, inactiveRecordCount,
     };
     const { placements, concepts } = groupCreativeConcepts(exactRecords, identity);
     if (!placements.length) return {
       ...metapiError(company, country, "The exact Page returned records, but none had a usable public Meta ad ID.", identity),
-      exactPageId: identity.pageId, exactPageName: identity.pageName, discardedRecordCount, identityProbeRecordCount,
+      exactPageId: identity.pageId, exactPageName: identity.pageName, discardedRecordCount, identityProbeRecordCount, inactiveRecordCount,
     };
     return {
       platform: "Meta", status: "verified-active", activeCreativeCount: placements.length,
@@ -510,7 +527,7 @@ export async function queryMetapiAdvertiser(
       evidenceUrls: placements.map((placement) => placement.evidenceUrl).slice(0, 8), searchUrl,
       sourceProvider: "metapi-exact-page", attributionUrl: identity.profileUrl, attributionLabel: `${identity.pageName || company.brand} · Page ${identity.pageId}`,
       creativeConceptCount: concepts.length, creativeConcepts: concepts.slice(0, 6),
-      exactPageId: identity.pageId, exactPageName: identity.pageName || company.brand, discardedRecordCount, identityProbeRecordCount,
+      exactPageId: identity.pageId, exactPageName: identity.pageName || company.brand, discardedRecordCount, identityProbeRecordCount, inactiveRecordCount,
     };
   } catch { return metapiError(company, country, "The exact-Page ad provider could not be reached automatically.", identity); }
 }
@@ -579,9 +596,9 @@ export async function queryMetaAdLibrary(company: CompanyInput, region: string, 
     }
 
     const data = Array.isArray(payload.data) ? payload.data as MetaAdRecord[] : [];
-    const exactData = data.filter((ad) => String(ad.page_id || "") === identity.pageId);
-    const discardedRecordCount = data.length - exactData.length;
-    const normalizedRecords: MetapiAdRecord[] = exactData.map((ad) => ({
+    const pageData = data.filter((ad) => String(ad.page_id || "") === identity.pageId);
+    const discardedRecordCount = data.length - pageData.length;
+    const normalizedPageRecords: MetapiAdRecord[] = pageData.map((ad) => ({
       provider_id: ad.id,
       provider_page_id: ad.page_id,
       provider_page_name: ad.page_name,
@@ -594,13 +611,17 @@ export async function queryMetaAdLibrary(company: CompanyInput, region: string, 
       snapshot_url: ad.ad_snapshot_url,
       publisher_platforms: ad.publisher_platforms,
     }));
+    const normalizedRecords = normalizedPageRecords.filter((record) => currentDeliveryRecord(record));
+    const inactiveRecordCount = normalizedPageRecords.length - normalizedRecords.length;
+    const exactData = pageData.filter((_, index) => currentDeliveryRecord(normalizedPageRecords[index]));
     const { placements, concepts } = groupCreativeConcepts(normalizedRecords, { ...identity, pageName: identity.pageName || firstText(exactData[0]?.page_name, 120) || company.brand });
     const evidenceUrls = [...new Set(placements.map((ad) => ad.evidenceUrl).filter(Boolean))];
     const themes = [...new Set(concepts.map((concept) => concept.message || concept.headline || concept.caption).filter(Boolean))].slice(0, 5);
     const hasMore = Boolean(payload.paging && typeof payload.paging === "object" && (payload.paging as JsonRecord).next);
-    const common = { searchUrl: exactMetaSearch(identity.pageId, searches.regionCode), sourceProvider: "meta-official" as const, attributionUrl: identity.profileUrl, attributionLabel: `${identity.pageName || firstText(exactData[0]?.page_name, 120) || company.brand} · Page ${identity.pageId}`, exactPageId: identity.pageId, exactPageName: identity.pageName || firstText(exactData[0]?.page_name, 120) || company.brand, discardedRecordCount };
+    const common = { searchUrl: exactMetaSearch(identity.pageId, searches.regionCode), sourceProvider: "meta-official" as const, attributionUrl: identity.profileUrl, attributionLabel: `${identity.pageName || firstText(pageData[0]?.page_name, 120) || company.brand} · Page ${identity.pageId}`, exactPageId: identity.pageId, exactPageName: identity.pageName || firstText(pageData[0]?.page_name, 120) || company.brand, discardedRecordCount, inactiveRecordCount };
     if (!data.length) return { platform: "Meta", status: "no-verified-result", activeCreativeCount: 0, message: `Meta API returned no active commercial ads for exact Page ${identity.pageId} in ${searches.regionCode}. This scoped query is not proof of zero advertising in other regions or time periods.`, themes: [], evidenceUrls: [], creativeConceptCount: 0, creativeConcepts: [], ...common };
-    if (!exactData.length) return { platform: "Meta", status: "access-limited", activeCreativeCount: 0, message: `Meta returned ${data.length} record${data.length === 1 ? "" : "s"}, but none matched exact Page ${identity.pageId}; all were discarded.`, themes: [], evidenceUrls: [], ...common };
+    if (!pageData.length) return { platform: "Meta", status: "access-limited", activeCreativeCount: 0, message: `Meta returned ${data.length} record${data.length === 1 ? "" : "s"}, but none matched exact Page ${identity.pageId}; all were discarded.`, themes: [], evidenceUrls: [], ...common };
+    if (!exactData.length) return { platform: "Meta", status: "no-verified-result", activeCreativeCount: 0, message: `${pageData.length} exact-Page Meta record${pageData.length === 1 ? " was" : "s were"} returned, but every delivery-stop date had elapsed before this check. No currently active record was verified.`, themes: [], evidenceUrls: [], creativeConceptCount: 0, creativeConcepts: [], ...common };
     if (!evidenceUrls.length) return { platform: "Meta", status: "access-limited", activeCreativeCount: 0, message: `Meta returned ${exactData.length} exact-Page record${exactData.length === 1 ? "" : "s"}, but no usable public ad IDs were available.`, themes, evidenceUrls: [], ...common };
     return { platform: "Meta", status: "verified-active", activeCreativeCount: placements.length, activeCreativeCountIsLowerBound: hasMore, message: `${hasMore ? "At least " : ""}${placements.length} active Meta record${placements.length === 1 ? "" : "s"} group into ${concepts.length} creative concept${concepts.length === 1 ? "" : "s"}.`, themes, evidenceUrls, creativeConceptCount: concepts.length, creativeConcepts: concepts.slice(0, 6), ...common };
   } catch {

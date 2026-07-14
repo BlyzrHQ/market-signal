@@ -30,8 +30,8 @@ test("queries Metapi by exact company Page ID and groups duplicate placements in
     }
     if (String(url).endsWith("/tasks/task-1/status")) return Response.json({ status: "succeeded" });
     return Response.json({ data: [
-      { provider_id: 7001, provider_page_id: "123456789", provider_page_name: "Rival Foods", bodies: ["Fresh bread delivered today"], captions: ["Order bakery"], creative_link_titles: ["Bread in 30 minutes"], creative_link_descriptions: ["Freshly baked"], cta_text: "Shop now", original_image_url: "https://scontent-lhr8-1.xx.fbcdn.net/ad.jpg", link_url: "https://rival.example/bread", data_sources: ["facebook"], languages: ["en"], countries: ["GB"], delivery_start_time: "2026-07-01", delivery_stop_time: "2026-07-05" },
-      { provider_id: 7002, provider_page_id: "123456789", provider_page_name: "Rival Foods", bodies: ["Fresh bread delivered today"], captions: ["Order bakery"], creative_link_titles: ["Bread in 30 minutes"], creative_link_descriptions: ["Freshly baked"], cta_text: "Shop now", original_image_url: "https://scontent-lhr8-1.xx.fbcdn.net/ad-2.jpg", link_url: "https://rival.example/bread", data_sources: ["instagram"], languages: ["ar"], countries: ["GB"], delivery_start_time: "2026-06-28", delivery_stop_time: "2026-07-08" },
+      { provider_id: 7001, provider_page_id: "123456789", provider_page_name: "Rival Foods", bodies: ["Fresh bread delivered today"], captions: ["Order bakery"], creative_link_titles: ["Bread in 30 minutes"], creative_link_descriptions: ["Freshly baked"], cta_text: "Shop now", original_image_url: "https://scontent-lhr8-1.xx.fbcdn.net/ad.jpg", link_url: "https://rival.example/bread", data_sources: ["facebook"], languages: ["en"], countries: ["GB"], delivery_start_time: "2099-07-01", delivery_stop_time: "2099-07-05" },
+      { provider_id: 7002, provider_page_id: "123456789", provider_page_name: "Rival Foods", bodies: ["Fresh bread delivered today"], captions: ["Order bakery"], creative_link_titles: ["Bread in 30 minutes"], creative_link_descriptions: ["Freshly baked"], cta_text: "Shop now", original_image_url: "https://scontent-lhr8-1.xx.fbcdn.net/ad-2.jpg", link_url: "https://rival.example/bread", data_sources: ["instagram"], languages: ["ar"], countries: ["GB"], delivery_start_time: "2099-06-28", delivery_stop_time: "2099-07-08" },
       { provider_id: 9999, provider_page_id: "999999999", provider_page_name: "Wrong Advertiser", bodies: ["Must be rejected"] },
     ] });
   }, async () => {});
@@ -44,8 +44,8 @@ test("queries Metapi by exact company Page ID and groups duplicate placements in
   assert.equal(result.creativeConcepts[0].description, "Freshly baked");
   assert.equal(result.creativeConcepts[0].destinationUrl, "https://rival.example/bread");
   assert.equal(result.creativeConcepts[0].mediaUrl, "https://scontent-lhr8-1.xx.fbcdn.net/ad.jpg");
-  assert.equal(result.creativeConcepts[0].startDate, "2026-06-28");
-  assert.equal(result.creativeConcepts[0].stopDate, "2026-07-08");
+  assert.equal(result.creativeConcepts[0].startDate, "2099-06-28");
+  assert.equal(result.creativeConcepts[0].stopDate, "2099-07-08");
   assert.deepEqual(result.creativeConcepts[0].platforms, ["facebook", "instagram"]);
   assert.deepEqual(result.creativeConcepts[0].languages, ["en", "ar"]);
   assert.equal(result.discardedRecordCount, 1);
@@ -67,6 +67,19 @@ test("does not turn cross-advertiser Metapi records into competitor activity", a
   assert.equal(result.creativeConceptCount, undefined);
   assert.equal(result.discardedRecordCount, 1);
   assert.match(result.message, /all were discarded as unsafe attribution/i);
+});
+
+test("does not label exact-Page records with elapsed delivery dates as active", async () => {
+  const result = await queryMetapiAdvertiser({ domain: "rival.example", brand: "Rival", facebookUrl: "https://facebook.com/123456789" }, "United Kingdom", "secret", async (url) => {
+    if (String(url).endsWith("/tasks")) return Response.json({ task_id: "stale-task" });
+    if (String(url).endsWith("/status")) return Response.json({ status: "succeeded" });
+    return Response.json({ data: [{ provider_id: 8100, provider_page_id: "123456789", provider_page_name: "Rival", bodies: ["Old offer"], delivery_stop_time: "2020-01-01T00:00:00Z" }] });
+  }, async () => {});
+  assert.equal(result.status, "no-verified-result");
+  assert.equal(result.activeCreativeCount, 0);
+  assert.equal(result.creativeConceptCount, 0);
+  assert.equal(result.inactiveRecordCount, 1);
+  assert.match(result.message, /delivery-stop date had elapsed/i);
 });
 
 test("uses a bounded identity probe before an exact advertiser task when the linked Page hides its ID", async () => {

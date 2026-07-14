@@ -56,6 +56,7 @@ The report currently reduces ad intelligence to small status chips and links, wh
    - `no-verified-result`: a successful exact-Page query returned zero records in this country/status scope.
    - `access-limited`: provider key missing, country missing, Page unresolved/ambiguous, HTTP/auth/rate/timeout failure, only cross-Page records, or records without usable public IDs.
    - Give every state distinct English and Arabic copy; never use “no ads” for limited coverage.
+   - Defensively exclude records whose public delivery-stop calendar date is earlier than the observation date, even if an upstream provider returns them from an active-status query. Report that stale-record count separately.
 6. **Keep spend out of the feature.**
    - Task 023 does not render spend, reach, or impression numbers. A later task may show a provider-returned public transparency field verbatim with region/methodology labels, but this implementation never estimates or ranges spend.
 7. **Add the visible chapter in `app/page.tsx` and responsive styles in `app/globals.css`.**
@@ -79,3 +80,4 @@ The report currently reduces ad intelligence to small status chips and links, wh
 - Local implementation validation: typecheck passed, production build passed, lint passed, and 98/98 automated tests passed on 2026-07-14.
 - Browser visual validation: pending; the in-app browser runtime failed during connection setup and is not counted as passed.
 - Real-data validation, exact private Sites deployment, strict implementation review, and PR merge: pending.
+- Live MyJam validation on Sites v35 exposed one provider result with a 2025 delivery-stop date despite an active filter; it is recorded as a failed quality check and triggered the stale-record exclusion now under validation. A separate Nike control returned a numeric exact Page and grouped public records dated through the 2026-07-14 observation date.
