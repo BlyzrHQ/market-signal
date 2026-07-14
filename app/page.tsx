@@ -227,6 +227,10 @@ function productBattles(block: JsonBlock | undefined) {
     .sort((left, right) => Number(right.match.score || 0) - Number(left.match.score || 0));
 }
 
+function planTierOf(item: ReturnType<typeof product>) {
+  return item.attributes.find((attribute) => attribute.toLowerCase().startsWith("plan tier:"))?.split(":").slice(1).join(":").trim() || "";
+}
+
 function PricePicture({ battle, locale }: { battle: BattleView; locale: Locale }) {
   const ar = locale === "ar";
   const comparison = resolvedPriceDelta(battle.decision.priceComparison);
@@ -583,7 +587,7 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
                                 <strong dir="auto">{battle.primary.name}</strong>
                               </div>
                               <div className="battle-connector">
-                                <span>{Math.round(Number(battle.match.score || 0) * 100)}%</span>
+                                <span>{planTierOf(battle.primary) && planTierOf(battle.primary) === planTierOf(battle.rival) ? (ar ? "نفس الفئة" : "SAME TIER") : `${Math.round(Number(battle.match.score || 0) * 100)}%`}</span>
                                 <i />
                               </div>
                               <div className="battle-product rival-product">

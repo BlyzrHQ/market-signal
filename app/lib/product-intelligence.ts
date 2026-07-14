@@ -73,6 +73,7 @@ const AGENCY_OFFERING_WORDS = /\b(?:brand|design|development|engineering|innovat
 const ECOMMERCE_OFFERING_WORDS = /\b(?:box(?:es)?|bundles?|delivery|membership|subscriptions?)\b/i;
 const GENERIC_OFFERING_HEADING = /^(?:all features|benefits|built for .+|customer stories|everything you need|get started|how it works|learn more|our (?:features|products|services|work)|pricing|services|solutions|what we do|why .+)$/i;
 const GENERIC_PAGE_NAME = /^(?:features?|platform|pricing|products?|services?|solutions?|plans?)$/i;
+const SAAS_PLAN_NAME = /^(?:free|personal|basic|essentials?|starter|standard|unlimited|professional|pro|team|business|advanced|growth|premium|scale|enterprise|custom)$/i;
 const EDITORIAL_HEADING = /^(?:a guide to|case study|how (?:do|to)|news|our story|the faces behind|what is|why )\b|\b(?:case study|customer stor(?:y|ies)|in the age of)\b/i;
 const SLOGAN_LIKE_OFFERING = /[.!?]\s+[\p{L}\p{N}]|^(?:the|your)\s+.+\s+workspace$/iu;
 const STOPWORDS = new Set([
@@ -147,7 +148,7 @@ function nodeType(record: JsonRecord): ProductRecord["jsonLdType"] | null {
 }
 
 function periodFrom(value: string) {
-  const match = value.match(/\/(?:\s*)?(month|mo|year|yr|week|day|user)/i);
+  const match = value.match(/(?:\/\s*|\bper\s+(?:(?:user|seat|channel|brand|workspace|social\s+set)\s*[,/]?\s*(?:per\s+)?)?)(month|mo|year|yr|week|day)/i);
   return match?.[1]?.toLowerCase();
 }
 
@@ -250,6 +251,106 @@ export type ProductExtractionInput = {
   pagePriceSignals: string[];
 };
 
+type SaasPlanTier = "free" | "entry" | "team" | "enterprise";
+
+function readableHtml(value: string) {
+  return clean(value.replace(/<(?:script|style|svg)[^>]*>[\s\S]*?<\/(?:script|style|svg)>/gi, " "));
+}
+
+function cleanPlanName(value: string) {
+  const name = clean(value)
+    .replace(/\b(?:placeholder|recommended|most popular|popular|best value)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return SAAS_PLAN_NAME.test(name) ? name : "";
+}
+
+function planTier(name: string, price?: ProductPriceSignal): SaasPlanTier | null {
+  if (/\b(?:enterprise|custom)\b/i.test(name)) return "enterprise";
+  if (/\bfree\b/i.test(name) || price?.amount === 0 || (/\bpersonal\b/i.test(name) && !price?.amount)) return "free";
+  if (/\b(?:basic|essentials?|starter|standard|unlimited|personal)\b/i.test(name)) return "entry";
+  if (/\b(?:professional|pro|team|business|advanced|growth|premium|scale)\b/i.test(name)) return "team";
+  return null;
+}
+
+function planPrice(value: string) {
+  const expression = /(?:[$\u00a3\u20ac]\s?\d+(?:[.,]\d{1,2})?(?:\s*(?:USD|GBP|EUR))?(?:\s*(?:\/\s*|per\s+(?:(?:user|seat|channel|brand|workspace|social\s+set)\s*[,/]?\s*(?:per\s+)?)?)(?:month|mo|year|yr))?|\d+(?:[.,]\d{1,2})?\s*(?:USD|GBP|EUR)(?:\s*\/\s*(?:month|mo|year|yr))?)/gi;
+  const raws = [...value.matchAll(expression)].map((match) => clean(match[0])).filter(Boolean);
+  const recurring = raws.find((raw) => periodFrom(raw));
+  return priceSignal(recurring || raws[0]);
+}
+
+function planPriceBasis(value: string, price?: ProductPriceSignal) {
+  if (price && /\bper\s+(?:user|seat)\b|\b(?:user|seat)\s*\/\s*(?:month|mo|year|yr)\b/i.test(price.raw)) return "user";
+  if (/\bsocial\s+sets?\b/i.test(value)) return "social-set";
+  if (/\bchannels?\b/i.test(value)) return "channel";
+  if (/\bbrands?\b/i.test(value)) return "brand";
+  if (/\bworkspaces?\b/i.test(value)) return "workspace";
+  if (/\b(?:per\s+)?(?:user|seat)(?:\s*[,/]\s*per)?\s*(?:month|mo|year|yr)?\b/i.test(value)) return "user";
+  return price?.period ? "flat" : "unspecified";
+}
+
+function planBillingCommitment(value: string) {
+  if (/\b(?:billed|billing|paid|pay)\s+(?:yearly|annually|annual)\b|\bannual\s+(?:billing|commitment|contract)\b/i.test(value)) return "annual";
+  if (/\b(?:billed|billing|paid|pay)\s+monthly\b|\bmonth[- ]to[- ]month\b|\bmonthly\s+(?:billing|commitment|contract)\b/i.test(value)) return "monthly";
+  return "unspecified";
+}
+
+function extractSaasPlans(input: ProductExtractionInput) {
+  let path = "";
+  try { path = new URL(input.sourceUrl).pathname; } catch { return [] as ProductRecord[]; }
+  if (!PRICING_PATH.test(path)) return [];
+  const candidates: Array<{ name: string; context: string }> = [];
+  const headings = [...input.document.matchAll(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi)];
+  for (let index = 0; index < headings.length; index += 1) {
+    const name = cleanPlanName(headings[index][2] || "");
+    if (!name) continue;
+    const start = headings[index].index || 0;
+    const end = headings[index + 1]?.index ?? Math.min(input.document.length, start + 12_000);
+    const context = readableHtml(input.document.slice(start, end)).slice(0, 1_200);
+    if (planPrice(context) || /\b(?:contact sales|get a demo|request a demo|custom pricing|free forever)\b/i.test(context)) candidates.push({ name, context });
+  }
+  const selected = new Map<string, ProductRecord>();
+  for (const candidate of candidates) {
+    const observedPrice = planPrice(candidate.context) || undefined;
+    const price = observedPrice && (observedPrice.period || observedPrice.amount === 0) ? observedPrice : undefined;
+    const tier = planTier(candidate.name, price);
+    if (!tier) continue;
+    const basis = planPriceBasis(candidate.context, price);
+    const commitment = planBillingCommitment(candidate.context);
+    const id = makeId(input.domain, candidate.name, input.sourceUrl);
+    const attributes = [
+      `Plan tier: ${tier}`,
+      `Price basis: ${basis}`,
+      ...(price?.period ? [`Billing period: ${price.period}`] : []),
+      ...(price?.period ? [`Billing commitment: ${commitment}`] : []),
+      ...(!price && /\b(?:contact sales|get a demo|request a demo|custom pricing)\b/i.test(candidate.context) ? ["Price visibility: contact sales"] : []),
+    ];
+    const record: ProductRecord = {
+      id,
+      domain: canonicalHost(input.domain),
+      name: candidate.name,
+      normalizedName: normalized(candidate.name),
+      description: candidate.context.slice(0, 400),
+      category: `saas-plan ${tier}`,
+      jsonLdType: "Service",
+      priceSignals: price ? [price] : [],
+      attributes,
+      ownership: "path-inferred",
+      extraction: "page-signal",
+      confidence: "Medium",
+      sourceUrl: input.sourceUrl,
+      imageUrl: "",
+      observedAt: input.observedAt,
+      claimIds: [`${id}-observed`],
+    };
+    const key = `${record.domain}|${record.normalizedName}`;
+    const current = selected.get(key);
+    if (!current || record.priceSignals.length > 0) selected.set(key, record);
+  }
+  return [...selected.values()].slice(0, 8);
+}
+
 export function isProductLikePage(input: Pick<ProductExtractionInput, "sourceUrl" | "domain" | "pageTitle" | "headings" | "pagePriceSignals">) {
   const path = new URL(input.sourceUrl).pathname;
   if (EXCLUDED_PATH.test(path)) return false;
@@ -260,7 +361,7 @@ export function isProductLikePage(input: Pick<ProductExtractionInput, "sourceUrl
 }
 
 export function extractProductsFromHtml(input: ProductExtractionInput): ProductExtractionResult {
-  const products: ProductRecord[] = [];
+  const products: ProductRecord[] = extractSaasPlans(input);
   const thirdPartyReferenced: ProductRecord[] = [];
   const gaps: string[] = [];
   const scripts = [...input.document.matchAll(/<script[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
@@ -474,14 +575,22 @@ export function scoreProductPair(primary: ProductRecord, candidate: ProductRecor
   const sharedTerms = [...new Set([...sharedNameTerms, ...primaryCategory.filter((token) => candidateCategory.includes(token)), ...primaryDescription.filter((token) => candidateDescription.includes(token))])].sort();
   const imageTokens = (url: string) => { try { return tokens(decodeURIComponent(new URL(url).pathname.split("/").at(-1) || "").replace(/\.[a-z0-9]{2,5}$/i, ""), true).filter((token) => !/^(?:asset|default|hero|image|img|logo|og|placeholder|product|products|thumb|thumbnail|\d+)$/i.test(token)); } catch { return []; } };
   const imageScore = primary.imageUrl && candidate.imageUrl ? jaccard(imageTokens(primary.imageUrl), imageTokens(candidate.imageUrl)) : 0;
-  const score = (jaccard(primaryName, candidateName) * 0.58) + (jaccard(primaryCategory, candidateCategory) * 0.18) + (jaccard(primaryDescription, candidateDescription) * 0.14) + (imageScore * 0.1);
+  const baseScore = (jaccard(primaryName, candidateName) * 0.58) + (jaccard(primaryCategory, candidateCategory) * 0.18) + (jaccard(primaryDescription, candidateDescription) * 0.14) + (imageScore * 0.1);
+  const primaryPlanTier = primary.category.startsWith("saas-plan") ? planTier(primary.name, primary.priceSignals[0]) : null;
+  const candidatePlanTier = candidate.category.startsWith("saas-plan") ? planTier(candidate.name, candidate.priceSignals[0]) : null;
+  const bothSaasPlans = Boolean(primaryPlanTier && candidatePlanTier);
+  const eitherSaasPlan = Boolean(primaryPlanTier || candidatePlanTier);
+  const sameSaasPlanTier = Boolean(bothSaasPlans && primaryPlanTier === candidatePlanTier);
+  const score = sameSaasPlanTier ? Math.max(baseScore, 0.72) : baseScore;
+  if (sameSaasPlanTier) sharedTerms.push(`plan tier: ${primaryPlanTier}`);
   const categoryOverlap = primaryCategory.some((token) => candidateCategory.includes(token));
   const incompatiblePhysicalService = new Set([primary.jsonLdType, candidate.jsonLdType]).has("Product") && new Set([primary.jsonLdType, candidate.jsonLdType]).has("Service") && !categoryOverlap;
   const primaryAccessoryGroups = new Set(primaryName.map((token) => ACCESSORY_PRODUCT_GROUPS.get(token)).filter((group): group is string => Boolean(group)));
   const candidateAccessoryGroups = new Set(candidateName.map((token) => ACCESSORY_PRODUCT_GROUPS.get(token)).filter((group): group is string => Boolean(group)));
   const incompatibleAccessory = [...new Set([...primaryAccessoryGroups, ...candidateAccessoryGroups])]
     .some((group) => primaryAccessoryGroups.has(group) !== candidateAccessoryGroups.has(group));
-  return { score: Number(score.toFixed(4)), sharedTerms, imageScore: Number(imageScore.toFixed(4)), eligible: score >= 0.32 && sharedNameTerms.length >= 2 && !incompatiblePhysicalService && !incompatibleAccessory };
+  const ordinaryEligible = score >= 0.32 && sharedNameTerms.length >= 2;
+  return { score: Number(score.toFixed(4)), sharedTerms, imageScore: Number(imageScore.toFixed(4)), eligible: (sameSaasPlanTier || (!eitherSaasPlan && ordinaryEligible)) && !incompatiblePhysicalService && !incompatibleAccessory };
 }
 
 function comparablePrice(product: ProductRecord) {
@@ -495,34 +604,54 @@ function hasPublicPrice(product: ProductRecord) {
   return product.priceSignals.some((signal) => typeof signal.amount === "number" && signal.currency);
 }
 
+function planAttribute(product: ProductRecord, label: string) {
+  return product.attributes.find((value) => value.toLowerCase().startsWith(`${label.toLowerCase()}:`))?.split(":").slice(1).join(":").trim() || "";
+}
+
 function productDecision(primary: ProductRecord, candidate: ProductRecord, score: number): NonNullable<ProductMatch["decision"]> {
   const primaryPrice = comparablePrice(primary);
   const candidatePrice = comparablePrice(candidate);
   const primaryHasPrice = hasPublicPrice(primary);
   const candidateHasPrice = hasPublicPrice(candidate);
-  const priceComparison = primaryPrice && candidatePrice && primaryPrice.currency === candidatePrice.currency
+  const saasPlanPair = primary.category.startsWith("saas-plan") && candidate.category.startsWith("saas-plan");
+  const billingAligned = !saasPlanPair || Boolean(
+    primaryPrice?.period
+    && candidatePrice?.period
+    && primaryPrice.period === candidatePrice.period
+    && planAttribute(primary, "Price basis") === planAttribute(candidate, "Price basis")
+    && planAttribute(primary, "Price basis") !== "unspecified"
+    && planAttribute(primary, "Billing commitment") === planAttribute(candidate, "Billing commitment")
+    && planAttribute(primary, "Billing commitment") !== "unspecified"
+  );
+  const priceComparison = primaryPrice && candidatePrice && primaryPrice.currency === candidatePrice.currency && billingAligned
     ? { primaryRaw: primaryPrice.raw, rivalRaw: candidatePrice.raw }
     : null;
   let priceVerdict = "Public prices are not comparable yet.";
   let whyTheyMayWin = `The rival presents ${candidate.name} as the closest observable alternative.`;
-  let recommendedMove = "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer.";
-  if (primaryPrice && candidatePrice && primaryPrice.currency === candidatePrice.currency && primaryPrice.amount === candidatePrice.amount) {
+  let recommendedMove = saasPlanPair
+    ? "Compare included users, usage limits, billing cadence, and annual commitment before changing the plan."
+    : "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer.";
+  if (saasPlanPair && primaryHasPrice && candidateHasPrice && !billingAligned) {
+    priceVerdict = "Both expose public plan prices, but billing period, commitment, or unit basis is unresolved.";
+    whyTheyMayWin = "The plans use different or unclear billing terms, so a simple price lead would be misleading.";
+    recommendedMove = "Normalize per-user, per-channel, or flat pricing, billing period, and commitment before changing packaging.";
+  } else if (primaryPrice && candidatePrice && primaryPrice.currency === candidatePrice.currency && primaryPrice.amount === candidatePrice.amount) {
     priceVerdict = `The observed public price is the same at ${primaryPrice.currency} ${primaryPrice.amount!.toFixed(2)}.`;
-    whyTheyMayWin = "Price is not the visible differentiator on this matched product.";
-    recommendedMove = "Lead with a concrete product, availability, delivery, or trust advantage instead of price.";
+    whyTheyMayWin = saasPlanPair ? "Price is not the visible differentiator at this comparable plan tier." : "Price is not the visible differentiator on this matched product.";
+    recommendedMove = saasPlanPair ? "Lead with included usage, collaboration, automation, or support advantages instead of price." : "Lead with a concrete product, availability, delivery, or trust advantage instead of price.";
   } else if (primaryPrice && candidatePrice && primaryPrice.currency === candidatePrice.currency && primaryPrice.amount !== candidatePrice.amount) {
     const difference = Math.abs(primaryPrice.amount! - candidatePrice.amount!);
     const currency = primaryPrice.currency;
     if (candidatePrice.amount! < primaryPrice.amount!) {
       priceVerdict = `${candidate.domain} is ${currency} ${difference.toFixed(2)} cheaper on the observed price.`;
-      whyTheyMayWin = "A lower visible price gives the rival a simpler conversion argument.";
-      recommendedMove = "Either justify your premium with a concrete product advantage or test a matched-price offer.";
+      whyTheyMayWin = saasPlanPair ? "A lower visible price at the same billing unit gives the rival a simpler conversion argument." : "A lower visible price gives the rival a simpler conversion argument.";
+      recommendedMove = saasPlanPair ? "Verify included limits, then justify the premium with a named capability or test the aligned plan price." : "Either justify your premium with a concrete product advantage or test a matched-price offer.";
     } else {
       priceVerdict = `You are ${currency} ${difference.toFixed(2)} cheaper on the observed price.`;
-      whyTheyMayWin = "Price is not their visible advantage; their product framing or availability may be doing the work.";
-      recommendedMove = "Put your lower price beside an equivalent pack-size claim and make it prominent in ads and collection pages.";
+      whyTheyMayWin = saasPlanPair ? "Price is not their visible advantage; included limits, workflow depth, or brand trust may be doing the work." : "Price is not their visible advantage; their product framing or availability may be doing the work.";
+      recommendedMove = saasPlanPair ? "Show the lower aligned plan price beside the specific limits and capabilities it includes." : "Put your lower price beside an equivalent pack-size claim and make it prominent in ads and collection pages.";
     }
-  } else if (primaryHasPrice && candidateHasPrice) {
+  } else if (!saasPlanPair && primaryHasPrice && candidateHasPrice) {
     priceVerdict = "Both expose public prices, but variant or pack-size alignment is unresolved.";
     whyTheyMayWin = "The public pages expose multiple variants or non-comparable currencies, so a simple price lead would be misleading.";
     recommendedMove = "Normalize pack size and variant before using price in a campaign or merchandising decision.";

@@ -91,8 +91,8 @@ function verifyDiscoveredCompetitor(primary: DomainCrawl, candidate: DomainCrawl
 }
 
 function productPathPriority(path: string) {
+  if (/\/(?:pricing|plans?)(?:\/|$)/i.test(path)) return -10;
   if (/\/(?:boxes?|bundles?|subscriptions?|products?|shop|store|collections?|catalog|solutions?|services?|capabilities|expertise|platform|features?)(?:\/|$)/i.test(path)) return 0;
-  if (/\/(?:pricing|plans?)(?:\/|$)/i.test(path)) return 10;
   if (/^\/[^/]+\/?$/.test(path) && !/\/(?:about|blog|careers?|contact|customers?|docs?|help|login|news|press|privacy|resources?|support|terms)(?:\/|$)/i.test(path)) return 30;
   const exact = PRIORITY_PATHS.indexOf(path);
   if (exact >= 0) return 200 + exact;
