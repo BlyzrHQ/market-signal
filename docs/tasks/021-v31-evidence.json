@@ -1,0 +1,152 @@
+{
+  "deployment": {
+    "sitesVersion": 31,
+    "commit": "1f7ee0aa98263fc49dc5afd157148d2be88f880b",
+    "url": "https://market-signal.abdulla617931.chatgpt.site",
+    "capturedAt": "2026-07-14",
+    "fixtureData": false
+  },
+  "dataBoundaries": [
+    "Every plan and price below was extracted from a first-party public pricing page during the named production run.",
+    "Competitors were discovered from domain-only input; no competitor domains were supplied in either request.",
+    "Exact SaaS deltas require aligned currency, billing period, price basis, and explicit billing commitment on both plans.",
+    "A missing exact delta is a deliberate coverage state, not evidence that prices are equal."
+  ],
+  "reports": [
+    {
+      "primaryDomain": "linear.app",
+      "generatedAt": "2026-07-14T01:41:07.137Z",
+      "discoveredCompetitors": [
+        "asana.com",
+        "clickup.com",
+        "monday.com",
+        "jetbrains.com"
+      ],
+      "plans": [
+        {
+          "name": "Free",
+          "price": "$0",
+          "tier": "free",
+          "sourceUrl": "https://linear.app/pricing"
+        },
+        {
+          "name": "Basic",
+          "price": "$10 per user/month",
+          "tier": "entry",
+          "priceBasis": "user",
+          "billingPeriod": "month",
+          "billingCommitment": "annual",
+          "sourceUrl": "https://linear.app/pricing"
+        },
+        {
+          "name": "Business",
+          "price": "$16 per user/month",
+          "tier": "team",
+          "priceBasis": "user",
+          "billingPeriod": "month",
+          "billingCommitment": "annual",
+          "sourceUrl": "https://linear.app/pricing"
+        },
+        {
+          "name": "Enterprise",
+          "price": null,
+          "tier": "enterprise",
+          "priceVisibility": "contact sales",
+          "sourceUrl": "https://linear.app/pricing"
+        }
+      ],
+      "comparisons": [
+        {
+          "primaryPlan": "Basic",
+          "competitorDomain": "asana.com",
+          "competitorPlan": "Starter",
+          "primaryPrice": "$10 per user/month",
+          "competitorPrice": "$10.99 Per user, per month",
+          "alignment": "entry tier; USD; per user; month; annual commitment",
+          "verdict": "You are USD 0.99 cheaper on the observed price.",
+          "primarySourceUrl": "https://linear.app/pricing",
+          "competitorSourceUrl": "https://asana.com/pricing"
+        },
+        {
+          "primaryPlan": "Business",
+          "competitorDomain": "asana.com",
+          "competitorPlan": "Advanced",
+          "primaryPrice": "$16 per user/month",
+          "competitorPrice": "$24.99 Per user, per month",
+          "alignment": "team tier; USD; per user; month; annual commitment",
+          "verdict": "You are USD 8.99 cheaper on the observed price.",
+          "primarySourceUrl": "https://linear.app/pricing",
+          "competitorSourceUrl": "https://asana.com/pricing"
+        }
+      ]
+    },
+    {
+      "primaryDomain": "buffer.com",
+      "generatedAt": "2026-07-14T01:42:41.678Z",
+      "discoveredCompetitors": [
+        "agorapulse.com",
+        "hootsuite.com",
+        "eclincher.com",
+        "later.com",
+        "loomly.com",
+        "metricool.com"
+      ],
+      "plans": [
+        {
+          "name": "Free",
+          "price": null,
+          "tier": "free",
+          "priceBasis": "channel",
+          "sourceUrl": "https://buffer.com/pricing"
+        },
+        {
+          "name": "Essentials",
+          "price": "$5 /month",
+          "tier": "entry",
+          "priceBasis": "channel",
+          "billingPeriod": "month",
+          "billingCommitment": "annual",
+          "sourceUrl": "https://buffer.com/pricing"
+        },
+        {
+          "name": "Team",
+          "price": "$10 /month",
+          "tier": "team",
+          "priceBasis": "channel",
+          "billingPeriod": "month",
+          "billingCommitment": "annual",
+          "sourceUrl": "https://buffer.com/pricing"
+        }
+      ],
+      "comparisons": [
+        {
+          "primaryPlan": "Essentials",
+          "competitorDomain": "agorapulse.com",
+          "competitorPlan": "Standard",
+          "primaryPrice": "$5 /month",
+          "competitorPrice": "$99 per user /month",
+          "exactDelta": null,
+          "reason": "Price basis is channel versus user."
+        },
+        {
+          "primaryPlan": "Essentials",
+          "competitorDomain": "loomly.com",
+          "competitorPlan": "Starter",
+          "primaryPrice": "$5 /month",
+          "competitorPrice": "$65 Per month",
+          "exactDelta": null,
+          "reason": "Price basis is channel versus flat or unspecified."
+        },
+        {
+          "primaryPlan": "Team",
+          "competitorDomain": "agorapulse.com",
+          "competitorPlan": "Advanced",
+          "primaryPrice": "$10 /month",
+          "competitorPrice": "$199 per user /month",
+          "exactDelta": null,
+          "reason": "Price basis is channel versus user."
+        }
+      ]
+    }
+  ]
+}

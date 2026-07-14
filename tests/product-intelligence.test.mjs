@@ -156,6 +156,116 @@ test("turns first-party SaaS capability headings into attributable service recor
   assert.ok(offerings.every((offering) => !/PR Agency/i.test(offering.name)));
 });
 
+test("extracts named SaaS plans and their nearest public recurring price", () => {
+  const result = extraction({
+    sourceUrl: "https://buffer.com/pricing",
+    pageTitle: "Buffer pricing",
+    pageDescription: "Flexible pricing for everyone",
+    headings: ["Plans", "Free Placeholder", "Essentials Recommended", "Team Placeholder"],
+    pagePriceSignals: ["$5 /month", "$10 /month"],
+    document: `
+      <h2>Plans</h2>
+      <h2>Free <span>Placeholder</span></h2><p>Free forever</p><p>Connect up to 3 channels</p>
+      <h2>Essentials <span>Recommended</span></h2><p>$5 /month</p><p>1 channel · billed yearly</p>
+      <h2>Team <span>Placeholder</span></h2><p>$10 /month</p><p>1 channel · billed yearly</p>
+    `,
+  });
+  const plans = result.products.filter((item) => item.category.startsWith("saas-plan"));
+  assert.deepEqual(plans.map((item) => item.name), ["Free", "Essentials", "Team"]);
+  assert.deepEqual(plans[1].priceSignals, [{ raw: "$5 /month", currency: "USD", amount: 5, period: "month" }]);
+  assert.ok(plans[1].attributes.includes("Plan tier: entry"));
+  assert.ok(plans[1].attributes.includes("Price basis: channel"));
+  assert.ok(plans[1].attributes.includes("Billing commitment: annual"));
+  assert.ok(plans.every((item) => item.sourceUrl === "https://buffer.com/pricing"));
+});
+
+test("retains explicit billing commitment after noisy duplicated price markup", () => {
+  const duplicatedAccessiblePrices = `<span>$10 per user/month</span>`.repeat(300);
+  const malformedShadowMarkup = `<template shadowroot="open"><style>:host{display:inline-block}<span>shadow digits</span></template >`;
+  const result = extraction({
+    domain: "linear.app",
+    sourceUrl: "https://linear.app/pricing",
+    pageTitle: "Linear pricing",
+    headings: ["Basic"],
+    pagePriceSignals: ["$10 per user/month"],
+    document: `<h3>Basic</h3><span>$10 per user/month</span>${duplicatedAccessiblePrices}${malformedShadowMarkup}<p>Billed yearly</p><svg><path d="M0 0" /></svg><h3>Business</h3><p>$16 per user/month</p>`,
+  });
+  const basic = result.products.find((item) => item.name === "Basic");
+  const business = result.products.find((item) => item.name === "Business");
+  assert.deepEqual(basic.priceSignals, [{ raw: "$10 per user/month", currency: "USD", amount: 10, period: "month" }]);
+  assert.ok(basic.attributes.includes("Billing commitment: annual"));
+  assert.ok(!business.attributes.some((attribute) => attribute.startsWith("Billing commitment: annual")));
+});
+
+test("does not infer SaaS plans from unstructured pricing prose or feature names", () => {
+  const result = extraction({
+    sourceUrl: "https://metricool.com/pricing",
+    pageTitle: "Metricool pricing",
+    headings: ["Plans designed to give you peace of mind", "Start for free, scale up as your networks grow"],
+    pagePriceSignals: ["€0/month", "€16/month", "€43/month"],
+    document: `<h2>Start for free, scale up as your networks grow</h2><section>Annual Monthly EUR USD Free €0/month Start now Manage 1 brand Starter From €16/month Includes everything in Free Access to Advanced Analytics add-on Advanced €43/month Custom Contact sales</section>`,
+  });
+  assert.equal(result.products.filter((item) => item.category.startsWith("saas-plan")).length, 0);
+});
+
+test("matches differently named SaaS plans by tier and compares aligned per-user monthly prices", () => {
+  const linear = extraction({
+    domain: "linear.app",
+    sourceUrl: "https://linear.app/pricing",
+    pageTitle: "Linear pricing",
+    headings: ["Pricing", "Free", "Basic", "Business", "Enterprise"],
+    pagePriceSignals: ["$0", "$10 per user/month", "$16 per user/month"],
+    document: `<h1>Pricing</h1><h2>Free</h2><p>$0 Free for everyone</p><h2>Basic</h2><p>$10 per user/month Billed yearly</p><h2>Business</h2><p>$16 per user/month Billed yearly</p><h2>Enterprise</h2><p>Custom Annual billing only Contact sales</p>`,
+  }).products.filter((item) => item.category.startsWith("saas-plan"));
+  const clickup = extraction({
+    domain: "clickup.com",
+    sourceUrl: "https://clickup.com/pricing",
+    pageTitle: "ClickUp pricing",
+    headings: ["free forever", "unlimited", "business", "enterprise"],
+    pagePriceSignals: ["$7 per user/month", "$12 per user/month"],
+    document: `<h2>free forever</h2><p>Free</p><h2>unlimited</h2><p>$7 Per user/month, billed yearly</p><h2>business</h2><p>$12 Per user/month, billed yearly</p><h2>enterprise</h2><p>Contact sales</p>`,
+  }).products.filter((item) => item.category.startsWith("saas-plan"));
+  const comparison = buildProductComparison("linear.app", [
+    { domain: "linear.app", products: linear },
+    { domain: "clickup.com", products: clickup },
+  ]);
+  const basic = comparison.rows.find((row) => row.primary.name === "Basic").matches[0];
+  assert.equal(basic.product.name, "unlimited");
+  assert.equal(basic.confidence, "Medium");
+  assert.match(basic.decision.priceVerdict, /clickup\.com is USD 3\.00 cheaper/i);
+  assert.deepEqual(basic.decision.priceComparison, { primaryRaw: "$10 per user/month", rivalRaw: "$7 Per user/month" });
+});
+
+test("does not emit an exact SaaS price delta across billing units, periods, or commitments", () => {
+  const buffer = extraction({
+    domain: "buffer.com",
+    sourceUrl: "https://buffer.com/pricing",
+    pageTitle: "Buffer pricing",
+    headings: ["Essentials"],
+    pagePriceSignals: ["$5 /month"],
+    document: `<h2>Essentials</h2><p>$5 /month</p><p>1 channel billed yearly</p>`,
+  }).products.find((item) => item.name === "Essentials");
+  const later = extraction({
+    domain: "later.com",
+    sourceUrl: "https://later.com/pricing",
+    pageTitle: "Later pricing",
+    headings: ["Starter"],
+    pagePriceSignals: ["$18.75 USD/month"],
+    document: `<h2>Starter</h2><p>$18.75 USD/month</p><p>1 social set billed yearly</p>`,
+  }).products.find((item) => item.name === "Starter");
+  const yearly = { ...later, id: "later-yearly", priceSignals: [{ raw: "$180 USD/year", currency: "USD", amount: 180, period: "year" }], attributes: ["Plan tier: entry", "Price basis: channel"] };
+  const monthlyCommitment = { ...later, id: "later-monthly", priceSignals: [{ raw: "$18.75 USD/month", currency: "USD", amount: 18.75, period: "month" }], attributes: ["Plan tier: entry", "Price basis: channel", "Billing commitment: monthly"] };
+  const unitMismatch = buildProductComparison("buffer.com", [{ domain: "buffer.com", products: [buffer] }, { domain: "later.com", products: [later] }]).rows[0].matches[0];
+  const periodMismatch = buildProductComparison("buffer.com", [{ domain: "buffer.com", products: [buffer] }, { domain: "later.com", products: [yearly] }]).rows[0].matches[0];
+  const commitmentMismatch = buildProductComparison("buffer.com", [{ domain: "buffer.com", products: [buffer] }, { domain: "later.com", products: [monthlyCommitment] }]).rows[0].matches[0];
+  assert.match(unitMismatch.decision.priceVerdict, /billing period, commitment, or unit basis is unresolved/i);
+  assert.equal(unitMismatch.decision.priceComparison, null);
+  assert.match(periodMismatch.decision.priceVerdict, /billing period, commitment, or unit basis is unresolved/i);
+  assert.equal(periodMismatch.decision.priceComparison, null);
+  assert.match(commitmentMismatch.decision.priceVerdict, /billing period, commitment, or unit basis is unresolved/i);
+  assert.equal(commitmentMismatch.decision.priceComparison, null);
+});
+
 test("filters sentence-like slogans and generic workspace taglines from SaaS offerings", () => {
   const offerings = extractFirstPartyOfferings({
     domain: "linear.app",
