@@ -141,6 +141,9 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /SAME TIER/);
   assert.match(page, /href=\{`#dossier-\$\{rivalDomain\}`\}/);
   assert.match(page, /price-picture/);
+  assert.match(page, /price-legend/);
+  assert.match(page, /Math\.abs\(yourPosition - rivalPosition\) < 8/);
+  assert.match(page, /closePrices \? "close-prices" : ""/);
   assert.doesNotMatch(page, /comparablePriceDelta/);
   assert.match(page, /isDefensibleProductMatch/);
   assert.match(page, /SafeExternalLink href=\{battle\.primary\.sourceUrl\}/);
@@ -156,6 +159,11 @@ test("real-data route and product metadata are present", async () => {
   assert.match(styles, /\.app-root\[dir="rtl"\]/);
   assert.match(styles, /\.battle-product\.no-image \{ grid-template-columns: minmax\(0, 1fr\); \}/);
   assert.match(styles, /\.battle-product\.no-image strong \{ grid-column: 1; \}/);
+  assert.match(styles, /\.price-legend strong \{[^}]*white-space: nowrap/);
+  assert.match(styles, /\.close-prices \.your-dot \{ top: 2px; \}/);
+  assert.match(styles, /\.close-prices \.rival-dot \{ top: 20px; \}/);
+  assert.doesNotMatch(styles, /\.price-dot b \{/);
+  assert.doesNotMatch(styles, /\.price-dot small \{/);
   assert.doesNotMatch(page, /className="metric-grid"/);
   assert.doesNotMatch(page, /className="report-actions"/);
   assert.doesNotMatch(page, /This scan did not collect ad-library/);
