@@ -156,6 +156,18 @@ test("turns first-party SaaS capability headings into attributable service recor
   assert.ok(offerings.every((offering) => !/PR Agency/i.test(offering.name)));
 });
 
+test("does not turn business-type phrases into standalone comparable offerings", () => {
+  const offerings = extractFirstPartyOfferings({
+    domain: "buffer.com",
+    observedAt: "2026-07-14T00:00:00.000Z",
+    businessType: "saas",
+    pages: [
+      { sourceUrl: "https://buffer.com/features", title: "Buffer features", description: "Tools for growing brands", headings: ["Social media", "Mobile app", "Content creation", "AI social media scheduling", "Mobile app analytics for retailers"] },
+    ],
+  });
+  assert.deepEqual(offerings.map((offering) => offering.name), ["AI social media scheduling", "Mobile app analytics for retailers"]);
+});
+
 test("extracts named SaaS plans and their nearest public recurring price", () => {
   const result = extraction({
     sourceUrl: "https://buffer.com/pricing",

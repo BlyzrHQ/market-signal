@@ -5,6 +5,7 @@ import { discoverCompetitors, type DiscoveryCandidate, type DiscoveryResult } fr
 import { attributableFacebookUrl, type AdIntelligenceResult } from "../../lib/ad-intelligence";
 import { compareVerifiedCompetitors, verifyCompetitorEntity, type CompetitorVerification } from "../../lib/competitor-verification";
 import { inferBusinessProfile } from "../../lib/business-profile";
+import { seededCrawlPaths } from "../../lib/crawl-planning";
 import { combineRegionSignals, displayRegion, inferRegion as inferRegionEvidence, type RegionSignal } from "../../lib/region-inference";
 
 type ClaimType = "Observed" | "Inferred";
@@ -287,7 +288,7 @@ async function crawlDomain(input: string, role: DomainCrawl["role"], seededProdu
   }
   const candidates = discovered.candidates.slice(0, 12).map((candidate, index) => ({ domain: candidate.domain, reason: `A public page linked to this domain with “${candidate.text.slice(0, 120)}”. This is a possible match, not a confirmed competitor.`, sourceUrl: candidate.sourceUrl, claimIds: [`${domain}-candidate-${index}`] }));
   candidates.forEach((candidate, index) => homepage.claims.push(makeClaim(domain, `candidate-${index}`, `${domain} linked to possible market candidate ${candidate.domain}; anchor context supports investigation only.`, candidate.sourceUrl, startedAt, "Inferred", "Low")));
-  const seededPaths = seededProductUrls.flatMap((value) => { try { const url = new URL(value); return canonicalDomain(url.hostname) === domain ? [`${url.pathname}${url.search}`] : []; } catch { return []; } });
+  const seededPaths = seededCrawlPaths(seededProductUrls, domain);
   const observedPaths = robotsResult.ok ? unique([...discovered.paths, ...sitemapPaths], 500) : [];
   const sortedObservedPaths = observedPaths.sort((left, right) => {
     return productPathPriority(left) - productPathPriority(right) || left.localeCompare(right);

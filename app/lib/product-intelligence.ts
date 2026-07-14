@@ -83,6 +83,7 @@ const SAAS_OFFERING_WORDS = /\b(?:analy(?:s(?:e|is)|tics?)|automat(?:e|ion)|camp
 const AGENCY_OFFERING_WORDS = /\b(?:brand|design|development|engineering|innovation|mobile|product strategy|prototyping|research|strategy|user experience|ux|web)\b/i;
 const ECOMMERCE_OFFERING_WORDS = /\b(?:box(?:es)?|bundles?|delivery|membership|subscriptions?)\b/i;
 const GENERIC_OFFERING_HEADING = /^(?:all features|benefits|built for .+|customer stories|everything you need|get started|how it works|learn more|our (?:features|products|services|work)|pricing|services|solutions|what we do|why .+)$/i;
+const BUSINESS_TYPE_ONLY_OFFERING = /^(?:content creation|mobile app|social media)$/i;
 const GENERIC_PAGE_NAME = /^(?:features?|platform|pricing|products?|services?|solutions?|plans?)$/i;
 const SAAS_PLAN_NAME = /^(?:free|personal|basic|essentials?|starter|standard|unlimited|professional|pro|team|business|advanced|growth|premium|scale|enterprise|custom)$/i;
 const EDITORIAL_HEADING = /^(?:a guide to|case study|how (?:do|to)|news|our story|the faces behind|what is|why )\b|\b(?:case study|customer stor(?:y|ies)|in the age of)\b/i;
@@ -438,7 +439,7 @@ function usefulOfferingName(value: string) {
     if (words.slice(0, midpoint).join(" ").toLowerCase() === words.slice(midpoint).join(" ").toLowerCase()) name = words.slice(0, midpoint).join(" ");
   }
   const terms = normalized(name).split(/\s+/).filter(Boolean);
-  if (!name || name.length > 120 || terms.length < 2 || terms.length > 14 || GENERIC_OFFERING_HEADING.test(name) || EDITORIAL_HEADING.test(name) || SLOGAN_LIKE_OFFERING.test(name)) return "";
+  if (!name || name.length > 120 || terms.length < 2 || terms.length > 14 || GENERIC_OFFERING_HEADING.test(name) || BUSINESS_TYPE_ONLY_OFFERING.test(name) || EDITORIAL_HEADING.test(name) || SLOGAN_LIKE_OFFERING.test(name)) return "";
   return name;
 }
 
