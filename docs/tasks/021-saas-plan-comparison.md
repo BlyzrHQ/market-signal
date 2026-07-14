@@ -80,3 +80,11 @@ compares with ClickUp, Asana, Later, or another direct SaaS competitor.
   price selection remains capped to the nearest 1,200 readable characters.
 - Fable 5 verified this semantic-boundary correction, including final-card
   behavior and performance. Verdict: `FULL_CARD_BILLING_REVIEW: PASS`.
+- Exact parser reproduction then identified the structural cause: an unclosed
+  style element inside Linear's declarative shadow-DOM template was paired by
+  the old alternation regex with a later SVG closing tag, deleting the explicit
+  billing text. Readable plan HTML now removes bounded templates first and only
+  removes script, style, or SVG elements when the closing tag matches the opener.
+- Fable 5 verified the paired-tag correction against the production failure
+  shape, adjacent-card leakage, content-preservation behavior, and adversarial
+  performance. Verdict: `SHADOW_MARKUP_REVIEW: PASS`.

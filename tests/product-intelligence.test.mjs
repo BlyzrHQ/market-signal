@@ -181,13 +181,14 @@ test("extracts named SaaS plans and their nearest public recurring price", () =>
 
 test("retains explicit billing commitment after noisy duplicated price markup", () => {
   const duplicatedAccessiblePrices = `<span>$10 per user/month</span>`.repeat(300);
+  const malformedShadowMarkup = `<template shadowroot="open"><style>:host{display:inline-block}<span>shadow digits</span></template >`;
   const result = extraction({
     domain: "linear.app",
     sourceUrl: "https://linear.app/pricing",
     pageTitle: "Linear pricing",
     headings: ["Basic"],
     pagePriceSignals: ["$10 per user/month"],
-    document: `<h3>Basic</h3><span>$10 per user/month</span>${duplicatedAccessiblePrices}<p>Billed yearly</p><h3>Business</h3><p>$16 per user/month</p>`,
+    document: `<h3>Basic</h3><span>$10 per user/month</span>${duplicatedAccessiblePrices}${malformedShadowMarkup}<p>Billed yearly</p><svg><path d="M0 0" /></svg><h3>Business</h3><p>$16 per user/month</p>`,
   });
   const basic = result.products.find((item) => item.name === "Basic");
   const business = result.products.find((item) => item.name === "Business");

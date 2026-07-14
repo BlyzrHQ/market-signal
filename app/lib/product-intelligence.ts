@@ -254,7 +254,9 @@ export type ProductExtractionInput = {
 type SaasPlanTier = "free" | "entry" | "team" | "enterprise";
 
 function readableHtml(value: string) {
-  return clean(value.replace(/<(?:script|style|svg)[^>]*>[\s\S]*?<\/(?:script|style|svg)>/gi, " "));
+  return clean(value
+    .replace(/<template\b[^>]*>[\s\S]*?<\/template\s*>/gi, " ")
+    .replace(/<(script|style|svg)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " "));
 }
 
 function cleanPlanName(value: string) {
