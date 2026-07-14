@@ -65,6 +65,10 @@ test("real-data route and product metadata are present", async () => {
   assert.match(crawl, /selectProductEnrichmentTargets/);
   assert.match(crawl, /enrichMatchedProductPages/);
   assert.match(crawl, /priceEnrichmentPagesFetched/);
+  assert.match(crawl, /async function crawlPrimaryDomain/);
+  assert.match(crawl, /if \(first\.homepage\)/);
+  assert.match(crawl, /coverage: \{ \.\.\.retry\.coverage, attempts: 2 \}/);
+  assert.match(crawl, /domain === primaryDomain \? crawlPrimaryDomain\(domain\)/);
   assert.match(ads, /scanOfficialAdLibraries/);
   assert.match(ads, /Verified companies are required/);
   assert.match(crawl, /product-catalog/);
