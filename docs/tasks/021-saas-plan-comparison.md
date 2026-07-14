@@ -88,3 +88,19 @@ compares with ClickUp, Asana, Later, or another direct SaaS competitor.
 - Fable 5 verified the paired-tag correction against the production failure
   shape, adjacent-card leakage, content-preservation behavior, and adversarial
   performance. Verdict: `SHADOW_MARKUP_REVIEW: PASS`.
+- Private Sites version 31 deployed exact commit
+  `1f7ee0aa98263fc49dc5afd157148d2be88f880b`. A fresh live Linear scan
+  autonomously discovered Asana, ClickUp, monday.com, and JetBrains. It retained
+  annual commitment on Linear Basic and Business, aligned those tiers with
+  Asana Starter and Advanced, and produced exact observed-price verdicts:
+  Linear Basic is USD 0.99 cheaper and Linear Business is USD 8.99 cheaper.
+- A fresh live Buffer scan on the same deployment independently discovered six
+  competitors and extracted Free, Essentials, and Team from Buffer's public
+  pricing page. It aligned plans from Agorapulse and Loomly but correctly
+  withheld exact deltas because Buffer prices per channel while those rivals
+  expose per-user or flat monthly prices.
+- The compact raw-field capture is committed in
+  `docs/tasks/021-v31-evidence.json`; it is real public production evidence, not
+  fixture data.
+- Fable 5 found no live-acceptance blocker and verified the useful Linear exact
+  comparisons and Buffer refusal path. Verdict: `LIVE_ACCEPTANCE_REVIEW: PASS`.
