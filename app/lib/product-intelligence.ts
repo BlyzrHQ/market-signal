@@ -309,7 +309,7 @@ function extractSaasPlans(input: ProductExtractionInput) {
     const end = headings[index + 1]?.index ?? Math.min(input.document.length, start + 12_000);
     const readableSection = readableHtml(input.document.slice(start, end));
     const context = readableSection.slice(0, 1_200);
-    const billingContext = readableSection.slice(0, 4_000);
+    const billingContext = readableSection;
     if (planPrice(context) || /\b(?:contact sales|get a demo|request a demo|custom pricing|free forever)\b/i.test(context)) candidates.push({ name, context, billingContext });
   }
   const selected = new Map<string, ProductRecord>();

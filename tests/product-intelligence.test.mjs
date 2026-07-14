@@ -180,7 +180,7 @@ test("extracts named SaaS plans and their nearest public recurring price", () =>
 });
 
 test("retains explicit billing commitment after noisy duplicated price markup", () => {
-  const duplicatedAccessiblePrices = `<span>$10 per user/month</span>`.repeat(50);
+  const duplicatedAccessiblePrices = `<span>$10 per user/month</span>`.repeat(300);
   const result = extraction({
     domain: "linear.app",
     sourceUrl: "https://linear.app/pricing",

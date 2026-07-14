@@ -74,3 +74,9 @@ compares with ClickUp, Asana, Later, or another direct SaaS competitor.
 - Fable 5 reviewed the live-found correction for cross-card leakage, false
   commitment inference, price misbinding, and test adequacy. Final verdict:
   `LIVE_BILLING_CONTEXT_REVIEW: PASS`.
+- Version 29 showed the real Linear card's accessible duplication also exceeded
+  the 4,000-character billing-term window. Billing terms are therefore scanned
+  across the complete same-card section, still stopping at the next heading;
+  price selection remains capped to the nearest 1,200 readable characters.
+- Fable 5 verified this semantic-boundary correction, including final-card
+  behavior and performance. Verdict: `FULL_CARD_BILLING_REVIEW: PASS`.
