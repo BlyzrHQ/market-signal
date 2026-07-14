@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-07-14T13:40:00Z",
+  "deployment": {
+    "siteVersion": 36,
+    "commitSha": "f71390a24fb89c9ae77c400c6d27c6656cad911c",
+    "deploymentId": "appgdep_6a563b13125081919f59d7d40139b722",
+    "status": "succeeded",
+    "access": "owner-only private",
+    "url": "https://market-signal.abdulla617931.chatgpt.site"
+  },
+  "automatedValidation": {
+    "typecheck": "passed",
+    "productionBuild": "passed",
+    "lint": "passed",
+    "testsPassed": 99,
+    "testsFailed": 0,
+    "browserVisualQa": "blocked-before-navigation: in-app browser runtime could not initialize"
+  },
+  "myJamEndToEnd": {
+    "primaryDomain": "myjam.co.uk",
+    "region": "United Kingdom",
+    "regionCode": "GB",
+    "crawlGeneratedAt": "2026-07-14T13:39:19.794Z",
+    "adsObservedAt": "2026-07-14T13:39:22.213Z",
+    "crawlLatencyMs": 36015,
+    "adsLatencyMs": 24878,
+    "provider": "metapi-exact-page-and-official-search",
+    "acceptedCompetitors": [
+      { "domain": "halalo.co.uk", "companyName": "Halalo", "verificationScore": 77 },
+      { "domain": "ishopdesi.co.uk", "companyName": "ISHOPDESI", "verificationScore": 77 }
+    ],
+    "advertiserStates": [
+      {
+        "domain": "myjam.co.uk",
+        "brand": "MyJam",
+        "status": "access-limited",
+        "identityProbeRecordCount": 30,
+        "message": "The identity probe did not find one advertiser Page backed by both the first-party brand and company-domain evidence."
+      },
+      {
+        "domain": "halalo.co.uk",
+        "brand": "Halalo",
+        "status": "no-verified-result",
+        "exactPageId": "105325241469178",
+        "exactPageName": "halalo.co.uk",
+        "rawActiveRecordCount": 0,
+        "groupedConceptCount": 0,
+        "discardedCrossPageRecordCount": 0,
+        "excludedStaleRecordCount": 1,
+        "identityProbeRecordCount": 1,
+        "message": "One exact-Page record was returned, but its public 2025 delivery-stop date had elapsed before this check; no currently active record was verified in GB."
+      },
+      {
+        "domain": "ishopdesi.co.uk",
+        "brand": "ISHOPDESI",
+        "status": "access-limited",
+        "identityProbeRecordCount": 0,
+        "message": "The identity probe did not find one advertiser Page backed by both the first-party brand and company-domain evidence."
+      }
+    ]
+  },
+  "activeControl": {
+    "purpose": "Separate provider control; never inserted into the MyJam customer report.",
+    "domain": "nike.com",
+    "submittedFacebookProfile": "https://www.facebook.com/nike",
+    "region": "United Kingdom",
+    "regionCode": "GB",
+    "observedAt": "2026-07-14T13:37:46.451Z",
+    "latencyMs": 25369,
+    "provider": "metapi-exact-page-and-official-search",
+    "status": "verified-active",
+    "exactPageId": "51212153078",
+    "exactPageName": "Nike Football",
+    "identityBasis": "The bounded identity probe returned one Page ID whose Page name overlaps the submitted brand and whose ad evidence points to the nike.com company domain; the exact task then discarded any non-matching Page IDs.",
+    "identityProbeRecordCount": 30,
+    "rawRecordCount": 18,
+    "groupedConceptCount": 9,
+    "renderedConceptCount": 6,
+    "discardedCrossPageRecordCount": 0,
+    "excludedStaleRecordCount": 0,
+    "deliveryDatePolicy": "Provider fields are date-granularity values. Records whose stop calendar date precedes the observation calendar date are excluded; records dated through the observation date remain in the active-status result.",
+    "mediaPresent": true,
+    "destinationPresent": false,
+    "publicRecordUrls": [
+      "https://www.facebook.com/ads/library/?id=1567619694892257",
+      "https://www.facebook.com/ads/library/?id=1030079349769866",
+      "https://www.facebook.com/ads/library/?id=2107278973152744",
+      "https://www.facebook.com/ads/library/?id=1709662180273555",
+      "https://www.facebook.com/ads/library/?id=2501081290395508",
+      "https://www.facebook.com/ads/library/?id=1519511709869636",
+      "https://www.facebook.com/ads/library/?id=1004045592244413",
+      "https://www.facebook.com/ads/library/?id=1571648430972919"
+    ],
+    "sampleRenderedConcept": {
+      "providerRecordId": "1567619694892257",
+      "message": "Instinct Over Everything",
+      "headline": "Rip The Script",
+      "description": "Supporting the team is even more fun when you're wearing an England football kit. Find authentic strips at Nike.",
+      "deliveryStart": "2026-07-13T07:00:00.000Z",
+      "deliveryStop": "2026-07-14T07:00:00.000Z",
+      "placementCount": 8,
+      "platforms": ["INSTAGRAM"],
+      "countries": ["GB"],
+      "mediaPresent": true,
+      "destinationPresent": false,
+      "publicRecordUrl": "https://www.facebook.com/ads/library/?id=1567619694892257"
+    }
+  },
+  "qualityGateIncident": {
+    "deploymentVersion": 35,
+    "finding": "The provider returned a Halalo record with a 2025 delivery-stop date from an active-status task.",
+    "resolution": "Task 023 now excludes exact-Page records whose public stop calendar date predates the observation date and reports the excluded count. Version 36 reclassified Halalo from verified-active to no-verified-result with one stale record excluded."
+  },
+  "boundaries": [
+    "No spend, reach, or impression estimate is displayed.",
+    "An access-limited result is not presented as zero advertising.",
+    "Only exact Page-ID records survive attribution filtering.",
+    "Media is loaded directly from allowlisted Meta-owned HTTPS hosts and is not proxied or persisted."
+  ]
+}

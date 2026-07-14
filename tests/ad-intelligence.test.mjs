@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { attributableFacebookUrl, buildOfficialAdSearches, queryMetaAdLibrary, queryMetapiAdvertiser, resolveFacebookPageIdentity, scanOfficialAdLibraries } from "../app/lib/ad-intelligence.ts";
+import { attributableFacebookUrl, buildOfficialAdSearches, queryMetaAdLibrary, queryMetapiAdvertiser, resolveFacebookPageIdentity, safeAdDestination, safeMetaMediaUrl, scanOfficialAdLibraries } from "../app/lib/ad-intelligence.ts";
 
 test("accepts only attributable Facebook company-profile links", () => {
   assert.equal(attributableFacebookUrl(["https://www.facebook.com/sharer/sharer.php?u=x", "https://m.facebook.com/MyJamFood/?ref=footer"]), "https://www.facebook.com/MyJamFood");
@@ -11,7 +11,7 @@ test("accepts only attributable Facebook company-profile links", () => {
 test("preserves a numeric Page ID explicitly linked by the company website", async () => {
   const identity = await resolveFacebookPageIdentity("https://facebook.com/1148679501654585", async () => new Response('<meta property="al:android:url" content="fb://profile/999999999"><meta property="og:title" content="Exact Brand">'));
   assert.equal(identity.pageId, "1148679501654585");
-  assert.equal(identity.pageName, "Exact Brand");
+  assert.equal(identity.pageName, "");
 });
 
 test("queries Metapi by exact company Page ID and groups duplicate placements into useful concepts", async () => {
@@ -30,8 +30,8 @@ test("queries Metapi by exact company Page ID and groups duplicate placements in
     }
     if (String(url).endsWith("/tasks/task-1/status")) return Response.json({ status: "succeeded" });
     return Response.json({ data: [
-      { provider_id: 7001, provider_page_id: "123456789", provider_page_name: "Rival Foods", bodies: ["Fresh bread delivered today"], captions: ["Order bakery"], cta_text: "Shop now", original_image_url: "https://cdn.example/ad.jpg", delivery_start_time: "2026-07-01" },
-      { provider_id: 7002, provider_page_id: "123456789", provider_page_name: "Rival Foods", bodies: ["Fresh bread delivered today"], captions: ["Order bakery"], cta_text: "Shop now", original_image_url: "https://cdn.example/ad-2.jpg", delivery_start_time: "2026-07-02" },
+      { provider_id: 7001, provider_page_id: "123456789", provider_page_name: "Rival Foods", bodies: ["Fresh bread delivered today"], captions: ["Order bakery"], creative_link_titles: ["Bread in 30 minutes"], creative_link_descriptions: ["Freshly baked"], cta_text: "Shop now", original_image_url: "https://scontent-lhr8-1.xx.fbcdn.net/ad.jpg", link_url: "https://rival.example/bread", data_sources: ["facebook"], languages: ["en"], countries: ["GB"], delivery_start_time: "2099-07-01", delivery_stop_time: "2099-07-05" },
+      { provider_id: 7002, provider_page_id: "123456789", provider_page_name: "Rival Foods", bodies: ["Fresh bread delivered today"], captions: ["Order bakery"], creative_link_titles: ["Bread in 30 minutes"], creative_link_descriptions: ["Freshly baked"], cta_text: "Shop now", original_image_url: "https://scontent-lhr8-1.xx.fbcdn.net/ad-2.jpg", link_url: "https://rival.example/bread", data_sources: ["instagram"], languages: ["ar"], countries: ["GB"], delivery_start_time: "2099-06-28", delivery_stop_time: "2099-07-08" },
       { provider_id: 9999, provider_page_id: "999999999", provider_page_name: "Wrong Advertiser", bodies: ["Must be rejected"] },
     ] });
   }, async () => {});
@@ -40,6 +40,15 @@ test("queries Metapi by exact company Page ID and groups duplicate placements in
   assert.equal(result.creativeConceptCount, 1);
   assert.equal(result.creativeConcepts[0].placementCount, 2);
   assert.equal(result.creativeConcepts[0].pageId, "123456789");
+  assert.equal(result.creativeConcepts[0].headline, "Bread in 30 minutes");
+  assert.equal(result.creativeConcepts[0].description, "Freshly baked");
+  assert.equal(result.creativeConcepts[0].destinationUrl, "https://rival.example/bread");
+  assert.equal(result.creativeConcepts[0].mediaUrl, "https://scontent-lhr8-1.xx.fbcdn.net/ad.jpg");
+  assert.equal(result.creativeConcepts[0].startDate, "2099-06-28");
+  assert.equal(result.creativeConcepts[0].stopDate, "2099-07-08");
+  assert.deepEqual(result.creativeConcepts[0].platforms, ["facebook", "instagram"]);
+  assert.deepEqual(result.creativeConcepts[0].languages, ["en", "ar"]);
+  assert.equal(result.discardedRecordCount, 1);
   assert.deepEqual(result.evidenceUrls, ["https://www.facebook.com/ads/library/?id=7001", "https://www.facebook.com/ads/library/?id=7002"]);
   assert.equal(JSON.stringify(requests).includes("temporary-secret"), true);
   assert.equal(JSON.stringify(result).includes("temporary-secret"), false);
@@ -56,7 +65,79 @@ test("does not turn cross-advertiser Metapi records into competitor activity", a
   assert.equal(result.status, "access-limited");
   assert.equal(result.activeCreativeCount, 0);
   assert.equal(result.creativeConceptCount, undefined);
+  assert.equal(result.discardedRecordCount, 1);
   assert.match(result.message, /all were discarded as unsafe attribution/i);
+});
+
+test("does not label exact-Page records with elapsed delivery dates as active", async () => {
+  const result = await queryMetapiAdvertiser({ domain: "rival.example", brand: "Rival", facebookUrl: "https://facebook.com/123456789" }, "United Kingdom", "secret", async (url) => {
+    if (String(url).endsWith("/tasks")) return Response.json({ task_id: "stale-task" });
+    if (String(url).endsWith("/status")) return Response.json({ status: "succeeded" });
+    return Response.json({ data: [{ provider_id: 8100, provider_page_id: "123456789", provider_page_name: "Rival", bodies: ["Old offer"], delivery_stop_time: "2020-01-01T00:00:00Z" }] });
+  }, async () => {});
+  assert.equal(result.status, "no-verified-result");
+  assert.equal(result.activeCreativeCount, 0);
+  assert.equal(result.creativeConceptCount, 0);
+  assert.equal(result.inactiveRecordCount, 1);
+  assert.match(result.message, /delivery-stop date had elapsed/i);
+});
+
+test("uses a bounded identity probe before an exact advertiser task when the linked Page hides its ID", async () => {
+  const taskBodies = [];
+  const result = await queryMetapiAdvertiser({ domain: "rival.example", brand: "Rival Foods", facebookUrl: "https://facebook.com/RivalFoods" }, "United Kingdom", "secret", async (url, init = {}) => {
+    const href = String(url);
+    if (href === "https://www.facebook.com/RivalFoods") return new Response("<html><title>Rival Foods</title></html>");
+    if (href.endsWith("/tasks")) {
+      const body = JSON.parse(init.body);
+      taskBodies.push(body);
+      return Response.json({ task_id: body.q ? "identity-probe" : "exact-page" });
+    }
+    if (href.endsWith("/identity-probe/status") || href.endsWith("/exact-page/status")) return Response.json({ status: "succeeded" });
+    if (href.includes("/identity-probe/results")) return Response.json({ data: [
+      { provider_id: 9100, provider_page_id: "123456789", provider_page_name: "Rival Foods", link_url: "https://rival.example/offer", bodies: ["Company-domain proof"] },
+      { provider_id: 9101, provider_page_id: "777777777", provider_page_name: "Rival Fan Club", link_url: "https://fan.example/offer", bodies: ["Unrelated"] },
+    ] });
+    if (href.includes("/exact-page/results")) return Response.json({ data: [
+      { provider_id: 9200, provider_page_id: "123456789", provider_page_name: "Rival Foods", bodies: ["Fresh bread today"], link_url: "https://rival.example/bread" },
+    ] });
+    throw new Error(`Unexpected request: ${href}`);
+  }, async () => {});
+  assert.equal(taskBodies.length, 2);
+  assert.equal(taskBodies[0].q, "Rival Foods");
+  assert.equal(taskBodies[0].count, 20);
+  assert.equal(taskBodies[1].advertiser_id, "123456789");
+  assert.equal(taskBodies[1].count, 100);
+  assert.equal(result.status, "verified-active");
+  assert.equal(result.exactPageId, "123456789");
+  assert.equal(result.identityProbeRecordCount, 2);
+  assert.equal(result.activeCreativeCount, 1);
+});
+
+test("rejects an ambiguous identity probe instead of mixing advertiser Pages", async () => {
+  const result = await queryMetapiAdvertiser({ domain: "rival.example", brand: "Rival Foods", facebookUrl: "https://facebook.com/RivalFoods" }, "United Kingdom", "secret", async (url, init = {}) => {
+    const href = String(url);
+    if (href === "https://www.facebook.com/RivalFoods") return new Response("<html></html>");
+    if (href.endsWith("/tasks")) return Response.json({ task_id: JSON.parse(init.body).q ? "probe" : "unexpected-exact" });
+    if (href.endsWith("/probe/status")) return Response.json({ status: "succeeded" });
+    if (href.includes("/probe/results")) return Response.json({ data: [
+      { provider_id: 1, provider_page_id: "111111111", provider_page_name: "Rival Foods", link_url: "https://rival.example/a" },
+      { provider_id: 2, provider_page_id: "222222222", provider_page_name: "Rival Foods UK", link_url: "https://rival.example/b" },
+    ] });
+    throw new Error(`An exact task must not run after ambiguity: ${href}`);
+  }, async () => {});
+  assert.equal(result.status, "access-limited");
+  assert.equal(result.identityProbeRecordCount, 2);
+  assert.match(result.message, /ambiguous/i);
+});
+
+test("permits only public destinations and Meta-owned creative media", () => {
+  assert.equal(safeAdDestination("https://rival.example/offer"), "https://rival.example/offer");
+  assert.equal(safeAdDestination("https://l.facebook.com/l.php?u=https%3A%2F%2Frival.example%2Foffer"), "https://rival.example/offer");
+  assert.equal(safeAdDestination("http://127.0.0.1/admin"), "");
+  assert.equal(safeAdDestination("https://user:password@rival.example/offer"), "");
+  assert.equal(safeMetaMediaUrl("https://scontent-lhr8-1.xx.fbcdn.net/ad.jpg"), "https://scontent-lhr8-1.xx.fbcdn.net/ad.jpg");
+  assert.equal(safeMetaMediaUrl("https://cdn.example/ad.jpg"), "");
+  assert.equal(safeMetaMediaUrl("http://scontent-lhr8-1.xx.fbcdn.net/ad.jpg"), "");
 });
 
 test("runs the exact-Page provider concurrently with the official-library search", { timeout: 2_000 }, async () => {
@@ -110,8 +191,8 @@ test("never reports zero ads when automatic official-library access is unavailab
   try {
     const result = await scanOfficialAdLibraries([{ domain: "rival.example", brand: "Rival" }], "United Kingdom");
     assert.equal(result.available, false);
-    assert.equal(result.companies[0].platforms.every((platform) => platform.status === "no-verified-result"), true);
-    assert.match(result.companies[0].summary, /independently verified/i);
+    assert.equal(result.companies[0].platforms.every((platform) => platform.status === "access-limited"), true);
+    assert.match(result.companies[0].summary, /coverage is limited/i);
     assert.match(result.limitation, /exact spend/i);
   } finally {
     if (previous) process.env.OPENAI_API_KEY = previous;
@@ -120,20 +201,24 @@ test("never reports zero ads when automatic official-library access is unavailab
 });
 
 test("uses the Meta token only in the authorization header and returns safe direct records", async () => {
-  const result = await queryMetaAdLibrary({ domain: "rival.example", brand: "Rival Foods" }, "Germany", "server-secret", async (url, init) => {
+  const result = await queryMetaAdLibrary({ domain: "rival.example", brand: "Rival Foods", facebookUrl: "https://facebook.com/123456789" }, "Germany", "server-secret", async (url, init) => {
     assert.doesNotMatch(String(url), /server-secret|access_token/i);
+    assert.match(String(url), /search_page_ids=%5B%22123456789%22%5D/);
+    assert.doesNotMatch(String(url), /search_terms=/);
     assert.equal(init.headers.Authorization, "Bearer server-secret");
     assert.equal(init.signal instanceof AbortSignal, true);
     return Response.json({
       data: [
-        { id: "123", ad_creative_bodies: ["Free delivery this weekend"] },
-        { id: "456", ad_creative_bodies: ["New grocery range"] },
+        { id: "123", page_id: "123456789", page_name: "Rival Foods", ad_creative_bodies: ["Free delivery this weekend"] },
+        { id: "456", page_id: "123456789", page_name: "Rival Foods", ad_creative_bodies: ["New grocery range"] },
       ],
       paging: { next: "https://graph.facebook.com/next?access_token=must-not-leak" },
     });
   });
   assert.equal(result.status, "verified-active");
   assert.equal(result.activeCreativeCount, 2);
+  assert.equal(result.exactPageId, "123456789");
+  assert.equal(result.creativeConceptCount, 2);
   assert.equal(result.activeCreativeCountIsLowerBound, true);
   assert.deepEqual(result.evidenceUrls, ["https://www.facebook.com/ads/library/?id=123", "https://www.facebook.com/ads/library/?id=456"]);
   assert.equal(JSON.stringify(result).includes("server-secret"), false);
@@ -141,7 +226,7 @@ test("uses the Meta token only in the authorization header and returns safe dire
 });
 
 test("surfaces Meta app authorization failures instead of reporting no ads", async () => {
-  const result = await queryMetaAdLibrary({ domain: "rival.example", brand: "Rival" }, "Germany", "server-secret", async () => Response.json({ error: { code: 10, error_subcode: 2332002 } }));
+  const result = await queryMetaAdLibrary({ domain: "rival.example", brand: "Rival", facebookUrl: "https://facebook.com/123456789" }, "Germany", "server-secret", async () => Response.json({ error: { code: 10, error_subcode: 2332002 } }));
   assert.equal(result.status, "access-limited");
   assert.equal(result.activeCreativeCount, 0);
   assert.match(result.message, /10\/2332002/);
@@ -149,7 +234,7 @@ test("surfaces Meta app authorization failures instead of reporting no ads", asy
 });
 
 test("describes an empty Meta query as scoped evidence, not global zero activity", async () => {
-  const result = await queryMetaAdLibrary({ domain: "rival.example", brand: "Rival" }, "Germany", "server-secret", async () => Response.json({ data: [] }));
+  const result = await queryMetaAdLibrary({ domain: "rival.example", brand: "Rival", facebookUrl: "https://facebook.com/123456789" }, "Germany", "server-secret", async () => Response.json({ data: [] }));
   assert.equal(result.status, "no-verified-result");
   assert.match(result.message, /not proof of zero advertising/i);
 });
@@ -163,10 +248,10 @@ test("does not query ordinary commercial ads in a region without Meta API covera
 });
 
 test("does not turn un-linkable Meta records into a false empty result", async () => {
-  const result = await queryMetaAdLibrary({ domain: "rival.example", brand: "Rival" }, "Germany", "server-secret", async () => Response.json({ data: [{ id: "not-public", ad_creative_bodies: ["x".repeat(400)] }] }));
+  const result = await queryMetaAdLibrary({ domain: "rival.example", brand: "Rival", facebookUrl: "https://facebook.com/123456789" }, "Germany", "server-secret", async () => Response.json({ data: [{ id: "not-public", page_id: "123456789", page_name: "Rival", ad_creative_bodies: ["x".repeat(400)] }] }));
   assert.equal(result.status, "access-limited");
   assert.match(result.message, /no usable public ad IDs/i);
-  assert.equal(result.themes[0].length, 160);
+  assert.deepEqual(result.themes, []);
 });
 
 test("accepts verified ads only when evidence URLs are from the matching official platform", async () => {
@@ -216,7 +301,7 @@ test("token-enabled scan preserves stronger official-search evidence when Meta A
     ] }] }) }] }] });
   };
   try {
-    const result = await scanOfficialAdLibraries([{ domain: "rival.example", brand: "Rival" }], "Germany");
+    const result = await scanOfficialAdLibraries([{ domain: "rival.example", brand: "Rival", facebookUrl: "https://facebook.com/123456789" }], "Germany");
     assert.equal(result.provider, "openai-official-library-search");
     assert.equal(result.companies[0].platforms[0].status, "verified-active");
     assert.equal(result.companies[0].platforms[1].status, "verified-active");
@@ -244,7 +329,7 @@ test("rejects brand pages and generic library searches as direct ad evidence", a
   try {
     const result = await scanOfficialAdLibraries([{ domain: "rival.example", brand: "Rival" }], "United Kingdom");
     assert.deepEqual(result.companies[0].platforms.map((platform) => platform.status), ["no-verified-result", "no-verified-result", "no-verified-result"]);
-    assert.equal(result.companies[0].summary, "No active creative was independently verified in the automatic official-library search.");
+    assert.equal(result.companies[0].summary, "Automatic ad-library coverage is limited; no claim about advertising activity can be made yet.");
     assert.doesNotMatch(result.companies[0].summary, /claimed active/i);
   } finally {
     globalThis.fetch = previousFetch;
