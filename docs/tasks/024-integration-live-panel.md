@@ -67,4 +67,19 @@ need a rendered-screen check.
   removal from competitor expansion, and business-type-only offering removal.
 - Local gate after fixes: typecheck passed, production build passed, 101/101
   tests passed, and ESLint passed.
-- Patched production panel and rendered EN/AR responsive validation: pending.
+- Sites version 39 (commit `655141a2ceeb0e7e8e896d0e9ee31649d8eb3f72`)
+  was deployed and the identical no-retry panel returned 10/10 reports,
+  10/10 ad scans, 10/10 correct regions, 9/10 with at least three rivals,
+  8/10 with at least five offerings, crawl p95 80.9 seconds, but still only
+  5/10 `GOOD` and median 69.5. The reduced evidence is
+  `024-live-panel-v39.json`.
+- Fable 5 strict v39 review: `PANEL_V39_BLOCKERS`. It verified that same-brand,
+  publisher, and duplicate-root fixes worked, then identified variant-family
+  dilution, full-name containment scoring, missing rival fetch diagnostics,
+  and unrecorded cited positioning comparisons as the smallest safe next work.
+- Added red/green coverage for apparel family scoring and collapse, two-token
+  containment, cross-form and one-word rejection, rival fetched-path/gap
+  evidence, and cited-positioning scoring. The second local gate passed:
+  typecheck, production build, 107/107 tests, and ESLint.
+- Next exact deployment/panel and rendered EN/AR responsive validation:
+  pending.

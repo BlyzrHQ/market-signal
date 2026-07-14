@@ -1,4 +1,5 @@
 import { writeFile } from "node:fs/promises";
+import { reduceCompetitorForPanel, usefulnessBreakdown } from "./live-panel-utils.mjs";
 
 const siteUrl = (process.env.MARKET_SIGNAL_SITE_URL || "https://market-signal.abdulla617931.chatgpt.site").replace(/\/$/, "");
 const authorization = process.env.MARKET_SIGNAL_SITES_AUTH;
@@ -87,21 +88,6 @@ function reduceAdCompany(company) {
   };
 }
 
-function usefulnessBreakdown({ ok, regionCorrect, competitorCount, offeringCount, matchCount, exactPriceCount, adsOk, verifiedCreativeConcepts, competitorEvidenceComplete, actionableMatchCount }) {
-  const breakdown = {
-    reliableLiveReport: ok ? 10 : 0,
-    correctRegion: regionCorrect ? 10 : 0,
-    credibleCompetitorSet: competitorCount >= 3 ? 20 : competitorCount === 2 ? 12 : competitorCount === 1 ? 5 : 0,
-    specificOfferings: offeringCount >= 5 ? 10 : offeringCount >= 3 ? 6 : offeringCount ? 3 : 0,
-    productOrServiceComparison: matchCount >= 3 ? 30 : matchCount === 2 ? 25 : matchCount === 1 ? 18 : 0,
-    exactComparablePrice: exactPriceCount ? 5 : 0,
-    truthfulAdCoverage: verifiedCreativeConcepts ? 5 : adsOk ? 3 : 0,
-    firstPartyCompetitorEvidence: competitorEvidenceComplete && competitorCount ? 5 : 0,
-    actionableComparison: actionableMatchCount ? 5 : 0,
-  };
-  return { breakdown, score: Object.values(breakdown).reduce((sum, value) => sum + value, 0) };
-}
-
 async function runDomain(domain) {
   const crawl = await post("/api/crawl", { primary: domain, domains: [domain] });
   const payload = crawl.payload;
@@ -110,6 +96,7 @@ async function runDomain(domain) {
   const results = Array.isArray(payload?.results) ? payload.results : [];
   const primary = results.find((result) => result?.domain === payload?.primaryDomain) || results.find((result) => result?.role === "primary");
   const competitors = results.filter((result) => result?.role === "discovered-competitor" && result?.homepage && result?.discovery?.accepted);
+  const reducedCompetitors = competitors.map(reduceCompetitorForPanel);
   const profile = blocks.find((block) => block?.type === "market-profile") || {};
   const comparison = blocks.find((block) => block?.type === "product-comparison") || {};
   const rows = Array.isArray(comparison.rows) ? comparison.rows : [];
@@ -123,9 +110,10 @@ async function runDomain(domain) {
   const region = cleanRegion(profile.region || primary?.homepage?.region);
   const expectedRegion = expectedRegions.get(domain);
   const regionCorrect = region === expectedRegion;
-  const competitorEvidenceComplete = competitors.every((result) => /^https?:\/\//.test(String(result?.homepage?.sourceUrl || "")) && /^https?:\/\//.test(String(result?.discovery?.sourceUrl || result?.discovery?.websiteUrl || "")));
+  const competitorEvidenceComplete = reducedCompetitors.every((result) => Boolean(result.homepageEvidenceUrl && result.discoveryEvidenceUrl));
+  const positioningComparisonCount = reducedCompetitors.filter((result) => result.positioningComparison.available).length;
   const offeringCount = Array.isArray(primary?.products) ? primary.products.length : 0;
-  const score = usefulnessBreakdown({ ok: Boolean(payload?.ok), regionCorrect, competitorCount: competitors.length, offeringCount, matchCount: matches.length, exactPriceCount, adsOk: Boolean(ad.payload?.ok), verifiedCreativeConcepts, competitorEvidenceComplete, actionableMatchCount });
+  const score = usefulnessBreakdown({ ok: Boolean(payload?.ok), regionCorrect, competitorCount: competitors.length, offeringCount, matchCount: matches.length, positioningComparisonCount, exactPriceCount, adsOk: Boolean(ad.payload?.ok), verifiedCreativeConcepts, competitorEvidenceComplete, actionableMatchCount });
   return {
     domain,
     reportOk: Boolean(payload?.ok),
@@ -141,15 +129,8 @@ async function runDomain(domain) {
     category: String(profile.category || ""),
     offeringCount,
     offeringSamples: (Array.isArray(primary?.products) ? primary.products : []).slice(0, 5).map((product) => ({ name: String(product?.name || ""), type: String(product?.jsonLdType || ""), sourceUrl: String(product?.sourceUrl || "") })),
-    competitors: competitors.map((result) => ({
-      domain: String(result.domain || ""),
-      companyName: String(result?.discovery?.companyName || ""),
-      score: Number(result?.discovery?.verificationScore || 0),
-      confidence: String(result?.discovery?.confidence || ""),
-      category: String(result?.discovery?.marketCategory || ""),
-      homepageEvidenceUrl: String(result?.homepage?.sourceUrl || ""),
-      discoveryEvidenceUrl: String(result?.discovery?.sourceUrl || result?.discovery?.websiteUrl || ""),
-    })),
+    competitors: reducedCompetitors,
+    positioningComparisonCount,
     comparisonCoverage: comparison.coverage || null,
     visibleMatches: matches.slice(0, 8).map(({ primary: primaryProduct, match }) => ({
       primary: String(primaryProduct?.name || ""),
@@ -198,6 +179,7 @@ const artifact = {
     domainsWithAtLeastThreeCompetitors: reports.filter((report) => report.competitors.length >= 3).length,
     domainsWithAtLeastFiveOfferings: reports.filter((report) => report.offeringCount >= 5).length,
     domainsWithVisibleProductOrServiceMatches: reports.filter((report) => report.visibleMatches.length > 0).length,
+    domainsWithProductOrCitedPositioningComparison: reports.filter((report) => report.visibleMatches.length > 0 || report.positioningComparisonCount >= 3).length,
     domainsWithExactComparablePrices: reports.filter((report) => report.visibleMatches.some((match) => match.exactPriceComparison)).length,
     verifiedCreativeConcepts: reports.reduce((sum, report) => sum + report.ads.verifiedCreativeConcepts, 0),
     diagnosticGoodCount: reports.filter((report) => report.diagnosticUsefulness.grade === "GOOD").length,
@@ -208,6 +190,7 @@ const artifact = {
     "This is a no-retry production capture from the deployed application; no fixture data is included.",
     "Every competitor record retains first-party homepage and discovery evidence URLs.",
     "Visible matches include only Medium-confidence pairs returned by the production comparison engine.",
+    "A cited positioning comparison is counted only when at least three verified rivals have first-party and discovery evidence plus category alignment.",
     "Exact price comparisons require a server-approved priceComparison pair.",
     "Missing or limited ad coverage is not evidence of zero advertising activity.",
     "Diagnostic usefulness scores are transparent heuristics and are not the Fable 5 merge verdict.",

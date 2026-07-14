@@ -53,6 +53,7 @@ export type ProductComparison = {
   coverage: {
     primaryProductsAvailable: number;
     primaryProductsScanned: number;
+    primaryProductFamiliesCompared: number;
     competitorProductsAvailable: number;
     competitorProductsScanned: number;
     assignedPairCount: number;
@@ -99,6 +100,9 @@ const ACCESSORY_PRODUCT_GROUPS = new Map<string, string>([
   ...["cup", "cups", "mug", "mugs"].map((token) => [token, "drinkware"] as const),
   ...["infuser", "infusers", "scoop", "scoops", "spoon", "spoons", "whisk", "whisks"].map((token) => [token, "preparation-accessory"] as const),
   ...["voucher", "vouchers"].map((token) => [token, "voucher"] as const),
+  ...["butter", "butters", "spread", "spreads"].map((token) => [token, "spread"] as const),
+  ...["cereal", "cereals", "granola", "granolas", "muesli"].map((token) => [token, "granola"] as const),
+  ...["bar", "bars"].map((token) => [token, "snack-bar"] as const),
 ]);
 
 function clean(value: string) {
@@ -557,6 +561,14 @@ function fieldTokens(product: ProductRecord, value: string) {
   return tokens(value).filter((token) => !identityTokens.has(token) && !/^\d+(?:\.\d+)?(?:g|kg|ml|l|oz|lb|pk|pack|pcs?)?$/i.test(token));
 }
 
+function productFamilyName(value: string) {
+  return clean(value)
+    .replace(/\s*\([^)]*\)\s*/g, " ")
+    .replace(/\s+(?:-|–|—|\|)\s+.+$/u, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function editDistanceAtMostOne(left: string, right: string) {
   if (left === right) return true;
   if (Math.abs(left.length - right.length) > 1 || Math.min(left.length, right.length) < 5) return false;
@@ -588,10 +600,16 @@ export function scoreProductPair(primary: ProductRecord, candidate: ProductRecor
   const primaryDescription = fieldTokens(primary, primary.description);
   const candidateDescription = fieldTokens(candidate, candidate.description);
   const sharedNameTerms = primaryName.filter((token) => candidateName.some((candidateToken) => editDistanceAtMostOne(token, candidateToken)));
+  const primaryFamily = fieldTokens(primary, productFamilyName(primary.name));
+  const candidateFamily = fieldTokens(candidate, productFamilyName(candidate.name));
+  const sharedFamilyTerms = primaryFamily.filter((token) => candidateFamily.some((candidateToken) => editDistanceAtMostOne(token, candidateToken)));
+  const familySimilarity = primaryFamily.length >= 2 && candidateFamily.length >= 2 && sharedFamilyTerms.length >= 2 ? jaccard(primaryFamily, candidateFamily) : 0;
+  const primaryNameContained = primaryName.length >= 2 && primaryName.every((token) => candidateName.includes(token));
+  const nameSimilarity = Math.max(jaccard(primaryName, candidateName), familySimilarity, primaryNameContained ? 1 : 0);
   const sharedTerms = [...new Set([...sharedNameTerms, ...primaryCategory.filter((token) => candidateCategory.includes(token)), ...primaryDescription.filter((token) => candidateDescription.includes(token))])].sort();
   const imageTokens = (url: string) => { try { return tokens(decodeURIComponent(new URL(url).pathname.split("/").at(-1) || "").replace(/\.[a-z0-9]{2,5}$/i, ""), true).filter((token) => !/^(?:asset|default|hero|image|img|logo|og|placeholder|product|products|thumb|thumbnail|\d+)$/i.test(token)); } catch { return []; } };
   const imageScore = primary.imageUrl && candidate.imageUrl ? jaccard(imageTokens(primary.imageUrl), imageTokens(candidate.imageUrl)) : 0;
-  const baseScore = (jaccard(primaryName, candidateName) * 0.58) + (jaccard(primaryCategory, candidateCategory) * 0.18) + (jaccard(primaryDescription, candidateDescription) * 0.14) + (imageScore * 0.1);
+  const baseScore = (nameSimilarity * 0.58) + (jaccard(primaryCategory, candidateCategory) * 0.18) + (jaccard(primaryDescription, candidateDescription) * 0.14) + (imageScore * 0.1);
   const primaryPlanTier = primary.category.startsWith("saas-plan") ? planTier(primary.name, primary.priceSignals[0]) : null;
   const candidatePlanTier = candidate.category.startsWith("saas-plan") ? planTier(candidate.name, candidate.priceSignals[0]) : null;
   const bothSaasPlans = Boolean(primaryPlanTier && candidatePlanTier);
@@ -696,8 +714,18 @@ export function buildProductComparison(primaryDomain: string, catalogs: Array<{ 
     const required = new Set((requiredSourceUrls[canonicalHost(domain)] || []).map((url) => url.split("#")[0]));
     return [...products].sort((left, right) => Number(required.has(right.sourceUrl.split("#")[0])) - Number(required.has(left.sourceUrl.split("#")[0])) || rank(right) - rank(left) || left.id.localeCompare(right.id)).slice(0, maxProductsPerCatalog);
   };
+  const collapsePrimaryFamilies = (products: ProductRecord[]) => {
+    const selected = new Map<string, ProductRecord>();
+    for (const product of products) {
+      const familyTokens = product.jsonLdType === "Product" ? fieldTokens(product, productFamilyName(product.name)) : [];
+      const key = familyTokens.length >= 2 ? `${product.jsonLdType}|${familyTokens.join("|")}` : `${product.jsonLdType}|${product.id}`;
+      if (!selected.has(key)) selected.set(key, product);
+    }
+    return [...selected.values()];
+  };
   const primaryCatalog = catalogs.find((catalog) => canonicalHost(catalog.domain) === canonicalPrimary)?.products || [];
-  const primaryProducts = selectForComparison(canonicalPrimary, primaryCatalog);
+  const primaryProductsScanned = selectForComparison(canonicalPrimary, primaryCatalog);
+  const primaryProducts = collapsePrimaryFamilies(primaryProductsScanned);
   const competitors = catalogs.filter((catalog) => canonicalHost(catalog.domain) !== canonicalPrimary).map((catalog) => ({ ...catalog, domain: canonicalHost(catalog.domain), products: selectForComparison(catalog.domain, catalog.products) }));
   const rows = primaryProducts.map((primary) => ({ primary, matches: [] as ProductMatch[] }));
   const unmatched: ProductComparison["unmatched"] = [];
@@ -765,7 +793,8 @@ export function buildProductComparison(primaryDomain: string, catalogs: Array<{ 
     unmatched,
     coverage: {
       primaryProductsAvailable: primaryCatalog.length,
-      primaryProductsScanned: primaryProducts.length,
+      primaryProductsScanned: primaryProductsScanned.length,
+      primaryProductFamiliesCompared: primaryProducts.length,
       competitorProductsAvailable: catalogs.filter((catalog) => canonicalHost(catalog.domain) !== canonicalPrimary).reduce((sum, catalog) => sum + catalog.products.length, 0),
       competitorProductsScanned: competitors.reduce((sum, competitor) => sum + competitor.products.length, 0),
       assignedPairCount,
