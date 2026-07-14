@@ -51,6 +51,14 @@ export type ProductComparison = {
   unmatched: Array<{ domain: string; products: ProductRecord[] }>;
 };
 
+export type ProductEnrichmentTarget = {
+  domain: string;
+  sourceUrl: string;
+  productId: string;
+  pairScore: number;
+  role: "primary" | "rival";
+};
+
 type JsonRecord = Record<string, unknown>;
 
 const PRODUCT_TYPES = new Set(["Product", "SoftwareApplication", "Service"]);
@@ -65,6 +73,7 @@ const ECOMMERCE_OFFERING_WORDS = /\b(?:box(?:es)?|bundles?|delivery|membership|s
 const GENERIC_OFFERING_HEADING = /^(?:all features|benefits|built for .+|customer stories|everything you need|get started|how it works|learn more|our (?:features|products|services|work)|pricing|services|solutions|what we do|why .+)$/i;
 const GENERIC_PAGE_NAME = /^(?:features?|platform|pricing|products?|services?|solutions?|plans?)$/i;
 const EDITORIAL_HEADING = /^(?:a guide to|case study|how (?:do|to)|news|our story|the faces behind|what is|why )\b|\b(?:case study|customer stor(?:y|ies)|in the age of)\b/i;
+const SLOGAN_LIKE_OFFERING = /[.!?]\s+[\p{L}\p{N}]|^(?:the|your)\s+.+\s+workspace$/iu;
 const STOPWORDS = new Set([
   "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "is", "it", "of", "on", "or", "our", "the", "their", "this", "to", "with", "your",
 ]);
@@ -138,10 +147,12 @@ function periodFrom(value: string) {
 function priceSignal(rawValue: unknown, currencyValue?: unknown): ProductPriceSignal | null {
   const rawText = text(rawValue);
   if (!rawText) return null;
-  const currency = text(currencyValue).toUpperCase() || undefined;
+  const explicitCurrency = text(currencyValue).toUpperCase();
+  const inferredCurrency = /£/.test(rawText) ? "GBP" : /€/.test(rawText) ? "EUR" : /\$/.test(rawText) ? "USD" : undefined;
+  const currency = explicitCurrency || inferredCurrency;
   const amountMatch = rawText.replace(/,/g, "").match(/\d+(?:\.\d+)?/);
   const amount = amountMatch ? Number(amountMatch[0]) : undefined;
-  const raw = currency && !rawText.toUpperCase().includes(currency) ? `${currency} ${rawText}` : rawText;
+  const raw = explicitCurrency && !rawText.toUpperCase().includes(explicitCurrency) ? `${explicitCurrency} ${rawText}` : rawText;
   return { raw: raw.slice(0, 120), currency, amount: Number.isFinite(amount) ? amount : undefined, period: periodFrom(raw) };
 }
 
@@ -304,7 +315,7 @@ function usefulOfferingName(value: string) {
     if (words.slice(0, midpoint).join(" ").toLowerCase() === words.slice(midpoint).join(" ").toLowerCase()) name = words.slice(0, midpoint).join(" ");
   }
   const terms = normalized(name).split(/\s+/).filter(Boolean);
-  if (!name || name.length > 120 || terms.length < 2 || terms.length > 14 || GENERIC_OFFERING_HEADING.test(name) || EDITORIAL_HEADING.test(name)) return "";
+  if (!name || name.length > 120 || terms.length < 2 || terms.length > 14 || GENERIC_OFFERING_HEADING.test(name) || EDITORIAL_HEADING.test(name) || SLOGAN_LIKE_OFFERING.test(name)) return "";
   return name;
 }
 
@@ -527,4 +538,57 @@ export function buildProductComparison(primaryDomain: string, catalogs: Array<{ 
     unmatched.push({ domain: competitor.domain, products: competitor.products.filter((product) => !usedProducts.has(product.id)) });
   }
   return { primaryDomain: canonicalPrimary, comparisonDomains: competitors.map((competitor) => competitor.domain), rows, unmatched };
+}
+
+function hasComparablePublicPrice(product: ProductRecord) {
+  return product.priceSignals.some((signal) => typeof signal.amount === "number" && Boolean(signal.currency));
+}
+
+function safeProductSource(product: ProductRecord) {
+  try {
+    const url = new URL(product.sourceUrl);
+    return /^https?:$/.test(url.protocol) && canonicalHost(url.hostname) === canonicalHost(product.domain) && /\/(?:products?|shop|store)\//i.test(url.pathname)
+      ? url.toString()
+      : "";
+  } catch {
+    return "";
+  }
+}
+
+export function selectProductEnrichmentTargets(comparison: ProductComparison, maxPages = 6): ProductEnrichmentTarget[] {
+  const boundedMax = Math.max(0, Math.min(6, Math.floor(maxPages)));
+  if (!boundedMax) return [];
+  const pairs = comparison.rows.flatMap((row) => row.matches.flatMap((match) => {
+    const rival = match.product;
+    if (!rival || row.primary.jsonLdType !== "Product" || rival.jsonLdType !== "Product") return [];
+    const primaryUrl = safeProductSource(row.primary);
+    const rivalUrl = safeProductSource(rival);
+    if (!primaryUrl || !rivalUrl || (hasComparablePublicPrice(row.primary) && hasComparablePublicPrice(rival))) return [];
+    return [{ primary: row.primary, rival, primaryUrl, rivalUrl, score: match.score, competitorDomain: match.domain }];
+  })).sort((left, right) => right.score - left.score || left.competitorDomain.localeCompare(right.competitorDomain) || left.primary.id.localeCompare(right.primary.id));
+  const selected: ProductEnrichmentTarget[] = [];
+  const selectedUrls = new Set<string>();
+  const selectedPairs = new Set<string>();
+  const addPair = (pair: typeof pairs[number]) => {
+    const key = `${pair.primary.id}|${pair.rival.id}`;
+    if (selectedPairs.has(key)) return;
+    const missing = [
+      ...(!hasComparablePublicPrice(pair.primary) ? [{ domain: pair.primary.domain, sourceUrl: pair.primaryUrl, productId: pair.primary.id, pairScore: pair.score, role: "primary" as const }] : []),
+      ...(!hasComparablePublicPrice(pair.rival) ? [{ domain: pair.rival.domain, sourceUrl: pair.rivalUrl, productId: pair.rival.id, pairScore: pair.score, role: "rival" as const }] : []),
+    ].filter((target) => !selectedUrls.has(target.sourceUrl));
+    if (!missing.length || selected.length + missing.length > boundedMax) return;
+    selectedPairs.add(key);
+    for (const target of missing) {
+      selectedUrls.add(target.sourceUrl);
+      selected.push(target);
+    }
+  };
+  const seenCompetitors = new Set<string>();
+  for (const pair of pairs) {
+    if (seenCompetitors.has(pair.competitorDomain)) continue;
+    addPair(pair);
+    seenCompetitors.add(pair.competitorDomain);
+  }
+  for (const pair of pairs) addPair(pair);
+  return selected;
 }

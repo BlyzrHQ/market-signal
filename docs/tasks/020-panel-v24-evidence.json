@@ -1,0 +1,3291 @@
+{
+  "schema": "market-signal-production-panel-evidence/v1",
+  "provenance": {
+    "siteVersion": 24,
+    "sourceCommit": "9d26eacf93b7d55b034584dddb4ee1b45a2d0008",
+    "liveUrl": "https://market-signal.abdulla617931.chatgpt.site",
+    "captureMethod": "Ten production /api/crawl calls ran in parallel with no retry. Each successful crawl was followed by its own /api/ads call using only the primary and accepted competitors.",
+    "dataBoundary": "All entries are public report evidence. The private Sites bypass credential used for the audit is intentionally excluded."
+  },
+  "summary": {
+    "submittedDomains": 10,
+    "successfulInitialReports": 10,
+    "reportsWithAtLeastThreeCompetitors": 10,
+    "reportsWithAtLeastFivePrimaryOfferings": 9,
+    "completedAdScans": 10,
+    "initialReportP50Seconds": 37.4,
+    "initialReportP95Seconds": 41.5,
+    "adIntelligenceP50Seconds": 19.9,
+    "adIntelligenceP95Seconds": 31.6
+  },
+  "reports": [
+    {
+      "domain": "myjam.co.uk",
+      "ok": true,
+      "region": "United Kingdom",
+      "businessType": "ecommerce",
+      "category": "A Marketplace for Cultural Food – MyJam Food",
+      "timings": {
+        "initialReportSeconds": 37,
+        "adIntelligenceSeconds": 24.8
+      },
+      "observedAt": {
+        "report": "2026-07-13T23:41:31.338Z",
+        "ads": "2026-07-13T23:41:37.420Z"
+      },
+      "competitorCount": 5,
+      "competitors": [
+        {
+          "domain": "asiangrocerystore.uk",
+          "companyName": "Asian Grocery Store",
+          "verificationScore": 77,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "Asian grocery ecommerce",
+          "reason": "Offers fresh groceries, halal meat, vegetables, fruits, spices, bakery, and same-day delivery in the UK, which is highly adjacent to a cultural food marketplace and functionally a direct substitute.",
+          "evidenceUrl": "https://asiangrocerystore.uk/",
+          "websiteSourceUrl": "https://asiangrocerystore.uk/",
+          "productCount": 2
+        },
+        {
+          "domain": "barakahgo.co.uk",
+          "companyName": "BarakahGo",
+          "verificationScore": 70,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "Halal marketplace / ethnic grocery e-commerce",
+          "reason": "Online halal marketplace in Newcastle with meat, fruit & vegetables, bakery, pantry, pickles and olives—very similar to a cultural grocery marketplace.",
+          "evidenceUrl": "https://www.barakahgo.co.uk/",
+          "websiteSourceUrl": "https://www.barakahgo.co.uk/",
+          "productCount": 0
+        },
+        {
+          "domain": "egrocers.uk",
+          "companyName": "E-Grocers UK",
+          "verificationScore": 89,
+          "confidence": "High",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": true,
+          "marketCategory": "South Asian grocery ecommerce",
+          "reason": "Markets itself as an authentic South Asian grocery store and sells spices, bakery items, dessert mixes, grains, fresh vegetables, frozen foods, and halal meat, overlapping strongly with MyJam's cultural assortment.",
+          "evidenceUrl": "https://www.egrocers.uk/product/cabbage-red/",
+          "websiteSourceUrl": "https://www.egrocers.uk/",
+          "productCount": 400
+        },
+        {
+          "domain": "halalgrocerystore.co.uk",
+          "companyName": "Halal Grocery Store / Poplar Oriental Grocers",
+          "verificationScore": 76,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "Halal grocery store / multicultural grocer",
+          "reason": "Online halal grocer in partnership with an established oriental grocer, selling halal meat and multicultural groceries; overlaps with meat, pickles, and pantry items.",
+          "evidenceUrl": "https://halalgrocerystore.co.uk/",
+          "websiteSourceUrl": "https://halalgrocerystore.co.uk/",
+          "productCount": 1
+        },
+        {
+          "domain": "healthy-halal.co.uk",
+          "companyName": "Healthy Halal",
+          "verificationScore": 76,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "halal meat delivery / grocery retailer",
+          "reason": "Direct halal meat delivery retailer in the UK with grocery/home-shopping positioning, overlapping strongly on meat and grocery baskets.",
+          "evidenceUrl": "https://www.healthy-halal.co.uk/",
+          "websiteSourceUrl": "https://www.healthy-halal.co.uk/",
+          "productCount": 2
+        }
+      ],
+      "primaryOfferingCount": 400,
+      "primaryOfferingSamples": [
+        {
+          "name": "Red Cabbage 1Kg",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://myjam.co.uk/products/red-cabbage-1kg"
+        },
+        {
+          "name": "1&1 Salzgurken Pickled Cucumber 720G",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://myjam.co.uk/products/1and1-salzgurken-pickled-cucumber-720g"
+        },
+        {
+          "name": "Abido 7 Spices Bag 500G",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://myjam.co.uk/products/abido-7-spices-bag-500g"
+        },
+        {
+          "name": "Abido 7Mix Spices 50G",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://myjam.co.uk/products/abido-7mix-spices-50g"
+        },
+        {
+          "name": "Abido Greek Mastic 1Bag",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://myjam.co.uk/products/abido-greek-mastic-1bag"
+        }
+      ],
+      "productMatchSamples": [
+        {
+          "primary": "Red Cabbage 1Kg",
+          "primarySource": "https://myjam.co.uk/products/red-cabbage-1kg",
+          "competitor": "egrocers.uk",
+          "rival": "cabbage red",
+          "rivalSource": "https://www.egrocers.uk/product/cabbage-red/",
+          "matchScore": 0.58,
+          "priceVerdict": "Public prices are not comparable yet.",
+          "whyTheyMayWin": "The rival presents cabbage red as the closest observable alternative.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer."
+        }
+      ],
+      "adProvider": "metapi-exact-page-and-official-search",
+      "adCompanies": [
+        {
+          "domain": "myjam.co.uk",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: No active Meta ads were observed for exact Page 100063536817111 in GB at this check. This does not prove zero activity in other regions, time periods, or Pages.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=GB&view_all_page_id=100063536817111&search_type=page&media_type=all"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=MyJam"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=MyJam"
+            }
+          ]
+        },
+        {
+          "domain": "asiangrocerystore.uk",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: No Facebook profile linked from this company's own website was found, so exact advertiser attribution was not attempted.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Asian%20Grocery%20Store&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=Asian%20Grocery%20Store"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=Asian%20Grocery%20Store"
+            }
+          ]
+        },
+        {
+          "domain": "barakahgo.co.uk",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: No Facebook profile linked from this company's own website was found, so exact advertiser attribution was not attempted.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=BarakahGo&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=BarakahGo"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=BarakahGo"
+            }
+          ]
+        },
+        {
+          "domain": "egrocers.uk",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: No Facebook profile linked from this company's own website was found, so exact advertiser attribution was not attempted.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=E-Grocers%20UK&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=E-Grocers%20UK"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=E-Grocers%20UK"
+            }
+          ]
+        },
+        {
+          "domain": "halalgrocerystore.co.uk",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: No Facebook profile linked from this company's own website was found, so exact advertiser attribution was not attempted.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Halal%20Grocery%20Store%20%2F%20Poplar%20Oriental%20Grocers&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=Halal%20Grocery%20Store%20%2F%20Poplar%20Oriental%20Grocers"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=Halal%20Grocery%20Store%20%2F%20Poplar%20Oriental%20Grocers"
+            }
+          ]
+        },
+        {
+          "domain": "healthy-halal.co.uk",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: No active Meta ads were observed for exact Page 61583230764457 in GB at this check. This does not prove zero activity in other regions, time periods, or Pages.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=GB&view_all_page_id=61583230764457&search_type=page&media_type=all"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=Healthy%20Halal"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=Healthy%20Halal"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "domain": "birdandblendtea.com",
+      "ok": true,
+      "region": "United Kingdom",
+      "businessType": "ecommerce",
+      "category": "Loose Leaf Tea Blends",
+      "timings": {
+        "initialReportSeconds": 31.9,
+        "adIntelligenceSeconds": 19.2
+      },
+      "observedAt": {
+        "report": "2026-07-13T23:41:24.978Z",
+        "ads": "2026-07-13T23:41:32.607Z"
+      },
+      "competitorCount": 5,
+      "competitors": [
+        {
+          "domain": "rareteacompany.com",
+          "companyName": "Rare Tea Company",
+          "verificationScore": 96,
+          "confidence": "High",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": true,
+          "marketCategory": "Premium loose leaf tea",
+          "reason": "UK loose-leaf tea specialist focused on whole-leaf teas and blends; a direct alternative for customers seeking premium loose-leaf tea blends.",
+          "evidenceUrl": "https://rareteacompany.com/products/loose-leaf-tea-kit",
+          "websiteSourceUrl": "https://rareteacompany.com/",
+          "productCount": 220
+        },
+        {
+          "domain": "brewteacompany.co.uk",
+          "companyName": "Brew Tea Co.",
+          "verificationScore": 92,
+          "confidence": "High",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": true,
+          "marketCategory": "Loose leaf tea blends",
+          "reason": "Well-known UK direct-substitute brand focused on loose leaf tea and blends; its homepage says it sells loose leaf tea and that it started with a handful of blends. ([brewteacompany.co.uk](https://www.brewteacompany.co.uk/?utm_source=openai))",
+          "evidenceUrl": "https://www.brewteacompany.co.uk/products/lemon-ginger-tea",
+          "websiteSourceUrl": "https://www.brewteacompany.co.uk/",
+          "productCount": 58
+        },
+        {
+          "domain": "jingtea.com",
+          "companyName": "JING Tea",
+          "verificationScore": 89,
+          "confidence": "High",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": true,
+          "marketCategory": "Premium tea and loose leaf tea",
+          "reason": "UK premium tea company offering loose-leaf teas and blends, overlapping with Bird & Blend on specialty tea buyers and gifting.",
+          "evidenceUrl": "https://jingtea.com/products/tea-bag-selection-box",
+          "websiteSourceUrl": "https://jingtea.com/",
+          "productCount": 93
+        },
+        {
+          "domain": "tea23.co.uk",
+          "companyName": "TEA23",
+          "verificationScore": 88,
+          "confidence": "High",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": true,
+          "marketCategory": "Loose leaf tea blends",
+          "reason": "UK independent tea company offering loose leaf tea and herbals, with a shop focused on loose leaf tea and specialty tea bags. ([tea23.co.uk](https://www.tea23.co.uk/?utm_source=openai))",
+          "evidenceUrl": "https://www.tea23.co.uk/products/sweet-lemon-and-ginger-tea-bags",
+          "websiteSourceUrl": "https://www.tea23.co.uk/",
+          "productCount": 51
+        },
+        {
+          "domain": "tealab.co.uk",
+          "companyName": "Tea Lab Company",
+          "verificationScore": 92,
+          "confidence": "High",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": true,
+          "marketCategory": "Loose leaf tea blends",
+          "reason": "UK loose-leaf specialist with a blend-heavy assortment; the homepage markets organic and natural loose leaf teas and clearly serves UK orders. ([tealab.co.uk](https://www.tealab.co.uk/?utm_source=openai))",
+          "evidenceUrl": "https://www.tealab.co.uk/products/bamboo-matcha-whisk",
+          "websiteSourceUrl": "https://www.tealab.co.uk/",
+          "productCount": 106
+        }
+      ],
+      "primaryOfferingCount": 340,
+      "primaryOfferingSamples": [
+        {
+          "name": "Bamboo Matcha Whisk",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://www.birdandblendtea.com/products/bamboo-matcha-whisk"
+        },
+        {
+          "name": "Christmas Tea Bag Selection Gift Box",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://www.birdandblendtea.com/products/christmas-tea-selection-gift-box"
+        },
+        {
+          "name": "Lemon & Ginger Tea",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://www.birdandblendtea.com/products/lemon-and-ginger-tea"
+        },
+        {
+          "name": "Loose Leaf Tea Starter Kit",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://www.birdandblendtea.com/products/starter-kit-loose-leaf-tea"
+        },
+        {
+          "name": "100 Days of Tea & Mindfulness Journal",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://www.birdandblendtea.com/products/100-days-of-tea-mindfulness-journal"
+        }
+      ],
+      "productMatchSamples": [
+        {
+          "primary": "Bamboo Matcha Whisk",
+          "primarySource": "https://www.birdandblendtea.com/products/bamboo-matcha-whisk",
+          "competitor": "tealab.co.uk",
+          "rival": "BAMBOO MATCHA WHISK",
+          "rivalSource": "https://www.tealab.co.uk/products/bamboo-matcha-whisk",
+          "matchScore": 0.6553,
+          "priceVerdict": "Public prices are not comparable yet.",
+          "whyTheyMayWin": "The two offers look very similar from public product language, so small price, availability, or trust differences can decide the sale.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer."
+        },
+        {
+          "primary": "Christmas Tea Bag Selection Gift Box",
+          "primarySource": "https://www.birdandblendtea.com/products/christmas-tea-selection-gift-box",
+          "competitor": "jingtea.com",
+          "rival": "Tea Bag Selection Box",
+          "rivalSource": "https://jingtea.com/products/tea-bag-selection-box",
+          "matchScore": 0.4224,
+          "priceVerdict": "Public prices are not comparable yet.",
+          "whyTheyMayWin": "The rival presents Tea Bag Selection Box as the closest observable alternative.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer."
+        },
+        {
+          "primary": "Lemon & Ginger Tea",
+          "primarySource": "https://www.birdandblendtea.com/products/lemon-and-ginger-tea",
+          "competitor": "brewteacompany.co.uk",
+          "rival": "Lemon & Ginger Tea",
+          "rivalSource": "https://www.brewteacompany.co.uk/products/lemon-ginger-tea",
+          "matchScore": 0.58,
+          "priceVerdict": "Public prices are not comparable yet.",
+          "whyTheyMayWin": "The rival presents Lemon & Ginger Tea as the closest observable alternative.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer."
+        },
+        {
+          "primary": "Lemon & Ginger Tea",
+          "primarySource": "https://www.birdandblendtea.com/products/lemon-and-ginger-tea",
+          "competitor": "tea23.co.uk",
+          "rival": "Sweet Lemon and Ginger Tea Bags",
+          "rivalSource": "https://www.tea23.co.uk/products/sweet-lemon-and-ginger-tea-bags",
+          "matchScore": 0.4894,
+          "priceVerdict": "Public prices are not comparable yet.",
+          "whyTheyMayWin": "The rival presents Sweet Lemon and Ginger Tea Bags as the closest observable alternative.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer."
+        },
+        {
+          "primary": "Loose Leaf Tea Starter Kit",
+          "primarySource": "https://www.birdandblendtea.com/products/starter-kit-loose-leaf-tea",
+          "competitor": "rareteacompany.com",
+          "rival": "Loose Leaf Tea Starter Kit",
+          "rivalSource": "https://rareteacompany.com/products/loose-leaf-tea-kit",
+          "matchScore": 0.62,
+          "priceVerdict": "Public prices are not comparable yet.",
+          "whyTheyMayWin": "The rival presents Loose Leaf Tea Starter Kit as the closest observable alternative.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer."
+        }
+      ],
+      "adProvider": "metapi-exact-page-and-official-search",
+      "adCompanies": [
+        {
+          "domain": "birdandblendtea.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: No active Meta ads were observed for exact Page 100064783383950 in GB at this check. This does not prove zero activity in other regions, time periods, or Pages.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=GB&view_all_page_id=100064783383950&search_type=page&media_type=all"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=Loose%20Leaf%20Tea%20Blends"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=Loose%20Leaf%20Tea%20Blends"
+            }
+          ]
+        },
+        {
+          "domain": "rareteacompany.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: No Facebook profile linked from this company's own website was found, so exact advertiser attribution was not attempted.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Rare%20Tea%20Company&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=Rare%20Tea%20Company"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=Rare%20Tea%20Company"
+            }
+          ]
+        },
+        {
+          "domain": "brewteacompany.co.uk",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: No Facebook profile linked from this company's own website was found, so exact advertiser attribution was not attempted.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Brew%20Tea%20Co.&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=Brew%20Tea%20Co."
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=Brew%20Tea%20Co."
+            }
+          ]
+        },
+        {
+          "domain": "jingtea.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: No active Meta ads were observed for exact Page 100064076763145 in GB at this check. This does not prove zero activity in other regions, time periods, or Pages.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=GB&view_all_page_id=100064076763145&search_type=page&media_type=all"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=JING%20Tea"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=JING%20Tea"
+            }
+          ]
+        },
+        {
+          "domain": "tea23.co.uk",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: No active Meta ads were observed for exact Page 100028409453290 in GB at this check. This does not prove zero activity in other regions, time periods, or Pages.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=GB&view_all_page_id=100028409453290&search_type=page&media_type=all"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=TEA23"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=TEA23"
+            }
+          ]
+        },
+        {
+          "domain": "tealab.co.uk",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: The company-owned Facebook profile was found, but its exact public Page ID could not be resolved.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Tea%20Lab%20Company&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=Tea%20Lab%20Company"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=Tea%20Lab%20Company"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "domain": "pipandnut.com",
+      "ok": true,
+      "region": "United Kingdom",
+      "businessType": "ecommerce",
+      "category": "Natural Nut Butters, Cups & Bars",
+      "timings": {
+        "initialReportSeconds": 40.6,
+        "adIntelligenceSeconds": 15.6
+      },
+      "observedAt": {
+        "report": "2026-07-13T23:41:39.357Z",
+        "ads": "2026-07-13T23:41:41.187Z"
+      },
+      "competitorCount": 6,
+      "competitors": [
+        {
+          "domain": "33cocoa.com",
+          "companyName": "33Cocoa",
+          "verificationScore": 89,
+          "confidence": "High",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": true,
+          "marketCategory": "natural nut butters and bars",
+          "reason": "UK-based artisan brand explicitly describing itself as a natural nut butter brand and also selling nut-forward bars, making it a close category substitute.",
+          "evidenceUrl": "https://www.33cocoa.com/products/peanut-butter",
+          "websiteSourceUrl": "https://www.33cocoa.com/",
+          "productCount": 21
+        },
+        {
+          "domain": "butter-nut.com",
+          "companyName": "ButterNut of London",
+          "verificationScore": 74,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "nut butter spreads",
+          "reason": "UK nut-butter brand selling natural peanut and mixed-nut butters, a direct substitute for Pip & Nut's spreads.",
+          "evidenceUrl": "https://www.butter-nut.com/",
+          "websiteSourceUrl": "https://www.butter-nut.com/",
+          "productCount": 17
+        },
+        {
+          "domain": "eatnatural.com",
+          "companyName": "Eat Natural",
+          "verificationScore": 77,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "fruit & nut bars / snack bars",
+          "reason": "Established UK bar brand with fruit-and-nut, peanut, almond and chocolate bar lines that compete directly for the same snack occasion as Pip & Nut's bars.",
+          "evidenceUrl": "https://www.eatnatural.com/uk/en",
+          "websiteSourceUrl": "https://www.eatnatural.com/uk/en",
+          "productCount": 21
+        },
+        {
+          "domain": "fixandfogg.co.uk",
+          "companyName": "Fix & Fogg",
+          "verificationScore": 82,
+          "confidence": "High",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": true,
+          "marketCategory": "Natural nut butters",
+          "reason": "Direct adjacent-to-direct competitor in premium nut butters sold in the UK; offers peanut, almond, cashew, and blended nut/seed butters that overlap with Pip & Nut’s natural spread positioning.",
+          "evidenceUrl": "https://fixandfogg.co.uk/products/uk-smooth",
+          "websiteSourceUrl": "https://fixandfogg.co.uk/",
+          "productCount": 12
+        },
+        {
+          "domain": "mani-life.com",
+          "companyName": "ManiLife",
+          "verificationScore": 89,
+          "confidence": "High",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": true,
+          "marketCategory": "Natural peanut butter",
+          "reason": "Direct UK competitor in premium natural peanut butter; frequently compared with Pip & Nut by retailers and consumers, and sells similar natural peanut butters in crunchy/smooth formats.",
+          "evidenceUrl": "https://mani-life.com/products/the-peanut-butter-cookbook",
+          "websiteSourceUrl": "https://mani-life.com/",
+          "productCount": 27
+        },
+        {
+          "domain": "nubars.co.uk",
+          "companyName": "NU",
+          "verificationScore": 63,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "natural snack bars",
+          "reason": "UK brand focused on naturally made bars with simple ingredients, overlapping with Pip & Nut's stuffed oat bars and snack bar range.",
+          "evidenceUrl": "https://www.nubars.co.uk/",
+          "websiteSourceUrl": "https://www.nubars.co.uk/",
+          "productCount": 1
+        }
+      ],
+      "primaryOfferingCount": 6,
+      "primaryOfferingSamples": [
+        {
+          "name": "Peanut Butter",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://www.pipandnut.com/products/peanut-butter-range"
+        },
+        {
+          "name": "Almond Butter",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://www.pipandnut.com/products/smooth-almond-butter-range"
+        },
+        {
+          "name": "Chocolate Hazelnut Spread",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://www.pipandnut.com/products/chocolate-hazelnut-range"
+        },
+        {
+          "name": "Nut Butter Cups",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://www.pipandnut.com/products/nut-butter-cups-range"
+        },
+        {
+          "name": "Protein Bars",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://www.pipandnut.com/products/protein-bars-range"
+        }
+      ],
+      "productMatchSamples": [
+        {
+          "primary": "Peanut Butter",
+          "primarySource": "https://www.pipandnut.com/products/peanut-butter-range",
+          "competitor": "33cocoa.com",
+          "rival": "PEANUT BUTTER",
+          "rivalSource": "https://www.33cocoa.com/products/peanut-butter",
+          "matchScore": 0.58,
+          "priceVerdict": "Public prices are not comparable yet.",
+          "whyTheyMayWin": "The rival presents PEANUT BUTTER as the closest observable alternative.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer."
+        },
+        {
+          "primary": "Peanut Butter",
+          "primarySource": "https://www.pipandnut.com/products/peanut-butter-range",
+          "competitor": "fixandfogg.co.uk",
+          "rival": "Smooth Peanut Butter",
+          "rivalSource": "https://fixandfogg.co.uk/products/uk-smooth",
+          "matchScore": 0.4117,
+          "priceVerdict": "Public prices are not comparable yet.",
+          "whyTheyMayWin": "The rival presents Smooth Peanut Butter as the closest observable alternative.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer."
+        },
+        {
+          "primary": "Peanut Butter",
+          "primarySource": "https://www.pipandnut.com/products/peanut-butter-range",
+          "competitor": "mani-life.com",
+          "rival": "The Peanut Butter Cookbook",
+          "rivalSource": "https://mani-life.com/products/the-peanut-butter-cookbook",
+          "matchScore": 0.3867,
+          "priceVerdict": "Public prices are not comparable yet.",
+          "whyTheyMayWin": "The rival presents The Peanut Butter Cookbook as the closest observable alternative.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer."
+        },
+        {
+          "primary": "Almond Butter",
+          "primarySource": "https://www.pipandnut.com/products/smooth-almond-butter-range",
+          "competitor": "33cocoa.com",
+          "rival": "ALMOND CASHEW BUTTER",
+          "rivalSource": "https://www.33cocoa.com/products/almond-cashew-butter",
+          "matchScore": 0.3867,
+          "priceVerdict": "Public prices are not comparable yet.",
+          "whyTheyMayWin": "The rival presents ALMOND CASHEW BUTTER as the closest observable alternative.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer."
+        },
+        {
+          "primary": "Almond Butter",
+          "primarySource": "https://www.pipandnut.com/products/smooth-almond-butter-range",
+          "competitor": "fixandfogg.co.uk",
+          "rival": "Crunchy Almond Butter",
+          "rivalSource": "https://fixandfogg.co.uk/products/uk-crunchy-almond-butters",
+          "matchScore": 0.3867,
+          "priceVerdict": "Public prices are not comparable yet.",
+          "whyTheyMayWin": "The rival presents Crunchy Almond Butter as the closest observable alternative.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer."
+        }
+      ],
+      "adProvider": "openai-official-library-search",
+      "adCompanies": [
+        {
+          "domain": "pipandnut.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: The company-owned Facebook profile was found, but its exact public Page ID could not be resolved.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Pip%20%26%20Nut&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=Pip%20%26%20Nut"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=Pip%20%26%20Nut"
+            }
+          ]
+        },
+        {
+          "domain": "33cocoa.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: The company-owned Facebook profile was found, but its exact public Page ID could not be resolved.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=33Cocoa&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=33Cocoa"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=33Cocoa"
+            }
+          ]
+        },
+        {
+          "domain": "butter-nut.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: The company-owned Facebook profile was found, but its exact public Page ID could not be resolved.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=ButterNut%20of%20London&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=ButterNut%20of%20London"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=ButterNut%20of%20London"
+            }
+          ]
+        },
+        {
+          "domain": "eatnatural.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: The company-owned Facebook profile was found, but its exact public Page ID could not be resolved.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Eat%20Natural&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=Eat%20Natural"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=Eat%20Natural"
+            }
+          ]
+        },
+        {
+          "domain": "fixandfogg.co.uk",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: The company-owned Facebook profile was found, but its exact public Page ID could not be resolved.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Fix%20%26%20Fogg&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=Fix%20%26%20Fogg"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=Fix%20%26%20Fogg"
+            }
+          ]
+        },
+        {
+          "domain": "mani-life.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: The company-owned Facebook profile was found, but its exact public Page ID could not be resolved.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=ManiLife&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=ManiLife"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=ManiLife"
+            }
+          ]
+        },
+        {
+          "domain": "nubars.co.uk",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: No Facebook profile linked from this company's own website was found, so exact advertiser attribution was not attempted.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=NU&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=NU"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=NU"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "domain": "oddbox.co.uk",
+      "ok": true,
+      "region": "United Kingdom",
+      "businessType": "ecommerce",
+      "category": "Good Food Doing Good, Delivered to Your Door",
+      "timings": {
+        "initialReportSeconds": 23.3,
+        "adIntelligenceSeconds": 16.4
+      },
+      "observedAt": {
+        "report": "2026-07-13T23:41:21.725Z",
+        "ads": "2026-07-13T23:41:23.892Z"
+      },
+      "competitorCount": 4,
+      "competitors": [
+        {
+          "domain": "abelandcole.co.uk",
+          "companyName": "Abel & Cole",
+          "verificationScore": 100,
+          "confidence": "High",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": true,
+          "marketCategory": "fruit and veg box delivery",
+          "reason": "Frequently listed alongside Oddbox in UK veg-box comparison content; it serves the same household fruit-and-veg delivery need and is often discussed as an alternative to Oddbox.",
+          "evidenceUrl": "https://www.abelandcole.co.uk/",
+          "websiteSourceUrl": "https://www.abelandcole.co.uk/",
+          "productCount": 3
+        },
+        {
+          "domain": "organicdeliverycompany.co.uk",
+          "companyName": "Organic Delivery Company",
+          "verificationScore": 74,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "organic grocery / fruit and veg delivery",
+          "reason": "Appears in competitor listings for Oddbox and is a direct substitute in the UK organic fruit-and-veg-delivery market, though its positioning is organic rather than rescued surplus.",
+          "evidenceUrl": "https://www.organicdeliverycompany.co.uk/",
+          "websiteSourceUrl": "https://organicdeliverycompany.co.uk/",
+          "productCount": 400
+        },
+        {
+          "domain": "thevegboxcompany.co.uk",
+          "companyName": "The Veg Box Company",
+          "verificationScore": 95,
+          "confidence": "High",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": true,
+          "marketCategory": "fruit and veg box delivery",
+          "reason": "Direct fresh produce box seller in the UK offering fruit, veg and mixed boxes, with one-off or subscription ordering and home delivery.",
+          "evidenceUrl": "https://thevegboxcompany.co.uk/",
+          "websiteSourceUrl": "https://thevegboxcompany.co.uk/",
+          "productCount": 7
+        },
+        {
+          "domain": "5adaybox.co.uk",
+          "companyName": "5adaybox",
+          "verificationScore": 77,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "fruit and veg box delivery",
+          "reason": "UK fruit and veg box supplier with seasonal boxes and wonky-veg food-waste messaging, making it a comparable representative seller.",
+          "evidenceUrl": "https://www.5adaybox.co.uk/",
+          "websiteSourceUrl": "https://www.5adaybox.co.uk/",
+          "productCount": 2
+        }
+      ],
+      "primaryOfferingCount": 12,
+      "primaryOfferingSamples": [
+        {
+          "name": "Behind the box",
+          "kind": "Service",
+          "category": "ecommerce",
+          "price": [],
+          "sourceUrl": "https://www.oddbox.co.uk/"
+        },
+        {
+          "name": "Boxes in all shapes and sizes",
+          "kind": "Service",
+          "category": "ecommerce",
+          "price": [],
+          "sourceUrl": "https://www.oddbox.co.uk/"
+        },
+        {
+          "name": "Fruit & Veg Boxes",
+          "kind": "Service",
+          "category": "ecommerce",
+          "price": [],
+          "sourceUrl": "https://www.oddbox.co.uk/"
+        },
+        {
+          "name": "Pick a box",
+          "kind": "Service",
+          "category": "ecommerce",
+          "price": [],
+          "sourceUrl": "https://www.oddbox.co.uk/"
+        },
+        {
+          "name": "Veg Boxes",
+          "kind": "Service",
+          "category": "ecommerce",
+          "price": [],
+          "sourceUrl": "https://www.oddbox.co.uk/"
+        }
+      ],
+      "productMatchSamples": [
+        {
+          "primary": "Fruit & Veg Boxes",
+          "primarySource": "https://www.oddbox.co.uk/",
+          "competitor": "abelandcole.co.uk",
+          "rival": "Fruit & Veg Boxes",
+          "rivalSource": "https://www.abelandcole.co.uk/",
+          "matchScore": 0.76,
+          "priceVerdict": "Public prices are not comparable yet.",
+          "whyTheyMayWin": "The two offers look very similar from public product language, so small price, availability, or trust differences can decide the sale.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer."
+        },
+        {
+          "primary": "Fruit & Veg Boxes",
+          "primarySource": "https://www.oddbox.co.uk/",
+          "competitor": "thevegboxcompany.co.uk",
+          "rival": "Fruit, Veg & Meat Boxes Delivered to your Door",
+          "rivalSource": "https://thevegboxcompany.co.uk/",
+          "matchScore": 0.486,
+          "priceVerdict": "Public prices are not comparable yet.",
+          "whyTheyMayWin": "The rival presents Fruit, Veg & Meat Boxes Delivered to your Door as the closest observable alternative.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer."
+        },
+        {
+          "primary": "Fruit & Veg Box",
+          "primarySource": "https://www.oddbox.co.uk/fruit-and-veg",
+          "competitor": "abelandcole.co.uk",
+          "rival": "Personalise your Fruit & Veg Box",
+          "rivalSource": "https://www.abelandcole.co.uk/",
+          "matchScore": 0.435,
+          "priceVerdict": "Public prices are not comparable yet.",
+          "whyTheyMayWin": "The rival presents Personalise your Fruit & Veg Box as the closest observable alternative.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer."
+        }
+      ],
+      "adProvider": "openai-official-library-search",
+      "adCompanies": [
+        {
+          "domain": "oddbox.co.uk",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: The company-owned Facebook profile was found, but its exact public Page ID could not be resolved.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Oddbox&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=Oddbox"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=Oddbox"
+            }
+          ]
+        },
+        {
+          "domain": "abelandcole.co.uk",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: The company-owned Facebook profile was found, but its exact public Page ID could not be resolved.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Abel%20%26%20Cole&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=Abel%20%26%20Cole"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=Abel%20%26%20Cole"
+            }
+          ]
+        },
+        {
+          "domain": "organicdeliverycompany.co.uk",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: The company-owned Facebook profile was found, but its exact public Page ID could not be resolved.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Organic%20Delivery%20Company&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=Organic%20Delivery%20Company"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=Organic%20Delivery%20Company"
+            }
+          ]
+        },
+        {
+          "domain": "thevegboxcompany.co.uk",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: The company-owned Facebook profile was found, but its exact public Page ID could not be resolved.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=The%20Veg%20Box%20Company&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=The%20Veg%20Box%20Company"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=The%20Veg%20Box%20Company"
+            }
+          ]
+        },
+        {
+          "domain": "5adaybox.co.uk",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for GB. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: The company-owned Facebook profile was found, but its exact public Page ID could not be resolved.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=5adaybox&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=GB&query=5adaybox"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=GB&start_time=2025-01-01&end_time=2026-07-13&adv_name=5adaybox"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "domain": "beardbrand.com",
+      "ok": true,
+      "region": "United States",
+      "businessType": "ecommerce",
+      "category": "Simplify your grooming routine. Versatile beard, hair, and skin products for men. Invest in yourself and Keep on Growing.",
+      "timings": {
+        "initialReportSeconds": 41.5,
+        "adIntelligenceSeconds": 19.7
+      },
+      "observedAt": {
+        "report": "2026-07-13T23:41:39.000Z",
+        "ads": "2026-07-13T23:41:42.375Z"
+      },
+      "competitorCount": 5,
+      "competitors": [
+        {
+          "domain": "dukecannon.com",
+          "companyName": "Duke Cannon",
+          "verificationScore": 85,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "Men’s grooming / beard care / hair care / skin care",
+          "reason": "Direct substitute: men’s grooming brand with beard wash, beard balm, shampoo/conditioner, face wash, and styling products.",
+          "evidenceUrl": "https://dukecannon.com/",
+          "websiteSourceUrl": "https://dukecannon.com/",
+          "productCount": 164
+        },
+        {
+          "domain": "brickellmensproducts.com",
+          "companyName": "Brickell Men's Products",
+          "verificationScore": 78,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "men's grooming",
+          "reason": "Close match for the hair, beard, skin, deodorant, and fragrance portions of Beardbrand’s lineup. Brickell sells beard oil, natural deodorant, all-natural cologne, and sea salt spray, plus other men’s grooming products and styling products, making it a strong adjacent-to-direct competitor.",
+          "evidenceUrl": "https://brickellmensproducts.com/",
+          "websiteSourceUrl": "https://brickellmensproducts.com/",
+          "productCount": 83
+        },
+        {
+          "domain": "dandymen.com",
+          "companyName": "DandyMen Co.",
+          "verificationScore": 89,
+          "confidence": "High",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": true,
+          "marketCategory": "men's grooming",
+          "reason": "Directly comparable on styling and routine-building products. DandyMen sells sea salt spray, styling paste, deodorant, body wash, and beard oil/butter kits, making it a close match for Beardbrand’s hair styling, body care, and beard grooming lineup.",
+          "evidenceUrl": "https://dandymen.com/products/beard-brush",
+          "websiteSourceUrl": "https://dandymen.com/",
+          "productCount": 50
+        },
+        {
+          "domain": "livebearded.com",
+          "companyName": "Live Bearded",
+          "verificationScore": 86,
+          "confidence": "High",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": true,
+          "marketCategory": "men's grooming / beard care",
+          "reason": "Direct beard-care alternative: it sells beard oil, beard wash, conditioner, butter, and complete beard care routines for the same grooming need Beardbrand targets.",
+          "evidenceUrl": "https://livebearded.com/products/large-beard-comb",
+          "websiteSourceUrl": "https://livebearded.com/",
+          "productCount": 126
+        },
+        {
+          "domain": "scotchporter.com",
+          "companyName": "Scotch Porter",
+          "verificationScore": 81,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "men's grooming / beard care",
+          "reason": "Direct alternative for beard grooming: its beard care line includes beard wash, conditioner, balm, oil, and complete beard collections for the same use case.",
+          "evidenceUrl": "https://www.scotchporter.com/",
+          "websiteSourceUrl": "https://www.scotchporter.com/",
+          "productCount": 31
+        }
+      ],
+      "primaryOfferingCount": 66,
+      "primaryOfferingSamples": [
+        {
+          "name": "Beard Brush",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://www.beardbrand.com/products/beard-brush"
+        },
+        {
+          "name": "Beard Comb",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://www.beardbrand.com/products/beard-combs"
+        },
+        {
+          "name": "Alliance Membership",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://www.beardbrand.com/products/alliance-membership"
+        },
+        {
+          "name": "Beard Trimming Scissors",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://www.beardbrand.com/products/trimming-scissors"
+        },
+        {
+          "name": "Black Sails Men's Cologne",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://www.beardbrand.com/products/black-sails-mens-cologne"
+        }
+      ],
+      "productMatchSamples": [
+        {
+          "primary": "Beard Brush",
+          "primarySource": "https://www.beardbrand.com/products/beard-brush",
+          "competitor": "dandymen.com",
+          "rival": "Beard Brush",
+          "rivalSource": "https://dandymen.com/products/beard-brush",
+          "matchScore": 0.58,
+          "priceVerdict": "Public prices are not comparable yet.",
+          "whyTheyMayWin": "The rival presents Beard Brush as the closest observable alternative.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer."
+        },
+        {
+          "primary": "Beard Comb",
+          "primarySource": "https://www.beardbrand.com/products/beard-combs",
+          "competitor": "livebearded.com",
+          "rival": "Large Beard Comb",
+          "rivalSource": "https://livebearded.com/products/large-beard-comb",
+          "matchScore": 0.41,
+          "priceVerdict": "Public prices are not comparable yet.",
+          "whyTheyMayWin": "The rival presents Large Beard Comb as the closest observable alternative.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer."
+        }
+      ],
+      "adProvider": "metapi-exact-page-and-official-search",
+      "adCompanies": [
+        {
+          "domain": "beardbrand.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for US. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: The company-owned Facebook profile was found, but its exact public Page ID could not be resolved.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Beard%20Products&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=US&query=Beard%20Products"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=US&start_time=2025-01-01&end_time=2026-07-13&adv_name=Beard%20Products"
+            }
+          ]
+        },
+        {
+          "domain": "dukecannon.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for US. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: No active Meta ads were observed for exact Page 100064855621755 in US at this check. This does not prove zero activity in other regions, time periods, or Pages.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&view_all_page_id=100064855621755&search_type=page&media_type=all"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=US&query=Duke%20Cannon"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=US&start_time=2025-01-01&end_time=2026-07-13&adv_name=Duke%20Cannon"
+            }
+          ]
+        },
+        {
+          "domain": "brickellmensproducts.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for US. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: The company-owned Facebook profile was found, but its exact public Page ID could not be resolved.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Brickell%20Men's%20Products&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=US&query=Brickell%20Men's%20Products"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=US&start_time=2025-01-01&end_time=2026-07-13&adv_name=Brickell%20Men's%20Products"
+            }
+          ]
+        },
+        {
+          "domain": "dandymen.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for US. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: The company-owned Facebook profile was found, but its exact public Page ID could not be resolved.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=DandyMen%20Co.&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=US&query=DandyMen%20Co."
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=US&start_time=2025-01-01&end_time=2026-07-13&adv_name=DandyMen%20Co."
+            }
+          ]
+        },
+        {
+          "domain": "livebearded.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for US. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: No active Meta ads were observed for exact Page 100064377084629 in US at this check. This does not prove zero activity in other regions, time periods, or Pages.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&view_all_page_id=100064377084629&search_type=page&media_type=all"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=US&query=Live%20Bearded"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=US&start_time=2025-01-01&end_time=2026-07-13&adv_name=Live%20Bearded"
+            }
+          ]
+        },
+        {
+          "domain": "scotchporter.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for US. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: The company-owned Facebook profile was found, but its exact public Page ID could not be resolved.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Scotch%20Porter&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=US&query=Scotch%20Porter"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=US&start_time=2025-01-01&end_time=2026-07-13&adv_name=Scotch%20Porter"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "domain": "allbirds.com",
+      "ok": true,
+      "region": "United States",
+      "businessType": "ecommerce",
+      "category": "Allbirds: Comfortable, Sustainable Shoes & Apparel",
+      "timings": {
+        "initialReportSeconds": 39.7,
+        "adIntelligenceSeconds": 21.8
+      },
+      "observedAt": {
+        "report": "2026-07-13T23:41:29.382Z",
+        "ads": "2026-07-13T23:41:40.630Z"
+      },
+      "competitorCount": 3,
+      "competitors": [
+        {
+          "domain": "rothys.com",
+          "companyName": "Rothy's",
+          "verificationScore": 76,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "washable casual shoes",
+          "reason": "Direct adjacent-to-direct alternative in the same comfort-forward, minimalist everyday-shoe space; commonly compared with Allbirds for washable, casual footwear.",
+          "evidenceUrl": "https://rothys.com/",
+          "websiteSourceUrl": "https://rothys.com/",
+          "productCount": 411
+        },
+        {
+          "domain": "vessi.com",
+          "companyName": "Vessi",
+          "verificationScore": 78,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "comfortable knit sneakers",
+          "reason": "Direct alternative for Allbirds buyers who want lightweight everyday sneakers; it is frequently compared on comfort and weather protection, especially versus Allbirds Mizzles.",
+          "evidenceUrl": "https://vessi.com/",
+          "websiteSourceUrl": "https://vessi.com/",
+          "productCount": 280
+        },
+        {
+          "domain": "baabuk.com",
+          "companyName": "Baabuk",
+          "verificationScore": 90,
+          "confidence": "High",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": true,
+          "marketCategory": "wool sneakers",
+          "reason": "Direct alternative for Allbirds' original wool-sneaker positioning; Baabuk explicitly sells wool sneakers, slip-ons, and flats and is commonly recommended as an Allbirds substitute.",
+          "evidenceUrl": "https://www.baabuk.com/products/corkybuk-dark-grey",
+          "websiteSourceUrl": "https://www.baabuk.com/en-de",
+          "productCount": 148
+        }
+      ],
+      "primaryOfferingCount": 292,
+      "primaryOfferingSamples": [
+        {
+          "name": "Allbirds Slipper - Dark Grey",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://www.allbirds.com/products/allbirds-slipper-dark-grey-tweed"
+        },
+        {
+          "name": "Anytime Ankle Sock 3-Pack - Blizzard",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://www.allbirds.com/products/anytime-ankle-sock-3-pack-blizzard"
+        },
+        {
+          "name": "Anytime Ankle Sock 3-Pack - Natural Black",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://www.allbirds.com/products/anytime-ankle-sock-3-pack-natural-black"
+        },
+        {
+          "name": "Anytime Ankle Sock - Basin Blue",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://www.allbirds.com/products/anytime-ankle-sock-basin-blue"
+        },
+        {
+          "name": "Anytime Ankle Sock - Blizzard",
+          "kind": "Product",
+          "category": "products",
+          "price": [],
+          "sourceUrl": "https://www.allbirds.com/products/anytime-ankle-sock-blizzard"
+        }
+      ],
+      "productMatchSamples": [
+        {
+          "primary": "Allbirds Slipper - Dark Grey",
+          "primarySource": "https://www.allbirds.com/products/allbirds-slipper-dark-grey-tweed",
+          "competitor": "baabuk.com",
+          "rival": "Corkybuk Slipper - Dark Grey",
+          "rivalSource": "https://www.baabuk.com/products/corkybuk-dark-grey",
+          "matchScore": 0.46,
+          "priceVerdict": "Public prices are not comparable yet.",
+          "whyTheyMayWin": "The rival presents Corkybuk Slipper - Dark Grey as the closest observable alternative.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer."
+        }
+      ],
+      "adProvider": "metapi-exact-page-and-official-search",
+      "adCompanies": [
+        {
+          "domain": "allbirds.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for US. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: No active Meta ads were observed for exact Page 100064933200094 in US at this check. This does not prove zero activity in other regions, time periods, or Pages.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&view_all_page_id=100064933200094&search_type=page&media_type=all"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=US&query=Allbirds%3A%20Comfortable%2C%20Sustainable%20Shoes%20%26%20Apparel"
+            },
+            {
+              "platform": "TikTok",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=US&start_time=2025-01-01&end_time=2026-07-13&adv_name=Allbirds%3A%20Comfortable%2C%20Sustainable%20Shoes%20%26%20Apparel"
+            }
+          ]
+        },
+        {
+          "domain": "rothys.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for US. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: No Facebook profile linked from this company's own website was found, so exact advertiser attribution was not attempted.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Rothy's&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=US&query=Rothy's"
+            },
+            {
+              "platform": "TikTok",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=US&start_time=2025-01-01&end_time=2026-07-13&adv_name=Rothy's"
+            }
+          ]
+        },
+        {
+          "domain": "vessi.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for US. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: No active Meta ads were observed for exact Page 100064372284525 in US at this check. This does not prove zero activity in other regions, time periods, or Pages.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&view_all_page_id=100064372284525&search_type=page&media_type=all"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=US&query=Vessi"
+            },
+            {
+              "platform": "TikTok",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=US&start_time=2025-01-01&end_time=2026-07-13&adv_name=Vessi"
+            }
+          ]
+        },
+        {
+          "domain": "baabuk.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for US. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: No active Meta ads were observed for exact Page 100064800400042 in US at this check. This does not prove zero activity in other regions, time periods, or Pages.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&view_all_page_id=100064800400042&search_type=page&media_type=all"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=US&query=Baabuk"
+            },
+            {
+              "platform": "TikTok",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=US&start_time=2025-01-01&end_time=2026-07-13&adv_name=Baabuk"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "domain": "linear.app",
+      "ok": true,
+      "region": "United States",
+      "businessType": "saas",
+      "category": "The system for product development",
+      "timings": {
+        "initialReportSeconds": 35.4,
+        "adIntelligenceSeconds": 24.8
+      },
+      "observedAt": {
+        "report": "2026-07-13T23:41:35.549Z",
+        "ads": "2026-07-13T23:41:37.344Z"
+      },
+      "competitorCount": 3,
+      "competitors": [
+        {
+          "domain": "airfocus.com",
+          "companyName": "airfocus",
+          "verificationScore": 77,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "product management / roadmapping software",
+          "reason": "A modular product management platform built around prioritization, roadmaps, feedback, and product strategy.",
+          "evidenceUrl": "https://airfocus.com/",
+          "websiteSourceUrl": "https://airfocus.com/",
+          "productCount": 10
+        },
+        {
+          "domain": "asana.com",
+          "companyName": "Asana",
+          "verificationScore": 77,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "work management / task and project tracking",
+          "reason": "Asana is a common comparison point and direct alternative for teams managing tasks, projects, and cross-functional work. Linear’s own migration docs include native import support from Asana, indicating meaningful overlap in customer need.",
+          "evidenceUrl": "https://asana.com/pricing",
+          "websiteSourceUrl": "https://asana.com/",
+          "productCount": 9
+        },
+        {
+          "domain": "prodpad.com",
+          "companyName": "ProdPad",
+          "verificationScore": 74,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "product management / roadmapping software",
+          "reason": "A product management platform centered on roadmaps, ideas, and customer feedback for product teams.",
+          "evidenceUrl": "https://www.prodpad.com/",
+          "websiteSourceUrl": "https://www.prodpad.com/",
+          "productCount": 2
+        }
+      ],
+      "primaryOfferingCount": 6,
+      "primaryOfferingSamples": [
+        {
+          "name": "Linear Plan",
+          "kind": "PageSignal",
+          "category": "plan",
+          "price": [
+            "$2.9",
+            "$200",
+            "$1.25",
+            "$82",
+            "$35",
+            "$13",
+            "$4.2",
+            "$1"
+          ],
+          "sourceUrl": "https://linear.app/plan"
+        },
+        {
+          "name": "Artificial colleagues. Natural collaboration.",
+          "kind": "Service",
+          "category": "agents",
+          "price": [],
+          "sourceUrl": "https://linear.app/agents"
+        },
+        {
+          "name": "Close the gap between planning and building",
+          "kind": "Service",
+          "category": "plan",
+          "price": [],
+          "sourceUrl": "https://linear.app/plan"
+        },
+        {
+          "name": "Delegate, automate, and orchestrate work",
+          "kind": "Service",
+          "category": "agents",
+          "price": [],
+          "sourceUrl": "https://linear.app/agents"
+        },
+        {
+          "name": "Plan and navigate from idea to launch",
+          "kind": "Service",
+          "category": "plan",
+          "price": [],
+          "sourceUrl": "https://linear.app/plan"
+        }
+      ],
+      "productMatchSamples": [],
+      "adProvider": "metapi-exact-page-and-official-search",
+      "adCompanies": [
+        {
+          "domain": "linear.app",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for US. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: No Facebook profile linked from this company's own website was found, so exact advertiser attribution was not attempted.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Linear&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=US&query=Linear"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=US&start_time=2025-01-01&end_time=2026-07-13&adv_name=Linear"
+            }
+          ]
+        },
+        {
+          "domain": "airfocus.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for US. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: No Facebook profile linked from this company's own website was found, so exact advertiser attribution was not attempted.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=airfocus&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=US&query=airfocus"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=US&start_time=2025-01-01&end_time=2026-07-13&adv_name=airfocus"
+            }
+          ]
+        },
+        {
+          "domain": "asana.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for US. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: No active Meta ads were observed for exact Page 100064868553707 in US at this check. This does not prove zero activity in other regions, time periods, or Pages.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&view_all_page_id=100064868553707&search_type=page&media_type=all"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=US&query=Asana"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=US&start_time=2025-01-01&end_time=2026-07-13&adv_name=Asana"
+            }
+          ]
+        },
+        {
+          "domain": "prodpad.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for US. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: The company-owned Facebook profile was found, but its exact public Page ID could not be resolved.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=ProdPad&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=US&query=ProdPad"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=US&start_time=2025-01-01&end_time=2026-07-13&adv_name=ProdPad"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "domain": "buffer.com",
+      "ok": true,
+      "region": "United States",
+      "businessType": "saas",
+      "category": "Buffer: Social media management for everyone",
+      "timings": {
+        "initialReportSeconds": 37.8,
+        "adIntelligenceSeconds": 20.1
+      },
+      "observedAt": {
+        "report": "2026-07-13T23:41:42.774Z",
+        "ads": "2026-07-13T23:41:44.624Z"
+      },
+      "competitorCount": 5,
+      "competitors": [
+        {
+          "domain": "agorapulse.com",
+          "companyName": "Agorapulse",
+          "verificationScore": 81,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "social media management",
+          "reason": "Compared directly with Buffer on official Agorapulse pages and positioned as a stronger option for teams needing inbox, reporting, and listening features.",
+          "evidenceUrl": "https://www.agorapulse.com/",
+          "websiteSourceUrl": "https://www.agorapulse.com/",
+          "productCount": 11
+        },
+        {
+          "domain": "hootsuite.com",
+          "companyName": "Hootsuite",
+          "verificationScore": 81,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "social media management",
+          "reason": "Commonly compared with Buffer and positioned as a social media management platform with stronger analytics, inbox, and social listening. Hootsuite’s official Buffer comparison page directly frames it as a Buffer alternative.",
+          "evidenceUrl": "https://www.hootsuite.com/",
+          "websiteSourceUrl": "https://www.hootsuite.com/",
+          "productCount": 4
+        },
+        {
+          "domain": "later.com",
+          "companyName": "Later",
+          "verificationScore": 93,
+          "confidence": "High",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": true,
+          "marketCategory": "social media management",
+          "reason": "Officially markets itself as a Buffer alternative and compares itself directly against Buffer for scheduling, planning, analytics, and collaboration.",
+          "evidenceUrl": "https://later.com/",
+          "websiteSourceUrl": "https://later.com/",
+          "productCount": 3
+        },
+        {
+          "domain": "loomly.com",
+          "companyName": "Loomly",
+          "verificationScore": 81,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "social media management",
+          "reason": "Officially brands itself as an alternative to Buffer and focuses on publishing workflows, approval processes, and content libraries that overlap with Buffer’s core use case.",
+          "evidenceUrl": "https://www.loomly.com/",
+          "websiteSourceUrl": "https://www.loomly.com/",
+          "productCount": 9
+        },
+        {
+          "domain": "metricool.com",
+          "companyName": "Metricool",
+          "verificationScore": 87,
+          "confidence": "High",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": true,
+          "marketCategory": "social media management",
+          "reason": "Official comparison page directly contrasts Metricool with Buffer and overlaps on planning, analytics, reports, inbox, and ads tracking, making it a direct substitute for many Buffer users.",
+          "evidenceUrl": "https://metricool.com/pricing/",
+          "websiteSourceUrl": "https://metricool.com/",
+          "productCount": 7
+        }
+      ],
+      "primaryOfferingCount": 5,
+      "primaryOfferingSamples": [
+        {
+          "name": "Social media",
+          "kind": "Service",
+          "category": "2step",
+          "price": [],
+          "sourceUrl": "https://buffer.com/2step"
+        },
+        {
+          "name": "Collaborate without friction",
+          "kind": "Service",
+          "category": "agency",
+          "price": [],
+          "sourceUrl": "https://buffer.com/agency"
+        },
+        {
+          "name": "Content creation",
+          "kind": "Service",
+          "category": "pricing",
+          "price": [],
+          "sourceUrl": "https://buffer.com/pricing"
+        },
+        {
+          "name": "Mobile app",
+          "kind": "Service",
+          "category": "saas",
+          "price": [],
+          "sourceUrl": "https://buffer.com/"
+        },
+        {
+          "name": "Your social media workspace",
+          "kind": "Service",
+          "category": "saas",
+          "price": [],
+          "sourceUrl": "https://buffer.com/"
+        }
+      ],
+      "productMatchSamples": [
+        {
+          "primary": "Social media",
+          "primarySource": "https://buffer.com/2step",
+          "competitor": "later.com",
+          "rival": "Social media scheduling",
+          "rivalSource": "https://later.com/",
+          "matchScore": 0.3867,
+          "priceVerdict": "Public prices are not comparable yet.",
+          "whyTheyMayWin": "The rival presents Social media scheduling as the closest observable alternative.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer."
+        },
+        {
+          "primary": "Social media",
+          "primarySource": "https://buffer.com/2step",
+          "competitor": "metricool.com",
+          "rival": "Social Media",
+          "rivalSource": "https://metricool.com/pricing/",
+          "matchScore": 0.58,
+          "priceVerdict": "Public prices are not comparable yet.",
+          "whyTheyMayWin": "The rival presents Social Media as the closest observable alternative.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer."
+        }
+      ],
+      "adProvider": "metapi-exact-page-and-official-search",
+      "adCompanies": [
+        {
+          "domain": "buffer.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for US. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: The company-owned Facebook profile was found, but its exact public Page ID could not be resolved.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Buffer%3A%20Social%20media%20management%20for%20everyone&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=US&query=Buffer%3A%20Social%20media%20management%20for%20everyone"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=US&start_time=2025-01-01&end_time=2026-07-13&adv_name=Buffer%3A%20Social%20media%20management%20for%20everyone"
+            }
+          ]
+        },
+        {
+          "domain": "agorapulse.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for US. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: No active Meta ads were observed for exact Page 100064575856755 in US at this check. This does not prove zero activity in other regions, time periods, or Pages.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&view_all_page_id=100064575856755&search_type=page&media_type=all"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=US&query=Agorapulse"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=US&start_time=2025-01-01&end_time=2026-07-13&adv_name=Agorapulse"
+            }
+          ]
+        },
+        {
+          "domain": "hootsuite.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for US. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: The company-owned Facebook profile was found, but its exact public Page ID could not be resolved.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Hootsuite&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=US&query=Hootsuite"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=US&start_time=2025-01-01&end_time=2026-07-13&adv_name=Hootsuite"
+            }
+          ]
+        },
+        {
+          "domain": "later.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for US. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: The company-owned Facebook profile was found, but its exact public Page ID could not be resolved.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Later&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=US&query=Later"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=US&start_time=2025-01-01&end_time=2026-07-13&adv_name=Later"
+            }
+          ]
+        },
+        {
+          "domain": "loomly.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for US. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: The company-owned Facebook profile was found, but its exact public Page ID could not be resolved.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Loomly&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=US&query=Loomly"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=US&start_time=2025-01-01&end_time=2026-07-13&adv_name=Loomly"
+            }
+          ]
+        },
+        {
+          "domain": "metricool.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: Meta's API does not provide ordinary commercial-ad coverage for US. Use the public Meta Ad Library search; an empty API result would not mean zero active ads. Exact Page check: No active Meta ads were observed for exact Page 100082989560144 in US at this check. This does not prove zero activity in other regions, time periods, or Pages.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&view_all_page_id=100082989560144&search_type=page&media_type=all"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=US&query=Metricool"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=US&start_time=2025-01-01&end_time=2026-07-13&adv_name=Metricool"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "domain": "thoughtbot.com",
+      "ok": true,
+      "region": "Global market (inferred)",
+      "businessType": "agency",
+      "category": "Design and Development agency building web and mobile products - thoughtbot",
+      "timings": {
+        "initialReportSeconds": 39.3,
+        "adIntelligenceSeconds": 31.6
+      },
+      "observedAt": {
+        "report": "2026-07-13T23:41:44.404Z",
+        "ads": "2026-07-13T23:41:46.178Z"
+      },
+      "competitorCount": 5,
+      "competitors": [
+        {
+          "domain": "8thlight.com",
+          "companyName": "8th Light",
+          "verificationScore": 70,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "Software consulting / product design and development",
+          "reason": "Direct competitor: software consultancy with product design, development, modernization, and leadership/coaching services that overlap strongly with thoughtbot's consulting model.",
+          "evidenceUrl": "https://8thlight.com/",
+          "websiteSourceUrl": "https://8thlight.com/",
+          "productCount": 3
+        },
+        {
+          "domain": "clay.global",
+          "companyName": "Clay",
+          "verificationScore": 74,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "UX / digital product agency",
+          "reason": "Full-service UX/design agency that builds digital products, including web design and development, with roots in mobile apps and enterprise software.",
+          "evidenceUrl": "https://clay.global/",
+          "websiteSourceUrl": "https://clay.global/",
+          "productCount": 3
+        },
+        {
+          "domain": "gojilabs.com",
+          "companyName": "Goji Labs",
+          "verificationScore": 92,
+          "confidence": "High",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": true,
+          "marketCategory": "digital product agency",
+          "reason": "Strategy-led digital product agency with UX/UI, software development, and mobile app development for web and mobile products.",
+          "evidenceUrl": "https://gojilabs.com/product-agency/",
+          "websiteSourceUrl": "https://gojilabs.com/",
+          "productCount": 12
+        },
+        {
+          "domain": "headway.io",
+          "companyName": "Headway",
+          "verificationScore": 76,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "digital product agency",
+          "reason": "Digital product agency and consultancy focused on full-product lifecycle delivery for web and mobile applications.",
+          "evidenceUrl": "https://www.headway.io/",
+          "websiteSourceUrl": "https://www.headway.io/",
+          "productCount": 3
+        },
+        {
+          "domain": "isbx.com",
+          "companyName": "ISBX",
+          "verificationScore": 72,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "Digital product agency / web and mobile app development",
+          "reason": "Direct competitor: digital agency building web and mobile applications, with strategy, design, and development services similar to thoughtbot's client-facing offering.",
+          "evidenceUrl": "https://www.isbx.com/",
+          "websiteSourceUrl": "https://www.isbx.com/",
+          "productCount": 1
+        }
+      ],
+      "primaryOfferingCount": 15,
+      "primaryOfferingSamples": [
+        {
+          "name": "De-risk your investment in product development",
+          "kind": "Service",
+          "category": "services",
+          "price": [],
+          "sourceUrl": "https://thoughtbot.com/services"
+        },
+        {
+          "name": "Design Research",
+          "kind": "Service",
+          "category": "services",
+          "price": [],
+          "sourceUrl": "https://thoughtbot.com/services"
+        },
+        {
+          "name": "Let’s design and develop a great product while leveling up your team",
+          "kind": "Service",
+          "category": "services",
+          "price": [],
+          "sourceUrl": "https://thoughtbot.com/services"
+        },
+        {
+          "name": "Mobile Development",
+          "kind": "Service",
+          "category": "services",
+          "price": [],
+          "sourceUrl": "https://thoughtbot.com/services"
+        },
+        {
+          "name": "Senior Product Strategy, Design, and Development services for web apps, mobile apps, and websites.",
+          "kind": "PageSignal",
+          "category": "services",
+          "price": [],
+          "sourceUrl": "https://thoughtbot.com/services"
+        }
+      ],
+      "productMatchSamples": [
+        {
+          "primary": "UX, UI, and Product Design",
+          "primarySource": "https://thoughtbot.com/services",
+          "competitor": "gojilabs.com",
+          "rival": "UX/UI Design",
+          "rivalSource": "https://gojilabs.com/product-agency/",
+          "matchScore": 0.6019,
+          "priceVerdict": "Public prices are not comparable yet.",
+          "whyTheyMayWin": "The rival presents UX/UI Design as the closest observable alternative.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer."
+        }
+      ],
+      "adProvider": "official-links-only",
+      "adCompanies": [
+        {
+          "domain": "thoughtbot.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: A specific country is required before querying Meta Ads Archive. Exact Page check: A specific market country is required for an exact competitor ad check.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Design%20and%20Development%20agency%20building%20web%20and%20mobile%20products&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=ALL&query=Design%20and%20Development%20agency%20building%20web%20and%20mobile%20products"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=ALL&start_time=2025-01-01&end_time=2026-07-13&adv_name=Design%20and%20Development%20agency%20building%20web%20and%20mobile%20products"
+            }
+          ]
+        },
+        {
+          "domain": "8thlight.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: A specific country is required before querying Meta Ads Archive. Exact Page check: A specific market country is required for an exact competitor ad check.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=8th%20Light&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=ALL&query=8th%20Light"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=ALL&start_time=2025-01-01&end_time=2026-07-13&adv_name=8th%20Light"
+            }
+          ]
+        },
+        {
+          "domain": "clay.global",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: A specific country is required before querying Meta Ads Archive. Exact Page check: A specific market country is required for an exact competitor ad check.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Clay&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=ALL&query=Clay"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=ALL&start_time=2025-01-01&end_time=2026-07-13&adv_name=Clay"
+            }
+          ]
+        },
+        {
+          "domain": "gojilabs.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: A specific country is required before querying Meta Ads Archive. Exact Page check: A specific market country is required for an exact competitor ad check.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Goji%20Labs&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=ALL&query=Goji%20Labs"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=ALL&start_time=2025-01-01&end_time=2026-07-13&adv_name=Goji%20Labs"
+            }
+          ]
+        },
+        {
+          "domain": "headway.io",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: A specific country is required before querying Meta Ads Archive. Exact Page check: A specific market country is required for an exact competitor ad check.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Headway&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=ALL&query=Headway"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=ALL&start_time=2025-01-01&end_time=2026-07-13&adv_name=Headway"
+            }
+          ]
+        },
+        {
+          "domain": "isbx.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: A specific country is required before querying Meta Ads Archive. Exact Page check: A specific market country is required for an exact competitor ad check.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=ISBX&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=ALL&query=ISBX"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=ALL&start_time=2025-01-01&end_time=2026-07-13&adv_name=ISBX"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "domain": "ustwo.com",
+      "ok": true,
+      "region": "Global market (inferred)",
+      "businessType": "agency",
+      "category": "Digital Product Studio",
+      "timings": {
+        "initialReportSeconds": 33.1,
+        "adIntelligenceSeconds": 15.2
+      },
+      "observedAt": {
+        "report": "2026-07-13T23:41:38.326Z",
+        "ads": "2026-07-13T23:41:40.005Z"
+      },
+      "competitorCount": 4,
+      "competitors": [
+        {
+          "domain": "ideo.com",
+          "companyName": "IDEO",
+          "verificationScore": 80,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "Design and innovation consultancy",
+          "reason": "Human-centered design firm that designs products, services, and organizations, including digital product design and development work.",
+          "evidenceUrl": "https://www.ideo.com/",
+          "websiteSourceUrl": "https://www.ideo.com/",
+          "productCount": 7
+        },
+        {
+          "domain": "buildwithstudio.com",
+          "companyName": "Studio",
+          "verificationScore": 65,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "Digital Product Studio",
+          "reason": "Digital product design and development studio focused on strategy, product design, web and iOS development, and product growth.",
+          "evidenceUrl": "https://buildwithstudio.com/",
+          "websiteSourceUrl": "https://buildwithstudio.com/",
+          "productCount": 2
+        },
+        {
+          "domain": "fantasy.co",
+          "companyName": "Fantasy",
+          "verificationScore": 76,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "Digital Product Studio",
+          "reason": "AI-native digital product design agency that builds product innovation, strategy, design, and engineering at global scale.",
+          "evidenceUrl": "https://fantasy.co/",
+          "websiteSourceUrl": "https://fantasy.co/",
+          "productCount": 3
+        },
+        {
+          "domain": "metalab.com",
+          "companyName": "Metalab",
+          "verificationScore": 58,
+          "confidence": "Medium",
+          "categoryAlignment": true,
+          "regionCompatibility": true,
+          "hasProductOverlap": false,
+          "marketCategory": "Product design and development studio",
+          "reason": "Direct competitor: product design and development studio with a similar end-to-end digital product positioning.",
+          "evidenceUrl": "https://www.metalab.com/",
+          "websiteSourceUrl": "https://www.metalab.com/",
+          "productCount": 0
+        }
+      ],
+      "primaryOfferingCount": 3,
+      "primaryOfferingSamples": [
+        {
+          "name": "Design and build digital products that users return to",
+          "kind": "Service",
+          "category": "services",
+          "price": [],
+          "sourceUrl": "https://ustwo.com/services/"
+        },
+        {
+          "name": "Pilot new services and brands through design and development",
+          "kind": "Service",
+          "category": "services",
+          "price": [],
+          "sourceUrl": "https://ustwo.com/services/"
+        },
+        {
+          "name": "Product Innovation",
+          "kind": "Service",
+          "category": "ai",
+          "price": [],
+          "sourceUrl": "https://ustwo.com/ai/"
+        }
+      ],
+      "productMatchSamples": [],
+      "adProvider": "openai-official-library-search",
+      "adCompanies": [
+        {
+          "domain": "ustwo.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: A specific country is required before querying Meta Ads Archive. Exact Page check: A specific market country is required for an exact competitor ad check.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=ustwo&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=ALL&query=ustwo"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=ALL&start_time=2025-01-01&end_time=2026-07-13&adv_name=ustwo"
+            }
+          ]
+        },
+        {
+          "domain": "ideo.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: A specific country is required before querying Meta Ads Archive. Exact Page check: A specific market country is required for an exact competitor ad check.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=IDEO&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=ALL&query=IDEO"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=ALL&start_time=2025-01-01&end_time=2026-07-13&adv_name=IDEO"
+            }
+          ]
+        },
+        {
+          "domain": "buildwithstudio.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: A specific country is required before querying Meta Ads Archive. Exact Page check: A specific market country is required for an exact competitor ad check.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Studio&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=ALL&query=Studio"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=ALL&start_time=2025-01-01&end_time=2026-07-13&adv_name=Studio"
+            }
+          ]
+        },
+        {
+          "domain": "fantasy.co",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: A specific country is required before querying Meta Ads Archive. Exact Page check: A specific market country is required for an exact competitor ad check.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Fantasy&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=ALL&query=Fantasy"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=ALL&start_time=2025-01-01&end_time=2026-07-13&adv_name=Fantasy"
+            }
+          ]
+        },
+        {
+          "domain": "metalab.com",
+          "summary": "No active creative was independently verified in the automatic official-library search. Meta API: A specific country is required before querying Meta Ads Archive. Exact Page check: A specific market country is required for an exact competitor ad check.",
+          "platforms": [
+            {
+              "platform": "Meta",
+              "status": "access-limited",
+              "activeCreativeCount": 0,
+              "sourceProvider": "metapi-exact-page",
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=Metalab&search_type=keyword_unordered"
+            },
+            {
+              "platform": "Google",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://adstransparency.google.com/?region=ALL&query=Metalab"
+            },
+            {
+              "platform": "TikTok",
+              "status": "no-verified-result",
+              "activeCreativeCount": 0,
+              "sourceProvider": null,
+              "evidenceUrlCount": 0,
+              "evidenceUrls": [],
+              "searchUrl": "https://library.tiktok.com/ads?region=ALL&start_time=2025-01-01&end_time=2026-07-13&adv_name=Metalab"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

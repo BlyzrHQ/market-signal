@@ -59,6 +59,11 @@ Move to an entity-first pipeline:
   documents. Bound each discovered-company verification crawl to three HTML
   pages and two sitemap documents, and expose the role-specific limits in
   coverage metadata.
+- After verification, select only high-similarity physical-product pairs and
+  fetch at most six unique matched product pages per report for structured or
+  contextual price evidence. Keep this enrichment separate from the pages used
+  to verify competitor identity, enforce robots rules, and expose its coverage
+  and failures.
 
 ## Validation
 
@@ -75,6 +80,46 @@ reports for 9/10 domains, but `allbirds.com` ended in a hosting HTTP 500 after
 62.9 seconds. Successful requests still took 41.3–80.7 seconds. This run is a
 failed reliability gate and is retained as evidence for the staged-report fix;
 it is not counted as completion.
+
+The final exact no-retry production panel ran against private Sites version 24
+from commit `9d26eac`. All ten submitted domains returned HTTP 200 market
+reports and all ten separate ad-intelligence requests completed:
+
+- 10/10 valid reports and 10/10 `GOOD` strict usefulness results;
+- 10/10 correct regions with zero confident-wrong assignments;
+- 10/10 domains with at least three accepted competitors, each supported by
+  first-party category evidence and a positioning comparison;
+- 9/10 domains with at least five non-generic products, plans, capabilities, or
+  services (ustwo returned three first-party services);
+- initial-report latency of 31.8 seconds p50 and 57.3 seconds p95;
+- separate ad-intelligence latency of 19.5 seconds p50 and 24.7 seconds p95;
+  and
+- no retries, request failures, or discovery results discarded by a timed-out
+  lane.
+
+The panel was `myjam.co.uk`, `birdandblendtea.com`, `pipandnut.com`,
+`oddbox.co.uk`, `beardbrand.com`, `allbirds.com`, `linear.app`, `buffer.com`,
+`thoughtbot.com`, and `ustwo.com`. The former Allbirds failure returned HTTP
+200 in 44.6 seconds with five verified competitors and 292 first-party product
+records; its separate ad scan completed in 23.0 seconds. The first panel exposed
+ten exact-page Meta placements for Pip & Nut through the configured provider,
+but the second evidence capture did not reproduce that result and returned only
+access-limited or no-verified-result states. The placement observation is
+therefore historical, not a claim of current activity. Every other ad result
+also remained an explicit official-search, access, or non-result state; the
+report did not invent active campaigns or exact spend.
+
+Because the first strict live-panel message was truncated, a second independent
+no-retry evidence capture is preserved in
+[`020-panel-v24-evidence.json`](./020-panel-v24-evidence.json). It includes every
+accepted competitor with its verification score and first-party evidence URL,
+five primary offering samples where available, up to five actual product-match
+rows, and the Meta, Google, and TikTok status for the primary and each accepted
+competitor. This second capture also returned 10/10 successful reports, 10/10
+with at least three competitors, 9/10 with at least five primary offerings, and
+10/10 completed ad scans. Its initial-report latency was 37.4 seconds p50 and
+41.5 seconds p95; its separate ad phase was 19.9 seconds p50 and 31.6 seconds
+p95. No credential is stored in the artifact.
 
 ## Acceptance gate
 
@@ -97,4 +142,32 @@ it is not counted as completion.
 - Generic-offering cleanup review: Fable 5 returned `FINAL_CLEANUP_REVIEW: PASS`; the exact local gate passed 72 tests, build, and lint before Sites version 23.
 - Performance design review: Fable 5 returned `PERFORMANCE_DESIGN: BLOCK` for speculative pre-verification ad scans because rejected candidates could consume the company cap and create false ad non-results. That design was discarded.
 - Staged-flow review: Fable 5 returned `STAGED_CODE_REVIEW: PASS` after verifying that ad requests contain only the primary and accepted competitors, the seven-company cap covers primary plus all six candidates, private/local domains are rejected, and the UI exposes scanning versus not-scanned states. Fable independently ran 74 tests and lint successfully.
-- Merge remains blocked until the exact commit is deployed and the ten-site live quality gate above is recorded.
+- First live-panel review: Fable 5 returned `LIVE_PANEL_REVIEW: BLOCK`
+  because the per-domain message was truncated and the private deployment
+  returned HTTP 401 without Sites authorization. The aggregate score was not
+  accepted as a substitute for inspecting the underlying rivals, offerings,
+  and ad states.
+- Resolution: the no-retry production panel was captured again and its reduced,
+  secret-free public evidence was added as `020-panel-v24-evidence.json` for
+  direct reviewer inspection.
+- Second live-panel review: Fable 5 confirmed 10/10 rival credibility, 10/10
+  regions, and the reliability fix, then returned `LIVE_PANEL_REVIEW: BLOCK`
+  because no sampled pair exposed a comparable public price and the second ad
+  capture did not reproduce the earlier Pip & Nut placements.
+- Resolution: the ad record now distinguishes the historical first
+  observation from the second capture, while a bounded six-page matched-product
+  enrichment phase recovers price evidence without weakening competitor
+  verification or silently expanding the crawl.
+- Price-enrichment code review: Fable 5 returned
+  `PRICE_ENRICHMENT_CODE_REVIEW: PASS` after tracing target selection, same-domain
+  URL validation, robots enforcement, visible failure states, structured-price
+  replacement, evidence citation, and the domain-identity regression fix. Fable
+  independently ran 78/78 tests and lint successfully. Its two non-blocking
+  follow-ups are region-aware `$` currency inference and avoiding one duplicate
+  in-memory comparison build.
+- Production deployment: private Sites version 24 deployed commit `9d26eac` at
+  `https://market-signal.abdulla617931.chatgpt.site/`; the final ten-domain
+  panel above meets every acceptance gate.
+- Merge remains blocked until Fable 5 returns a strict live-panel PASS, the
+  final record is reviewed, and the exact merge candidate is deployed and
+  verified.
