@@ -165,6 +165,18 @@ p95. No credential is stored in the artifact.
   independently ran 78/78 tests and lint successfully. Its two non-blocking
   follow-ups are region-aware `$` currency inference and avoiding one duplicate
   in-memory comparison build.
+- Production price smoke: Sites version 25 returned two fetched enrichment pages
+  for Pip & Nut and three for Bird & Blend. Bird & Blend produced exact public
+  comparisons including Lemon & Ginger Tea (`GBP 7.75` versus `GBP 7.35`) and
+  Perfect Matcha Spoon (`GBP 3.85` versus `GBP 4.50`). The same smoke exposed an
+  invalid Peanut Butter-versus-Cookbook pairing before the final panel.
+- Product-type resolution: accessory product-form groups now reject a food item
+  paired with a book, mug, infuser, or other differently formed accessory while
+  retaining like-for-like accessory comparisons. Singular/plural forms and
+  near-synonyms such as mug/cup are normalized. Fable 5 returned
+  `PRODUCT_TYPE_COMPATIBILITY_REVIEW: PASS`,
+  `GROUPED_PRODUCT_TYPE_REVIEW: PASS`, and `RECIPE_BOX_FOLLOWUP: PASS`; the final
+  local gate passed 79/79 tests, typecheck, build, and lint.
 - Production deployment: private Sites version 24 deployed commit `9d26eac` at
   `https://market-signal.abdulla617931.chatgpt.site/`; the final ten-domain
   panel above meets every acceptance gate.

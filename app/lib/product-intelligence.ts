@@ -80,6 +80,12 @@ const STOPWORDS = new Set([
 const GENERIC_TOKENS = new Set([
   "app", "basic", "business", "catalog", "collection", "collections", "edition", "enterprise", "essential", "feature", "features", "free", "plan", "plans", "platform", "plus", "premium", "pricing", "pro", "product", "products", "saas", "service", "services", "shop", "software", "solution", "starter", "store", "suite",
 ]);
+const ACCESSORY_PRODUCT_GROUPS = new Map<string, string>([
+  ...["book", "books", "cookbook", "cookbooks", "guide", "guides"].map((token) => [token, "publication"] as const),
+  ...["cup", "cups", "mug", "mugs"].map((token) => [token, "drinkware"] as const),
+  ...["infuser", "infusers", "scoop", "scoops", "spoon", "spoons", "whisk", "whisks"].map((token) => [token, "preparation-accessory"] as const),
+  ...["voucher", "vouchers"].map((token) => [token, "voucher"] as const),
+]);
 
 function clean(value: string) {
   return value.replace(/<[^>]*>/g, " ").replace(/&amp;/gi, "&").replace(/&quot;/gi, '"').replace(/&#39;|&apos;/gi, "'").replace(/\s+/g, " ").trim();
@@ -470,7 +476,11 @@ export function scoreProductPair(primary: ProductRecord, candidate: ProductRecor
   const score = (jaccard(primaryName, candidateName) * 0.58) + (jaccard(primaryCategory, candidateCategory) * 0.18) + (jaccard(primaryDescription, candidateDescription) * 0.14) + (imageScore * 0.1);
   const categoryOverlap = primaryCategory.some((token) => candidateCategory.includes(token));
   const incompatiblePhysicalService = new Set([primary.jsonLdType, candidate.jsonLdType]).has("Product") && new Set([primary.jsonLdType, candidate.jsonLdType]).has("Service") && !categoryOverlap;
-  return { score: Number(score.toFixed(4)), sharedTerms, imageScore: Number(imageScore.toFixed(4)), eligible: score >= 0.32 && sharedNameTerms.length >= 2 && !incompatiblePhysicalService };
+  const primaryAccessoryGroups = new Set(primaryName.map((token) => ACCESSORY_PRODUCT_GROUPS.get(token)).filter((group): group is string => Boolean(group)));
+  const candidateAccessoryGroups = new Set(candidateName.map((token) => ACCESSORY_PRODUCT_GROUPS.get(token)).filter((group): group is string => Boolean(group)));
+  const incompatibleAccessory = [...new Set([...primaryAccessoryGroups, ...candidateAccessoryGroups])]
+    .some((group) => primaryAccessoryGroups.has(group) !== candidateAccessoryGroups.has(group));
+  return { score: Number(score.toFixed(4)), sharedTerms, imageScore: Number(imageScore.toFixed(4)), eligible: score >= 0.32 && sharedNameTerms.length >= 2 && !incompatiblePhysicalService && !incompatibleAccessory };
 }
 
 function comparablePrice(product: ProductRecord) {

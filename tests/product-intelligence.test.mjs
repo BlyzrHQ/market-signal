@@ -227,6 +227,27 @@ test("matching removes each company brand token before comparing product names",
   assert.deepEqual(result.sharedTerms.includes("billing"), true);
 });
 
+test("matching rejects an accessory even when its name contains the complete product name", () => {
+  const food = { ...product("butter", "shop.test", "Peanut Butter"), jsonLdType: "Product" };
+  const cookbook = { ...product("cookbook", "rival.test", "The Peanut Butter Cookbook"), jsonLdType: "Product" };
+  const cookbooks = { ...product("cookbooks", "rival.test", "Peanut Butter Cookbooks"), jsonLdType: "Product" };
+  const matchingSpoons = scoreProductPair(
+    { ...product("spoon-a", "shop.test", "Perfect Matcha Spoon"), jsonLdType: "Product" },
+    { ...product("spoon-b", "rival.test", "Perfect Matcha Spoon"), jsonLdType: "Product" },
+  );
+  assert.equal(scoreProductPair(food, cookbook).eligible, false);
+  assert.equal(scoreProductPair(food, cookbooks).eligible, false);
+  assert.equal(matchingSpoons.eligible, true);
+  assert.equal(scoreProductPair(
+    { ...product("mug", "shop.test", "Tea Infuser Mug"), jsonLdType: "Product" },
+    { ...product("cup", "rival.test", "Tea Infuser Cup"), jsonLdType: "Product" },
+  ).eligible, true);
+  assert.equal(scoreProductPair(
+    { ...product("recipe-box", "shop.test", "Classic Recipe Box"), jsonLdType: "Product" },
+    { ...product("meal-box", "rival.test", "Classic Meal Box"), jsonLdType: "Product" },
+  ).eligible, true);
+});
+
 test("matching is deterministic and one-to-one per competitor", () => {
   const primaryA = product("primary-a", "a.com", "Inventory Forecasting", "inventory forecasting", "forecast inventory demand");
   const primaryB = product("primary-b", "a.com", "Inventory Planning", "inventory planning", "plan inventory levels");
