@@ -61,3 +61,16 @@ compares with ClickUp, Asana, Later, or another direct SaaS competitor.
   display the tier-match eligibility floor as a similarity percentage.
 - Both improvements were implemented and independently probed by Fable 5.
 - Final verdict: `SAAS_PLAN_COMPARISON_REREVIEW: PASS`.
+
+## Live validation follow-up
+
+- Private Sites version 28 produced four named Linear plan rows against Asana
+  and three named Buffer rows against Loomly and Sprout Social.
+- The first live Linear run correctly withheld an exact delta because duplicated
+  accessible price markup pushed the explicit `Billed yearly` text beyond the
+  short price context. The bounded plan section is now retained separately for
+  explicit billing-term extraction; price selection remains limited to the
+  short nearest-price context.
+- Fable 5 reviewed the live-found correction for cross-card leakage, false
+  commitment inference, price misbinding, and test adequacy. Final verdict:
+  `LIVE_BILLING_CONTEXT_REVIEW: PASS`.

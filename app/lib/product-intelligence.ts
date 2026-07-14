@@ -300,15 +300,17 @@ function extractSaasPlans(input: ProductExtractionInput) {
   let path = "";
   try { path = new URL(input.sourceUrl).pathname; } catch { return [] as ProductRecord[]; }
   if (!PRICING_PATH.test(path)) return [];
-  const candidates: Array<{ name: string; context: string }> = [];
+  const candidates: Array<{ name: string; context: string; billingContext: string }> = [];
   const headings = [...input.document.matchAll(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi)];
   for (let index = 0; index < headings.length; index += 1) {
     const name = cleanPlanName(headings[index][2] || "");
     if (!name) continue;
     const start = headings[index].index || 0;
     const end = headings[index + 1]?.index ?? Math.min(input.document.length, start + 12_000);
-    const context = readableHtml(input.document.slice(start, end)).slice(0, 1_200);
-    if (planPrice(context) || /\b(?:contact sales|get a demo|request a demo|custom pricing|free forever)\b/i.test(context)) candidates.push({ name, context });
+    const readableSection = readableHtml(input.document.slice(start, end));
+    const context = readableSection.slice(0, 1_200);
+    const billingContext = readableSection.slice(0, 4_000);
+    if (planPrice(context) || /\b(?:contact sales|get a demo|request a demo|custom pricing|free forever)\b/i.test(context)) candidates.push({ name, context, billingContext });
   }
   const selected = new Map<string, ProductRecord>();
   for (const candidate of candidates) {
@@ -317,7 +319,7 @@ function extractSaasPlans(input: ProductExtractionInput) {
     const tier = planTier(candidate.name, price);
     if (!tier) continue;
     const basis = planPriceBasis(candidate.context, price);
-    const commitment = planBillingCommitment(candidate.context);
+    const commitment = planBillingCommitment(candidate.billingContext);
     const id = makeId(input.domain, candidate.name, input.sourceUrl);
     const attributes = [
       `Plan tier: ${tier}`,

@@ -179,6 +179,23 @@ test("extracts named SaaS plans and their nearest public recurring price", () =>
   assert.ok(plans.every((item) => item.sourceUrl === "https://buffer.com/pricing"));
 });
 
+test("retains explicit billing commitment after noisy duplicated price markup", () => {
+  const duplicatedAccessiblePrices = `<span>$10 per user/month</span>`.repeat(50);
+  const result = extraction({
+    domain: "linear.app",
+    sourceUrl: "https://linear.app/pricing",
+    pageTitle: "Linear pricing",
+    headings: ["Basic"],
+    pagePriceSignals: ["$10 per user/month"],
+    document: `<h3>Basic</h3><span>$10 per user/month</span>${duplicatedAccessiblePrices}<p>Billed yearly</p><h3>Business</h3><p>$16 per user/month</p>`,
+  });
+  const basic = result.products.find((item) => item.name === "Basic");
+  const business = result.products.find((item) => item.name === "Business");
+  assert.deepEqual(basic.priceSignals, [{ raw: "$10 per user/month", currency: "USD", amount: 10, period: "month" }]);
+  assert.ok(basic.attributes.includes("Billing commitment: annual"));
+  assert.ok(!business.attributes.some((attribute) => attribute.startsWith("Billing commitment: annual")));
+});
+
 test("does not infer SaaS plans from unstructured pricing prose or feature names", () => {
   const result = extraction({
     sourceUrl: "https://metricool.com/pricing",
