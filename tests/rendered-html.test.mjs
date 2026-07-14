@@ -114,6 +114,10 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /No defensible product pair was verified yet/);
   assert.match(page, /لم يتم التحقق من زوج منتجات قابل للدفاع عنه بعد/);
   assert.match(page, /ProductBattleCard/);
+  assert.match(page, /catalog-scan-summary/);
+  assert.match(page, /of your products scanned/);
+  assert.match(page, /rival products scanned/);
+  assert.match(page, /verified comparison/);
   assert.match(page, /SAME TIER/);
   assert.match(page, /href=\{`#dossier-\$\{rivalDomain\}`\}/);
   assert.match(page, /price-picture/);

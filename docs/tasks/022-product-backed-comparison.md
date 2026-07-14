@@ -23,6 +23,9 @@ The report must show defensible pairs in a dedicated top-level Product Compariso
 - Keep each accepted source URL, search query, matched primary product, evidence method, and observed crawl evidence attributable.
 - Reserve two candidate investigations for direct entity/category leads; rank product-backed companies first only after strict first-party category, region, and product-overlap verification.
 - Seed no more than two accepted product-detail URLs into the corresponding competitor crawl; always retain the homepage and robots checks.
+- Compare up to 400 crawled product records per catalog rather than sampling the first 16; pre-index normalized product-name terms so the wider comparison remains bounded.
+- Show how many primary and rival products were scanned, how many defensible pairs were verified, and whether the returned comparison set was truncated.
+- Retain the strongest 80 matched product rows and cap unmatched examples so live reports do not duplicate entire catalogs as an unreadable data dump.
 - Render a universal top-level Product Comparison chapter with the matched names, public prices when observed, decision guidance, match evidence, observed dates, confidence, rival-dossier link, and links to both product sources.
 - Show at most eight pairs initially, retain an accurate total, and place additional verified pairs behind an explicit expander.
 - Clearly state when no defensible pair was verified; never manufacture a pair or present fixture data as live.
@@ -36,7 +39,7 @@ Search results are discovery leads, not product truth. Product names, prices, de
 
 ## Known limits
 
-- The search set is deliberately bounded for latency and cost; it is not an exhaustive comparison of every SKU in the first run.
+- Search discovery is deliberately bounded for latency and cost. Catalog comparison covers up to 400 crawled product records per company and visibly reports when a larger catalog was capped.
 - Robots rules, dynamic storefronts, unavailable product pages, and regional variants can prevent verification.
 - Image similarity is supporting evidence only and does not override a weak product-name match.
 

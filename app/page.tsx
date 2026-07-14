@@ -460,11 +460,18 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
   const profile = doc.blocks.find((block) => block.type === "market-profile");
   const competitors = doc.blocks.filter((block) => block.type === "competitor").sort((left, right) => jsonNumber(right, "verificationScore") - jsonNumber(left, "verificationScore"));
   const comparison = doc.blocks.find((block) => block.type === "product-comparison");
+  const comparisonCoverage = object(comparison?.coverage);
   const allBattles = productBattles(comparison);
   const competitorDomains = new Set(competitors.map((competitor) => jsonText(competitor, "domain")));
   const battles = allBattles.filter((battle) => competitorDomains.has(String(battle.match.domain)));
   const visibleBattles = battles.slice(0, 8);
   const remainingBattles = battles.slice(8);
+  const primaryProductsScanned = Number(comparisonCoverage.primaryProductsScanned || 0);
+  const primaryProductsAvailable = Number(comparisonCoverage.primaryProductsAvailable || primaryProductsScanned);
+  const competitorProductsScanned = Number(comparisonCoverage.competitorProductsScanned || 0);
+  const competitorProductsAvailable = Number(comparisonCoverage.competitorProductsAvailable || competitorProductsScanned);
+  const verifiedPairTotal = Number(comparisonCoverage.verifiedPairCount || battles.length);
+  const comparisonTruncated = comparisonCoverage.truncated === true;
   const ads = doc.blocks.find((block) => block.type === "ad-intelligence");
   const adCompanies = jsonList(ads || { type: "", id: "" }, "companies").map(object);
   const adLimitation = jsonText(ads || { type: "", id: "" }, "limitation");
@@ -519,7 +526,7 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
             <span>{ar ? "منافسون موثقون" : "verified rivals"}</span>
           </div>
           <div>
-            <strong>{battles.length}</strong>
+            <strong>{verifiedPairTotal}</strong>
             <span>{ar ? "مواجهات منتجات" : "product battles"}</span>
           </div>
         </div>
@@ -609,7 +616,17 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
               </div>
               <p>{ar ? "تظهر هنا فقط الأزواج التي اجتازت مطابقة الاسم والصفحة ومصدر الطرف الأول." : "Only pairs backed by matching names and crawled first-party product pages appear here."}</p>
             </div>
-            {battles.length > 0 && <div className="battle-pair-count">{battles.length} {ar ? "أزواج موثقة" : `verified pair${battles.length === 1 ? "" : "s"}`}</div>}
+            {comparison && (
+              <div className="catalog-scan-summary">
+                <div><strong>{primaryProductsScanned}{primaryProductsAvailable > primaryProductsScanned ? ` / ${primaryProductsAvailable}` : ""}</strong><span>{ar ? "من منتجاتك تم فحصها" : "of your products scanned"}</span></div>
+                <b aria-hidden="true">×</b>
+                <div><strong>{competitorProductsScanned}{competitorProductsAvailable > competitorProductsScanned ? ` / ${competitorProductsAvailable}` : ""}</strong><span>{ar ? "منتجاً للمنافسين تم فحصها" : "rival products scanned"}</span></div>
+                <i aria-hidden="true" />
+                <div className="catalog-scan-result"><strong>{verifiedPairTotal}</strong><span>{ar ? "مقارنات موثقة" : `verified comparison${verifiedPairTotal === 1 ? "" : "s"}`}</span></div>
+              </div>
+            )}
+            {battles.length > 0 && <div className="battle-pair-count">{battles.length} {ar ? "أزواج معروضة" : `pair${battles.length === 1 ? "" : "s"} shown`}</div>}
+            {comparisonTruncated && <p className="comparison-limit-note">{ar ? `نعرض أقوى ${battles.length} من أصل ${verifiedPairTotal} مقارنة موثقة.` : `Showing the strongest ${battles.length} of ${verifiedPairTotal} verified comparisons.`}</p>}
             {battles.length ? (
               <div className="product-battle-list">
                 {visibleBattles.map((battle, index) => {
