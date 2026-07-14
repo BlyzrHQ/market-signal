@@ -1,0 +1,236 @@
+{
+  "deployment": {
+    "sitesVersion": 27,
+    "commit": "65185006f6edb0a21c59d4be0c3e55549337444b",
+    "url": "https://market-signal.abdulla617931.chatgpt.site",
+    "capturedAt": "2026-07-14",
+    "fixtureData": false
+  },
+  "summary": {
+    "reportsOk": 10,
+    "adScansOk": 10,
+    "correctRegions": 10,
+    "domainsWithAtLeastThreeCompetitors": 9,
+    "domainsWithAtLeastFiveOfferings": 7,
+    "domainsWithVisibleProductOrServiceMatches": 6,
+    "domainsWithExactComparablePrices": 2,
+    "verifiedActiveAdEvidenceCount": 0,
+    "crawlLatencySeconds": { "p50": 30.5, "p95": 41.1 },
+    "adLatencySeconds": { "p50": 23.1, "p95": 27.3 }
+  },
+  "dataBoundaries": [
+    "Every accepted competitor below has a first-party homepage evidence URL and a verification score stored in its score field.",
+    "Only Medium-confidence product or service matches are counted as visible comparisons.",
+    "Exact price deltas require one unambiguous amount on each side and matching currencies.",
+    "All ad results were access-limited or no-verified-result. This is not evidence of zero advertising activity.",
+    "No exact ad spend is claimed."
+  ],
+  "fieldDefinitions": {
+    "competitors.score": "Entity-verification score from 0 to 100.",
+    "visibleMatches": "Only Medium-confidence product or service rows that the production UI may show.",
+    "exactPriceComparison": "True only when both observed prices are unambiguous and use the same currency."
+  },
+  "reports": [
+    {
+      "domain": "myjam.co.uk",
+      "region": "United Kingdom",
+      "category": "Cultural food marketplace",
+      "crawlSeconds": 37.2,
+      "adSeconds": 17.5,
+      "offeringCount": 400,
+      "competitors": [
+        { "domain": "halalo.co.uk", "score": 81, "confidence": "Medium", "evidenceUrl": "https://halalo.co.uk/" },
+        { "domain": "asiangrocerystore.uk", "score": 77, "confidence": "Medium", "evidenceUrl": "https://asiangrocerystore.uk/" },
+        { "domain": "egrocers.uk", "score": 89, "confidence": "High", "evidenceUrl": "https://www.egrocers.uk/" },
+        { "domain": "freshcodirect.co.uk", "score": 92, "confidence": "High", "evidenceUrl": "https://www.freshcodirect.co.uk/" }
+      ],
+      "offeringSamples": ["Lamb Leg Halal apx 2500g", "Lamb Shoulder Halal (apx 1.5kg)", "Beef Sirloin Steak Halal 500G", "Halal Lamb Chops 500g"],
+      "visibleMatches": [
+        { "primary": "Gala Royal Apple 500g", "rival": "Royal Gala Apple", "rivalDomain": "freshcodirect.co.uk", "primaryPrices": ["GBP 2.25"], "rivalPrices": ["GBP 3.99"], "verdict": "You are GBP 1.74 cheaper on the observed price.", "exactPriceComparison": true },
+        { "primary": "Red Cabbage 1Kg", "rival": "cabbage red", "rivalDomain": "egrocers.uk", "primaryPrices": ["GBP 2.71"], "rivalPrices": [], "verdict": "You expose a public price while the rival did not in this crawl.", "exactPriceComparison": false }
+      ],
+      "priceEnrichment": { "requested": 2, "fetched": 2 },
+      "ads": { "verifiedEvidenceCount": 0, "states": ["Meta access-limited", "Google no-verified-result", "TikTok no-verified-result"] }
+    },
+    {
+      "domain": "birdandblendtea.com",
+      "region": "United Kingdom",
+      "category": "Loose leaf tea blends",
+      "crawlSeconds": 41.1,
+      "adSeconds": 23.5,
+      "offeringCount": 340,
+      "competitors": [
+        { "domain": "teapigs.co.uk", "score": 97, "confidence": "High", "evidenceUrl": "https://www.teapigs.co.uk/" },
+        { "domain": "twinings.co.uk", "score": 100, "confidence": "High", "evidenceUrl": "https://twinings.co.uk/" },
+        { "domain": "whittard.co.uk", "score": 78, "confidence": "Medium", "evidenceUrl": "https://www.whittard.co.uk/" },
+        { "domain": "brewteacompany.co.uk", "score": 96, "confidence": "High", "evidenceUrl": "https://www.brewteacompany.co.uk/" },
+        { "domain": "rareteacompany.com", "score": 96, "confidence": "High", "evidenceUrl": "https://rareteacompany.com/" },
+        { "domain": "porterhill.co.uk", "score": 92, "confidence": "High", "evidenceUrl": "https://porterhill.co.uk/" }
+      ],
+      "offeringSamples": ["Pure Grade Ceremonial Matcha", "Strawberry Lemonade Tea", "Apple Strudel Tea", "All Nighter Tea"],
+      "visibleMatches": [
+        { "primary": "Bamboo Matcha Whisk", "rival": "Matcha Bamboo Whisk", "rivalDomain": "twinings.co.uk", "primaryPrices": ["GBP 15"], "rivalPrices": ["GBP 12.75"], "verdict": "twinings.co.uk is GBP 2.25 cheaper on the observed price.", "exactPriceComparison": true },
+        { "primary": "Lemon & Ginger Tea", "rival": "Lemon & Ginger Tea", "rivalDomain": "porterhill.co.uk", "primaryPrices": ["GBP 7.75", "GBP 22.1", "GBP 42", "GBP 3.5"], "rivalPrices": ["GBP 7.35", "GBP 24.00", "GBP 14.00", "GBP 9.00"], "verdict": "Both expose public prices, but variant or pack-size alignment is unresolved.", "exactPriceComparison": false },
+        { "primary": "Loose Leaf Tea Starter Kit", "rival": "Loose Leaf Tea Starter Kit", "rivalDomain": "rareteacompany.com", "primaryPrices": [], "rivalPrices": [], "verdict": "Public prices are not comparable yet.", "exactPriceComparison": false }
+      ],
+      "priceEnrichment": { "requested": 3, "fetched": 3 },
+      "ads": { "verifiedEvidenceCount": 0, "states": ["Meta access-limited", "Google no-verified-result", "TikTok no-verified-result"] }
+    },
+    {
+      "domain": "pipandnut.com",
+      "region": "United Kingdom",
+      "category": "Natural nut butters, cups and bars",
+      "crawlSeconds": 38.2,
+      "adSeconds": 15.7,
+      "offeringCount": 6,
+      "competitors": [
+        { "domain": "try-nicks.co.uk", "score": 90, "confidence": "High", "category": "better-for-you chocolate and protein bars", "evidenceUrl": "https://try-nicks.co.uk/" },
+        { "domain": "biona.co.uk", "score": 92, "confidence": "High", "category": "nut butters and spreads", "evidenceUrl": "https://biona.co.uk/" },
+        { "domain": "mani-life.com", "score": 73, "confidence": "Medium", "category": "peanut and nut butters", "evidenceUrl": "https://mani-life.com/" },
+        { "domain": "superfoodio.com", "score": 70, "confidence": "Medium", "category": "better-for-you confectionery", "evidenceUrl": "https://www.superfoodio.com/" },
+        { "domain": "theproteinballco.com", "score": 77, "confidence": "Medium", "category": "high-protein snacks and bars", "evidenceUrl": "https://theproteinballco.com/" },
+        { "domain": "yumello.com", "score": 90, "confidence": "High", "category": "nut butters and spreads", "evidenceUrl": "https://www.yumello.com/" }
+      ],
+      "offeringSamples": ["Peanut Butter", "Almond Butter", "Chocolate Hazelnut Spread", "Protein Bars", "Stuffed Oat Bars", "Nut Butter Cups"],
+      "visibleMatches": [
+        { "primary": "Almond Butter", "rival": "ALMOND BUTTER 350g", "rivalDomain": "biona.co.uk", "primaryPrices": ["GBP 3.49", "GBP 17.59"], "rivalPrices": [], "verdict": "You expose a public price while the rival did not in this crawl.", "exactPriceComparison": false }
+      ],
+      "priceEnrichment": { "requested": 2, "fetched": 2 },
+      "qualityConcern": "Three accepted companies are adjacent snack or confectionery brands rather than direct nut-butter substitutes.",
+      "ads": { "verifiedEvidenceCount": 0, "states": ["Meta access-limited", "Google no-verified-result", "TikTok no-verified-result"] }
+    },
+    {
+      "domain": "oddbox.co.uk",
+      "region": "United Kingdom",
+      "category": "Delivered fruit and vegetable boxes",
+      "crawlSeconds": 23.9,
+      "adSeconds": 23.9,
+      "offeringCount": 12,
+      "competitors": [
+        { "domain": "abelandcole.co.uk", "score": 96, "confidence": "High", "evidenceUrl": "https://www.abelandcole.co.uk/" },
+        { "domain": "thepaddock.org.uk", "score": 96, "confidence": "High", "evidenceUrl": "https://www.thepaddock.org.uk/" },
+        { "domain": "wonkyvegboxes.co.uk", "score": 81, "confidence": "Medium", "evidenceUrl": "https://wonkyvegboxes.co.uk/" },
+        { "domain": "greenergreens.com", "score": 77, "confidence": "Medium", "evidenceUrl": "https://greenergreens.com/" },
+        { "domain": "thevegboxcompany.co.uk", "score": 91, "confidence": "High", "evidenceUrl": "https://thevegboxcompany.co.uk/" }
+      ],
+      "offeringSamples": ["Fruit & Veg Boxes", "Veg Boxes", "Pick a box", "Behind the box"],
+      "visibleMatches": [
+        { "primary": "Fruit & Veg Boxes", "rival": "Fruit & Veg Boxes", "rivalDomain": "abelandcole.co.uk", "primaryPrices": [], "rivalPrices": [], "verdict": "Public prices are not comparable yet.", "exactPriceComparison": false },
+        { "primary": "Veg Boxes", "rival": "Veg Boxes", "rivalDomain": "thepaddock.org.uk", "primaryPrices": [], "rivalPrices": [], "verdict": "Public prices are not comparable yet.", "exactPriceComparison": false }
+      ],
+      "qualityConcern": "Some extracted offerings are navigation or editorial labels rather than purchasable box variants.",
+      "ads": { "verifiedEvidenceCount": 0, "states": ["Meta access-limited", "Google no-verified-result", "TikTok no-verified-result"] }
+    },
+    {
+      "domain": "beardbrand.com",
+      "region": "United States",
+      "category": "Men's beard, hair and skin grooming",
+      "crawlSeconds": 27.6,
+      "adSeconds": 24.8,
+      "offeringCount": 66,
+      "competitors": [
+        { "domain": "livebearded.com", "score": 90, "confidence": "High", "evidenceUrl": "https://livebearded.com/" },
+        { "domain": "badassbeardcare.com", "score": 74, "confidence": "Medium", "evidenceUrl": "https://badassbeardcare.com/" },
+        { "domain": "honestamish.com", "score": 74, "confidence": "Medium", "evidenceUrl": "https://honestamish.com/" },
+        { "domain": "americancrew.com", "score": 74, "confidence": "Medium", "evidenceUrl": "https://www.americancrew.com/" },
+        { "domain": "artiusman.com", "score": 89, "confidence": "High", "evidenceUrl": "https://artiusman.com/" },
+        { "domain": "bhtgrooming.com", "score": 77, "confidence": "Medium", "evidenceUrl": "https://www.bhtgrooming.com/" }
+      ],
+      "offeringSamples": ["Beard Comb", "Beard Brush", "Beard Trimming Scissors", "Utility Beard Trimmer"],
+      "visibleMatches": [],
+      "priceIntegritySmoke": "Multiple Beard Brush and Beard Comb variant prices remained unresolved and produced no exact cheaper claim.",
+      "ads": { "verifiedEvidenceCount": 0, "states": ["Meta access-limited", "Google no-verified-result", "TikTok no-verified-result"] }
+    },
+    {
+      "domain": "allbirds.com",
+      "region": "United States",
+      "category": "Sustainable shoes and apparel",
+      "crawlSeconds": 34.9,
+      "adSeconds": 20.3,
+      "offeringCount": 293,
+      "competitors": [
+        { "domain": "rothys.com", "score": 76, "confidence": "Medium", "evidenceUrl": "https://rothys.com/" },
+        { "domain": "baabuk.com", "score": 90, "confidence": "High", "evidenceUrl": "https://www.baabuk.com/en-de" }
+      ],
+      "offeringSamples": ["Men's Wool Runner - Natural White", "Women's Wool Runner - Natural Black", "Women's Tree Breezer - Mist"],
+      "visibleMatches": [],
+      "qualityConcern": "Only two competitors and no defensible product-level row despite a large primary catalog.",
+      "ads": { "verifiedEvidenceCount": 0, "states": ["Meta access-limited", "Google no-verified-result", "TikTok no-verified-result"] }
+    },
+    {
+      "domain": "linear.app",
+      "region": "United States",
+      "category": "Product development system",
+      "crawlSeconds": 22.5,
+      "adSeconds": 26.0,
+      "offeringCount": 4,
+      "competitors": [
+        { "domain": "clickup.com", "score": 80, "confidence": "Medium", "evidenceUrl": "https://clickup.com/" },
+        { "domain": "airfocus.com", "score": 77, "confidence": "Medium", "evidenceUrl": "https://airfocus.com/" },
+        { "domain": "asana.com", "score": 73, "confidence": "Medium", "evidenceUrl": "https://asana.com/" }
+      ],
+      "offeringSamples": ["Linear Plan", "Plan and navigate from idea to launch", "Close the gap between planning and building", "Delegate, automate, and orchestrate work"],
+      "visibleMatches": [],
+      "qualityConcern": "The offering list is mainly marketing capability copy and does not produce a plan or feature comparison.",
+      "ads": { "verifiedEvidenceCount": 0, "states": ["Meta access-limited", "Google no-verified-result", "TikTok no-verified-result"] }
+    },
+    {
+      "domain": "buffer.com",
+      "region": "United States",
+      "category": "Social media management",
+      "crawlSeconds": 21.6,
+      "adSeconds": 27.3,
+      "offeringCount": 4,
+      "competitors": [
+        { "domain": "hootsuite.com", "score": 85, "confidence": "Medium", "evidenceUrl": "https://www.hootsuite.com/" },
+        { "domain": "later.com", "score": 97, "confidence": "High", "evidenceUrl": "https://later.com/" },
+        { "domain": "metricool.com", "score": 95, "confidence": "High", "evidenceUrl": "https://metricool.com/" },
+        { "domain": "agorapulse.com", "score": 81, "confidence": "Medium", "evidenceUrl": "https://www.agorapulse.com/" },
+        { "domain": "loomly.com", "score": 81, "confidence": "Medium", "evidenceUrl": "https://www.loomly.com/" },
+        { "domain": "eclincher.com", "score": 77, "confidence": "Medium", "evidenceUrl": "https://www.eclincher.com/" }
+      ],
+      "offeringSamples": ["Mobile app", "Content creation", "Social media", "Collaborate without friction"],
+      "visibleMatches": [
+        { "primary": "Social media", "rival": "Social Media", "rivalDomain": "metricool.com", "primaryPrices": [], "rivalPrices": [], "verdict": "Public prices are not comparable yet.", "exactPriceComparison": false }
+      ],
+      "qualityConcern": "The only row is tautological and not a decision-useful feature or plan comparison.",
+      "ads": { "verifiedEvidenceCount": 0, "states": ["Meta access-limited", "Google no-verified-result", "TikTok no-verified-result"] }
+    },
+    {
+      "domain": "thoughtbot.com",
+      "region": "Global market",
+      "category": "Product design and development agency",
+      "crawlSeconds": 37.9,
+      "adSeconds": 18.6,
+      "offeringCount": 15,
+      "competitors": [
+        { "domain": "ramotion.com", "score": 81, "confidence": "Medium", "evidenceUrl": "https://www.ramotion.com/" },
+        { "domain": "akqa.com", "score": 70, "confidence": "Medium", "evidenceUrl": "https://www.akqa.com/" },
+        { "domain": "appnovation.com", "score": 69, "confidence": "Medium", "evidenceUrl": "https://www.appnovation.com/" },
+        { "domain": "gojilabs.com", "score": 92, "confidence": "High", "evidenceUrl": "https://gojilabs.com/" }
+      ],
+      "offeringSamples": ["Design Research", "UX, UI, and Product Design", "Web Development", "Fractional Product and Technical Leadership"],
+      "visibleMatches": [
+        { "primary": "UX, UI, and Product Design", "rival": "UX/UI Design", "rivalDomain": "gojilabs.com", "primaryPrices": [], "rivalPrices": [], "verdict": "Public prices are not comparable yet.", "exactPriceComparison": false }
+      ],
+      "ads": { "verifiedEvidenceCount": 0, "states": ["Meta access-limited", "Google no-verified-result", "TikTok no-verified-result"] }
+    },
+    {
+      "domain": "ustwo.com",
+      "region": "Global market (inferred)",
+      "category": "Digital product studio",
+      "crawlSeconds": 30.5,
+      "adSeconds": 23.1,
+      "offeringCount": 3,
+      "competitors": [
+        { "domain": "hugeinc.com", "score": 77, "confidence": "Medium", "evidenceUrl": "https://www.hugeinc.com/" },
+        { "domain": "instrument.com", "score": 69, "confidence": "Medium", "evidenceUrl": "https://www.instrument.com/" },
+        { "domain": "kiiloo.com", "score": 70, "confidence": "Medium", "evidenceUrl": "https://www.kiiloo.com/" }
+      ],
+      "offeringSamples": ["Pilot new services and brands through design and development", "Design and build digital products that users return to", "Product Innovation"],
+      "visibleMatches": [],
+      "qualityConcern": "Only three broad service labels and no decision-useful comparison row.",
+      "ads": { "verifiedEvidenceCount": 0, "states": ["Meta access-limited", "Google no-verified-result", "TikTok no-verified-result"] }
+    }
+  ]
+}

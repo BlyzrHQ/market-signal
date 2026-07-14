@@ -196,9 +196,26 @@ p95. No credential is stored in the artifact.
   the server-approved pair, Fable independently reproduced the panel case,
   reran the gate, and returned `VARIANT_PRICE_INTEGRITY_REREVIEW: PASS`. The
   exact local gate passed 82/82 tests, typecheck, build, and lint.
-- Production deployment: private Sites version 24 deployed commit `9d26eac` at
-  `https://market-signal.abdulla617931.chatgpt.site/`; the final ten-domain
-  panel above meets every acceptance gate.
+- Historical deployment: private Sites version 24 deployed commit `9d26eac` at
+  `https://market-signal.abdulla617931.chatgpt.site/` and passed the aggregate
+  gates recorded for that capture. It is superseded by the version 27 panel
+  below and is not the current merge evidence.
+- Version 27 production evidence: private Sites version 27 deployed exact commit
+  `65185006f6edb0a21c59d4be0c3e55549337444b`. The no-fixture ten-domain capture
+  is preserved in [`020-panel-v27-evidence.json`](./020-panel-v27-evidence.json).
+  All ten reports and ad phases completed, region accuracy was 10/10, 9/10
+  reports returned at least three verified competitors, and latency remained
+  within the production gate. However, only 7/10 returned at least five useful
+  offerings, 6/10 produced a visible product or service row, 2/10 produced an
+  exact comparable price, and no ad creative was independently verified.
+- Version 27 live-panel review: Fable 5 independently rescored the reports at an
+  approximately 58/100 median with only 2/10 `GOOD` and returned
+  `V27_LIVE_PANEL_REVIEW: BLOCK`. The primary blockers are missing named
+  plan/price comparisons for SaaS, Allbirds competitor and product-match recall,
+  adjacent Pip & Nut competitors, broad offering labels, and no reproduced ad
+  creative. This failed quality gate is retained as the baseline for follow-up
+  tasks; reliability and accurate regions are not treated as a substitute for
+  decision usefulness.
 - Merge remains blocked until Fable 5 returns a strict live-panel PASS, the
   final record is reviewed, and the exact merge candidate is deployed and
   verified.
