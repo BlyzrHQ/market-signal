@@ -51,6 +51,18 @@ After the task plan was updated, the verified Fable 5 session returned `PRODUCT_
 
 ## Local validation
 
-- `npm.cmd test`: PASS (typecheck, production build, 94 tests)
+- `npm.cmd test`: PASS (typecheck, production build, 95 tests)
 - `npm.cmd run lint`: PASS
 - `git diff --check`: PASS
+
+## Live validation
+
+Private Sites version 33 deployed commit `dd8b6daed74ca160c5bf6707c7170dc5c85327fd` and was exercised against `myjam.co.uk` on 2026-07-14.
+
+- The automatic run confirmed four competitors and completed in 43.72 seconds.
+- The comparison engine scanned 400 of 401 attributable MyJam product records against 530 competitor product records.
+- It assigned nine candidate pairs and exposed one pair above the shared defensibility threshold: MyJam `Red Cabbage 1Kg` versus eGrocers `cabbage red` at score 0.58 / Medium confidence.
+- MyJam source: `https://myjam.co.uk/products/red-cabbage-1kg`; observed public price: GBP 2.71.
+- Rival source: `https://www.egrocers.uk/product/cabbage-red/`; no attributable public price was observed in the bounded crawl.
+- The report returned the price state truthfully rather than inventing a rival price: “You expose a public price while the rival did not in this crawl.”
+- Candidate discovery is search-dependent, so the confirmed competitor mix and resulting pair count vary between runs. Stabilizing competitor recall belongs to the Competitor Discovery pillar; this task verifies that every confirmed catalog is compared beyond the previous 16-product sample.
