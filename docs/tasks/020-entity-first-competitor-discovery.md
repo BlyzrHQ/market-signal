@@ -177,6 +177,25 @@ p95. No credential is stored in the artifact.
   `PRODUCT_TYPE_COMPATIBILITY_REVIEW: PASS`,
   `GROUPED_PRODUCT_TYPE_REVIEW: PASS`, and `RECIPE_BOX_FOLLOWUP: PASS`; the final
   local gate passed 79/79 tests, typecheck, build, and lint.
+- Version 26 panel follow-up: all ten reports and all ten separate ad scans
+  completed with public data. Nine reports returned at least three verified
+  competitors; ustwo returned two. Seven reports returned at least five useful
+  first-party offerings after generic labels were removed. The initial-report
+  latency was 42.8 seconds p50 and 63.2 seconds p95; the separate ad phase was
+  22.4 seconds p50 and 36.9 seconds p95. Every competitor retained first-party
+  evidence, but the ad phase returned only access-limited or
+  no-verified-result states and therefore made no current-activity claim.
+- Price-integrity resolution: the version 26 evidence exposed misleading exact
+  deltas when a product carried multiple variant or pack-size prices (for
+  example, `GBP 3.49` and `GBP 7.85` compared with a rival `GBP 8.49` SKU).
+  Exact price deltas are now emitted only when every observed price signal on
+  each side resolves to one amount and both currencies match. Unresolved ranges
+  remain visible but do not produce a cheaper/more-expensive percentage.
+  Fable 5 first returned `VARIANT_PRICE_INTEGRITY_REVIEW: BLOCK` because the UI
+  still selected the first raw price. After the UI was changed to consume only
+  the server-approved pair, Fable independently reproduced the panel case,
+  reran the gate, and returned `VARIANT_PRICE_INTEGRITY_REREVIEW: PASS`. The
+  exact local gate passed 82/82 tests, typecheck, build, and lint.
 - Production deployment: private Sites version 24 deployed commit `9d26eac` at
   `https://market-signal.abdulla617931.chatgpt.site/`; the final ten-domain
   panel above meets every acceptance gate.

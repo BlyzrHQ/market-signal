@@ -91,6 +91,8 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /YOUR NEXT DECISION/);
   assert.match(page, /WHY THEY MAY WIN/);
   assert.match(page, /WHAT WE SEE/);
+  assert.match(page, /resolvedPriceDelta\(battle\.decision\.priceComparison\)/);
+  assert.doesNotMatch(page, /battle\.primary\.prices\[0\]/);
   assert.doesNotMatch(page, /sharedTerms\.map/);
   assert.match(page, /AD PULSE/);
   assert.match(page, /direct record/);
@@ -108,7 +110,7 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /THREAT MAP/);
   assert.match(page, /RIVAL DOSSIERS/);
   assert.match(page, /price-picture/);
-  assert.match(page, /comparablePriceDelta/);
+  assert.doesNotMatch(page, /comparablePriceDelta/);
   assert.match(page, /isDefensibleProductMatch/);
   assert.match(page, /SafeExternalLink href=\{battle\.primary\.sourceUrl\}/);
   assert.doesNotMatch(page, /sourceUrl: String\(item\.sourceUrl \|\| "#"\)/);

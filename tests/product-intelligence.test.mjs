@@ -301,3 +301,34 @@ test("enriched product evidence replaces sitemap placeholders and activates a pr
   assert.equal(match.product.id, "rival-jsonld");
   assert.match(match.decision.priceVerdict, /GBP 2\.00 cheaper/);
 });
+
+test("price verdicts do not compare a multi-variant range with a single rival SKU", () => {
+  const primary = {
+    ...product("butter", "shop.test", "Peanut Butter"),
+    jsonLdType: "Product",
+    priceSignals: [
+      { raw: "GBP 3.49", currency: "GBP", amount: 3.49 },
+      { raw: "GBP 7.85", currency: "GBP", amount: 7.85 },
+    ],
+  };
+  const rival = {
+    ...product("rival-butter", "rival.test", "Crunchy Peanut Butter 1kg"),
+    jsonLdType: "Product",
+    priceSignals: [{ raw: "GBP 8.49", currency: "GBP", amount: 8.49 }],
+  };
+  const comparison = buildProductComparison("shop.test", [
+    { domain: "shop.test", products: [primary] },
+    { domain: "rival.test", products: [rival] },
+  ]);
+  assert.match(comparison.rows[0].matches[0].decision.priceVerdict, /variant or pack-size alignment is unresolved/i);
+  assert.doesNotMatch(comparison.rows[0].matches[0].decision.priceVerdict, /cheaper/i);
+  assert.equal(comparison.rows[0].matches[0].decision.priceComparison, null);
+});
+
+test("price verdicts identify an equal unambiguous public price", () => {
+  const primary = { ...product("tea", "shop.test", "Lemon Ginger Tea"), jsonLdType: "Product", priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }] };
+  const rival = { ...product("rival-tea", "rival.test", "Lemon Ginger Tea"), jsonLdType: "Product", priceSignals: [{ raw: "GBP 8.00", currency: "GBP", amount: 8 }] };
+  const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "rival.test", products: [rival] }]);
+  assert.match(comparison.rows[0].matches[0].decision.priceVerdict, /same at GBP 8\.00/i);
+  assert.deepEqual(comparison.rows[0].matches[0].decision.priceComparison, { primaryRaw: "GBP 8", rivalRaw: "GBP 8.00" });
+});

@@ -3,7 +3,7 @@
 
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { postJson } from "./lib/json-response";
-import { comparablePriceDelta, isDefensibleProductMatch } from "./lib/report-presentation";
+import { isDefensibleProductMatch, resolvedPriceDelta } from "./lib/report-presentation";
 
 type ClaimType = "Observed" | "Inferred" | "Estimated" | "Recommended";
 type Locale = "en" | "ar";
@@ -229,19 +229,19 @@ function productBattles(block: JsonBlock | undefined) {
 
 function PricePicture({ battle, locale }: { battle: BattleView; locale: Locale }) {
   const ar = locale === "ar";
-  const yourRaw = battle.primary.prices[0] || "";
-  const rivalRaw = battle.rival.prices[0] || "";
-  const comparison = comparablePriceDelta(yourRaw, rivalRaw);
+  const comparison = resolvedPriceDelta(battle.decision.priceComparison);
+  const yourDisplay = battle.primary.prices.join(" · ");
+  const rivalDisplay = battle.rival.prices.join(" · ");
   if (!comparison)
     return (
       <div className="price-fallback">
         <div>
           <span>{ar ? "سعرك المعلن" : "YOUR PUBLIC PRICE"}</span>
-          <strong dir="auto">{yourRaw || (ar ? "غير متاح" : "Not observed")}</strong>
+          <strong dir="auto">{yourDisplay || (ar ? "غير متاح" : "Not observed")}</strong>
         </div>
         <div>
           <span>{ar ? "سعر المنافس" : "RIVAL PUBLIC PRICE"}</span>
-          <strong dir="auto">{rivalRaw || (ar ? "غير متاح" : "Not observed")}</strong>
+          <strong dir="auto">{rivalDisplay || (ar ? "غير متاح" : "Not observed")}</strong>
         </div>
       </div>
     );
@@ -254,11 +254,11 @@ function PricePicture({ battle, locale }: { battle: BattleView; locale: Locale }
       <div className="price-axis">
         <span className="price-line" />
         <span className="price-dot your-dot" style={{ left: `${yourPosition}%` }}>
-          <b>{yourRaw}</b>
+          <b>{comparison.primaryRaw}</b>
           <small>{ar ? "أنت" : "YOU"}</small>
         </span>
         <span className="price-dot rival-dot" style={{ left: `${rivalPosition}%` }}>
-          <b>{rivalRaw}</b>
+          <b>{comparison.rivalRaw}</b>
           <small>{ar ? "المنافس" : "RIVAL"}</small>
         </span>
       </div>

@@ -41,6 +41,7 @@ export type ProductMatch = {
     priceVerdict: string;
     whyTheyMayWin: string;
     recommendedMove: string;
+    priceComparison: { primaryRaw: string; rivalRaw: string } | null;
   } | null;
 };
 
@@ -484,16 +485,32 @@ export function scoreProductPair(primary: ProductRecord, candidate: ProductRecor
 }
 
 function comparablePrice(product: ProductRecord) {
-  return product.priceSignals.find((signal) => typeof signal.amount === "number" && signal.currency);
+  const prices = product.priceSignals.filter((signal) => typeof signal.amount === "number" && signal.currency);
+  const currencies = new Set(prices.map((signal) => signal.currency));
+  const amounts = new Set(prices.map((signal) => signal.amount));
+  return currencies.size === 1 && amounts.size === 1 ? prices[0] : undefined;
+}
+
+function hasPublicPrice(product: ProductRecord) {
+  return product.priceSignals.some((signal) => typeof signal.amount === "number" && signal.currency);
 }
 
 function productDecision(primary: ProductRecord, candidate: ProductRecord, score: number): NonNullable<ProductMatch["decision"]> {
   const primaryPrice = comparablePrice(primary);
   const candidatePrice = comparablePrice(candidate);
+  const primaryHasPrice = hasPublicPrice(primary);
+  const candidateHasPrice = hasPublicPrice(candidate);
+  const priceComparison = primaryPrice && candidatePrice && primaryPrice.currency === candidatePrice.currency
+    ? { primaryRaw: primaryPrice.raw, rivalRaw: candidatePrice.raw }
+    : null;
   let priceVerdict = "Public prices are not comparable yet.";
   let whyTheyMayWin = `The rival presents ${candidate.name} as the closest observable alternative.`;
   let recommendedMove = "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer.";
-  if (primaryPrice && candidatePrice && primaryPrice.currency === candidatePrice.currency && primaryPrice.amount !== candidatePrice.amount) {
+  if (primaryPrice && candidatePrice && primaryPrice.currency === candidatePrice.currency && primaryPrice.amount === candidatePrice.amount) {
+    priceVerdict = `The observed public price is the same at ${primaryPrice.currency} ${primaryPrice.amount!.toFixed(2)}.`;
+    whyTheyMayWin = "Price is not the visible differentiator on this matched product.";
+    recommendedMove = "Lead with a concrete product, availability, delivery, or trust advantage instead of price.";
+  } else if (primaryPrice && candidatePrice && primaryPrice.currency === candidatePrice.currency && primaryPrice.amount !== candidatePrice.amount) {
     const difference = Math.abs(primaryPrice.amount! - candidatePrice.amount!);
     const currency = primaryPrice.currency;
     if (candidatePrice.amount! < primaryPrice.amount!) {
@@ -505,18 +522,22 @@ function productDecision(primary: ProductRecord, candidate: ProductRecord, score
       whyTheyMayWin = "Price is not their visible advantage; their product framing or availability may be doing the work.";
       recommendedMove = "Put your lower price beside an equivalent pack-size claim and make it prominent in ads and collection pages.";
     }
-  } else if (!primaryPrice && candidatePrice) {
+  } else if (primaryHasPrice && candidateHasPrice) {
+    priceVerdict = "Both expose public prices, but variant or pack-size alignment is unresolved.";
+    whyTheyMayWin = "The public pages expose multiple variants or non-comparable currencies, so a simple price lead would be misleading.";
+    recommendedMove = "Normalize pack size and variant before using price in a campaign or merchandising decision.";
+  } else if (!primaryHasPrice && candidateHasPrice) {
     priceVerdict = `${candidate.domain} exposes a public price while yours was not observed.`;
     whyTheyMayWin = "The rival removes price uncertainty before checkout.";
     recommendedMove = "Expose the comparable price earlier on the product or collection page.";
-  } else if (primaryPrice && !candidatePrice) {
+  } else if (primaryHasPrice && !candidateHasPrice) {
     priceVerdict = "You expose a public price while the rival did not in this crawl.";
     whyTheyMayWin = "Their advantage is not visible price transparency in the pages we observed.";
     recommendedMove = "Keep price clarity and strengthen the product-specific reason to choose you.";
   } else if (score >= 0.65) {
     whyTheyMayWin = "The two offers look very similar from public product language, so small price, availability, or trust differences can decide the sale.";
   }
-  return { priceVerdict, whyTheyMayWin, recommendedMove };
+  return { priceVerdict, whyTheyMayWin, recommendedMove, priceComparison };
 }
 
 export function buildProductComparison(primaryDomain: string, catalogs: Array<{ domain: string; products: ProductRecord[] }>, requiredSourceUrls: Record<string, string[]> = {}): ProductComparison {
