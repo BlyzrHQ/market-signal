@@ -364,6 +364,89 @@ function PlatformPulse({ company, locale, showEvidence = true, loading = false }
   );
 }
 
+function AdCreativeCard({ concept, locale, index }: { concept: Record<string, unknown>; locale: Locale; index: number }) {
+  const ar = locale === "ar";
+  const mediaUrl = typeof concept.mediaUrl === "string" ? concept.mediaUrl : "";
+  const platforms = Array.isArray(concept.platforms) ? concept.platforms.map(String).filter(Boolean) : [];
+  const headline = [concept.headline, concept.caption].map(String).find(Boolean) || "";
+  const details = [concept.description, concept.callToAction].map(String).filter(Boolean).join(" · ");
+  const start = typeof concept.startDate === "string" ? concept.startDate.slice(0, 10) : "";
+  const stop = typeof concept.stopDate === "string" ? concept.stopDate.slice(0, 10) : "";
+  return (
+    <article className="ad-creative-card">
+      <div className={`ad-creative-media ${mediaUrl ? "has-media" : "media-missing"}`}>
+        <span>{ar ? "معاينة الوسائط غير متاحة" : "Creative media unavailable"}</span>
+        {mediaUrl && <img src={mediaUrl} alt={ar ? `معاينة الإعلان ${index + 1}` : `Ad creative ${index + 1} preview`} loading="lazy" onError={(event) => { event.currentTarget.style.display = "none"; event.currentTarget.parentElement?.classList.add("media-missing"); }} />}
+      </div>
+      <div className="ad-creative-copy">
+        <span>{ar ? `فكرة إعلانية ${index + 1}` : `CREATIVE CONCEPT ${index + 1}`}</span>
+        {headline && <strong dir="auto">{headline}</strong>}
+        <p dir="auto">{String(concept.message || (ar ? "إعلان مرئي دون نص عام" : "Visual ad with no public body copy"))}</p>
+        {details && <small dir="auto">{details}</small>}
+      </div>
+      <dl className="ad-creative-meta">
+        <div><dt>{ar ? "السجلات" : "RECORDS"}</dt><dd>{Number(concept.placementCount || 1)}</dd></div>
+        <div><dt>{ar ? "المنصات" : "PLACEMENTS"}</dt><dd>{platforms.length ? platforms.join(" · ") : ar ? "غير محددة" : "Not exposed"}</dd></div>
+        <div><dt>{ar ? "فترة العرض" : "DELIVERY"}</dt><dd>{start ? `${start}${stop ? ` → ${stop}` : ar ? " → نشط" : " → active"}` : ar ? "غير معلنة" : "Not exposed"}</dd></div>
+      </dl>
+      <div className="ad-creative-actions">
+        {typeof concept.destinationUrl === "string" && concept.destinationUrl && <SafeExternalLink href={concept.destinationUrl}>{ar ? "افتح الوجهة ↗" : "Open destination ↗"}</SafeExternalLink>}
+        <SafeExternalLink href={String(concept.evidenceUrl || "")}>{ar ? "شاهد سجل Meta ↗" : "View public Meta record ↗"}</SafeExternalLink>
+      </div>
+    </article>
+  );
+}
+
+function AdCompanyActivity({ company, locale, observedAt, primary }: { company: Record<string, unknown>; locale: Locale; observedAt: string; primary: boolean }) {
+  const ar = locale === "ar";
+  const platforms = Array.isArray(company.platforms) ? company.platforms.map(object) : [];
+  const meta = platforms.find((platform) => platform.platform === "Meta");
+  const concepts = Array.isArray(meta?.creativeConcepts) ? meta.creativeConcepts.map(object) : [];
+  const status = String(meta?.status || "access-limited");
+  const verified = status === "verified-active" && concepts.length > 0;
+  const stateLabel = verified ? (ar ? "نشاط موثق" : "VERIFIED ACTIVE") : status === "no-verified-result" ? (ar ? "فحص مكتمل دون سجل موثق" : "SCOPED CHECK COMPLETE") : (ar ? "تغطية محدودة" : "COVERAGE LIMITED");
+  return (
+    <article className={`ad-company-activity ad-state-${status}`}>
+      <header>
+        <div>
+          <span>{primary ? (ar ? "شركتك" : "YOUR COMPANY") : (ar ? "منافس" : "COMPETITOR")}</span>
+          <h4 dir="auto">{String(company.brand || company.domain || "")}</h4>
+          <small>{String(company.domain || "")}</small>
+        </div>
+        <div className="ad-activity-state">
+          <b>{stateLabel}</b>
+          {verified && <strong>{Number(meta?.activeCreativeCount || 0)} {ar ? "سجل" : "records"} · {Number(meta?.creativeConceptCount || concepts.length)} {ar ? "أفكار" : "concepts"}</strong>}
+        </div>
+      </header>
+      <PlatformPulse company={company} locale={locale} showEvidence={false} />
+      {verified ? (
+        <div className="ad-creative-feed">
+          {concepts.map((concept, index) => <AdCreativeCard concept={concept} locale={locale} index={index} key={String(concept.id || index)} />)}
+        </div>
+      ) : (
+        <div className="ad-coverage-state">
+          <strong>{status === "no-verified-result" ? (ar ? "لم يظهر سجل نشط في هذا الفحص المحدد" : "No active record appeared in this exact scoped check") : (ar ? "لا يمكننا إصدار حكم على النشاط بعد" : "We cannot judge this advertiser’s activity yet")}</strong>
+          <p dir="auto">{String(meta?.message || company.summary || "")}</p>
+        </div>
+      )}
+      <footer>
+        <div>
+          <span>{ar ? "المعلن الدقيق" : "EXACT ADVERTISER"}</span>
+          <SafeExternalLink href={String(meta?.attributionUrl || meta?.searchUrl || "")}>{String(meta?.attributionLabel || meta?.exactPageName || (ar ? "تحقق من الصفحة" : "Verify Page attribution"))} ↗</SafeExternalLink>
+        </div>
+        <div>
+          <span>{ar ? "تغطية البيانات" : "DATA COVERAGE"}</span>
+          <p>{Number(meta?.discardedRecordCount || 0)} {ar ? "سجل مستبعد لعدم تطابق الصفحة" : "cross-Page records discarded"} · {Number(meta?.identityProbeRecordCount || 0)} {ar ? "سجل في فحص الهوية" : "identity-probe records"}</p>
+        </div>
+        <div>
+          <span>{ar ? "تاريخ الرصد" : "OBSERVED"}</span>
+          <p>{observedAt ? observedAt.slice(0, 19).replace("T", " ") + " UTC" : (ar ? "غير متاح" : "Unavailable")}</p>
+        </div>
+      </footer>
+    </article>
+  );
+}
+
 function AdEvidenceLinks({ company, locale }: { company?: Record<string, unknown>; locale: Locale }) {
   const ar = locale === "ar";
   const platforms = Array.isArray(company?.platforms) ? company.platforms.map(object) : [];
@@ -375,41 +458,12 @@ function AdEvidenceLinks({ company, locale }: { company?: Record<string, unknown
     })),
   );
   const meta = platforms.find((platform) => platform.platform === "Meta");
-  const concepts = Array.isArray(meta?.creativeConcepts) ? meta.creativeConcepts.map(object).slice(0, 3) : [];
   const comparison = object(company?.comparisonToPrimary);
-  if (concepts.length || comparison.headline)
+  if ((Array.isArray(meta?.creativeConcepts) && meta.creativeConcepts.length > 0) || Boolean(comparison.headline))
     return (
-      <div className="ad-strategy-panel">
-        <div className="ad-strategy-verdict">
-          <span>{ar ? "الفجوة الإعلانية" : "PAID ATTENTION GAP"}</span>
-          <strong dir="auto">{String(comparison.headline || (ar ? "نشاط إعلاني موثق" : "Verified active creative"))}</strong>
-          <p dir="auto">{String(comparison.implication || meta?.message || "")}</p>
-        </div>
-        {concepts.length > 0 && (
-          <div className="ad-concept-grid">
-            {concepts.map((concept, index) => (
-              <article className="ad-concept-card" key={String(concept.id || index)}>
-                {typeof concept.mediaUrl === "string" && concept.mediaUrl && <img src={concept.mediaUrl} alt="" loading="lazy" />}
-                <div>
-                  <span>{ar ? `رسالة ${index + 1}` : `MESSAGE CONCEPT ${index + 1}`}</span>
-                  <strong dir="auto">{String(concept.message || concept.caption || (ar ? "إعلان مرئي بدون نص عام" : "Visual creative without public copy"))}</strong>
-                  <p dir="auto">{[concept.caption, concept.callToAction].map(String).filter(Boolean).join(" · ")}</p>
-                  <small>
-                    {Number(concept.placementCount || 1)} {ar ? "موضع" : "placement"}
-                    {Number(concept.placementCount || 1) === 1 ? "" : "s"}
-                    {concept.startDate ? ` · ${String(concept.startDate).slice(0, 10)}` : ""}
-                  </small>
-                </div>
-                <SafeExternalLink href={String(concept.evidenceUrl || "")}>{ar ? "شاهد الإعلان ↗" : "View exact ad ↗"}</SafeExternalLink>
-              </article>
-            ))}
-          </div>
-        )}
-        <div className="ad-attribution">
-          <span>{ar ? "إسناد المعلن" : "EXACT ADVERTISER"}</span>
-          <SafeExternalLink href={String(meta?.attributionUrl || meta?.searchUrl || "")}>{String(meta?.attributionLabel || (ar ? "تحقق من الصفحة" : "Verify Page attribution"))} ↗</SafeExternalLink>
-          <em>{ar ? "مزود مؤقت غير رسمي؛ الدليل مرتبط بسجل Meta العام." : "Temporary unofficial provider; evidence links to the public Meta record."}</em>
-        </div>
+      <div className="ad-strategy-link">
+        <div><span>{ar ? "الفجوة الإعلانية" : "PAID ATTENTION GAP"}</span><strong dir="auto">{String(comparison.headline || (ar ? "نشاط إعلاني موثق" : "Verified active creative"))}</strong></div>
+        <a href="#ad-activity">{ar ? "اعرض الإعلانات داخل التقرير ←" : "View the creatives in this report →"}</a>
       </div>
     );
   if (!records.length) return null;
@@ -475,6 +529,8 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
   const ads = doc.blocks.find((block) => block.type === "ad-intelligence");
   const adCompanies = jsonList(ads || { type: "", id: "" }, "companies").map(object);
   const adLimitation = jsonText(ads || { type: "", id: "" }, "limitation");
+  const adObservedAt = jsonText(ads || { type: "", id: "" }, "observedAt");
+  const adPrimaryDomain = jsonText(ads || { type: "", id: "" }, "primaryDomain");
   const gaps = doc.blocks.filter((block) => block.type === "gap");
   const battlesFor = (domain: string) => battles.filter((battle) => String(battle.match.domain) === domain);
   const adFor = (domain: string) => adCompanies.find((company) => String(company.domain) === domain);
@@ -555,12 +611,16 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
             <b>03</b>
             <span>{ar ? "مقارنة المنتجات" : "Product comparison"}</span>
           </a>
-          <a href="#rival-dossiers">
+          <a href="#ad-activity">
             <b>04</b>
+            <span>{ar ? "نشاط الإعلانات" : "Ad activity"}</span>
+          </a>
+          <a href="#rival-dossiers">
+            <b>05</b>
             <span>{ar ? "ملفات المنافسين" : "Rival dossiers"}</span>
           </a>
           <a href="#evidence-appendix">
-            <b>05</b>
+            <b>06</b>
             <span>{ar ? "الأدلة" : "Evidence"}</span>
           </a>
         </nav>
@@ -655,10 +715,30 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
             )}
           </section>
 
+          <section className="story-chapter ads-activity-chapter" id="ad-activity">
+            <div className="chapter-heading">
+              <div>
+                <span className="chapter-kicker">04 · {ar ? "نشاط الإعلانات" : "AD ACTIVITY"}</span>
+                <h3>{ar ? "ماذا يعرض المنافسون للناس الآن؟" : "What are competitors putting in front of customers?"}</h3>
+              </div>
+              <p>{ar ? "نعرض سجل الإعلان نفسه عندما يتحقق تطابق صفحة المعلن. لا نستنتج الإنفاق ولا نحول نقص الوصول إلى صفر." : "When exact Page attribution succeeds, the public creative appears here. We do not infer spend or turn limited access into zero activity."}</p>
+            </div>
+            {adLoading && !adCompanies.length ? (
+              <div className="ad-scan-state ad-scan-pending"><i /><div><strong>{ar ? "نفحص صفحات المعلنين الدقيقة" : "Checking exact advertiser Pages"}</strong><p>{ar ? "نجمع السجلات العامة ونستبعد أي إعلان لا يطابق صفحة الشركة." : "Collecting public records and discarding anything that does not match the company’s Page."}</p></div></div>
+            ) : adCompanies.length ? (
+              <div className="ad-company-feed">
+                {adCompanies.map((company, index) => <AdCompanyActivity company={company} locale={locale} observedAt={adObservedAt} primary={String(company.domain || "") === adPrimaryDomain || (!adPrimaryDomain && index === 0)} key={String(company.domain || index)} />)}
+              </div>
+            ) : (
+              <div className="ad-scan-state ad-scan-limited"><div><strong>{ar ? "لم تكتمل تغطية مكتبات الإعلانات" : "Ad-library coverage did not complete"}</strong><p>{adError || (ar ? "لا يمكننا إصدار حكم على نشاط الشركات من دون نتيجة مزود قابلة للتحقق." : "We cannot judge company activity without a verifiable provider result.")}</p></div></div>
+            )}
+            {adLimitation && <p className="ads-method-note">{adLimitation}</p>}
+          </section>
+
           <section className="story-chapter" id="rival-dossiers">
             <div className="chapter-heading">
               <div>
-                <span className="chapter-kicker">04 · {ar ? "ملفات المنافسين" : "RIVAL DOSSIERS"}</span>
+                <span className="chapter-kicker">05 · {ar ? "ملفات المنافسين" : "RIVAL DOSSIERS"}</span>
                 <h3>{ar ? "الدليل، الفرق، والخطوة التالية" : "Proof, difference, and next move"}</h3>
               </div>
               <p>{ar ? "افتح أي منافس لرؤية القصة كاملة دون تشتيت." : "Open a rival to follow the full story without the noise."}</p>
@@ -721,7 +801,7 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
           <details className="evidence-appendix" id="evidence-appendix">
             <summary>
               <div>
-                <span className="chapter-kicker">05 · {ar ? "الأدلة والتغطية" : "EVIDENCE & COVERAGE"}</span>
+                <span className="chapter-kicker">06 · {ar ? "الأدلة والتغطية" : "EVIDENCE & COVERAGE"}</span>
                 <strong>{ar ? "اعرض الفجوات والمنهج" : "Show gaps and methodology"}</strong>
               </div>
               <span>

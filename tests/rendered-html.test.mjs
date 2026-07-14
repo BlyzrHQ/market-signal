@@ -28,15 +28,17 @@ test("server-renders the Market Signal product shell", async () => {
 });
 
 test("real-data route and product metadata are present", async () => {
-  const [route, crawl, ads, report, page, layout, packageJson, domainUtils] = await Promise.all([
+  const [route, crawl, ads, report, page, layout, styles, packageJson, domainUtils, adIntelligence] = await Promise.all([
     readFile(new URL("../app/api/analyze/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/crawl/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/ads/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/report/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/domain.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/ad-intelligence.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(route, /MAX_DOCUMENT_BYTES/);
@@ -96,6 +98,17 @@ test("real-data route and product metadata are present", async () => {
   assert.doesNotMatch(page, /sharedTerms\.map/);
   assert.match(page, /AD PULSE/);
   assert.match(page, /direct record/);
+  assert.match(page, /AD ACTIVITY/);
+  assert.match(page, /id="ad-activity"/);
+  assert.match(page, /نشاط الإعلانات/);
+  assert.match(page, /AdCreativeCard/);
+  assert.match(page, /Creative media unavailable/);
+  assert.match(page, /Open destination ↗/);
+  assert.match(page, /View public Meta record ↗/);
+  assert.match(page, /cross-Page records discarded/);
+  assert.match(page, /identity-probe records/);
+  assert.match(page, /We do not infer spend or turn limited access into zero activity/);
+  assert.doesNotMatch(page, /estimated spend|ESTIMATED SPEND|impression estimate|reach estimate/i);
   assert.match(page, /العربية/);
   assert.match(page, /dir=\{ar \? "rtl" : "ltr"\}/);
   assert.doesNotMatch(page, /market-query-list/);
@@ -126,6 +139,14 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /SafeExternalLink href=\{battle\.primary\.sourceUrl\}/);
   assert.doesNotMatch(page, /sourceUrl: String\(item\.sourceUrl \|\| "#"\)/);
   assert.match(page, /story-rail/);
+  assert.match(page, /<b>04<\/b>[\s\S]{0,160}Ad activity/);
+  assert.match(page, /<b>05<\/b>[\s\S]{0,160}Rival dossiers/);
+  assert.match(page, /<b>06<\/b>[\s\S]{0,160}Evidence/);
+  assert.match(styles, /repeat\(6, minmax\(0, 1fr\)\)/);
+  assert.match(styles, /\.ad-creative-feed \{[^}]*min-width: 0/);
+  assert.match(styles, /\.ad-creative-copy strong, \.ad-creative-copy p, \.ad-creative-copy small \{[^}]*overflow-wrap: anywhere/);
+  assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.ad-creative-feed \{ grid-template-columns: 1fr/);
+  assert.match(styles, /\.app-root\[dir="rtl"\]/);
   assert.doesNotMatch(page, /className="metric-grid"/);
   assert.doesNotMatch(page, /className="report-actions"/);
   assert.doesNotMatch(page, /This scan did not collect ad-library/);
@@ -133,6 +154,11 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /paste the full URL/);
   assert.doesNotMatch(page, /<span>https:\/\/<\/span>/);
   assert.doesNotMatch(page, /Northstar|Brightcart|Shopline|Illustrative competitor set|Own “easy”|11 total|acmecommerce\.com/);
+  assert.match(adIntelligence, /search_page_ids/);
+  assert.doesNotMatch(adIntelligence, /search_terms/);
+  assert.match(adIntelligence, /discardedRecordCount/);
+  assert.match(adIntelligence, /identityProbeRecordCount/);
+  assert.match(adIntelligence, /safeMetaMediaUrl/);
   assert.match(layout, /Market Signal — Know where your market is moving/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   await assert.rejects(access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)));
