@@ -50,4 +50,11 @@ Prevent a thin or unfinished product-matching phase from appearing to be the com
 
 ## Evidence record
 
-Pending implementation and deployed validation. Do not merge while browser QA or repeat-run evidence is missing.
+Sites version 50 deployed commit `6f368557d76fadb2e0b00f335d018db079fb36bf` on 2026-07-15. The lifecycle code passed local validation and two strict Fable 5 code reviews, but the live usefulness gate failed:
+
+- MyJam run 1: 400 primary products, 13 rival products across five verified competitors, 30/30 primaries assessed, no matching gaps, and 0 visible defensible AI comparisons.
+- MyJam run 2: 400 primary products, 116 rival products across four verified competitors, 28/30 primaries assessed, one judging gap, and 1 visible defensible AI comparison.
+- A third automatic crawl found `egrocers.uk` with 400 current public products and many obvious same-product candidates, proving that memoryless discovery caused rival catalog coverage to vary from 13 to 116 to 410 products between runs.
+- The in-app browser runtime could not attach because its kernel assets failed to initialize. Browser QA therefore remains unverified.
+
+Fable 5 returned `FABLE_TASK_027_LIVE_FAILURE` and recommended a separate persistence task: remember previously verified competitors per primary domain, but re-crawl and re-verify them live before every reuse. Do not merge this PR while its browser gate is missing. The failed repeat-run gate is the input to Task 028; no matching threshold was weakened and no competitor is hardcoded.
