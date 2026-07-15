@@ -39,8 +39,11 @@ MyJam also exposes authoritative Shopify price metadata and a secure image URL t
 - `go test ./...` in `cli/`: PASS.
 - `go test ./...` in `contracts/`: PASS (no test files).
 - Real route probe: a current MyJam lamb-leg page returned attributable `GBP 39.05` and a secure Shopify product image; a contradictory eGrocers product page was rejected with a source-specific identity gap.
+- Sites production version 53, commit `2ca77c1aa74e4f93ee3440895412025d474b8291`: PASS.
+- Full production MyJam chain: 400 primary catalog products, five verified competitors, 30 AI-assessed product rows, and 16 defensible product pairs.
+- Production post-match enrichment: 24 of 24 exact selected pages fetched, 24 returned public prices, 17 returned secure page images, and zero page-fetch gaps. Existing secure sitemap images remain available when a fetched page has no image.
 
 ## Strict review
 
 - Fable 5 verified the implementation and local quality gates, identified one stale-run race, and returned `FABLE_TASK_029_PASS` after the race fix and regression assertion.
-- Production MyJam and in-app browser verification remain required before the stacked PR chain can be merged.
+- Production MyJam verification passed. In-app browser verification is still blocked by the local browser-control runtime failing to initialize (`failed to write kernel assets: path not found`), so the PR remains a draft and the stacked chain must not merge yet.
