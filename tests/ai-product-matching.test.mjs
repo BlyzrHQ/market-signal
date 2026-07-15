@@ -88,6 +88,7 @@ test("embedding retrieval gives a cross-language pair to the structured judge", 
   assert.equal(match?.assessment?.verdict, "close_substitute");
   assert.equal(comparison.matching?.method, "ai-hybrid");
   assert.equal(calls.filter((call) => call.url.endsWith("/responses")).length, 1);
+  assert.equal(calls.find((call) => call.url.endsWith("/responses"))?.body.max_output_tokens, 12_000);
 });
 
 test("deterministic veto rejects an AI same-product service mismatch", async () => {
@@ -216,4 +217,49 @@ test("candidate retrieval scores a hard-bounded pool instead of every catalog pa
 
   assert.ok((comparison.matching?.retrievalPairsScored || 0) <= 120);
   assert.ok((comparison.matching?.retrievalPairsScored || 0) < primaryProducts.length * rivalProducts.length);
+});
+
+test("synchronizes complete catalogs before selecting the strongest groups for AI judging", async () => {
+  const primaryProducts = Array.from({ length: 80 }, (_, index) => product(
+    `p${index}`,
+    "shop.test",
+    index === 79 ? "عسل سدر عضوي 500 جرام" : `Unrelated local item ${index}`,
+  ));
+  const rivalProducts = Array.from({ length: 100 }, (_, index) => product(
+    `r${index}`,
+    "rival.test",
+    index === 99 ? "Organic Sidr Honey 500g" : `Different imported item ${index}`,
+  ));
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) {
+      return response({ data: body.input.map((text, index) => ({
+        index,
+        embedding: /سدر|sidr/i.test(text) ? [1, 0, 0, 0] : (/name: Unrelated/i.test(text) ? [0, 1, 0, 0] : [0, -1, 0, 0]),
+      })) });
+    }
+    const request = JSON.parse(body.input[1].content);
+    return response({ output_text: JSON.stringify({ assessments: request.groups.flatMap((group) => group.candidates.map((candidate) => ({
+      primaryId: group.primary.id,
+      candidateId: candidate.id,
+      verdict: group.primary.id === "p79" && candidate.id === "r99" ? "close_substitute" : "no_match",
+      confidence: 0.97,
+      normalizedCategory: group.primary.id === "p79" && candidate.id === "r99" ? "sidr honey" : "",
+      normalizedVariant: "",
+      normalizedSize: group.primary.id === "p79" && candidate.id === "r99" ? "500g" : "",
+      reasons: group.primary.id === "p79" && candidate.id === "r99" ? ["Same product family across Arabic and English."] : ["Different products."],
+      contradictions: [],
+      needsImageReview: false,
+    }))) }) });
+  };
+
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: primaryProducts },
+    { domain: "rival.test", products: rivalProducts },
+  ], {}, { apiKey: "test", fetch, maxPrimaryProducts: 10, maxProductsPerCompetitor: 100, primaryProductsPerJudgeCall: 5 });
+
+  assert.equal(comparison.matching?.primaryProductsSynchronized, 80);
+  assert.equal(comparison.matching?.competitorProductsSynchronized, 100);
+  assert.ok(comparison.matching?.selectedPrimaryIds?.includes("p79"));
+  assert.equal(comparison.rows.find((row) => row.primary.id === "p79")?.matches[0].product?.id, "r99");
 });

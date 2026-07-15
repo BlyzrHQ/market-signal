@@ -93,6 +93,8 @@ export type ProductComparison = {
     selectedPrimaryIds?: string[];
     assessedPrimaryIds?: string[];
     attempts?: number;
+    primaryProductsSynchronized?: number;
+    competitorProductsSynchronized?: number;
   };
   enrichment?: {
     pagesRequested: number;
@@ -574,7 +576,10 @@ export function extractProductsFromSitemap(document: string, domain: string, obs
     const catalogPath = /\/(?:products?|shop|store)\//i.test(url.pathname);
     if (canonicalHost(url.hostname) !== canonicalHost(domain) || !catalogPath) continue;
     const sitemapTitle = clean(entry.match(/<(?:image:)?title>\s*([\s\S]*?)\s*<\/(?:image:)?title>/i)?.[1] || "");
-    const name = sitemapTitle || clean(url.pathname.split("/").filter(Boolean).at(-1)?.replace(/[-_]+/g, " ") || "");
+    const rawPathName = url.pathname.split("/").filter(Boolean).at(-1) || "";
+    let decodedPathName = rawPathName;
+    try { decodedPathName = decodeURIComponent(rawPathName); } catch { /* Preserve malformed public path evidence verbatim. */ }
+    const name = sitemapTitle || clean(decodedPathName.replace(/[-_]+/g, " "));
     if (!name) continue;
     const description = clean(entry.match(/<(?:image:)?caption>\s*([\s\S]*?)\s*<\/(?:image:)?caption>/i)?.[1] || "");
     const imageUrl = clean(entry.match(/<image:loc>\s*(https?:\/\/[^<]+)\s*<\/image:loc>/i)?.[1] || "").replace(/&amp;/gi, "&");
@@ -597,7 +602,7 @@ export function extractProductsFromSitemap(document: string, domain: string, obs
       observedAt,
       claimIds: [`${id}-sitemap-observed`],
     });
-    if (products.length >= 400) break;
+    if (products.length >= 600) break;
   }
   return selectPreferredProducts(products);
 }
@@ -824,7 +829,7 @@ export function productDecision(primary: ProductRecord, candidate: ProductRecord
 
 export function buildProductComparison(primaryDomain: string, catalogs: Array<{ domain: string; products: ProductRecord[] }>, requiredSourceUrls: Record<string, string[]> = {}): ProductComparison {
   const canonicalPrimary = canonicalHost(primaryDomain);
-  const maxProductsPerCatalog = 400;
+  const maxProductsPerCatalog = 600;
   const rowLimit = 80;
   const minimumCoverageRows = 16;
   const maxUnmatchedProductsPerDomain = 24;
