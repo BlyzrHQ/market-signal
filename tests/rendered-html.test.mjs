@@ -28,14 +28,17 @@ test("server-renders the Market Signal product shell", async () => {
 });
 
 test("real-data route and product metadata are present", async () => {
-  const [route, crawl, report, page, layout, packageJson, domainUtils] = await Promise.all([
+  const [route, crawl, ads, report, page, layout, styles, packageJson, domainUtils, adIntelligence] = await Promise.all([
     readFile(new URL("../app/api/analyze/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/crawl/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/ads/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/report/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/domain.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/ad-intelligence.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(route, /MAX_DOCUMENT_BYTES/);
@@ -55,7 +58,19 @@ test("real-data route and product metadata are present", async () => {
   assert.match(crawl, /buildProductComparison/);
   assert.match(crawl, /extractProductsFromHtml/);
   assert.match(crawl, /extractProductsFromSitemap/);
-  assert.match(crawl, /scanOfficialAdLibraries/);
+  assert.doesNotMatch(crawl, /await scanOfficialAdLibraries/);
+  assert.match(crawl, /adRequest/);
+  assert.match(crawl, /MAX_DISCOVERED_HTML_PAGES = 3/);
+  assert.match(crawl, /MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES = 6/);
+  assert.match(crawl, /selectProductEnrichmentTargets/);
+  assert.match(crawl, /enrichMatchedProductPages/);
+  assert.match(crawl, /priceEnrichmentPagesFetched/);
+  assert.match(crawl, /async function crawlPrimaryDomain/);
+  assert.match(crawl, /if \(first\.homepage\)/);
+  assert.match(crawl, /coverage: \{ \.\.\.retry\.coverage, attempts: 2 \}/);
+  assert.match(crawl, /domain === primaryDomain \? crawlPrimaryDomain\(domain\)/);
+  assert.match(ads, /scanOfficialAdLibraries/);
+  assert.match(ads, /Verified companies are required/);
   assert.match(crawl, /product-catalog/);
   assert.match(crawl, /product-comparison/);
   assert.match(crawl, /claimIds/);
@@ -67,8 +82,11 @@ test("real-data route and product metadata are present", async () => {
   assert.match(route, /Promise\.all\(domains\.map/);
   assert.match(domainUtils, /Private or local addresses cannot be analyzed/);
   assert.match(route, /application\/xhtml\+xml/);
-  assert.match(page, /postJson<CrawlPayload \| CrawlFailure>\("\/api\/crawl"/);
-  assert.match(page, /postJson<MarketBrief \| \{ ok: false; error\?: string \}>\("\/api\/report"/);
+  assert.match(page, /postJson<CrawlPayload \| CrawlFailure>[\s\S]{0,80}"\/api\/crawl"/);
+  assert.match(page, /postJson<AdScanPayload>\("\/api\/ads"/);
+  assert.match(page, /adLoading/);
+  assert.match(page, /not scanned/);
+  assert.match(page, /postJson<[\s\S]{0,100}MarketBrief \| \{ ok: false; error\?: string \}[\s\S]{0,80}"\/api\/report"/);
   assert.match(page, /domains: successful\.map/);
   assert.match(page, /THE VERDICT/);
   assert.match(page, /START WITH THE STRONGEST THREAT/);
@@ -79,9 +97,23 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /YOUR NEXT DECISION/);
   assert.match(page, /WHY THEY MAY WIN/);
   assert.match(page, /WHAT WE SEE/);
+  assert.match(page, /resolvedPriceDelta\(battle\.decision\.priceComparison\)/);
+  assert.doesNotMatch(page, /battle\.primary\.prices\[0\]/);
   assert.doesNotMatch(page, /sharedTerms\.map/);
   assert.match(page, /AD PULSE/);
   assert.match(page, /direct record/);
+  assert.match(page, /AD ACTIVITY/);
+  assert.match(page, /id="ad-activity"/);
+  assert.match(page, /نشاط الإعلانات/);
+  assert.match(page, /AdCreativeCard/);
+  assert.match(page, /Creative media unavailable/);
+  assert.match(page, /Open destination ↗/);
+  assert.match(page, /View public Meta record ↗/);
+  assert.match(page, /cross-Page records discarded/);
+  assert.match(page, /stale records excluded/);
+  assert.match(page, /identity-probe records/);
+  assert.match(page, /We do not infer spend or turn limited access into zero activity/);
+  assert.doesNotMatch(page, /estimated spend|ESTIMATED SPEND|impression estimate|reach estimate/i);
   assert.match(page, /العربية/);
   assert.match(page, /dir=\{ar \? "rtl" : "ltr"\}/);
   assert.doesNotMatch(page, /market-query-list/);
@@ -95,12 +127,43 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /GuidedReportRenderer/);
   assert.match(page, /THREAT MAP/);
   assert.match(page, /RIVAL DOSSIERS/);
+  assert.match(page, /PRODUCT COMPARISON/);
+  assert.match(page, /id="product-comparison"/);
+  assert.match(page, /No defensible product pair was verified yet/);
+  assert.match(page, /لم يتم التحقق من زوج منتجات قابل للدفاع عنه بعد/);
+  assert.match(page, /ProductBattleCard/);
+  assert.match(page, /battle\.primary\.imageUrl \? "has-image" : "no-image"/);
+  assert.match(page, /battle\.rival\.imageUrl \? "has-image" : "no-image"/);
+  assert.match(page, /catalog-scan-summary/);
+  assert.match(page, /of your products scanned/);
+  assert.match(page, /rival products scanned/);
+  assert.match(page, /verified comparison/);
+  assert.match(page, /SAME TIER/);
+  assert.match(page, /href=\{`#dossier-\$\{rivalDomain\}`\}/);
   assert.match(page, /price-picture/);
-  assert.match(page, /comparablePriceDelta/);
+  assert.match(page, /price-legend/);
+  assert.match(page, /Math\.abs\(yourPosition - rivalPosition\) < 8/);
+  assert.match(page, /closePrices \? "close-prices" : ""/);
+  assert.doesNotMatch(page, /comparablePriceDelta/);
   assert.match(page, /isDefensibleProductMatch/);
   assert.match(page, /SafeExternalLink href=\{battle\.primary\.sourceUrl\}/);
   assert.doesNotMatch(page, /sourceUrl: String\(item\.sourceUrl \|\| "#"\)/);
   assert.match(page, /story-rail/);
+  assert.match(page, /<b>04<\/b>[\s\S]{0,160}Ad activity/);
+  assert.match(page, /<b>05<\/b>[\s\S]{0,160}Rival dossiers/);
+  assert.match(page, /<b>06<\/b>[\s\S]{0,160}Evidence/);
+  assert.match(styles, /repeat\(6, minmax\(0, 1fr\)\)/);
+  assert.match(styles, /\.ad-creative-feed \{[^}]*min-width: 0/);
+  assert.match(styles, /\.ad-creative-copy strong, \.ad-creative-copy p, \.ad-creative-copy small \{[^}]*overflow-wrap: anywhere/);
+  assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.ad-creative-feed \{ grid-template-columns: 1fr/);
+  assert.match(styles, /\.app-root\[dir="rtl"\]/);
+  assert.match(styles, /\.battle-product\.no-image \{ grid-template-columns: minmax\(0, 1fr\); \}/);
+  assert.match(styles, /\.battle-product\.no-image strong \{ grid-column: 1; \}/);
+  assert.match(styles, /\.price-legend strong \{[^}]*white-space: nowrap/);
+  assert.match(styles, /\.close-prices \.your-dot \{ top: 2px; \}/);
+  assert.match(styles, /\.close-prices \.rival-dot \{ top: 20px; \}/);
+  assert.doesNotMatch(styles, /\.price-dot b \{/);
+  assert.doesNotMatch(styles, /\.price-dot small \{/);
   assert.doesNotMatch(page, /className="metric-grid"/);
   assert.doesNotMatch(page, /className="report-actions"/);
   assert.doesNotMatch(page, /This scan did not collect ad-library/);
@@ -108,6 +171,11 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /paste the full URL/);
   assert.doesNotMatch(page, /<span>https:\/\/<\/span>/);
   assert.doesNotMatch(page, /Northstar|Brightcart|Shopline|Illustrative competitor set|Own “easy”|11 total|acmecommerce\.com/);
+  assert.match(adIntelligence, /search_page_ids/);
+  assert.doesNotMatch(adIntelligence, /search_terms/);
+  assert.match(adIntelligence, /discardedRecordCount/);
+  assert.match(adIntelligence, /identityProbeRecordCount/);
+  assert.match(adIntelligence, /safeMetaMediaUrl/);
   assert.match(layout, /Market Signal — Know where your market is moving/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   await assert.rejects(access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)));

@@ -10,7 +10,7 @@
     "build": "vinext build",
     "start": "vinext start",
     "test": "npm run typecheck && npm run build && node --test tests/*.test.mjs",
-    "typecheck": "tsc --noEmit --allowImportingTsExtensions --jsx react-jsx --moduleResolution bundler --module esnext --target es2022 --lib dom,es2022 --skipLibCheck app/page.tsx app/lib/report-presentation.ts app/lib/ad-intelligence.ts",
+    "typecheck": "tsc --noEmit --allowImportingTsExtensions --jsx react-jsx --moduleResolution bundler --module esnext --target es2022 --lib dom,es2022 --skipLibCheck app/page.tsx app/api/crawl/route.ts app/api/ads/route.ts app/lib/report-presentation.ts app/lib/ad-intelligence.ts app/lib/business-profile.ts app/lib/competitor-discovery.ts app/lib/competitor-verification.ts app/lib/product-intelligence.ts app/lib/region-inference.ts",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },
@@ -28,6 +28,8 @@
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
     "@vitejs/plugin-rsc": "0.5.26",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.6",

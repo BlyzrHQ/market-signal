@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildProductComparison, extractProductsFromHtml, extractProductsFromSitemap, scoreProductPair, selectPreferredProducts } from "../app/lib/product-intelligence.ts";
+import { buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, scoreProductPair, selectPreferredProducts, selectProductEnrichmentTargets } from "../app/lib/product-intelligence.ts";
 
 function extraction(overrides = {}) {
   return extractProductsFromHtml({
@@ -75,6 +75,7 @@ test("creates a medium-confidence page signal only with path and page structure"
   assert.equal(result.products[0].extraction, "page-signal");
   assert.equal(result.products[0].confidence, "Medium");
   assert.equal(result.products[0].ownership, "path-inferred");
+  assert.deepEqual(result.products[0].priceSignals[0], { raw: "$20/month", currency: "USD", amount: 20, period: "month" });
 });
 
 test("creates a page signal for a branded shallow product page but not a company page", () => {
@@ -93,12 +94,14 @@ test("rejects generic shallow pages while preserving evidence-backed product pag
   const industries = extraction({ ...details, sourceUrl: "https://acme.com/industries", pageTitle: "Industries | Acme", headings: ["Industries we serve", "Retail", "Healthcare", "Fintech"] });
   const community = extraction({ ...details, sourceUrl: "https://acme.com/community", pageTitle: "Community | Acme", headings: ["Community", "Built for teams", "Product features", "Pricing plans"], pagePriceSignals: ["$20/month"] });
   const payments = extraction({ ...details, sourceUrl: "https://acme.com/payments", pageTitle: "Acme Payments", headings: ["Acme Payments", "Accept payments online", "Optimize checkout", "Fight fraud"] });
+  const features = extraction({ sourceUrl: "https://acme.com/features", pageTitle: "Features", headings: ["Product features", "Useful features", "Built for teams"] });
   assert.equal(customers.products.length, 0);
   assert.equal(jobs.products.length, 0);
   assert.equal(team.products.length, 0);
   assert.equal(industries.products.length, 0);
   assert.equal(community.products.length, 0);
   assert.equal(payments.products.length, 1);
+  assert.equal(features.products.length, 0);
 });
 
 test("catalog deduplication preserves high-confidence structured evidence", () => {
@@ -129,6 +132,176 @@ test("discovers real product records from a Shopify child sitemap", () => {
   assert.equal(products[0].name, "Halal Lamb Chops 500g");
   assert.equal(products[0].extraction, "sitemap");
   assert.equal(products[0].sourceUrl, "https://myjam.co.uk/products/halal-lamb-chops-500g");
+});
+
+test("discovers locale-prefixed product and shop records from public sitemaps", () => {
+  const sitemap = `<?xml version="1.0"?><urlset><url><loc>https://shop.example/en-gb/product/sidr-honey-500g</loc><image:title>Sidr Honey 500g</image:title></url><url><loc>https://shop.example/ar/shop/baklava-box</loc><image:title>Baklava Box</image:title></url><url><loc>https://shop.example/en-gb/blog/honey-guide</loc></url></urlset>`;
+  const products = extractProductsFromSitemap(sitemap, "shop.example", "2026-07-14T00:00:00.000Z");
+  assert.deepEqual(products.map((item) => item.name), ["Sidr Honey 500g", "Baklava Box"]);
+});
+
+test("turns first-party SaaS capability headings into attributable service records", () => {
+  const offerings = extractFirstPartyOfferings({
+    domain: "buffer.com",
+    observedAt: "2026-07-14T00:00:00.000Z",
+    businessType: "saas",
+    pages: [
+      { sourceUrl: "https://buffer.com/", title: "Buffer: Social media management for everyone", description: "Manage social media in one place", headings: ["Publish and schedule posts", "Analyze social media performance", "Engage with your audience", "How to Run a Successful PR Agency in the Age of Social Media"] },
+      { sourceUrl: "https://buffer.com/features", title: "Social media management features | Buffer", description: "Tools for creators and teams", headings: ["Plan your content calendar", "Collaborate on campaigns", "Build a landing page"] },
+    ],
+  });
+  assert.ok(offerings.length >= 5);
+  assert.ok(offerings.every((offering) => offering.sourceUrl.startsWith("https://buffer.com/")));
+  assert.ok(offerings.some((offering) => /schedule posts/i.test(offering.name)));
+  assert.ok(offerings.every((offering) => !/PR Agency/i.test(offering.name)));
+});
+
+test("does not turn business-type phrases into standalone comparable offerings", () => {
+  const offerings = extractFirstPartyOfferings({
+    domain: "buffer.com",
+    observedAt: "2026-07-14T00:00:00.000Z",
+    businessType: "saas",
+    pages: [
+      { sourceUrl: "https://buffer.com/features", title: "Buffer features", description: "Tools for growing brands", headings: ["Social media", "Mobile app", "Content creation", "AI social media scheduling", "Mobile app analytics for retailers"] },
+    ],
+  });
+  assert.deepEqual(offerings.map((offering) => offering.name), ["AI social media scheduling", "Mobile app analytics for retailers"]);
+});
+
+test("extracts named SaaS plans and their nearest public recurring price", () => {
+  const result = extraction({
+    sourceUrl: "https://buffer.com/pricing",
+    pageTitle: "Buffer pricing",
+    pageDescription: "Flexible pricing for everyone",
+    headings: ["Plans", "Free Placeholder", "Essentials Recommended", "Team Placeholder"],
+    pagePriceSignals: ["$5 /month", "$10 /month"],
+    document: `
+      <h2>Plans</h2>
+      <h2>Free <span>Placeholder</span></h2><p>Free forever</p><p>Connect up to 3 channels</p>
+      <h2>Essentials <span>Recommended</span></h2><p>$5 /month</p><p>1 channel · billed yearly</p>
+      <h2>Team <span>Placeholder</span></h2><p>$10 /month</p><p>1 channel · billed yearly</p>
+    `,
+  });
+  const plans = result.products.filter((item) => item.category.startsWith("saas-plan"));
+  assert.deepEqual(plans.map((item) => item.name), ["Free", "Essentials", "Team"]);
+  assert.deepEqual(plans[1].priceSignals, [{ raw: "$5 /month", currency: "USD", amount: 5, period: "month" }]);
+  assert.ok(plans[1].attributes.includes("Plan tier: entry"));
+  assert.ok(plans[1].attributes.includes("Price basis: channel"));
+  assert.ok(plans[1].attributes.includes("Billing commitment: annual"));
+  assert.ok(plans.every((item) => item.sourceUrl === "https://buffer.com/pricing"));
+});
+
+test("retains explicit billing commitment after noisy duplicated price markup", () => {
+  const duplicatedAccessiblePrices = `<span>$10 per user/month</span>`.repeat(300);
+  const malformedShadowMarkup = `<template shadowroot="open"><style>:host{display:inline-block}<span>shadow digits</span></template >`;
+  const result = extraction({
+    domain: "linear.app",
+    sourceUrl: "https://linear.app/pricing",
+    pageTitle: "Linear pricing",
+    headings: ["Basic"],
+    pagePriceSignals: ["$10 per user/month"],
+    document: `<h3>Basic</h3><span>$10 per user/month</span>${duplicatedAccessiblePrices}${malformedShadowMarkup}<p>Billed yearly</p><svg><path d="M0 0" /></svg><h3>Business</h3><p>$16 per user/month</p>`,
+  });
+  const basic = result.products.find((item) => item.name === "Basic");
+  const business = result.products.find((item) => item.name === "Business");
+  assert.deepEqual(basic.priceSignals, [{ raw: "$10 per user/month", currency: "USD", amount: 10, period: "month" }]);
+  assert.ok(basic.attributes.includes("Billing commitment: annual"));
+  assert.ok(!business.attributes.some((attribute) => attribute.startsWith("Billing commitment: annual")));
+});
+
+test("does not infer SaaS plans from unstructured pricing prose or feature names", () => {
+  const result = extraction({
+    sourceUrl: "https://metricool.com/pricing",
+    pageTitle: "Metricool pricing",
+    headings: ["Plans designed to give you peace of mind", "Start for free, scale up as your networks grow"],
+    pagePriceSignals: ["€0/month", "€16/month", "€43/month"],
+    document: `<h2>Start for free, scale up as your networks grow</h2><section>Annual Monthly EUR USD Free €0/month Start now Manage 1 brand Starter From €16/month Includes everything in Free Access to Advanced Analytics add-on Advanced €43/month Custom Contact sales</section>`,
+  });
+  assert.equal(result.products.filter((item) => item.category.startsWith("saas-plan")).length, 0);
+});
+
+test("matches differently named SaaS plans by tier and compares aligned per-user monthly prices", () => {
+  const linear = extraction({
+    domain: "linear.app",
+    sourceUrl: "https://linear.app/pricing",
+    pageTitle: "Linear pricing",
+    headings: ["Pricing", "Free", "Basic", "Business", "Enterprise"],
+    pagePriceSignals: ["$0", "$10 per user/month", "$16 per user/month"],
+    document: `<h1>Pricing</h1><h2>Free</h2><p>$0 Free for everyone</p><h2>Basic</h2><p>$10 per user/month Billed yearly</p><h2>Business</h2><p>$16 per user/month Billed yearly</p><h2>Enterprise</h2><p>Custom Annual billing only Contact sales</p>`,
+  }).products.filter((item) => item.category.startsWith("saas-plan"));
+  const clickup = extraction({
+    domain: "clickup.com",
+    sourceUrl: "https://clickup.com/pricing",
+    pageTitle: "ClickUp pricing",
+    headings: ["free forever", "unlimited", "business", "enterprise"],
+    pagePriceSignals: ["$7 per user/month", "$12 per user/month"],
+    document: `<h2>free forever</h2><p>Free</p><h2>unlimited</h2><p>$7 Per user/month, billed yearly</p><h2>business</h2><p>$12 Per user/month, billed yearly</p><h2>enterprise</h2><p>Contact sales</p>`,
+  }).products.filter((item) => item.category.startsWith("saas-plan"));
+  const comparison = buildProductComparison("linear.app", [
+    { domain: "linear.app", products: linear },
+    { domain: "clickup.com", products: clickup },
+  ]);
+  const basic = comparison.rows.find((row) => row.primary.name === "Basic").matches[0];
+  assert.equal(basic.product.name, "unlimited");
+  assert.equal(basic.confidence, "Medium");
+  assert.match(basic.decision.priceVerdict, /clickup\.com is USD 3\.00 cheaper/i);
+  assert.deepEqual(basic.decision.priceComparison, { primaryRaw: "$10 per user/month", rivalRaw: "$7 Per user/month" });
+});
+
+test("does not emit an exact SaaS price delta across billing units, periods, or commitments", () => {
+  const buffer = extraction({
+    domain: "buffer.com",
+    sourceUrl: "https://buffer.com/pricing",
+    pageTitle: "Buffer pricing",
+    headings: ["Essentials"],
+    pagePriceSignals: ["$5 /month"],
+    document: `<h2>Essentials</h2><p>$5 /month</p><p>1 channel billed yearly</p>`,
+  }).products.find((item) => item.name === "Essentials");
+  const later = extraction({
+    domain: "later.com",
+    sourceUrl: "https://later.com/pricing",
+    pageTitle: "Later pricing",
+    headings: ["Starter"],
+    pagePriceSignals: ["$18.75 USD/month"],
+    document: `<h2>Starter</h2><p>$18.75 USD/month</p><p>1 social set billed yearly</p>`,
+  }).products.find((item) => item.name === "Starter");
+  const yearly = { ...later, id: "later-yearly", priceSignals: [{ raw: "$180 USD/year", currency: "USD", amount: 180, period: "year" }], attributes: ["Plan tier: entry", "Price basis: channel"] };
+  const monthlyCommitment = { ...later, id: "later-monthly", priceSignals: [{ raw: "$18.75 USD/month", currency: "USD", amount: 18.75, period: "month" }], attributes: ["Plan tier: entry", "Price basis: channel", "Billing commitment: monthly"] };
+  const unitMismatch = buildProductComparison("buffer.com", [{ domain: "buffer.com", products: [buffer] }, { domain: "later.com", products: [later] }]).rows[0].matches[0];
+  const periodMismatch = buildProductComparison("buffer.com", [{ domain: "buffer.com", products: [buffer] }, { domain: "later.com", products: [yearly] }]).rows[0].matches[0];
+  const commitmentMismatch = buildProductComparison("buffer.com", [{ domain: "buffer.com", products: [buffer] }, { domain: "later.com", products: [monthlyCommitment] }]).rows[0].matches[0];
+  assert.match(unitMismatch.decision.priceVerdict, /billing period, commitment, or unit basis is unresolved/i);
+  assert.equal(unitMismatch.decision.priceComparison, null);
+  assert.match(periodMismatch.decision.priceVerdict, /billing period, commitment, or unit basis is unresolved/i);
+  assert.equal(periodMismatch.decision.priceComparison, null);
+  assert.match(commitmentMismatch.decision.priceVerdict, /billing period, commitment, or unit basis is unresolved/i);
+  assert.equal(commitmentMismatch.decision.priceComparison, null);
+});
+
+test("filters sentence-like slogans and generic workspace taglines from SaaS offerings", () => {
+  const offerings = extractFirstPartyOfferings({
+    domain: "linear.app",
+    observedAt: "2026-07-14T00:00:00.000Z",
+    businessType: "saas",
+    pages: [
+      { sourceUrl: "https://linear.app/features", title: "Linear features", description: "Product development tools", headings: ["Artificial colleagues. Natural collaboration.", "Your social media workspace", "Plan and navigate from idea to launch", "Delegate and automate work"] },
+    ],
+  });
+  assert.deepEqual(offerings.map((offering) => offering.name), ["Plan and navigate from idea to launch", "Delegate and automate work"]);
+});
+
+test("recognizes first-party subscription box pages without inventing physical SKUs", () => {
+  const offerings = extractFirstPartyOfferings({
+    domain: "oddbox.co.uk",
+    observedAt: "2026-07-14T00:00:00.000Z",
+    businessType: "ecommerce",
+    pages: [
+      { sourceUrl: "https://oddbox.co.uk/boxes", title: "Fruit and veg boxes | Oddbox", description: "Choose a rescued produce box", headings: ["Small Fruit & Veg Box", "Medium Fruit & Veg Box", "Large Fruit & Veg Box", "Fruit Booster Box", "Veg Booster Box", "Wake up to fruit, veg & more", "The faces behind the fruit & veg"] },
+    ],
+  });
+  assert.equal(offerings.length, 5);
+  assert.ok(offerings.every((offering) => offering.jsonLdType === "Service"));
+  assert.ok(offerings.every((offering) => offering.confidence === "Medium"));
 });
 
 test("uses matching product-image filenames as supporting identity evidence", () => {
@@ -176,6 +349,76 @@ test("matching removes each company brand token before comparing product names",
   assert.deepEqual(result.sharedTerms.includes("billing"), true);
 });
 
+test("matching treats a fully contained two-token product identity as defensible", () => {
+  const contained = scoreProductPair(
+    { ...product("butter", "shop.test", "Peanut Butter", "nut butter", ""), jsonLdType: "Product" },
+    { ...product("crunchy-butter", "rival.test", "Crunchy Peanut Butter 1kg", "spread", ""), jsonLdType: "Product" },
+  );
+  assert.equal(contained.eligible, true);
+  assert.ok(contained.score >= 0.55);
+});
+
+test("matching rejects contained names when the rival is a different food form", () => {
+  const butter = { ...product("almond-butter", "shop.test", "Almond Butter", "nut butter", ""), jsonLdType: "Product" };
+  const granola = { ...product("almond-granola", "rival.test", "Almond Butter Granola", "granola", ""), jsonLdType: "Product" };
+  const bar = { ...product("almond-bar", "rival.test", "Almond Butter Bar", "snack bar", ""), jsonLdType: "Product" };
+  assert.equal(scoreProductPair(butter, granola).eligible, false);
+  assert.equal(scoreProductPair(butter, bar).eligible, false);
+  assert.equal(scoreProductPair(
+    { ...product("matcha", "shop.test", "Matcha", "tea", ""), jsonLdType: "Product" },
+    { ...product("ceremonial-matcha", "rival.test", "Ceremonial Matcha", "tea", ""), jsonLdType: "Product" },
+  ).eligible, false);
+});
+
+test("matching compares an apparel family without color and sole variants", () => {
+  const variant = { ...product("wool-runner-white", "allbirds.com", "Men's Wool Runner - Natural White (Cream Sole)", "shoes", ""), jsonLdType: "Product" };
+  const family = { ...product("wool-runner", "rival.test", "Men's Wool Runner", "footwear", ""), jsonLdType: "Product" };
+  const match = scoreProductPair(variant, family);
+  assert.equal(match.eligible, true);
+  assert.ok(match.score >= 0.55);
+});
+
+test("comparison collapses primary color variants into one family row", () => {
+  const white = { ...product("runner-white", "allbirds.com", "Men's Wool Runner - Natural White (Cream Sole)", "shoes", ""), jsonLdType: "Product" };
+  const black = { ...product("runner-black", "allbirds.com", "Men's Wool Runner - Natural Black (Black Sole)", "shoes", ""), jsonLdType: "Product", priceSignals: [{ raw: "USD 98", currency: "USD", amount: 98 }] };
+  const dasher = { ...product("tree-dasher", "allbirds.com", "Men's Tree Dasher - Blizzard (White Sole)", "shoes", ""), jsonLdType: "Product" };
+  const rival = { ...product("rival-runner", "rival.test", "Men's Wool Runner", "footwear", ""), jsonLdType: "Product" };
+  const comparison = buildProductComparison("allbirds.com", [
+    { domain: "allbirds.com", products: [white, black, dasher] },
+    { domain: "rival.test", products: [rival] },
+  ]);
+  assert.equal(comparison.coverage.primaryProductsAvailable, 3);
+  assert.equal(comparison.coverage.primaryProductsScanned, 3);
+  assert.equal(comparison.coverage.primaryProductFamiliesCompared, 2);
+  assert.equal(comparison.rows.length, 2);
+  const runnerRows = comparison.rows.filter((row) => /Wool Runner/.test(row.primary.name));
+  assert.equal(runnerRows.length, 1);
+  assert.equal(runnerRows[0].primary.id, "runner-black");
+  assert.equal(runnerRows[0].matches[0].confidence, "Medium");
+  assert.equal(comparison.rows.find((row) => row.primary.id === "tree-dasher").matches[0].product, null);
+});
+
+test("matching rejects an accessory even when its name contains the complete product name", () => {
+  const food = { ...product("butter", "shop.test", "Peanut Butter"), jsonLdType: "Product" };
+  const cookbook = { ...product("cookbook", "rival.test", "The Peanut Butter Cookbook"), jsonLdType: "Product" };
+  const cookbooks = { ...product("cookbooks", "rival.test", "Peanut Butter Cookbooks"), jsonLdType: "Product" };
+  const matchingSpoons = scoreProductPair(
+    { ...product("spoon-a", "shop.test", "Perfect Matcha Spoon"), jsonLdType: "Product" },
+    { ...product("spoon-b", "rival.test", "Perfect Matcha Spoon"), jsonLdType: "Product" },
+  );
+  assert.equal(scoreProductPair(food, cookbook).eligible, false);
+  assert.equal(scoreProductPair(food, cookbooks).eligible, false);
+  assert.equal(matchingSpoons.eligible, true);
+  assert.equal(scoreProductPair(
+    { ...product("mug", "shop.test", "Tea Infuser Mug"), jsonLdType: "Product" },
+    { ...product("cup", "rival.test", "Tea Infuser Cup"), jsonLdType: "Product" },
+  ).eligible, true);
+  assert.equal(scoreProductPair(
+    { ...product("recipe-box", "shop.test", "Classic Recipe Box"), jsonLdType: "Product" },
+    { ...product("meal-box", "rival.test", "Classic Meal Box"), jsonLdType: "Product" },
+  ).eligible, true);
+});
+
 test("matching is deterministic and one-to-one per competitor", () => {
   const primaryA = product("primary-a", "a.com", "Inventory Forecasting", "inventory forecasting", "forecast inventory demand");
   const primaryB = product("primary-b", "a.com", "Inventory Planning", "inventory planning", "plan inventory levels");
@@ -187,4 +430,93 @@ test("matching is deterministic and one-to-one per competitor", () => {
   assert.match(first.rows.find((row) => row.primary.id === "primary-a").matches[0].decision.recommendedMove, /Compare|price|offer/i);
   assert.equal(first.rows.find((row) => row.primary.id === "primary-b").matches[0].product, null);
   assert.equal(first.unmatched[0].products.length, 0);
+});
+
+test("comparison scans the crawled catalog beyond the first sixteen products and reports bounded coverage", () => {
+  const primaryFillers = Array.from({ length: 24 }, (_, index) => product(`a-primary-${index}`, "shop.test", `Unrelated Primary ${index}`));
+  const rivalFillers = Array.from({ length: 30 }, (_, index) => product(`a-rival-${index}`, "rival.test", `Different Rival ${index}`));
+  const primaryMatch = product("z-primary-match", "shop.test", "Halal Lamb Ribs");
+  const rivalMatch = product("z-rival-match", "rival.test", "Lamb Ribs Halal");
+  const comparison = buildProductComparison("shop.test", [
+    { domain: "shop.test", products: [...primaryFillers, primaryMatch] },
+    { domain: "rival.test", products: [...rivalFillers, rivalMatch] },
+  ]);
+  const matchedRow = comparison.rows.find((row) => row.primary.id === primaryMatch.id);
+  assert.equal(matchedRow.matches[0].product.id, rivalMatch.id);
+  assert.equal(comparison.coverage.primaryProductsScanned, 25);
+  assert.equal(comparison.coverage.competitorProductsScanned, 31);
+  assert.equal(comparison.coverage.verifiedPairCount, 1);
+  assert.ok(comparison.unmatched[0].products.length <= 24);
+});
+
+test("price enrichment targets are physical product pages, competitor-diverse, and globally capped", () => {
+  const primary = [
+    { ...product("tea", "shop.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/lemon-ginger-tea", extraction: "sitemap", confidence: "Medium" },
+    { ...product("whisk", "shop.test", "Bamboo Matcha Whisk"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/bamboo-matcha-whisk", extraction: "sitemap", confidence: "Medium" },
+    { ...product("planning", "shop.test", "Product Planning"), jsonLdType: "Service", sourceUrl: "https://shop.test/features/planning" },
+  ];
+  const rivals = [
+    { domain: "tea.test", products: [{ ...product("rival-tea", "tea.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://tea.test/products/lemon-ginger-tea", extraction: "sitemap", confidence: "Medium" }] },
+    { domain: "matcha.test", products: [{ ...product("rival-whisk", "matcha.test", "Bamboo Matcha Whisk"), jsonLdType: "Product", sourceUrl: "https://matcha.test/shop/bamboo-matcha-whisk", extraction: "sitemap", confidence: "Medium" }] },
+    { domain: "saas.test", products: [{ ...product("rival-planning", "saas.test", "Product Planning"), jsonLdType: "Service", sourceUrl: "https://saas.test/features/planning" }] },
+  ];
+  const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: primary }, ...rivals]);
+  const targets = selectProductEnrichmentTargets(comparison, 4);
+  assert.equal(targets.length, 4);
+  assert.ok(targets.every((target) => /\/(?:products?|shop)\//.test(new URL(target.sourceUrl).pathname)));
+  assert.ok(targets.some((target) => target.domain === "tea.test"));
+  assert.ok(targets.some((target) => target.domain === "matcha.test"));
+  assert.ok(targets.every((target) => target.domain !== "saas.test"));
+});
+
+test("price enrichment skips the side that already has comparable structured price evidence", () => {
+  const primary = { ...product("tea", "shop.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/lemon-ginger-tea", priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }] };
+  const rival = { ...product("rival-tea", "tea.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://tea.test/products/lemon-ginger-tea" };
+  const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "tea.test", products: [rival] }]);
+  assert.deepEqual(selectProductEnrichmentTargets(comparison).map((target) => [target.role, target.domain]), [["rival", "tea.test"]]);
+});
+
+test("enriched product evidence replaces sitemap placeholders and activates a price verdict", () => {
+  const primarySitemap = { ...product("tea-sitemap", "shop.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/lemon-ginger-tea", extraction: "sitemap", confidence: "Medium" };
+  const rivalSitemap = { ...product("rival-sitemap", "tea.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://tea.test/products/lemon-ginger-tea", extraction: "sitemap", confidence: "Medium" };
+  const primaryEnriched = { ...primarySitemap, id: "tea-jsonld", extraction: "json-ld", confidence: "High", priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }] };
+  const rivalEnriched = { ...rivalSitemap, id: "rival-jsonld", extraction: "json-ld", confidence: "High", priceSignals: [{ raw: "GBP 6", currency: "GBP", amount: 6 }] };
+  const comparison = buildProductComparison("shop.test", [
+    { domain: "shop.test", products: selectPreferredProducts([primarySitemap, primaryEnriched]) },
+    { domain: "tea.test", products: selectPreferredProducts([rivalSitemap, rivalEnriched]) },
+  ]);
+  const match = comparison.rows[0].matches[0];
+  assert.equal(match.product.id, "rival-jsonld");
+  assert.match(match.decision.priceVerdict, /GBP 2\.00 cheaper/);
+});
+
+test("price verdicts do not compare a multi-variant range with a single rival SKU", () => {
+  const primary = {
+    ...product("butter", "shop.test", "Peanut Butter"),
+    jsonLdType: "Product",
+    priceSignals: [
+      { raw: "GBP 3.49", currency: "GBP", amount: 3.49 },
+      { raw: "GBP 7.85", currency: "GBP", amount: 7.85 },
+    ],
+  };
+  const rival = {
+    ...product("rival-butter", "rival.test", "Crunchy Peanut Butter 1kg"),
+    jsonLdType: "Product",
+    priceSignals: [{ raw: "GBP 8.49", currency: "GBP", amount: 8.49 }],
+  };
+  const comparison = buildProductComparison("shop.test", [
+    { domain: "shop.test", products: [primary] },
+    { domain: "rival.test", products: [rival] },
+  ]);
+  assert.match(comparison.rows[0].matches[0].decision.priceVerdict, /variant or pack-size alignment is unresolved/i);
+  assert.doesNotMatch(comparison.rows[0].matches[0].decision.priceVerdict, /cheaper/i);
+  assert.equal(comparison.rows[0].matches[0].decision.priceComparison, null);
+});
+
+test("price verdicts identify an equal unambiguous public price", () => {
+  const primary = { ...product("tea", "shop.test", "Lemon Ginger Tea"), jsonLdType: "Product", priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }] };
+  const rival = { ...product("rival-tea", "rival.test", "Lemon Ginger Tea"), jsonLdType: "Product", priceSignals: [{ raw: "GBP 8.00", currency: "GBP", amount: 8 }] };
+  const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "rival.test", products: [rival] }]);
+  assert.match(comparison.rows[0].matches[0].decision.priceVerdict, /same at GBP 8\.00/i);
+  assert.deepEqual(comparison.rows[0].matches[0].decision.priceComparison, { primaryRaw: "GBP 8", rivalRaw: "GBP 8.00" });
 });

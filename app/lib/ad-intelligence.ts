@@ -15,6 +15,11 @@ export type AdPlatformResult = {
   attributionLabel?: string;
   creativeConceptCount?: number;
   creativeConcepts?: MetaCreativeConcept[];
+  exactPageId?: string;
+  exactPageName?: string;
+  discardedRecordCount?: number;
+  identityProbeRecordCount?: number;
+  inactiveRecordCount?: number;
 };
 
 export type MetaCreativeConcept = {
@@ -24,11 +29,18 @@ export type MetaCreativeConcept = {
   pageName: string;
   message: string;
   caption: string;
+  headline: string;
+  description: string;
   callToAction: string;
   startDate: string;
+  stopDate: string;
+  destinationUrl: string;
   mediaUrl: string;
   mediaType: "image" | "video" | "unknown";
   placementCount: number;
+  platforms: string[];
+  languages: string[];
+  countries: string[];
 };
 
 export type CompanyAdResult = {
@@ -54,7 +66,19 @@ export type CompanyAdInput = { domain: string; brand: string; facebookUrl?: stri
 type CompanyInput = CompanyAdInput;
 type CompanyAdPair = readonly [string, AdPlatformResult];
 type JsonRecord = Record<string, unknown>;
-type MetaAdRecord = { id?: string; ad_creative_bodies?: string[] };
+type MetaAdRecord = JsonRecord & {
+  id?: unknown;
+  page_id?: unknown;
+  page_name?: unknown;
+  ad_creative_bodies?: unknown;
+  ad_creative_link_captions?: unknown;
+  ad_creative_link_titles?: unknown;
+  ad_creative_link_descriptions?: unknown;
+  ad_delivery_start_time?: unknown;
+  ad_delivery_stop_time?: unknown;
+  ad_snapshot_url?: unknown;
+  publisher_platforms?: unknown;
+};
 
 type MetapiPageIdentity = { pageId: string; pageName: string; profileUrl: string };
 type MetapiAdRecord = JsonRecord & {
@@ -67,6 +91,12 @@ type MetapiAdRecord = JsonRecord & {
   start_date?: unknown;
   image_url?: unknown;
   video_url?: unknown;
+  delivery_stop_time?: unknown;
+  link_url?: unknown;
+  snapshot_url?: unknown;
+  data_sources?: unknown;
+  languages?: unknown;
+  countries?: unknown;
 };
 
 const META_GRAPH_VERSION = "v24.0";
@@ -76,6 +106,9 @@ const META_COMMERCIAL_API_COUNTRIES = new Set(["DE", "FR"]);
 const METAPI_BASE_URL = "https://api.metapi.io/v1";
 const METAPI_TIMEOUT_MS = 25_000;
 const METAPI_POLL_ATTEMPTS = 40;
+const METAPI_IDENTITY_COUNT = 20;
+const METAPI_AD_COUNT = 100;
+const META_MEDIA_HOST_SUFFIXES = ["fbcdn.net", "fbsbx.com", "facebook.com"];
 
 function regionCode(region: string) {
   if (/united kingdom|\buk\b/i.test(region)) return "GB";
@@ -123,6 +156,75 @@ function firstHttpUrl(value: unknown) {
   return safeHttpUrl(value);
 }
 
+function textList(value: unknown, limit = 6, itemLimit = 80) {
+  return (Array.isArray(value) ? value : typeof value === "string" ? [value] : [])
+    .map((item) => cleanText(item, itemLimit))
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function isPrivateHost(hostname: string) {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (!host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true;
+  if (/^(?:10|127)\./.test(host) || /^169\.254\./.test(host) || /^192\.168\./.test(host)) return true;
+  const private172 = host.match(/^172\.(\d{1,3})\./);
+  if (private172 && Number(private172[1]) >= 16 && Number(private172[1]) <= 31) return true;
+  return host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:");
+}
+
+export function safeAdDestination(value: unknown) {
+  const initial = safeHttpUrl(value);
+  if (!initial) return "";
+  try {
+    let url = new URL(initial);
+    if (url.username || url.password || isPrivateHost(url.hostname)) return "";
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    if (host === "l.facebook.com" && url.pathname === "/l.php") {
+      const target = safeHttpUrl(url.searchParams.get("u"));
+      if (!target) return "";
+      url = new URL(target);
+      if (url.username || url.password || isPrivateHost(url.hostname)) return "";
+    }
+    return url.toString();
+  } catch { return ""; }
+}
+
+export function safeMetaMediaUrl(value: unknown) {
+  const href = safeHttpUrl(value);
+  if (!href) return "";
+  try {
+    const url = new URL(href);
+    const host = url.hostname.toLowerCase();
+    return url.protocol === "https:" && META_MEDIA_HOST_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`)) ? url.toString() : "";
+  } catch { return ""; }
+}
+
+function safeMetaRecordUrl(value: unknown, id: string) {
+  const href = safeHttpUrl(value);
+  if (href) {
+    try {
+      const url = new URL(href);
+      const host = url.hostname.toLowerCase().replace(/^www\./, "");
+      if (host === "facebook.com" && url.pathname.toLowerCase().startsWith("/ads/library")) return url.toString();
+    } catch { /* use canonical record below */ }
+  }
+  return /^\d+$/.test(id) ? `https://www.facebook.com/ads/library/?id=${id}` : "";
+}
+
+function normalizedWords(value: string) {
+  return value.toLowerCase().normalize("NFKD").replace(/[^\p{L}\p{N}]+/gu, " ").trim().split(/\s+/).filter((word) => word.length >= 3);
+}
+
+function compactIdentity(value: string) {
+  return value.toLowerCase().normalize("NFKD").replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+function hostMatchesDomain(hostname: string, domain: string) {
+  const host = hostname.toLowerCase().replace(/^www\./, "");
+  const expected = domain.toLowerCase().replace(/^www\./, "");
+  return host === expected || host.endsWith(`.${expected}`);
+}
+
 export function attributableFacebookUrl(links: string[]) {
   for (const value of links) {
     try {
@@ -146,6 +248,7 @@ export async function resolveFacebookPageIdentity(profileUrl: string, fetcher: t
   const attributable = attributableFacebookUrl([profileUrl]);
   if (!attributable) return null;
   const linkedPageId = new URL(attributable).pathname.split("/").filter(Boolean).find((segment) => /^\d{5,}$/.test(segment)) || "";
+  if (linkedPageId) return { pageId: linkedPageId, pageName: "", profileUrl: attributable };
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), META_TIMEOUT_MS);
   try {
@@ -200,28 +303,42 @@ function normalizeConcept(record: MetapiAdRecord, identity: MetapiPageIdentity):
   if (!id) return null;
   const message = firstText(record.bodies ?? record.body ?? record.ad_creative_bodies, 420);
   const caption = firstText(record.captions ?? record.caption ?? record.title, 160);
+  const headline = firstText(record.creative_link_titles ?? record.headline ?? record.title, 160);
+  const description = firstText(record.creative_link_descriptions ?? record.description, 160);
   const callToAction = firstText(record.cta_text ?? record.cta ?? record.call_to_action, 80);
-  const imageUrl = firstHttpUrl(record.original_image_url ?? record.image_url ?? record.thumbnail_url);
-  const videoPreviewUrl = firstHttpUrl(record.video_previews ?? record.video_preview_url);
-  const videoUrl = firstHttpUrl(record.video_hd_url ?? record.video_sd_url ?? record.original_video_url ?? record.video_url);
+  const imageUrl = safeMetaMediaUrl(firstHttpUrl(record.original_image_url ?? record.image_url ?? record.thumbnail_url));
+  const videoPreviewUrl = safeMetaMediaUrl(firstHttpUrl(record.video_previews ?? record.video_preview_url));
+  const videoUrl = safeMetaMediaUrl(firstHttpUrl(record.video_hd_url ?? record.video_sd_url ?? record.original_video_url ?? record.video_url));
   return {
     id,
-    evidenceUrl: `https://www.facebook.com/ads/library/?id=${id}`,
+    evidenceUrl: safeMetaRecordUrl(record.snapshot_url, id),
     pageId: identity.pageId,
     pageName: firstText(record.provider_page_name, 120) || identity.pageName,
     message,
     caption,
+    headline,
+    description,
     callToAction,
     startDate: firstText(record.delivery_start_time ?? record.start_date ?? record.creation_time, 32),
+    stopDate: firstText(record.delivery_stop_time ?? record.stop_date, 32),
+    destinationUrl: safeAdDestination(record.link_url ?? record.destination_url),
     mediaUrl: imageUrl || videoPreviewUrl,
     mediaType: imageUrl ? "image" : videoPreviewUrl || videoUrl ? "video" : "unknown",
     placementCount: 1,
+    platforms: textList(record.data_sources ?? record.publisher_platforms, 6, 40),
+    languages: textList(record.languages, 6, 20),
+    countries: textList(record.countries, 6, 12),
   };
 }
 
 function conceptKey(concept: MetaCreativeConcept) {
-  const content = `${concept.message}|${concept.caption}|${concept.callToAction}`.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-  return content || concept.id;
+  let destination = "";
+  try {
+    const url = concept.destinationUrl ? new URL(concept.destinationUrl) : null;
+    destination = url ? `${url.hostname.toLowerCase()}${url.pathname.replace(/\/$/, "")}` : "";
+  } catch { /* destination already omitted */ }
+  const content = `${concept.pageId}|${concept.message}|${concept.headline}|${concept.caption}|${concept.callToAction}|${destination}`.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  return content || `${concept.pageId}|${concept.id}`;
 }
 
 function groupCreativeConcepts(records: MetapiAdRecord[], identity: MetapiPageIdentity) {
@@ -231,10 +348,118 @@ function groupCreativeConcepts(records: MetapiAdRecord[], identity: MetapiPageId
   for (const concept of placements) {
     const key = conceptKey(concept);
     const existing = grouped.get(key);
-    if (existing) existing.placementCount += 1;
+    if (existing) {
+      existing.placementCount += 1;
+      existing.startDate = [existing.startDate, concept.startDate].filter(Boolean).sort()[0] || "";
+      existing.stopDate = [existing.stopDate, concept.stopDate].filter(Boolean).sort().at(-1) || "";
+      existing.platforms = [...new Set([...existing.platforms, ...concept.platforms])].slice(0, 6);
+      existing.languages = [...new Set([...existing.languages, ...concept.languages])].slice(0, 6);
+      existing.countries = [...new Set([...existing.countries, ...concept.countries])].slice(0, 6);
+      if (!existing.mediaUrl && concept.mediaUrl) {
+        existing.mediaUrl = concept.mediaUrl;
+        existing.mediaType = concept.mediaType;
+      }
+    }
     else grouped.set(key, { ...concept });
   }
   return { placements, concepts: [...grouped.values()].sort((a, b) => b.placementCount - a.placementCount || b.startDate.localeCompare(a.startDate)) };
+}
+
+function currentDeliveryRecord(record: MetapiAdRecord, observedAt = new Date()) {
+  const rawStop = firstText(record.delivery_stop_time ?? record.stop_date, 32);
+  if (!rawStop) return true;
+  const stop = new Date(rawStop);
+  if (!Number.isFinite(stop.getTime())) return false;
+  return stop.toISOString().slice(0, 10) >= observedAt.toISOString().slice(0, 10);
+}
+
+type MetapiTaskResult = { ok: true; records: MetapiAdRecord[] } | { ok: false; message: string };
+
+async function runMetapiTask(
+  body: JsonRecord,
+  apiKey: string,
+  fetcher: typeof fetch,
+  wait: (milliseconds: number) => Promise<void>,
+): Promise<MetapiTaskResult> {
+  const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+  try {
+    const created = await fetcher(`${METAPI_BASE_URL}/tasks`, {
+      method: "POST", headers, signal: AbortSignal.timeout(METAPI_TIMEOUT_MS), body: JSON.stringify(body),
+    });
+    const createdPayload = await created.json() as JsonRecord;
+    const taskId = metapiTaskId(createdPayload);
+    if (!created.ok || !taskId) return { ok: false, message: `Exact Page ad collection could not start${created.status ? ` (HTTP ${created.status})` : ""}.` };
+    let terminal = "";
+    for (let attempt = 0; attempt < METAPI_POLL_ATTEMPTS; attempt += 1) {
+      const statusResponse = await fetcher(`${METAPI_BASE_URL}/tasks/${encodeURIComponent(taskId)}/status`, { headers, signal: AbortSignal.timeout(METAPI_TIMEOUT_MS) });
+      if (!statusResponse.ok) return { ok: false, message: `Exact Page ad collection status failed (HTTP ${statusResponse.status}).` };
+      const statusPayload = await statusResponse.json() as JsonRecord;
+      terminal = cleanText(statusPayload.status, 40).toLowerCase();
+      if (["succeeded", "failed", "timed_out", "aborted"].includes(terminal)) break;
+      await wait(750);
+    }
+    if (terminal !== "succeeded") return { ok: false, message: `Exact Page ad collection did not complete successfully${terminal ? ` (${terminal})` : ""}.` };
+    const resultsResponse = await fetcher(`${METAPI_BASE_URL}/tasks/${encodeURIComponent(taskId)}/results?offset=0&limit=500`, { headers, signal: AbortSignal.timeout(METAPI_TIMEOUT_MS) });
+    if (!resultsResponse.ok) return { ok: false, message: `Exact Page ad results could not be retrieved (HTTP ${resultsResponse.status}).` };
+    return { ok: true, records: metapiRecords(await resultsResponse.json() as JsonRecord) };
+  } catch {
+    return { ok: false, message: "The exact-Page ad provider could not be reached automatically." };
+  }
+}
+
+function recordSupportsCompanyIdentity(record: MetapiAdRecord, company: CompanyInput, facebookUrl: string) {
+  const destination = safeAdDestination(record.link_url ?? record.destination_url);
+  const captionEvidence = [
+    ...textList(record.captions, 6, 160),
+    ...textList(record.creative_link_captions, 6, 160),
+    ...textList(record.creative_link_titles, 6, 160),
+  ].join(" ").toLowerCase();
+  let domainMatch = captionEvidence.includes(company.domain.toLowerCase().replace(/^www\./, ""));
+  try { domainMatch ||= Boolean(destination && hostMatchesDomain(new URL(destination).hostname, company.domain)); } catch { /* no safe destination */ }
+  if (!domainMatch) return false;
+
+  const pageName = firstText(record.provider_page_name, 120);
+  const slug = new URL(facebookUrl).pathname.split("/").filter(Boolean).at(-1) || "";
+  const compactPage = compactIdentity(pageName);
+  const compactSlug = compactIdentity(slug);
+  const brandWords = new Set(normalizedWords(company.brand));
+  const pageWords = normalizedWords(pageName);
+  const nameMatch = Boolean(compactSlug && compactPage && (compactSlug === compactPage || compactSlug.includes(compactPage) || compactPage.includes(compactSlug)))
+    || pageWords.some((word) => brandWords.has(word));
+  return nameMatch;
+}
+
+async function discoverMetapiIdentity(
+  company: CompanyInput,
+  facebookUrl: string,
+  country: string,
+  apiKey: string,
+  fetcher: typeof fetch,
+  wait: (milliseconds: number) => Promise<void>,
+) {
+  const probe = await runMetapiTask({
+    q: company.brand,
+    country,
+    count: METAPI_IDENTITY_COUNT,
+    active_status: "active",
+    ad_type: "all",
+    media_type: "all",
+    search_type: "keyword_unordered",
+    eu_data: country === "GB" || new Set(["DE", "FR", "ES", "IT", "NL", "BE", "IE", "SE", "DK", "PL", "AT", "PT", "FI", "GR"]).has(country),
+  }, apiKey, fetcher, wait);
+  if ("message" in probe) return { identity: null, probeCount: 0, message: probe.message };
+  const matching = probe.records.filter((record) => /^\d{5,}$/.test(String(record.provider_page_id || "")) && recordSupportsCompanyIdentity(record, company, facebookUrl));
+  const pageIds = [...new Set(matching.map((record) => String(record.provider_page_id)))];
+  if (pageIds.length !== 1) return {
+    identity: null,
+    probeCount: probe.records.length,
+    message: pageIds.length > 1
+      ? `The identity probe matched ${pageIds.length} advertiser Pages; exact attribution is ambiguous.`
+      : "The identity probe did not find one advertiser Page backed by both the first-party brand and company-domain evidence.",
+  };
+  const pageId = pageIds[0];
+  const pageName = firstText(matching.find((record) => String(record.provider_page_id) === pageId)?.provider_page_name, 120);
+  return { identity: { pageId, pageName, profileUrl: facebookUrl }, probeCount: probe.records.length, message: "" };
 }
 
 export async function queryMetapiAdvertiser(
@@ -249,41 +474,52 @@ export async function queryMetapiAdvertiser(
   if (country === "ALL") return metapiError(company, country, "A specific market country is required for an exact competitor ad check.");
   const facebookUrl = company.facebookUrl || await discoverCompanyFacebookUrl(company.domain, fetcher);
   if (!facebookUrl) return metapiError(company, country, "No Facebook profile linked from this company's own website was found, so exact advertiser attribution was not attempted.");
-  const identity = await resolveFacebookPageIdentity(facebookUrl, fetcher);
-  if (!identity) return metapiError(company, country, "The company-owned Facebook profile was found, but its exact public Page ID could not be resolved.");
-  const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+  let identity = await resolveFacebookPageIdentity(facebookUrl, fetcher);
+  let identityProbeRecordCount = 0;
+  if (!identity) {
+    const discovered = await discoverMetapiIdentity(company, facebookUrl, country, apiKey, fetcher, wait);
+    identity = discovered.identity;
+    identityProbeRecordCount = discovered.probeCount;
+    if (!identity) return { ...metapiError(company, country, discovered.message, undefined), identityProbeRecordCount };
+  }
+  const exactTask = await runMetapiTask({
+    advertiser_id: identity.pageId,
+    country,
+    count: METAPI_AD_COUNT,
+    active_status: "active",
+    ad_type: "all",
+    media_type: "all",
+    eu_data: country === "GB" || new Set(["DE", "FR", "ES", "IT", "NL", "BE", "IE", "SE", "DK", "PL", "AT", "PT", "FI", "GR"]).has(country),
+  }, apiKey, fetcher, wait);
+  if ("message" in exactTask) return { ...metapiError(company, country, exactTask.message, identity), identityProbeRecordCount };
   try {
-    const created = await fetcher(`${METAPI_BASE_URL}/tasks`, {
-      method: "POST", headers, signal: AbortSignal.timeout(METAPI_TIMEOUT_MS),
-      body: JSON.stringify({ advertiser_id: identity.pageId, country, count: 100, active_status: "active", ad_type: "all", media_type: "all", eu_data: country === "GB" || new Set(["DE", "FR", "ES", "IT", "NL", "BE", "IE", "SE", "DK", "PL", "AT", "PT", "FI", "GR"]).has(country) }),
-    });
-    const createdPayload = await created.json() as JsonRecord;
-    const taskId = metapiTaskId(createdPayload);
-    if (!created.ok || !taskId) return metapiError(company, country, `Exact Page ad collection could not start${created.status ? ` (HTTP ${created.status})` : ""}.`, identity);
-
-    let terminal = "";
-    for (let attempt = 0; attempt < METAPI_POLL_ATTEMPTS; attempt += 1) {
-      const statusResponse = await fetcher(`${METAPI_BASE_URL}/tasks/${encodeURIComponent(taskId)}/status`, { headers, signal: AbortSignal.timeout(METAPI_TIMEOUT_MS) });
-      const statusPayload = await statusResponse.json() as JsonRecord;
-      terminal = cleanText(statusPayload.status, 40).toLowerCase();
-      if (["succeeded", "failed", "timed_out", "aborted"].includes(terminal)) break;
-      await wait(750);
-    }
-    if (terminal !== "succeeded") return metapiError(company, country, `Exact Page ad collection did not complete successfully${terminal ? ` (${terminal})` : ""}.`, identity);
-    const resultsResponse = await fetcher(`${METAPI_BASE_URL}/tasks/${encodeURIComponent(taskId)}/results?offset=0&limit=500`, { headers, signal: AbortSignal.timeout(METAPI_TIMEOUT_MS) });
-    if (!resultsResponse.ok) return metapiError(company, country, `Exact Page ad results could not be retrieved (HTTP ${resultsResponse.status}).`, identity);
-    const payload = await resultsResponse.json() as JsonRecord;
-    const allRecords = metapiRecords(payload);
-    const exactRecords = allRecords.filter((record) => String(record.provider_page_id || "") === identity.pageId);
+    const allRecords = exactTask.records;
+    const pageRecords = allRecords.filter((record) => String(record.provider_page_id || "") === identity.pageId);
+    const discardedRecordCount = allRecords.length - pageRecords.length;
+    const exactRecords = pageRecords.filter((record) => currentDeliveryRecord(record));
+    const inactiveRecordCount = pageRecords.length - exactRecords.length;
     const searchUrl = exactMetaSearch(identity.pageId, country);
-    if (allRecords.length && !exactRecords.length) return metapiError(company, country, `The provider returned ${allRecords.length} record${allRecords.length === 1 ? "" : "s"}, but none matched exact Page ${identity.pageId}; all were discarded as unsafe attribution.`, identity);
+    if (allRecords.length && !pageRecords.length) return {
+      ...metapiError(company, country, `The provider returned ${allRecords.length} record${allRecords.length === 1 ? "" : "s"}, but none matched exact Page ${identity.pageId}; all were discarded as unsafe attribution.`, identity),
+      exactPageId: identity.pageId, exactPageName: identity.pageName, discardedRecordCount, identityProbeRecordCount, inactiveRecordCount,
+    };
+    if (pageRecords.length && !exactRecords.length) return {
+      platform: "Meta", status: "no-verified-result", activeCreativeCount: 0,
+      message: `${pageRecords.length} exact-Page record${pageRecords.length === 1 ? " was" : "s were"} returned, but every public delivery-stop date had elapsed before this check. No currently active record was verified in ${country}.`,
+      themes: [], evidenceUrls: [], searchUrl, sourceProvider: "metapi-exact-page", attributionUrl: identity.profileUrl, attributionLabel: `${identity.pageName || company.brand} · Page ${identity.pageId}`, creativeConceptCount: 0, creativeConcepts: [],
+      exactPageId: identity.pageId, exactPageName: identity.pageName || company.brand, discardedRecordCount, identityProbeRecordCount, inactiveRecordCount,
+    };
     if (!exactRecords.length) return {
       platform: "Meta", status: "no-verified-result", activeCreativeCount: 0,
       message: `No active Meta ads were observed for exact Page ${identity.pageId} in ${country} at this check. This does not prove zero activity in other regions, time periods, or Pages.`,
       themes: [], evidenceUrls: [], searchUrl, sourceProvider: "metapi-exact-page", attributionUrl: identity.profileUrl, attributionLabel: `${identity.pageName || company.brand} · Page ${identity.pageId}`, creativeConceptCount: 0, creativeConcepts: [],
+      exactPageId: identity.pageId, exactPageName: identity.pageName || company.brand, discardedRecordCount, identityProbeRecordCount, inactiveRecordCount,
     };
     const { placements, concepts } = groupCreativeConcepts(exactRecords, identity);
-    if (!placements.length) return metapiError(company, country, "The exact Page returned records, but none had a usable public Meta ad ID.", identity);
+    if (!placements.length) return {
+      ...metapiError(company, country, "The exact Page returned records, but none had a usable public Meta ad ID.", identity),
+      exactPageId: identity.pageId, exactPageName: identity.pageName, discardedRecordCount, identityProbeRecordCount, inactiveRecordCount,
+    };
     return {
       platform: "Meta", status: "verified-active", activeCreativeCount: placements.length,
       message: `${placements.length} active placement${placements.length === 1 ? "" : "s"} from exact Page ${identity.pageId} group into ${concepts.length} distinct message concept${concepts.length === 1 ? "" : "s"}.`,
@@ -291,6 +527,7 @@ export async function queryMetapiAdvertiser(
       evidenceUrls: placements.map((placement) => placement.evidenceUrl).slice(0, 8), searchUrl,
       sourceProvider: "metapi-exact-page", attributionUrl: identity.profileUrl, attributionLabel: `${identity.pageName || company.brand} · Page ${identity.pageId}`,
       creativeConceptCount: concepts.length, creativeConcepts: concepts.slice(0, 6),
+      exactPageId: identity.pageId, exactPageName: identity.pageName || company.brand, discardedRecordCount, identityProbeRecordCount, inactiveRecordCount,
     };
   } catch { return metapiError(company, country, "The exact-Page ad provider could not be reached automatically.", identity); }
 }
@@ -335,12 +572,17 @@ export async function queryMetaAdLibrary(company: CompanyInput, region: string, 
   if (searches.regionCode === "ALL") return { platform: "Meta", status: "access-limited", activeCreativeCount: 0, message: "A specific country is required before querying Meta Ads Archive.", themes: [], evidenceUrls: [], searchUrl: searches.Meta };
   if (!META_COMMERCIAL_API_COUNTRIES.has(searches.regionCode)) return { platform: "Meta", status: "access-limited", activeCreativeCount: 0, message: `Meta's API does not provide ordinary commercial-ad coverage for ${searches.regionCode}. Use the public Meta Ad Library search; an empty API result would not mean zero active ads.`, themes: [], evidenceUrls: [], searchUrl: searches.Meta };
 
+  const facebookUrl = company.facebookUrl || await discoverCompanyFacebookUrl(company.domain, fetcher);
+  if (!facebookUrl) return { platform: "Meta", status: "access-limited", activeCreativeCount: 0, message: "No company-owned Facebook profile was found for an exact official Meta query.", themes: [], evidenceUrls: [], searchUrl: searches.Meta, sourceProvider: "meta-official" };
+  const identity = await resolveFacebookPageIdentity(facebookUrl, fetcher);
+  if (!identity) return { platform: "Meta", status: "access-limited", activeCreativeCount: 0, message: "The company-owned Facebook profile did not expose a numeric Page ID for an exact official Meta query.", themes: [], evidenceUrls: [], searchUrl: searches.Meta, sourceProvider: "meta-official", attributionUrl: facebookUrl };
+
   const endpoint = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/ads_archive`);
   endpoint.searchParams.set("ad_reached_countries", JSON.stringify([searches.regionCode]));
-  endpoint.searchParams.set("search_terms", company.brand);
+  endpoint.searchParams.set("search_page_ids", JSON.stringify([identity.pageId]));
   endpoint.searchParams.set("ad_active_status", "ACTIVE");
   endpoint.searchParams.set("ad_type", "ALL");
-  endpoint.searchParams.set("fields", "id,ad_creative_bodies");
+  endpoint.searchParams.set("fields", "id,page_id,page_name,ad_creative_bodies,ad_creative_link_captions,ad_creative_link_titles,ad_creative_link_descriptions,ad_delivery_start_time,ad_delivery_stop_time,ad_snapshot_url,publisher_platforms");
   endpoint.searchParams.set("limit", String(META_PAGE_LIMIT));
 
   const controller = new AbortController();
@@ -354,12 +596,34 @@ export async function queryMetaAdLibrary(company: CompanyInput, region: string, 
     }
 
     const data = Array.isArray(payload.data) ? payload.data as MetaAdRecord[] : [];
-    const evidenceUrls = [...new Set(data.map((ad) => typeof ad.id === "string" && /^\d+$/.test(ad.id) ? `https://www.facebook.com/ads/library/?id=${ad.id}` : "").filter(Boolean))];
-    const themes = [...new Set(data.flatMap((ad) => Array.isArray(ad.ad_creative_bodies) ? ad.ad_creative_bodies : []).map((text) => text.replace(/\s+/g, " ").trim().slice(0, 160)).filter(Boolean))].slice(0, 5);
+    const pageData = data.filter((ad) => String(ad.page_id || "") === identity.pageId);
+    const discardedRecordCount = data.length - pageData.length;
+    const normalizedPageRecords: MetapiAdRecord[] = pageData.map((ad) => ({
+      provider_id: ad.id,
+      provider_page_id: ad.page_id,
+      provider_page_name: ad.page_name,
+      bodies: ad.ad_creative_bodies,
+      creative_link_captions: ad.ad_creative_link_captions,
+      creative_link_titles: ad.ad_creative_link_titles,
+      creative_link_descriptions: ad.ad_creative_link_descriptions,
+      delivery_start_time: ad.ad_delivery_start_time,
+      delivery_stop_time: ad.ad_delivery_stop_time,
+      snapshot_url: ad.ad_snapshot_url,
+      publisher_platforms: ad.publisher_platforms,
+    }));
+    const normalizedRecords = normalizedPageRecords.filter((record) => currentDeliveryRecord(record));
+    const inactiveRecordCount = normalizedPageRecords.length - normalizedRecords.length;
+    const exactData = pageData.filter((_, index) => currentDeliveryRecord(normalizedPageRecords[index]));
+    const { placements, concepts } = groupCreativeConcepts(normalizedRecords, { ...identity, pageName: identity.pageName || firstText(exactData[0]?.page_name, 120) || company.brand });
+    const evidenceUrls = [...new Set(placements.map((ad) => ad.evidenceUrl).filter(Boolean))];
+    const themes = [...new Set(concepts.map((concept) => concept.message || concept.headline || concept.caption).filter(Boolean))].slice(0, 5);
     const hasMore = Boolean(payload.paging && typeof payload.paging === "object" && (payload.paging as JsonRecord).next);
-    if (!data.length) return { platform: "Meta", status: "no-verified-result", activeCreativeCount: 0, message: `Meta API returned no active commercial ads for “${company.brand}” in ${searches.regionCode}. This scoped query is not proof of zero advertising under other names or in other regions.`, themes: [], evidenceUrls: [], searchUrl: searches.Meta };
-    if (!evidenceUrls.length) return { platform: "Meta", status: "access-limited", activeCreativeCount: 0, message: `Meta returned ${data.length} ad record${data.length === 1 ? "" : "s"}, but no usable public ad IDs were available for direct evidence links.`, themes, evidenceUrls: [], searchUrl: searches.Meta };
-    return { platform: "Meta", status: "verified-active", activeCreativeCount: evidenceUrls.length, activeCreativeCountIsLowerBound: hasMore, message: `${hasMore ? "At least " : ""}${evidenceUrls.length} active Meta ad${evidenceUrls.length === 1 ? "" : "s"} returned by the Ads Archive API.`, themes, evidenceUrls, searchUrl: searches.Meta };
+    const common = { searchUrl: exactMetaSearch(identity.pageId, searches.regionCode), sourceProvider: "meta-official" as const, attributionUrl: identity.profileUrl, attributionLabel: `${identity.pageName || firstText(pageData[0]?.page_name, 120) || company.brand} · Page ${identity.pageId}`, exactPageId: identity.pageId, exactPageName: identity.pageName || firstText(pageData[0]?.page_name, 120) || company.brand, discardedRecordCount, inactiveRecordCount };
+    if (!data.length) return { platform: "Meta", status: "no-verified-result", activeCreativeCount: 0, message: `Meta API returned no active commercial ads for exact Page ${identity.pageId} in ${searches.regionCode}. This scoped query is not proof of zero advertising in other regions or time periods.`, themes: [], evidenceUrls: [], creativeConceptCount: 0, creativeConcepts: [], ...common };
+    if (!pageData.length) return { platform: "Meta", status: "access-limited", activeCreativeCount: 0, message: `Meta returned ${data.length} record${data.length === 1 ? "" : "s"}, but none matched exact Page ${identity.pageId}; all were discarded.`, themes: [], evidenceUrls: [], ...common };
+    if (!exactData.length) return { platform: "Meta", status: "no-verified-result", activeCreativeCount: 0, message: `${pageData.length} exact-Page Meta record${pageData.length === 1 ? " was" : "s were"} returned, but every delivery-stop date had elapsed before this check. No currently active record was verified.`, themes: [], evidenceUrls: [], creativeConceptCount: 0, creativeConcepts: [], ...common };
+    if (!evidenceUrls.length) return { platform: "Meta", status: "access-limited", activeCreativeCount: 0, message: `Meta returned ${exactData.length} exact-Page record${exactData.length === 1 ? "" : "s"}, but no usable public ad IDs were available.`, themes, evidenceUrls: [], ...common };
+    return { platform: "Meta", status: "verified-active", activeCreativeCount: placements.length, activeCreativeCountIsLowerBound: hasMore, message: `${hasMore ? "At least " : ""}${placements.length} active Meta record${placements.length === 1 ? "" : "s"} group into ${concepts.length} creative concept${concepts.length === 1 ? "" : "s"}.`, themes, evidenceUrls, creativeConceptCount: concepts.length, creativeConcepts: concepts.slice(0, 6), ...common };
   } catch {
     return { platform: "Meta", status: "access-limited", activeCreativeCount: 0, message: "Meta Ads Archive could not be reached automatically.", themes: [], evidenceUrls: [], searchUrl: searches.Meta };
   } finally { clearTimeout(timeout); }
@@ -369,13 +633,13 @@ function fallbackCompany(company: CompanyInput, region: string): CompanyAdResult
   const searches = buildOfficialAdSearches(company.brand, region);
   return {
     ...company,
-    summary: "No active creative was independently verified in the automatic official-library search.",
-    recommendedAction: "Open the official searches below before treating this as no advertising activity.",
+    summary: "Automatic ad-library coverage is limited; no claim about advertising activity can be made yet.",
+    recommendedAction: "Open the official searches below or retry with provider access before drawing a conclusion.",
     platforms: (["Meta", "Google", "TikTok"] as AdPlatform[]).map((platform) => ({
       platform,
-      status: "no-verified-result",
+      status: "access-limited",
       activeCreativeCount: 0,
-      message: "No direct ad record was verified automatically.",
+      message: "Automatic access was not available for this platform check.",
       themes: [],
       evidenceUrls: [],
       searchUrl: searches[platform],
@@ -459,7 +723,7 @@ function compareAdStrategies(companies: CompanyAdResult[]) {
 export async function scanOfficialAdLibraries(companies: CompanyInput[], region: string): Promise<AdIntelligenceResult> {
   const observedAt = new Date().toISOString();
   const model = process.env.MARKET_SIGNAL_AD_MODEL || process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini";
-  const uniqueCompanies = [...new Map(companies.map((company) => [company.domain, company])).values()].slice(0, 6);
+  const uniqueCompanies = [...new Map(companies.map((company) => [company.domain, company])).values()].slice(0, 7);
   const fallback = uniqueCompanies.map((company) => fallbackCompany(company, region));
   const metapiKey = process.env.METAPI_API_KEY || "";
   const metaToken = process.env.META_AD_LIBRARY_ACCESS_TOKEN || "";

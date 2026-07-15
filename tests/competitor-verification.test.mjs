@@ -1,0 +1,121 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { compareVerifiedCompetitors, verifyCompetitorEntity } from "../app/lib/competitor-verification.ts";
+
+function product(domain, name, category, type = "Product") {
+  return {
+    id: `${domain}-${name}`,
+    domain,
+    name,
+    normalizedName: name.toLowerCase(),
+    description: category,
+    category,
+    jsonLdType: type,
+    priceSignals: [],
+    attributes: [],
+    ownership: "path-inferred",
+    extraction: "sitemap",
+    confidence: "Medium",
+    sourceUrl: `https://${domain}/products/${name.toLowerCase().replaceAll(" ", "-")}`,
+    imageUrl: "",
+    observedAt: "2026-07-14T00:00:00.000Z",
+    claimIds: [],
+  };
+}
+
+function site(domain, title, description, region, products = []) {
+  return { domain, title, description, region, headings: [], products };
+}
+
+function discovery(overrides = {}) {
+  return {
+    domain: "rival.example",
+    companyName: "Rival",
+    reason: "Same market category",
+    searchQuery: "halal grocery competitors UK",
+    sourceUrl: "https://source.example/result",
+    websiteUrl: "https://rival.example/",
+    marketCategory: "halal grocery delivery",
+    relationship: "direct",
+    sharedOfferings: ["halal meat", "cultural groceries"],
+    evidence: [{ url: "https://source.example/result", title: "Rival", method: "category-search" }],
+    mentionCount: 2,
+    ...overrides,
+  };
+}
+
+test("accepts a company-level rival from its own category evidence without a matched product page", () => {
+  const result = verifyCompetitorEntity(
+    site("myjam.co.uk", "MyJam cultural grocery marketplace", "Halal meat and cultural groceries delivered across the UK", "United Kingdom (inferred)"),
+    site("rival.example", "Rival halal grocery delivery", "Order halal meat and international groceries online", "Not enough public signal"),
+    discovery(),
+  );
+  assert.equal(result.accepted, true);
+  assert.equal(result.categoryAlignment, true);
+  assert.equal(result.regionCompatibility, true);
+  assert.equal(result.hasProductOverlap, false);
+});
+
+test("rejects an accessory seller that does not describe itself as the same core category", () => {
+  const result = verifyCompetitorEntity(
+    site("camera.example", "Professional cameras", "Cameras and lenses for creators", "United States (inferred)"),
+    site("strap.example", "Leather camera straps", "Handmade straps, bags, and protective cases", "United States (inferred)"),
+    discovery({ marketCategory: "professional cameras", sharedOfferings: ["camera accessories"] }),
+  );
+  assert.equal(result.accepted, false);
+  assert.equal(result.categoryAlignment, false);
+});
+
+test("rejects a same-region accessory seller even when one peripheral product pairs", () => {
+  const primaryProduct = product("tea.example", "Tea Infuser Mug", "loose leaf tea accessories");
+  const rivalProduct = product("mugs.example", "Tea Infuser Mug", "ceramic mugs");
+  const result = verifyCompetitorEntity(
+    site("tea.example", "Loose leaf tea and herbal infusions", "British tea shop selling loose leaf blends", "United Kingdom (inferred)", [primaryProduct]),
+    site("mugs.example", "Personalised ceramic mugs", "UK mug shop for gifts, cups, and printed drinkware", "United Kingdom (inferred)", [rivalProduct]),
+    discovery({ domain: "mugs.example", websiteUrl: "https://mugs.example/", marketCategory: "loose leaf tea", sharedOfferings: ["Tea Infuser Mug"] }),
+  );
+  assert.equal(result.hasProductOverlap, true);
+  assert.equal(result.categoryAlignment, false);
+  assert.equal(result.accepted, false);
+});
+
+test("rejects a proven regional mismatch but keeps an unknown candidate region neutral", () => {
+  const primary = site("shop.co.uk", "UK halal grocery", "Halal meat and grocery delivery", "United Kingdom (inferred)");
+  const mismatch = verifyCompetitorEntity(primary, site("rival.us", "US halal grocery", "Halal meat and grocery delivery in America", "United States (inferred)"), discovery());
+  const unknown = verifyCompetitorEntity(primary, site("rival.example", "Halal grocery", "Halal meat and grocery delivery", "Not enough public signal"), discovery());
+  assert.equal(mismatch.accepted, false);
+  assert.equal(mismatch.regionCompatibility, false);
+  assert.equal(unknown.regionCompatibility, true);
+});
+
+test("uses comparable products as a confidence booster and returns the strongest pair", () => {
+  const primaryProduct = product("a.example", "Halal Lamb Chops 500g", "halal meat");
+  const rivalProduct = product("b.example", "Fresh Halal Lamb Chops 500g", "halal meat");
+  const result = verifyCompetitorEntity(
+    site("a.example", "Halal grocery delivery", "Fresh halal meat online", "United Kingdom (inferred)", [primaryProduct]),
+    site("b.example", "Halal meat shop", "Fresh halal grocery and meat delivery", "United Kingdom (inferred)", [rivalProduct]),
+    discovery({ domain: "b.example", websiteUrl: "https://b.example/" }),
+  );
+  assert.equal(result.accepted, true);
+  assert.equal(result.hasProductOverlap, true);
+  assert.equal(result.provenPrimaryProduct.name, primaryProduct.name);
+  assert.equal(result.provenRivalProduct.name, rivalProduct.name);
+});
+
+test("uses both agencies' first-party capability headings for category alignment", () => {
+  const primary = { ...site("studio.example", "Digital Product Studio", "We make digital experiences", "Global market (inferred)"), headings: ["Product strategy", "UX and UI design", "Web and mobile development"] };
+  const rival = { ...site("rival.example", "Product design and engineering agency", "Digital products for ambitious companies", "United States (inferred)"), headings: ["Product strategy", "UX design", "Mobile app development"] };
+  const result = verifyCompetitorEntity(primary, rival, discovery({ marketCategory: "digital product design and development agency", sharedOfferings: ["product strategy", "UX design", "mobile development"] }));
+  assert.equal(result.categoryAlignment, true);
+  assert.equal(result.regionCompatibility, true);
+  assert.equal(result.accepted, true);
+});
+
+test("ranks a verified product-backed rival ahead only after entity acceptance", () => {
+  const base = { verificationScore: 90, accepted: true, hasProductOverlap: false };
+  const productBacked = { ...base, verificationScore: 70, hasProductOverlap: true };
+  const rejectedProductLead = { ...productBacked, accepted: false, verificationScore: 99 };
+  assert.ok(compareVerifiedCompetitors(base, productBacked) > 0);
+  assert.ok(compareVerifiedCompetitors(base, rejectedProductLead) < 0);
+});

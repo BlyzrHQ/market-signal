@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { candidatesFromSearchEvidence, discoverCompetitors } from "../app/lib/competitor-discovery.ts";
+import { candidatesFromSearchEvidence, discoverCompetitors, productSearchAnchors } from "../app/lib/competitor-discovery.ts";
 
 function product(name, sourceUrl) {
   return {
@@ -61,6 +61,8 @@ test("sanitizes, deduplicates, and excludes the primary domain from model candid
     assert.equal(request.text.format.type, "json_schema");
     return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "International grocery delivery", region: "United Kingdom", queries: ["international grocery delivery UK"], candidates: [
       { domain: "https://rival.example/shop", companyName: "Rival", reason: "Sells Halal Lamb Chops 500g", searchQuery: "Halal Lamb Chops 500g UK", sourceUrl: "https://rival.example/products/halal-lamb-chops", matchedPrimaryProductName: "Halal Lamb Chops 500g", matchedProductUrl: "https://rival.example/products/halal-lamb-chops" },
+      { domain: "myjam.us", companyName: "MyJam US", reason: "Same brand storefront", searchQuery: "same", sourceUrl: "https://myjam.us/products/beef-sirloin-steak-halal-500g", matchedPrimaryProductName: "Beef Sirloin Steak Halal 500g", matchedProductUrl: "https://myjam.us/products/beef-sirloin-steak-halal-500g" },
+      { domain: "which.co.uk", companyName: "Which?", reason: "Review publisher", searchQuery: "same", websiteUrl: "https://which.co.uk/", evidenceUrl: "https://which.co.uk/reviews/food-and-drink/article/best-grocery-delivery", evidenceTitle: "Best grocery delivery services reviewed" },
       { domain: "rival.example", companyName: "Duplicate", reason: "Duplicate", searchQuery: "same", sourceUrl: "https://rival.example/", matchedPrimaryProductName: "", matchedProductUrl: "https://rival.example/" },
       { domain: "myjam.co.uk", companyName: "Primary", reason: "Self", searchQuery: "same", sourceUrl: "https://myjam.co.uk/", matchedPrimaryProductName: "", matchedProductUrl: "https://myjam.co.uk/" },
       { domain: "bad.example", companyName: "Bad source", reason: "No evidence", searchQuery: "same", sourceUrl: "javascript:alert(1)", matchedPrimaryProductName: "", matchedProductUrl: "javascript:alert(1)" },
@@ -100,7 +102,7 @@ test("recovers a search-source candidate when the AI structured candidate array 
   }
 });
 
-test("does not expose an upstream JSON parser error when discovery returns HTML", async () => {
+test("retains a visible lane gap instead of exposing an upstream JSON parser error", async () => {
   const previousKey = process.env.OPENAI_API_KEY;
   const previousFetch = globalThis.fetch;
   process.env.OPENAI_API_KEY = "test-only";
@@ -109,11 +111,32 @@ test("does not expose an upstream JSON parser error when discovery returns HTML"
     headers: { "content-type": "text/html" },
   });
   try {
-    await assert.rejects(discoverCompetitors(profile), (error) => {
-      assert.match(error.message, /unreadable response.*Run the scan again/i);
-      assert.doesNotMatch(error.message, /Unexpected token|JSON/i);
-      return true;
-    });
+    const result = await discoverCompetitors(profile);
+    assert.equal(result.candidates.length, 0);
+    assert.ok(result.gaps.length >= 1);
+    assert.match(result.gaps.join(" "), /unreadable response/i);
+    assert.doesNotMatch(result.gaps.join(" "), /Unexpected token|JSON/i);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
+test("retains successful entity candidates when other discovery lanes fail", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  let call = 0;
+  globalThis.fetch = async () => {
+    call += 1;
+    if (call !== 1) return new Response("<!DOCTYPE html><title>Gateway error</title>", { status: 200, headers: { "content-type": "text/html" } });
+    return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: ["MyJam alternatives UK"], candidates: [{ domain: "rival.example", companyName: "Rival", reason: "Same grocery market", searchQuery: "MyJam alternatives UK", websiteUrl: "https://rival.example/", evidenceUrl: "https://rival.example/", evidenceTitle: "Rival halal grocery", marketCategory: "Halal grocery", relationship: "direct", sharedOfferings: ["halal grocery"], matchedPrimaryProductName: "", matchedProductUrl: "" }] }) }] }] });
+  };
+  try {
+    const result = await discoverCompetitors(profile);
+    assert.equal(result.available, true);
+    assert.deepEqual(result.candidates.map((candidate) => candidate.domain), ["rival.example"]);
+    assert.equal(result.gaps.length, 3);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
@@ -174,4 +197,151 @@ test("rejects same-domain, publisher, social, and weak one-word source matches",
     }],
   };
   assert.deepEqual(candidatesFromSearchEvidence(payload, profile), []);
+});
+
+test("caps ranked candidate investigations to six companies", () => {
+  const payload = {
+    output: [{
+      type: "web_search_call",
+      action: {
+        query: "UK buy halal beef sirloin steak 500g",
+        sources: Array.from({ length: 9 }, (_, index) => ({
+          title: `Halal Beef Sirloin Steak 500g | Rival ${index + 1}`,
+          url: `https://rival-${index + 1}.co.uk/products/halal-beef-sirloin-steak-500g`,
+        })),
+      },
+    }],
+  };
+  const candidates = candidatesFromSearchEvidence(payload, profile);
+  assert.equal(candidates.length, 6);
+  assert.deepEqual(candidates.map((candidate) => candidate.domain), Array.from({ length: 6 }, (_, index) => `rival-${index + 1}.co.uk`));
+});
+
+test("rejects homepages and category pages even when their text repeats a product name", () => {
+  const payload = {
+    output: [{
+      type: "web_search_call",
+      action: {
+        query: "UK buy halal beef sirloin steak 500g",
+        sources: [
+          { title: "Halal Beef Sirloin Steak 500g | Grocer", url: "https://grocer.example/" },
+          { title: "Halal Beef Sirloin Steak 500g | Meat collection", url: "https://grocer.example/collections/products" },
+          { title: "Halal Beef Sirloin Steak 500g | Grocer", url: "https://grocer.example/products/halal-beef-sirloin-steak-500g" },
+        ],
+      },
+    }],
+  };
+  assert.deepEqual(candidatesFromSearchEvidence(payload, profile).map((candidate) => candidate.matchedProductUrl), [
+    "https://grocer.example/products/halal-beef-sirloin-steak-500g",
+  ]);
+});
+
+test("selects a bounded product-search set across distinct name families", () => {
+  const products = [
+    product("Lamb Leg Halal 2500g", "https://myjam.co.uk/products/lamb-leg"),
+    product("Lamb Shoulder Halal 1500g", "https://myjam.co.uk/products/lamb-shoulder"),
+    product("Beef Sirloin Steak Halal 500g", "https://myjam.co.uk/products/beef-sirloin"),
+    product("Minced Beef Halal 500g", "https://myjam.co.uk/products/minced-beef"),
+    product("Chicken Shawarma Halal 500g", "https://myjam.co.uk/products/chicken-shawarma"),
+  ];
+  assert.deepEqual(productSearchAnchors(products, 4).map((item) => item.name), [
+    "Lamb Leg Halal 2500g",
+    "Beef Sirloin Steak Halal 500g",
+    "Minced Beef Halal 500g",
+    "Chicken Shawarma Halal 500g",
+  ]);
+});
+
+test("runs one bounded search request per selected ecommerce product", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  const searchedProducts = [];
+  const searchProfile = {
+    ...profile,
+    products: [
+      product("Lamb Leg Halal 2500g", "https://myjam.co.uk/products/lamb-leg"),
+      product("Lamb Shoulder Halal 1500g", "https://myjam.co.uk/products/lamb-shoulder"),
+      product("Beef Sirloin Steak Halal 500g", "https://myjam.co.uk/products/beef-sirloin"),
+      product("Minced Beef Halal 500g", "https://myjam.co.uk/products/minced-beef"),
+      product("Chicken Shawarma Halal 500g", "https://myjam.co.uk/products/chicken-shawarma"),
+    ],
+  };
+  globalThis.fetch = async (_url, init) => {
+    const request = JSON.parse(init.body);
+    const input = JSON.parse(request.input[1].content);
+    if (input.lane === "product") {
+      assert.equal(input.profile.offerings.length, 1);
+      searchedProducts.push(input.profile.offerings[0].name);
+    }
+    return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: [], candidates: [] }) }] }] });
+  };
+  try {
+    await discoverCompetitors(searchProfile);
+    assert.deepEqual(searchedProducts, productSearchAnchors(searchProfile.products).map((item) => item.name));
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
+test("excludes marketplaces and stockists carrying the primary brand", () => {
+  const payload = {
+    output: [{
+      type: "web_search_call",
+      action: {
+        query: "UK buy beef sirloin steak halal 500g",
+        sources: [
+          { title: "Beef Sirloin Steak Halal 500g", url: "https://amazon.co.uk/products/beef-sirloin-steak-halal-500g" },
+          { title: "MyJam Beef Sirloin Steak Halal 500g", url: "https://stockist.example/products/myjam-beef-sirloin-steak-halal-500g" },
+          { title: "Beef Sirloin Steak Halal 500g | Oasis Market", url: "https://oasismarket.co.uk/product/beef-sirloin-steak-halal-500g" },
+        ],
+      },
+    }],
+  };
+  assert.deepEqual(candidatesFromSearchEvidence(payload, profile).map((candidate) => candidate.domain), ["oasismarket.co.uk"]);
+});
+
+test("rejects two-token overlap when it covers too little of the anchor product", () => {
+  const longProfile = { ...profile, products: [product("Organic Crunchy Peanut Butter", "https://myjam.co.uk/products/organic-crunchy-peanut-butter")] };
+  const payload = { output: [{ type: "web_search_call", action: { sources: [{ title: "Peanut Butter", url: "https://rival.example/products/peanut-butter" }] } }] };
+  assert.deepEqual(candidatesFromSearchEvidence(payload, longProfile), []);
+});
+
+test("reserves two investigations for entity competitors while retaining four product-backed sellers", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  const searchProfile = {
+    ...profile,
+    products: [
+      product("Lamb Leg Halal 2500g", "https://myjam.co.uk/products/lamb-leg"),
+      product("Beef Sirloin Steak Halal 500g", "https://myjam.co.uk/products/beef-sirloin"),
+      product("Minced Beef Halal 500g", "https://myjam.co.uk/products/minced-beef"),
+      product("Chicken Shawarma Halal 500g", "https://myjam.co.uk/products/chicken-shawarma"),
+    ],
+  };
+  globalThis.fetch = async (_url, init) => {
+    const request = JSON.parse(init.body);
+    const input = JSON.parse(request.input[1].content);
+    if (input.lane === "product") {
+      const name = input.profile.offerings[0].name;
+      const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      return Response.json({ output: [
+        { type: "web_search_call", action: { query: `UK buy ${name}`, sources: [{ title: `${name} | Seller`, url: `https://seller-${slug}.example/products/${slug}` }] } },
+        { type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: [`UK buy ${name}`], candidates: [] }) }] },
+      ] });
+    }
+    const entities = [1, 2, 3].map((index) => ({ domain: `entity-${index}.example`, companyName: `Entity ${index}`, reason: "Same grocery market", searchQuery: "halal grocery competitors UK", websiteUrl: `https://entity-${index}.example/`, evidenceUrl: `https://entity-${index}.example/`, evidenceTitle: `Entity ${index} halal grocery`, marketCategory: "Halal grocery", relationship: "direct", sharedOfferings: ["halal grocery"], matchedPrimaryProductName: "", matchedProductUrl: "" }));
+    return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: ["halal grocery competitors UK"], candidates: entities }) }] }] });
+  };
+  try {
+    const result = await discoverCompetitors(searchProfile);
+    assert.equal(result.candidates.length, 6);
+    assert.deepEqual(result.candidates.slice(0, 2).map((candidate) => candidate.domain), ["entity-1.example", "entity-2.example"]);
+    assert.equal(result.candidates.filter((candidate) => candidate.evidenceMethod === "search-source" && candidate.matchedProductUrl).length, 4);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
 });

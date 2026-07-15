@@ -25,3 +25,12 @@ export function comparablePriceDelta(primaryRaw: string, rivalRaw: string) {
     : Math.round(((rival.amount - primary.amount) / rival.amount) * 100);
   return { primary, rival, percent, equal };
 }
+
+export function resolvedPriceDelta(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const primaryRaw = typeof record.primaryRaw === "string" ? record.primaryRaw : "";
+  const rivalRaw = typeof record.rivalRaw === "string" ? record.rivalRaw : "";
+  const comparison = comparablePriceDelta(primaryRaw, rivalRaw);
+  return comparison ? { ...comparison, primaryRaw, rivalRaw } : null;
+}

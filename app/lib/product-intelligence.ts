@@ -41,6 +41,7 @@ export type ProductMatch = {
     priceVerdict: string;
     whyTheyMayWin: string;
     recommendedMove: string;
+    priceComparison: { primaryRaw: string; rivalRaw: string } | null;
   } | null;
 };
 
@@ -49,6 +50,26 @@ export type ProductComparison = {
   comparisonDomains: string[];
   rows: Array<{ primary: ProductRecord; matches: ProductMatch[] }>;
   unmatched: Array<{ domain: string; products: ProductRecord[] }>;
+  coverage: {
+    primaryProductsAvailable: number;
+    primaryProductsScanned: number;
+    primaryProductFamiliesCompared: number;
+    competitorProductsAvailable: number;
+    competitorProductsScanned: number;
+    assignedPairCount: number;
+    verifiedPairCount: number;
+    rowsReturned: number;
+    rowLimit: number;
+    truncated: boolean;
+  };
+};
+
+export type ProductEnrichmentTarget = {
+  domain: string;
+  sourceUrl: string;
+  productId: string;
+  pairScore: number;
+  role: "primary" | "rival";
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -58,11 +79,30 @@ const PRODUCT_PATH = /\/(?:billing|checkout|invoices?|payments?|subscriptions?|p
 const EXCLUDED_PATH = /\/(?:about|articles?|blog|careers?|case-studies|company|contact|customers?|docs?|events?|guides?|help|jobs?|legal|news|partners?|press|privacy|resources?|security|stories|support|terms)(?:\/|$)/i;
 const PRODUCT_HEADING = /\b(?:billing|checkout|invoices?|payments?|plan|pricing|subscriptions?|tier|package|product|service|solution|feature|includes?|built for)\b/i;
 const PRICING_PATH = /\/(?:pricing|plans?)(?:\/|$)/i;
+const OFFERING_PATH = /\/(?:boxes?|bundles?|subscriptions?|products?|features?|solutions?|services?|capabilities|expertise|platform|pricing|plans?)(?:\/|$)/i;
+const SAAS_OFFERING_WORDS = /\b(?:analy(?:s(?:e|is)|tics?)|automat(?:e|ion)|campaigns?|collaborat(?:e|ion)|content creation|engag(?:e|ement)|landing page|mobile app|performance|plan(?:ning)?|posts?|publish(?:ing)?|schedul(?:e|ing)|social media|workflow)\b/i;
+const AGENCY_OFFERING_WORDS = /\b(?:brand|design|development|engineering|innovation|mobile|product strategy|prototyping|research|strategy|user experience|ux|web)\b/i;
+const ECOMMERCE_OFFERING_WORDS = /\b(?:box(?:es)?|bundles?|delivery|membership|subscriptions?)\b/i;
+const GENERIC_OFFERING_HEADING = /^(?:all features|benefits|built for .+|customer stories|everything you need|get started|how it works|learn more|our (?:features|products|services|work)|pricing|services|solutions|what we do|why .+)$/i;
+const BUSINESS_TYPE_ONLY_OFFERING = /^(?:content creation|mobile app|social media)$/i;
+const GENERIC_PAGE_NAME = /^(?:features?|platform|pricing|products?|services?|solutions?|plans?)$/i;
+const SAAS_PLAN_NAME = /^(?:free|personal|basic|essentials?|starter|standard|unlimited|professional|pro|team|business|advanced|growth|premium|scale|enterprise|custom)$/i;
+const EDITORIAL_HEADING = /^(?:a guide to|case study|how (?:do|to)|news|our story|the faces behind|what is|why )\b|\b(?:case study|customer stor(?:y|ies)|in the age of)\b/i;
+const SLOGAN_LIKE_OFFERING = /[.!?]\s+[\p{L}\p{N}]|^(?:the|your)\s+.+\s+workspace$/iu;
 const STOPWORDS = new Set([
   "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "is", "it", "of", "on", "or", "our", "the", "their", "this", "to", "with", "your",
 ]);
 const GENERIC_TOKENS = new Set([
   "app", "basic", "business", "catalog", "collection", "collections", "edition", "enterprise", "essential", "feature", "features", "free", "plan", "plans", "platform", "plus", "premium", "pricing", "pro", "product", "products", "saas", "service", "services", "shop", "software", "solution", "starter", "store", "suite",
+]);
+const ACCESSORY_PRODUCT_GROUPS = new Map<string, string>([
+  ...["book", "books", "cookbook", "cookbooks", "guide", "guides"].map((token) => [token, "publication"] as const),
+  ...["cup", "cups", "mug", "mugs"].map((token) => [token, "drinkware"] as const),
+  ...["infuser", "infusers", "scoop", "scoops", "spoon", "spoons", "whisk", "whisks"].map((token) => [token, "preparation-accessory"] as const),
+  ...["voucher", "vouchers"].map((token) => [token, "voucher"] as const),
+  ...["butter", "butters", "spread", "spreads"].map((token) => [token, "spread"] as const),
+  ...["cereal", "cereals", "granola", "granolas", "muesli"].map((token) => [token, "granola"] as const),
+  ...["bar", "bars"].map((token) => [token, "snack-bar"] as const),
 ]);
 
 function clean(value: string) {
@@ -124,17 +164,19 @@ function nodeType(record: JsonRecord): ProductRecord["jsonLdType"] | null {
 }
 
 function periodFrom(value: string) {
-  const match = value.match(/\/(?:\s*)?(month|mo|year|yr|week|day|user)/i);
+  const match = value.match(/(?:\/\s*|\bper\s+(?:(?:user|seat|channel|brand|workspace|social\s+set)\s*[,/]?\s*(?:per\s+)?)?)(month|mo|year|yr|week|day)/i);
   return match?.[1]?.toLowerCase();
 }
 
 function priceSignal(rawValue: unknown, currencyValue?: unknown): ProductPriceSignal | null {
   const rawText = text(rawValue);
   if (!rawText) return null;
-  const currency = text(currencyValue).toUpperCase() || undefined;
+  const explicitCurrency = text(currencyValue).toUpperCase();
+  const inferredCurrency = /£/.test(rawText) ? "GBP" : /€/.test(rawText) ? "EUR" : /\$/.test(rawText) ? "USD" : undefined;
+  const currency = explicitCurrency || inferredCurrency;
   const amountMatch = rawText.replace(/,/g, "").match(/\d+(?:\.\d+)?/);
   const amount = amountMatch ? Number(amountMatch[0]) : undefined;
-  const raw = currency && !rawText.toUpperCase().includes(currency) ? `${currency} ${rawText}` : rawText;
+  const raw = explicitCurrency && !rawText.toUpperCase().includes(explicitCurrency) ? `${explicitCurrency} ${rawText}` : rawText;
   return { raw: raw.slice(0, 120), currency, amount: Number.isFinite(amount) ? amount : undefined, period: periodFrom(raw) };
 }
 
@@ -225,6 +267,110 @@ export type ProductExtractionInput = {
   pagePriceSignals: string[];
 };
 
+type SaasPlanTier = "free" | "entry" | "team" | "enterprise";
+
+function readableHtml(value: string) {
+  return clean(value
+    .replace(/<template\b[^>]*>[\s\S]*?<\/template\s*>/gi, " ")
+    .replace(/<(script|style|svg)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " "));
+}
+
+function cleanPlanName(value: string) {
+  const name = clean(value)
+    .replace(/\b(?:placeholder|recommended|most popular|popular|best value)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return SAAS_PLAN_NAME.test(name) ? name : "";
+}
+
+function planTier(name: string, price?: ProductPriceSignal): SaasPlanTier | null {
+  if (/\b(?:enterprise|custom)\b/i.test(name)) return "enterprise";
+  if (/\bfree\b/i.test(name) || price?.amount === 0 || (/\bpersonal\b/i.test(name) && !price?.amount)) return "free";
+  if (/\b(?:basic|essentials?|starter|standard|unlimited|personal)\b/i.test(name)) return "entry";
+  if (/\b(?:professional|pro|team|business|advanced|growth|premium|scale)\b/i.test(name)) return "team";
+  return null;
+}
+
+function planPrice(value: string) {
+  const expression = /(?:[$\u00a3\u20ac]\s?\d+(?:[.,]\d{1,2})?(?:\s*(?:USD|GBP|EUR))?(?:\s*(?:\/\s*|per\s+(?:(?:user|seat|channel|brand|workspace|social\s+set)\s*[,/]?\s*(?:per\s+)?)?)(?:month|mo|year|yr))?|\d+(?:[.,]\d{1,2})?\s*(?:USD|GBP|EUR)(?:\s*\/\s*(?:month|mo|year|yr))?)/gi;
+  const raws = [...value.matchAll(expression)].map((match) => clean(match[0])).filter(Boolean);
+  const recurring = raws.find((raw) => periodFrom(raw));
+  return priceSignal(recurring || raws[0]);
+}
+
+function planPriceBasis(value: string, price?: ProductPriceSignal) {
+  if (price && /\bper\s+(?:user|seat)\b|\b(?:user|seat)\s*\/\s*(?:month|mo|year|yr)\b/i.test(price.raw)) return "user";
+  if (/\bsocial\s+sets?\b/i.test(value)) return "social-set";
+  if (/\bchannels?\b/i.test(value)) return "channel";
+  if (/\bbrands?\b/i.test(value)) return "brand";
+  if (/\bworkspaces?\b/i.test(value)) return "workspace";
+  if (/\b(?:per\s+)?(?:user|seat)(?:\s*[,/]\s*per)?\s*(?:month|mo|year|yr)?\b/i.test(value)) return "user";
+  return price?.period ? "flat" : "unspecified";
+}
+
+function planBillingCommitment(value: string) {
+  if (/\b(?:billed|billing|paid|pay)\s+(?:yearly|annually|annual)\b|\bannual\s+(?:billing|commitment|contract)\b/i.test(value)) return "annual";
+  if (/\b(?:billed|billing|paid|pay)\s+monthly\b|\bmonth[- ]to[- ]month\b|\bmonthly\s+(?:billing|commitment|contract)\b/i.test(value)) return "monthly";
+  return "unspecified";
+}
+
+function extractSaasPlans(input: ProductExtractionInput) {
+  let path = "";
+  try { path = new URL(input.sourceUrl).pathname; } catch { return [] as ProductRecord[]; }
+  if (!PRICING_PATH.test(path)) return [];
+  const candidates: Array<{ name: string; context: string; billingContext: string }> = [];
+  const headings = [...input.document.matchAll(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi)];
+  for (let index = 0; index < headings.length; index += 1) {
+    const name = cleanPlanName(headings[index][2] || "");
+    if (!name) continue;
+    const start = headings[index].index || 0;
+    const end = headings[index + 1]?.index ?? Math.min(input.document.length, start + 12_000);
+    const readableSection = readableHtml(input.document.slice(start, end));
+    const context = readableSection.slice(0, 1_200);
+    const billingContext = readableSection;
+    if (planPrice(context) || /\b(?:contact sales|get a demo|request a demo|custom pricing|free forever)\b/i.test(context)) candidates.push({ name, context, billingContext });
+  }
+  const selected = new Map<string, ProductRecord>();
+  for (const candidate of candidates) {
+    const observedPrice = planPrice(candidate.context) || undefined;
+    const price = observedPrice && (observedPrice.period || observedPrice.amount === 0) ? observedPrice : undefined;
+    const tier = planTier(candidate.name, price);
+    if (!tier) continue;
+    const basis = planPriceBasis(candidate.context, price);
+    const commitment = planBillingCommitment(candidate.billingContext);
+    const id = makeId(input.domain, candidate.name, input.sourceUrl);
+    const attributes = [
+      `Plan tier: ${tier}`,
+      `Price basis: ${basis}`,
+      ...(price?.period ? [`Billing period: ${price.period}`] : []),
+      ...(price?.period ? [`Billing commitment: ${commitment}`] : []),
+      ...(!price && /\b(?:contact sales|get a demo|request a demo|custom pricing)\b/i.test(candidate.context) ? ["Price visibility: contact sales"] : []),
+    ];
+    const record: ProductRecord = {
+      id,
+      domain: canonicalHost(input.domain),
+      name: candidate.name,
+      normalizedName: normalized(candidate.name),
+      description: candidate.context.slice(0, 400),
+      category: `saas-plan ${tier}`,
+      jsonLdType: "Service",
+      priceSignals: price ? [price] : [],
+      attributes,
+      ownership: "path-inferred",
+      extraction: "page-signal",
+      confidence: "Medium",
+      sourceUrl: input.sourceUrl,
+      imageUrl: "",
+      observedAt: input.observedAt,
+      claimIds: [`${id}-observed`],
+    };
+    const key = `${record.domain}|${record.normalizedName}`;
+    const current = selected.get(key);
+    if (!current || record.priceSignals.length > 0) selected.set(key, record);
+  }
+  return [...selected.values()].slice(0, 8);
+}
+
 export function isProductLikePage(input: Pick<ProductExtractionInput, "sourceUrl" | "domain" | "pageTitle" | "headings" | "pagePriceSignals">) {
   const path = new URL(input.sourceUrl).pathname;
   if (EXCLUDED_PATH.test(path)) return false;
@@ -235,7 +381,7 @@ export function isProductLikePage(input: Pick<ProductExtractionInput, "sourceUrl
 }
 
 export function extractProductsFromHtml(input: ProductExtractionInput): ProductExtractionResult {
-  const products: ProductRecord[] = [];
+  const products: ProductRecord[] = extractSaasPlans(input);
   const thirdPartyReferenced: ProductRecord[] = [];
   const gaps: string[] = [];
   const scripts = [...input.document.matchAll(/<script[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
@@ -256,7 +402,7 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
     const titleName = clean(input.pageTitle.split(/\s+(?:\||—|–|-)\s+/)[0] || input.pageTitle);
     const observedHeading = input.headings.find((heading) => !/\b(?:logo|menu|skip navigation|home)\b/i.test(heading));
     const name = titleName && !/\b(?:logo|home)\b/i.test(titleName) ? titleName : clean(observedHeading || input.pageTitle);
-    if (name) {
+    if (name && !GENERIC_PAGE_NAME.test(name)) {
       const id = makeId(input.domain, name, input.sourceUrl);
       products.push({
         id,
@@ -282,6 +428,79 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
   return { products: dedupe(products), thirdPartyReferenced: dedupe(thirdPartyReferenced), gaps: [...new Set(gaps)] };
 }
 
+export type FirstPartyOfferingInput = {
+  domain: string;
+  observedAt: string;
+  businessType: "ecommerce" | "saas" | "agency" | "unknown";
+  pages: Array<{ sourceUrl: string; title: string; description: string; headings: string[] }>;
+};
+
+function usefulOfferingName(value: string) {
+  let name = clean(value);
+  const words = name.split(/\s+/);
+  if (words.length % 2 === 0) {
+    const midpoint = words.length / 2;
+    if (words.slice(0, midpoint).join(" ").toLowerCase() === words.slice(midpoint).join(" ").toLowerCase()) name = words.slice(0, midpoint).join(" ");
+  }
+  const terms = normalized(name).split(/\s+/).filter(Boolean);
+  if (!name || name.length > 120 || terms.length < 2 || terms.length > 14 || GENERIC_OFFERING_HEADING.test(name) || BUSINESS_TYPE_ONLY_OFFERING.test(name) || EDITORIAL_HEADING.test(name) || SLOGAN_LIKE_OFFERING.test(name)) return "";
+  return name;
+}
+
+function matchesOfferingType(name: string, businessType: FirstPartyOfferingInput["businessType"]) {
+  if (businessType === "ecommerce") return ECOMMERCE_OFFERING_WORDS.test(name);
+  if (businessType === "saas") return SAAS_OFFERING_WORDS.test(name);
+  if (businessType === "agency") return AGENCY_OFFERING_WORDS.test(name);
+  return false;
+}
+
+export function extractFirstPartyOfferings(input: FirstPartyOfferingInput) {
+  if (input.businessType === "unknown") return [];
+  const candidates: Array<{ name: string; page: FirstPartyOfferingInput["pages"][number]; category: string }> = [];
+  for (const page of input.pages) {
+    let path = "/";
+    try { path = new URL(page.sourceUrl).pathname; } catch { continue; }
+    if (EXCLUDED_PATH.test(path)) continue;
+    const offeringPage = OFFERING_PATH.test(path);
+    const category = path.split("/").filter(Boolean)[0] || input.businessType;
+    const headings = page.headings.map(usefulOfferingName).filter(Boolean).filter((heading) => matchesOfferingType(heading, input.businessType));
+    for (const name of headings) candidates.push({ name, page, category });
+
+    const pathParts = path.split("/").filter(Boolean);
+    if (offeringPage && headings.length === 0 && pathParts.length >= 2) {
+      const title = usefulOfferingName(page.title.split(/\s+(?:\||—|–|-)\s+/)[0] || page.title);
+      if (title) candidates.push({ name: title, page, category });
+    }
+  }
+
+  const selected = new Map<string, ProductRecord>();
+  for (const candidate of candidates) {
+    const key = normalized(candidate.name);
+    if (!key || selected.has(key)) continue;
+    const id = makeId(input.domain, candidate.name, candidate.page.sourceUrl);
+    selected.set(key, {
+      id,
+      domain: canonicalHost(input.domain),
+      name: candidate.name,
+      normalizedName: key,
+      description: clean(candidate.page.description || `${candidate.name} is presented as a first-party offering.`).slice(0, 400),
+      category: candidate.category,
+      jsonLdType: "Service",
+      priceSignals: [],
+      attributes: [],
+      ownership: "path-inferred",
+      extraction: "page-signal",
+      confidence: "Medium",
+      sourceUrl: candidate.page.sourceUrl,
+      imageUrl: "",
+      observedAt: input.observedAt,
+      claimIds: [`${id}-observed`],
+    });
+    if (selected.size >= 12) break;
+  }
+  return [...selected.values()];
+}
+
 export function extractProductsFromSitemap(document: string, domain: string, observedAt: string) {
   const products: ProductRecord[] = [];
   for (const match of document.matchAll(/<url>([\s\S]*?)<\/url>/gi)) {
@@ -290,7 +509,8 @@ export function extractProductsFromSitemap(document: string, domain: string, obs
     if (!sourceUrl) continue;
     let url: URL;
     try { url = new URL(sourceUrl); } catch { continue; }
-    if (canonicalHost(url.hostname) !== canonicalHost(domain) || !/^\/products?\//i.test(url.pathname)) continue;
+    const catalogPath = /\/(?:products?|shop|store)\//i.test(url.pathname);
+    if (canonicalHost(url.hostname) !== canonicalHost(domain) || !catalogPath) continue;
     const sitemapTitle = clean(entry.match(/<(?:image:)?title>\s*([\s\S]*?)\s*<\/(?:image:)?title>/i)?.[1] || "");
     const name = sitemapTitle || clean(url.pathname.split("/").filter(Boolean).at(-1)?.replace(/[-_]+/g, " ") || "");
     if (!name) continue;
@@ -321,11 +541,17 @@ export function extractProductsFromSitemap(document: string, domain: string, obs
 }
 
 export function selectPreferredProducts(items: ProductRecord[]) {
+  const quality = (item: ProductRecord) =>
+    (item.extraction === "json-ld" ? 40 : item.extraction === "page-signal" ? 20 : 10)
+    + (item.confidence === "High" ? 20 : 0)
+    + (item.priceSignals.length ? 15 : 0)
+    + (item.description ? 5 : 0)
+    + (item.imageUrl ? 3 : 0);
   const selected = new Map<string, ProductRecord>();
   for (const item of items) {
     const key = `${item.domain}|${item.normalizedName}`;
     const current = selected.get(key);
-    if (!current || (item.confidence === "High" && current.confidence !== "High")) selected.set(key, item);
+    if (!current || quality(item) > quality(current)) selected.set(key, item);
   }
   return [...selected.values()];
 }
@@ -333,6 +559,14 @@ export function selectPreferredProducts(items: ProductRecord[]) {
 function fieldTokens(product: ProductRecord, value: string) {
   const identityTokens = new Set(tokens(canonicalHost(product.domain).split(".")[0], true));
   return tokens(value).filter((token) => !identityTokens.has(token) && !/^\d+(?:\.\d+)?(?:g|kg|ml|l|oz|lb|pk|pack|pcs?)?$/i.test(token));
+}
+
+function productFamilyName(value: string) {
+  return clean(value)
+    .replace(/\s*\([^)]*\)\s*/g, " ")
+    .replace(/\s+(?:-|–|—|\|)\s+.+$/u, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function editDistanceAtMostOne(left: string, right: string) {
@@ -366,64 +600,170 @@ export function scoreProductPair(primary: ProductRecord, candidate: ProductRecor
   const primaryDescription = fieldTokens(primary, primary.description);
   const candidateDescription = fieldTokens(candidate, candidate.description);
   const sharedNameTerms = primaryName.filter((token) => candidateName.some((candidateToken) => editDistanceAtMostOne(token, candidateToken)));
+  const primaryFamily = fieldTokens(primary, productFamilyName(primary.name));
+  const candidateFamily = fieldTokens(candidate, productFamilyName(candidate.name));
+  const sharedFamilyTerms = primaryFamily.filter((token) => candidateFamily.some((candidateToken) => editDistanceAtMostOne(token, candidateToken)));
+  const familySimilarity = primaryFamily.length >= 2 && candidateFamily.length >= 2 && sharedFamilyTerms.length >= 2 ? jaccard(primaryFamily, candidateFamily) : 0;
+  const primaryNameContained = primaryName.length >= 2 && primaryName.every((token) => candidateName.includes(token));
+  const nameSimilarity = Math.max(jaccard(primaryName, candidateName), familySimilarity, primaryNameContained ? 1 : 0);
   const sharedTerms = [...new Set([...sharedNameTerms, ...primaryCategory.filter((token) => candidateCategory.includes(token)), ...primaryDescription.filter((token) => candidateDescription.includes(token))])].sort();
   const imageTokens = (url: string) => { try { return tokens(decodeURIComponent(new URL(url).pathname.split("/").at(-1) || "").replace(/\.[a-z0-9]{2,5}$/i, ""), true).filter((token) => !/^(?:asset|default|hero|image|img|logo|og|placeholder|product|products|thumb|thumbnail|\d+)$/i.test(token)); } catch { return []; } };
   const imageScore = primary.imageUrl && candidate.imageUrl ? jaccard(imageTokens(primary.imageUrl), imageTokens(candidate.imageUrl)) : 0;
-  const score = (jaccard(primaryName, candidateName) * 0.58) + (jaccard(primaryCategory, candidateCategory) * 0.18) + (jaccard(primaryDescription, candidateDescription) * 0.14) + (imageScore * 0.1);
+  const baseScore = (nameSimilarity * 0.58) + (jaccard(primaryCategory, candidateCategory) * 0.18) + (jaccard(primaryDescription, candidateDescription) * 0.14) + (imageScore * 0.1);
+  const primaryPlanTier = primary.category.startsWith("saas-plan") ? planTier(primary.name, primary.priceSignals[0]) : null;
+  const candidatePlanTier = candidate.category.startsWith("saas-plan") ? planTier(candidate.name, candidate.priceSignals[0]) : null;
+  const bothSaasPlans = Boolean(primaryPlanTier && candidatePlanTier);
+  const eitherSaasPlan = Boolean(primaryPlanTier || candidatePlanTier);
+  const sameSaasPlanTier = Boolean(bothSaasPlans && primaryPlanTier === candidatePlanTier);
+  const score = sameSaasPlanTier ? Math.max(baseScore, 0.72) : baseScore;
+  if (sameSaasPlanTier) sharedTerms.push(`plan tier: ${primaryPlanTier}`);
   const categoryOverlap = primaryCategory.some((token) => candidateCategory.includes(token));
   const incompatiblePhysicalService = new Set([primary.jsonLdType, candidate.jsonLdType]).has("Product") && new Set([primary.jsonLdType, candidate.jsonLdType]).has("Service") && !categoryOverlap;
-  return { score: Number(score.toFixed(4)), sharedTerms, imageScore: Number(imageScore.toFixed(4)), eligible: score >= 0.32 && sharedNameTerms.length >= 2 && !incompatiblePhysicalService };
+  const primaryAccessoryGroups = new Set(primaryName.map((token) => ACCESSORY_PRODUCT_GROUPS.get(token)).filter((group): group is string => Boolean(group)));
+  const candidateAccessoryGroups = new Set(candidateName.map((token) => ACCESSORY_PRODUCT_GROUPS.get(token)).filter((group): group is string => Boolean(group)));
+  const incompatibleAccessory = [...new Set([...primaryAccessoryGroups, ...candidateAccessoryGroups])]
+    .some((group) => primaryAccessoryGroups.has(group) !== candidateAccessoryGroups.has(group));
+  const ordinaryEligible = score >= 0.32 && sharedNameTerms.length >= 2;
+  return { score: Number(score.toFixed(4)), sharedTerms, imageScore: Number(imageScore.toFixed(4)), eligible: (sameSaasPlanTier || (!eitherSaasPlan && ordinaryEligible)) && !incompatiblePhysicalService && !incompatibleAccessory };
 }
 
 function comparablePrice(product: ProductRecord) {
-  return product.priceSignals.find((signal) => typeof signal.amount === "number" && signal.currency);
+  const prices = product.priceSignals.filter((signal) => typeof signal.amount === "number" && signal.currency);
+  const currencies = new Set(prices.map((signal) => signal.currency));
+  const amounts = new Set(prices.map((signal) => signal.amount));
+  return currencies.size === 1 && amounts.size === 1 ? prices[0] : undefined;
+}
+
+function hasPublicPrice(product: ProductRecord) {
+  return product.priceSignals.some((signal) => typeof signal.amount === "number" && signal.currency);
+}
+
+function planAttribute(product: ProductRecord, label: string) {
+  return product.attributes.find((value) => value.toLowerCase().startsWith(`${label.toLowerCase()}:`))?.split(":").slice(1).join(":").trim() || "";
 }
 
 function productDecision(primary: ProductRecord, candidate: ProductRecord, score: number): NonNullable<ProductMatch["decision"]> {
   const primaryPrice = comparablePrice(primary);
   const candidatePrice = comparablePrice(candidate);
+  const primaryHasPrice = hasPublicPrice(primary);
+  const candidateHasPrice = hasPublicPrice(candidate);
+  const saasPlanPair = primary.category.startsWith("saas-plan") && candidate.category.startsWith("saas-plan");
+  const billingAligned = !saasPlanPair || Boolean(
+    primaryPrice?.period
+    && candidatePrice?.period
+    && primaryPrice.period === candidatePrice.period
+    && planAttribute(primary, "Price basis") === planAttribute(candidate, "Price basis")
+    && planAttribute(primary, "Price basis") !== "unspecified"
+    && planAttribute(primary, "Billing commitment") === planAttribute(candidate, "Billing commitment")
+    && planAttribute(primary, "Billing commitment") !== "unspecified"
+  );
+  const priceComparison = primaryPrice && candidatePrice && primaryPrice.currency === candidatePrice.currency && billingAligned
+    ? { primaryRaw: primaryPrice.raw, rivalRaw: candidatePrice.raw }
+    : null;
   let priceVerdict = "Public prices are not comparable yet.";
   let whyTheyMayWin = `The rival presents ${candidate.name} as the closest observable alternative.`;
-  let recommendedMove = "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer.";
-  if (primaryPrice && candidatePrice && primaryPrice.currency === candidatePrice.currency && primaryPrice.amount !== candidatePrice.amount) {
+  let recommendedMove = saasPlanPair
+    ? "Compare included users, usage limits, billing cadence, and annual commitment before changing the plan."
+    : "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer.";
+  if (saasPlanPair && primaryHasPrice && candidateHasPrice && !billingAligned) {
+    priceVerdict = "Both expose public plan prices, but billing period, commitment, or unit basis is unresolved.";
+    whyTheyMayWin = "The plans use different or unclear billing terms, so a simple price lead would be misleading.";
+    recommendedMove = "Normalize per-user, per-channel, or flat pricing, billing period, and commitment before changing packaging.";
+  } else if (primaryPrice && candidatePrice && primaryPrice.currency === candidatePrice.currency && primaryPrice.amount === candidatePrice.amount) {
+    priceVerdict = `The observed public price is the same at ${primaryPrice.currency} ${primaryPrice.amount!.toFixed(2)}.`;
+    whyTheyMayWin = saasPlanPair ? "Price is not the visible differentiator at this comparable plan tier." : "Price is not the visible differentiator on this matched product.";
+    recommendedMove = saasPlanPair ? "Lead with included usage, collaboration, automation, or support advantages instead of price." : "Lead with a concrete product, availability, delivery, or trust advantage instead of price.";
+  } else if (primaryPrice && candidatePrice && primaryPrice.currency === candidatePrice.currency && primaryPrice.amount !== candidatePrice.amount) {
     const difference = Math.abs(primaryPrice.amount! - candidatePrice.amount!);
     const currency = primaryPrice.currency;
     if (candidatePrice.amount! < primaryPrice.amount!) {
       priceVerdict = `${candidate.domain} is ${currency} ${difference.toFixed(2)} cheaper on the observed price.`;
-      whyTheyMayWin = "A lower visible price gives the rival a simpler conversion argument.";
-      recommendedMove = "Either justify your premium with a concrete product advantage or test a matched-price offer.";
+      whyTheyMayWin = saasPlanPair ? "A lower visible price at the same billing unit gives the rival a simpler conversion argument." : "A lower visible price gives the rival a simpler conversion argument.";
+      recommendedMove = saasPlanPair ? "Verify included limits, then justify the premium with a named capability or test the aligned plan price." : "Either justify your premium with a concrete product advantage or test a matched-price offer.";
     } else {
       priceVerdict = `You are ${currency} ${difference.toFixed(2)} cheaper on the observed price.`;
-      whyTheyMayWin = "Price is not their visible advantage; their product framing or availability may be doing the work.";
-      recommendedMove = "Put your lower price beside an equivalent pack-size claim and make it prominent in ads and collection pages.";
+      whyTheyMayWin = saasPlanPair ? "Price is not their visible advantage; included limits, workflow depth, or brand trust may be doing the work." : "Price is not their visible advantage; their product framing or availability may be doing the work.";
+      recommendedMove = saasPlanPair ? "Show the lower aligned plan price beside the specific limits and capabilities it includes." : "Put your lower price beside an equivalent pack-size claim and make it prominent in ads and collection pages.";
     }
-  } else if (!primaryPrice && candidatePrice) {
+  } else if (!saasPlanPair && primaryHasPrice && candidateHasPrice) {
+    priceVerdict = "Both expose public prices, but variant or pack-size alignment is unresolved.";
+    whyTheyMayWin = "The public pages expose multiple variants or non-comparable currencies, so a simple price lead would be misleading.";
+    recommendedMove = "Normalize pack size and variant before using price in a campaign or merchandising decision.";
+  } else if (!primaryHasPrice && candidateHasPrice) {
     priceVerdict = `${candidate.domain} exposes a public price while yours was not observed.`;
     whyTheyMayWin = "The rival removes price uncertainty before checkout.";
     recommendedMove = "Expose the comparable price earlier on the product or collection page.";
-  } else if (primaryPrice && !candidatePrice) {
+  } else if (primaryHasPrice && !candidateHasPrice) {
     priceVerdict = "You expose a public price while the rival did not in this crawl.";
     whyTheyMayWin = "Their advantage is not visible price transparency in the pages we observed.";
     recommendedMove = "Keep price clarity and strengthen the product-specific reason to choose you.";
   } else if (score >= 0.65) {
     whyTheyMayWin = "The two offers look very similar from public product language, so small price, availability, or trust differences can decide the sale.";
   }
-  return { priceVerdict, whyTheyMayWin, recommendedMove };
+  return { priceVerdict, whyTheyMayWin, recommendedMove, priceComparison };
 }
 
 export function buildProductComparison(primaryDomain: string, catalogs: Array<{ domain: string; products: ProductRecord[] }>, requiredSourceUrls: Record<string, string[]> = {}): ProductComparison {
   const canonicalPrimary = canonicalHost(primaryDomain);
+  const maxProductsPerCatalog = 400;
+  const rowLimit = 80;
+  const minimumCoverageRows = 16;
+  const maxUnmatchedProductsPerDomain = 24;
   const rank = (product: ProductRecord) => Number(product.confidence === "High") * 4 + Number(product.priceSignals.length > 0) * 2 + Number(product.extraction === "json-ld");
   const selectForComparison = (domain: string, products: ProductRecord[]) => {
     const required = new Set((requiredSourceUrls[canonicalHost(domain)] || []).map((url) => url.split("#")[0]));
-    return [...products].sort((left, right) => Number(required.has(right.sourceUrl.split("#")[0])) - Number(required.has(left.sourceUrl.split("#")[0])) || rank(right) - rank(left) || left.id.localeCompare(right.id)).slice(0, 16);
+    return [...products].sort((left, right) => Number(required.has(right.sourceUrl.split("#")[0])) - Number(required.has(left.sourceUrl.split("#")[0])) || rank(right) - rank(left) || left.id.localeCompare(right.id)).slice(0, maxProductsPerCatalog);
   };
-  const primaryProducts = selectForComparison(canonicalPrimary, catalogs.find((catalog) => canonicalHost(catalog.domain) === canonicalPrimary)?.products || []);
+  const collapsePrimaryFamilies = (products: ProductRecord[]) => {
+    const selected = new Map<string, ProductRecord>();
+    for (const product of products) {
+      const familyTokens = product.jsonLdType === "Product" ? fieldTokens(product, productFamilyName(product.name)) : [];
+      const key = familyTokens.length >= 2 ? `${product.jsonLdType}|${familyTokens.join("|")}` : `${product.jsonLdType}|${product.id}`;
+      if (!selected.has(key)) selected.set(key, product);
+    }
+    return [...selected.values()];
+  };
+  const primaryCatalog = catalogs.find((catalog) => canonicalHost(catalog.domain) === canonicalPrimary)?.products || [];
+  const primaryProductsScanned = selectForComparison(canonicalPrimary, primaryCatalog);
+  const primaryProducts = collapsePrimaryFamilies(primaryProductsScanned);
   const competitors = catalogs.filter((catalog) => canonicalHost(catalog.domain) !== canonicalPrimary).map((catalog) => ({ ...catalog, domain: canonicalHost(catalog.domain), products: selectForComparison(catalog.domain, catalog.products) }));
   const rows = primaryProducts.map((primary) => ({ primary, matches: [] as ProductMatch[] }));
   const unmatched: ProductComparison["unmatched"] = [];
   for (const competitor of competitors) {
-    const pairs = primaryProducts.flatMap((primary) => competitor.products.map((product) => ({ primary, product, ...scoreProductPair(primary, product) }))).filter((pair) => pair.eligible).sort((left, right) => right.score - left.score || Number(right.primary.jsonLdType === right.product.jsonLdType) - Number(left.primary.jsonLdType === left.product.jsonLdType) || left.primary.id.localeCompare(right.primary.id) || left.product.id.localeCompare(right.product.id));
+    const competitorTokenIndex = new Map<string, ProductRecord[]>();
+    for (const product of competitor.products) {
+      for (const token of fieldTokens(product, product.name)) {
+        const entries = competitorTokenIndex.get(token) || [];
+        entries.push(product);
+        competitorTokenIndex.set(token, entries);
+      }
+    }
+    const nearbyProductsByToken = new Map<string, ProductRecord[]>();
+    const nearbyProducts = (primaryToken: string) => {
+      const cached = nearbyProductsByToken.get(primaryToken);
+      if (cached) return cached;
+      const found = new Map<string, ProductRecord>();
+      for (const [competitorToken, products] of competitorTokenIndex) {
+        if (!editDistanceAtMostOne(primaryToken, competitorToken)) continue;
+        for (const product of products) found.set(product.id, product);
+      }
+      const result = [...found.values()];
+      nearbyProductsByToken.set(primaryToken, result);
+      return result;
+    };
+    const pairs = primaryProducts.flatMap((primary) => {
+      const hitCounts = new Map<string, { product: ProductRecord; count: number }>();
+      for (const token of fieldTokens(primary, primary.name)) {
+        for (const product of nearbyProducts(token)) {
+          const hit = hitCounts.get(product.id);
+          hitCounts.set(product.id, { product, count: (hit?.count || 0) + 1 });
+        }
+      }
+      const candidates = primary.category.startsWith("saas-plan")
+        ? competitor.products.filter((product) => product.category.startsWith("saas-plan"))
+        : [...hitCounts.values()].filter((hit) => hit.count >= 2).map((hit) => hit.product);
+      return candidates.map((product) => ({ primary, product, ...scoreProductPair(primary, product) }));
+    }).filter((pair) => pair.eligible).sort((left, right) => right.score - left.score || Number(right.primary.jsonLdType === right.product.jsonLdType) - Number(left.primary.jsonLdType === left.product.jsonLdType) || left.primary.id.localeCompare(right.primary.id) || left.product.id.localeCompare(right.product.id));
     const usedPrimary = new Set<string>();
     const usedProducts = new Set<string>();
     const assignments = new Map<string, typeof pairs[number]>();
@@ -437,7 +777,84 @@ export function buildProductComparison(primaryDomain: string, catalogs: Array<{ 
       const pair = assignments.get(row.primary.id);
       row.matches.push(pair ? { domain: competitor.domain, product: pair.product, score: pair.score, confidence: pair.score >= 0.55 ? "Medium" : "Low", sharedTerms: pair.sharedTerms.slice(0, 8), claimIds: [...row.primary.claimIds, ...pair.product.claimIds], decision: productDecision(row.primary, pair.product, pair.score) } : { domain: competitor.domain, product: null, score: 0, confidence: null, sharedTerms: [], claimIds: row.primary.claimIds, decision: null });
     }
-    unmatched.push({ domain: competitor.domain, products: competitor.products.filter((product) => !usedProducts.has(product.id)) });
+    unmatched.push({ domain: competitor.domain, products: competitor.products.filter((product) => !usedProducts.has(product.id)).slice(0, maxUnmatchedProductsPerDomain) });
   }
-  return { primaryDomain: canonicalPrimary, comparisonDomains: competitors.map((competitor) => competitor.domain), rows, unmatched };
+  const matchedRows = rows
+    .filter((row) => row.matches.some((match) => match.product))
+    .sort((left, right) => Math.max(...right.matches.map((match) => match.score)) - Math.max(...left.matches.map((match) => match.score)) || left.primary.id.localeCompare(right.primary.id));
+  const unmatchedRows = rows.filter((row) => row.matches.every((match) => !match.product));
+  const returnedRows = [...matchedRows.slice(0, rowLimit), ...unmatchedRows.slice(0, Math.max(0, minimumCoverageRows - matchedRows.length))];
+  const assignedPairCount = rows.reduce((sum, row) => sum + row.matches.filter((match) => match.product).length, 0);
+  const verifiedPairCount = rows.reduce((sum, row) => sum + row.matches.filter((match) => match.product && match.confidence === "Medium").length, 0);
+  return {
+    primaryDomain: canonicalPrimary,
+    comparisonDomains: competitors.map((competitor) => competitor.domain),
+    rows: returnedRows,
+    unmatched,
+    coverage: {
+      primaryProductsAvailable: primaryCatalog.length,
+      primaryProductsScanned: primaryProductsScanned.length,
+      primaryProductFamiliesCompared: primaryProducts.length,
+      competitorProductsAvailable: catalogs.filter((catalog) => canonicalHost(catalog.domain) !== canonicalPrimary).reduce((sum, catalog) => sum + catalog.products.length, 0),
+      competitorProductsScanned: competitors.reduce((sum, competitor) => sum + competitor.products.length, 0),
+      assignedPairCount,
+      verifiedPairCount,
+      rowsReturned: returnedRows.length,
+      rowLimit,
+      truncated: matchedRows.length > rowLimit,
+    },
+  };
+}
+
+function hasComparablePublicPrice(product: ProductRecord) {
+  return product.priceSignals.some((signal) => typeof signal.amount === "number" && Boolean(signal.currency));
+}
+
+function safeProductSource(product: ProductRecord) {
+  try {
+    const url = new URL(product.sourceUrl);
+    return /^https?:$/.test(url.protocol) && canonicalHost(url.hostname) === canonicalHost(product.domain) && /\/(?:products?|shop|store)\//i.test(url.pathname)
+      ? url.toString()
+      : "";
+  } catch {
+    return "";
+  }
+}
+
+export function selectProductEnrichmentTargets(comparison: ProductComparison, maxPages = 6): ProductEnrichmentTarget[] {
+  const boundedMax = Math.max(0, Math.min(6, Math.floor(maxPages)));
+  if (!boundedMax) return [];
+  const pairs = comparison.rows.flatMap((row) => row.matches.flatMap((match) => {
+    const rival = match.product;
+    if (!rival || row.primary.jsonLdType !== "Product" || rival.jsonLdType !== "Product") return [];
+    const primaryUrl = safeProductSource(row.primary);
+    const rivalUrl = safeProductSource(rival);
+    if (!primaryUrl || !rivalUrl || (hasComparablePublicPrice(row.primary) && hasComparablePublicPrice(rival))) return [];
+    return [{ primary: row.primary, rival, primaryUrl, rivalUrl, score: match.score, competitorDomain: match.domain }];
+  })).sort((left, right) => right.score - left.score || left.competitorDomain.localeCompare(right.competitorDomain) || left.primary.id.localeCompare(right.primary.id));
+  const selected: ProductEnrichmentTarget[] = [];
+  const selectedUrls = new Set<string>();
+  const selectedPairs = new Set<string>();
+  const addPair = (pair: typeof pairs[number]) => {
+    const key = `${pair.primary.id}|${pair.rival.id}`;
+    if (selectedPairs.has(key)) return;
+    const missing = [
+      ...(!hasComparablePublicPrice(pair.primary) ? [{ domain: pair.primary.domain, sourceUrl: pair.primaryUrl, productId: pair.primary.id, pairScore: pair.score, role: "primary" as const }] : []),
+      ...(!hasComparablePublicPrice(pair.rival) ? [{ domain: pair.rival.domain, sourceUrl: pair.rivalUrl, productId: pair.rival.id, pairScore: pair.score, role: "rival" as const }] : []),
+    ].filter((target) => !selectedUrls.has(target.sourceUrl));
+    if (!missing.length || selected.length + missing.length > boundedMax) return;
+    selectedPairs.add(key);
+    for (const target of missing) {
+      selectedUrls.add(target.sourceUrl);
+      selected.push(target);
+    }
+  };
+  const seenCompetitors = new Set<string>();
+  for (const pair of pairs) {
+    if (seenCompetitors.has(pair.competitorDomain)) continue;
+    addPair(pair);
+    seenCompetitors.add(pair.competitorDomain);
+  }
+  for (const pair of pairs) addPair(pair);
+  return selected;
 }
