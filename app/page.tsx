@@ -1,9 +1,11 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- remote competitor images are evidence URLs with unknown hosts */
 
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { postJson } from "./lib/json-response";
+import { composeProductMatchAttempts, hasProductMatchCoverageDefect, shouldRetryProductMatch, upsertProductComparisonBlock, type ProductMatchLifecycle } from "./lib/product-match-lifecycle";
 import { isDefensibleProductMatch, resolvedPriceDelta } from "./lib/report-presentation";
+import type { ProductComparison } from "./lib/product-intelligence";
 
 type ClaimType = "Observed" | "Inferred" | "Estimated" | "Recommended";
 type Locale = "en" | "ar";
@@ -141,7 +143,7 @@ type CrawlPayload = {
   };
 };
 type AdScanPayload = { ok: true; block: JsonBlock } | { ok: false; error?: string };
-type MatchPayload = { ok: true; comparison: Record<string, unknown> } | { ok: false; error?: string };
+type MatchPayload = { ok: true; comparison: ProductComparison } | { ok: false; error?: string };
 type CrawlFailure = {
   ok: false;
   live: false;
@@ -519,7 +521,7 @@ function PositioningComparison({ competitor, locale }: { competitor: JsonBlock; 
   );
 }
 
-function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading, adLoading, adError }: { document: JsonReportDocument; locale: Locale; marketBrief: MarketBrief | null; briefLoading: boolean; adLoading: boolean; adError: string }) {
+function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading, adLoading, adError, productMatchLifecycle, productMatchNotice }: { document: JsonReportDocument; locale: Locale; marketBrief: MarketBrief | null; briefLoading: boolean; adLoading: boolean; adError: string; productMatchLifecycle: ProductMatchLifecycle; productMatchNotice: string }) {
   const ar = locale === "ar";
   const summary = doc.blocks.find((block) => block.type === "summary");
   const profile = doc.blocks.find((block) => block.type === "market-profile");
@@ -689,7 +691,24 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
               </div>
               <p>{aiMatching ? (ar ? "نستخدم البحث الدلالي ثم تقييماً منظماً بالذكاء الاصطناعي لاكتشاف المنتج نفسه والبدائل القريبة، مع إبقاء النتيجة كاستنتاج مرتبط بالمصادر." : "Semantic retrieval finds plausible products, then a structured AI assessment separates the same product from close substitutes. Every result remains an inference tied to both public sources.") : ar ? "تظهر هنا فقط الأزواج التي اجتازت مطابقة الاسم والصفحة ومصدر الطرف الأول." : "Only pairs backed by matching names and crawled first-party product pages appear here."}</p>
             </div>
-            {comparison && <div className={`matching-method-banner ${aiMatching ? "ai-live" : "fallback"}`}><strong>{aiMatching ? (ar ? "المطابقة الدلالية بالذكاء الاصطناعي مفعلة" : "AI semantic matching is active") : (ar ? "استخدام المطابقة النصية الاحتياطية" : "Lexical fallback matching")}</strong><span>{aiMatching ? (ar ? `${Number(comparisonMatching.primaryProductsAssessed || 0)} منتجات أساسية و${Number(comparisonMatching.candidatePairsAssessed || 0)} أزواج مرشحة تم تقييمها.` : `${Number(comparisonMatching.primaryProductsAssessed || 0)} primary products and ${Number(comparisonMatching.candidatePairsAssessed || 0)} candidate pairs assessed.`) : (ar ? "تعذر تشغيل التقييم الدلالي في هذا التقرير؛ النتيجة الحالية أضيق." : "Semantic assessment was unavailable for this report, so the result is narrower.")}</span></div>}
+            {(comparison || productMatchLifecycle !== "idle") && (
+              <div className={`matching-method-banner ${productMatchLifecycle === "matching" || productMatchLifecycle === "retrying" ? "pending" : productMatchLifecycle === "limited" ? "limited" : aiMatching ? "ai-live" : "fallback"}`} data-product-match-state={productMatchLifecycle} aria-live="polite">
+                <strong>
+                  {productMatchLifecycle === "matching" ? (ar ? "مقارنات المنتجات الأولية" : "Preliminary product matches")
+                    : productMatchLifecycle === "retrying" ? (ar ? "نعيد فحص تغطية المنتجات" : "Rechecking incomplete product coverage")
+                      : productMatchLifecycle === "limited" ? (ar ? "اكتملت المطابقة بتغطية محدودة" : "Product matching finished with limited coverage")
+                        : aiMatching ? (ar ? "المطابقة الدلالية بالذكاء الاصطناعي مكتملة" : "AI semantic matching is complete")
+                          : (ar ? "استخدام المطابقة النصية الاحتياطية" : "Lexical fallback matching")}
+                </strong>
+                <span>
+                  {productMatchLifecycle === "matching" ? (ar ? "لا تزال المطابقة الدلالية تعمل. قد تتغير البطاقات الحالية عند اكتمال التقييم." : "AI semantic matching is still running. These cards can change when assessment finishes.")
+                    : productMatchLifecycle === "retrying" ? (ar ? "لم يكتمل تقييم بعض المنتجات، لذلك نجري محاولة أخيرة محدودة." : "Some selected products were not assessed, so one final bounded attempt is running.")
+                      : productMatchLifecycle === "limited" ? productMatchNotice
+                        : aiMatching ? (ar ? `${Number(comparisonMatching.primaryProductsAssessed || 0)} منتجات أساسية و${Number(comparisonMatching.candidatePairsAssessed || 0)} أزواج مرشحة تم تقييمها عبر ${Number(comparisonMatching.attempts || 1)} محاولة.` : `${Number(comparisonMatching.primaryProductsAssessed || 0)} primary products and ${Number(comparisonMatching.candidatePairsAssessed || 0)} candidate pairs assessed across ${Number(comparisonMatching.attempts || 1)} attempt${Number(comparisonMatching.attempts || 1) === 1 ? "" : "s"}.`)
+                          : (ar ? "تعذر تشغيل التقييم الدلالي في هذا التقرير؛ النتيجة الحالية أضيق." : "Semantic assessment was unavailable for this report, so the result is narrower.")}
+                </span>
+              </div>
+            )}
             {comparison && (
               <div className="catalog-scan-summary">
                 <div><strong>{primaryProductsScanned}{primaryProductsAvailable > primaryProductsScanned ? ` / ${primaryProductsAvailable}` : ""}</strong><span>{ar ? "من منتجاتك تم فحصها" : "of your products scanned"}</span></div>
@@ -855,7 +874,11 @@ export default function Home() {
   const [adError, setAdError] = useState("");
   const [analysisError, setAnalysisError] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [productMatchLifecycle, setProductMatchLifecycle] = useState<ProductMatchLifecycle>("idle");
+  const [productMatchNotice, setProductMatchNotice] = useState("");
   const [toast, setToast] = useState("");
+  const analysisRunRef = useRef(0);
+  const matchAttemptRef = useRef(0);
 
   const companyName = useMemo(() => getCompanyName(reportDomain ?? domain), [domain, reportDomain]);
   const ar = locale === "ar";
@@ -867,6 +890,8 @@ export default function Home() {
 
   async function analyze(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const runToken = ++analysisRunRef.current;
+    const active = () => analysisRunRef.current === runToken;
     const cleanDomain = domain.trim();
     const requestedDomains = [cleanDomain];
     setIsAnalyzing(true);
@@ -877,8 +902,11 @@ export default function Home() {
     setReportDomain(null);
     setAdLoading(false);
     setAdError("");
+    setProductMatchLifecycle("idle");
+    setProductMatchNotice("");
     try {
       const payload = await postJson<CrawlPayload | CrawlFailure>("/api/crawl", { primary: cleanDomain, domains: requestedDomains }, "The competitor scan");
+      if (!active()) return;
       if (!payload.ok) {
         if (payload.document) setCrawlDocument(payload.document);
         setReportDomain(cleanDomain);
@@ -896,6 +924,7 @@ export default function Home() {
       setReportDomain(cleanDomain);
       setBriefLoading(true);
       setAdLoading(true);
+      setProductMatchLifecycle("matching");
       window.setTimeout(() => document.getElementById("report")?.scrollIntoView({ behavior: "smooth" }), 50);
       const briefWork = (async () => {
         try {
@@ -907,45 +936,100 @@ export default function Home() {
             },
             "The market brief",
           );
+          if (!active()) return;
           if (briefPayload.ok) setMarketBrief(briefPayload);
           else setAnalysisError(("error" in briefPayload ? briefPayload.error : "") || "The source scan completed, but the market brief was unavailable.");
         } catch {
-          setAnalysisError("The source scan completed, but the market brief was unavailable.");
+          if (active()) setAnalysisError("The source scan completed, but the market brief was unavailable.");
         } finally {
-          setBriefLoading(false);
+          if (active()) setBriefLoading(false);
         }
       })();
       const adWork = (async () => {
         try {
           const adPayload = await postJson<AdScanPayload>("/api/ads", payload.adRequest, "The ad-library scan");
+          if (!active()) return;
           if (!adPayload.ok) {
             setAdError(("error" in adPayload ? adPayload.error : "") || "The market report is ready, but the public ad-library scan was unavailable.");
             return;
           }
           setCrawlDocument((current) => current ? { ...current, blocks: [...current.blocks.filter((block) => block.type !== "ad-intelligence"), adPayload.block] } : current);
         } catch (error) {
-          setAdError(error instanceof Error ? error.message : "The market report is ready, but the public ad-library scan was unavailable.");
+          if (active()) setAdError(error instanceof Error ? error.message : "The market report is ready, but the public ad-library scan was unavailable.");
         } finally {
-          setAdLoading(false);
+          if (active()) setAdLoading(false);
         }
       })();
       const matchWork = (async () => {
+        const primaryCatalog = crawlResults.find((result) => result.domain === primaryHost);
+        if (!primaryCatalog?.products.length) {
+          if (active()) {
+            setProductMatchLifecycle("limited");
+            setProductMatchNotice(ar ? "لم نجد صفحات منتجات عامة منسوبة إلى موقعك، لذلك لم نتمكن من تشغيل المقارنة الدلالية." : "No attributable public product pages were found on your site, so semantic product comparison could not run.");
+          }
+          return;
+        }
+        const baselineBlock = payload.document.blocks.find((block) => block.type === "product-comparison");
+        const baseline = baselineBlock ? baselineBlock as unknown as ProductComparison : null;
+        const attempts: ProductComparison[] = [];
+        let requestCount = 0;
+        let lastError = "";
+        const requestBody = {
+          primaryDomain: primaryHost,
+          catalogs: crawlResults.map((result) => ({ domain: result.domain, products: result.products })),
+        };
+        const requestAttempt = async () => {
+          requestCount += 1;
+          const attemptToken = ++matchAttemptRef.current;
+          const controller = new AbortController();
+          const timeout = window.setTimeout(() => controller.abort(), 55_000);
+          try {
+            const response = await postJson<MatchPayload>("/api/match", requestBody, "AI product matching", (input, init) => fetch(input, { ...init, signal: controller.signal }));
+            if (!active() || attemptToken !== matchAttemptRef.current) return null;
+            if (!response.ok) throw new Error(("error" in response ? response.error : "") || "AI product matching was unavailable.");
+            return response.comparison;
+          } finally {
+            window.clearTimeout(timeout);
+          }
+        };
         try {
-          const matchPayload = await postJson<MatchPayload>("/api/match", {
-            primaryDomain: primaryHost,
-            catalogs: crawlResults.map((result) => ({ domain: result.domain, products: result.products })),
-          }, "AI product matching");
-          if (!matchPayload.ok) throw new Error(("error" in matchPayload ? matchPayload.error : "") || "AI product matching was unavailable.");
-          setCrawlDocument((current) => current ? { ...current, blocks: current.blocks.map((block) => block.type === "product-comparison" ? { type: "product-comparison", id: "product-comparison", ...matchPayload.comparison } : block) } : current);
+          let firstTransportFailed = false;
+          try {
+            const first = await requestAttempt();
+            if (first) attempts.push(first);
+          } catch (error) {
+            firstTransportFailed = true;
+            lastError = error instanceof Error ? error.message : "AI product matching was unavailable.";
+          }
+          if (!active()) return;
+          if (shouldRetryProductMatch(attempts[0], firstTransportFailed)) {
+            setProductMatchLifecycle("retrying");
+            try {
+              const retry = await requestAttempt();
+              if (retry) attempts.push(retry);
+            } catch (error) {
+              lastError = error instanceof Error ? error.message : "AI product matching was unavailable after the bounded retry.";
+            }
+          }
+          if (!active()) return;
+          const comparison = composeProductMatchAttempts(baseline, attempts, requestCount);
+          if (comparison) setCrawlDocument((current) => current ? upsertProductComparisonBlock(current, comparison) : current);
+          const limited = attempts.length === 0 || hasProductMatchCoverageDefect(comparison);
+          setProductMatchLifecycle(limited ? "limited" : "complete");
+          setProductMatchNotice(limited
+            ? (ar ? "ظلت تغطية المطابقة الدلالية غير مكتملة بعد المحاولة المحدودة. نعرض النتائج الموثقة فقط ولا نفترض وجود تطابق." : `Semantic matching coverage remained incomplete after the bounded retry. Only verified results are shown${lastError ? `; ${lastError}` : "."}`)
+            : "");
         } catch (error) {
-          setAnalysisError(error instanceof Error ? `The source report is ready. ${error.message}` : "The source report is ready, but AI product matching was unavailable.");
+          if (!active()) return;
+          setProductMatchLifecycle("limited");
+          setProductMatchNotice(error instanceof Error ? `Product matching ended with limited coverage. ${error.message}` : "Product matching ended with limited coverage.");
         }
       })();
       await Promise.all([briefWork, adWork, matchWork]);
     } catch (error) {
-      setAnalysisError(error instanceof Error ? error.message : "Unable to analyze this domain.");
+      if (active()) setAnalysisError(error instanceof Error ? error.message : "Unable to analyze this domain.");
     } finally {
-      setIsAnalyzing(false);
+      if (active()) setIsAnalyzing(false);
     }
   }
 
@@ -1085,7 +1169,7 @@ export default function Home() {
         </div>
 
         {crawlDocument ? (
-          <GuidedReportRenderer document={crawlDocument} locale={locale} marketBrief={marketBrief} briefLoading={briefLoading} adLoading={adLoading} adError={adError} />
+          <GuidedReportRenderer document={crawlDocument} locale={locale} marketBrief={marketBrief} briefLoading={briefLoading} adLoading={adLoading} adError={adError} productMatchLifecycle={productMatchLifecycle} productMatchNotice={productMatchNotice} />
         ) : (
           <div className="report-empty-state">
             <span>01 → 02 → 03 → 04</span>

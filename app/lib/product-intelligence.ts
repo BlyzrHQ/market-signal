@@ -90,6 +90,9 @@ export type ProductComparison = {
     embeddingCalls: number;
     durationMs: number;
     gaps: string[];
+    selectedPrimaryIds?: string[];
+    assessedPrimaryIds?: string[];
+    attempts?: number;
   };
 };
 

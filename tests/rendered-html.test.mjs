@@ -125,6 +125,15 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /const primaryHost = payload\.primaryDomain/);
   assert.doesNotMatch(page, /function getDomainHost/);
   assert.match(page, /GuidedReportRenderer/);
+  assert.match(page, /data-product-match-state/);
+  assert.match(page, /Preliminary product matches/);
+  assert.match(page, /Product matching finished with limited coverage/);
+  assert.match(page, /shouldRetryProductMatch/);
+  assert.match(page, /analysisRunRef/);
+  assert.match(page, /matchAttemptRef/);
+  assert.match(page, /upsertProductComparisonBlock/);
+  assert.match(page, /No attributable public product pages were found/);
+  assert.match(page, /productMatchLifecycle !== "idle"/);
   assert.match(page, /THREAT MAP/);
   assert.match(page, /RIVAL DOSSIERS/);
   assert.match(page, /PRODUCT COMPARISON/);

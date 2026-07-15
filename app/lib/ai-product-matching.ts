@@ -403,7 +403,7 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   const apiKey = options.apiKey ?? process.env.OPENAI_API_KEY ?? "";
   const model = options.model || process.env.MARKET_SIGNAL_MATCH_MODEL || DEFAULT_MODEL;
   const embeddingModel = options.embeddingModel || process.env.MARKET_SIGNAL_MATCH_EMBEDDING_MODEL || DEFAULT_EMBEDDING_MODEL;
-  const matchingBase = { model, embeddingModel, promptVersion: PROMPT_VERSION, primaryProductsAssessed: 0, candidatePairsAssessed: 0, retrievalPairsScored: 0, judgeCalls: 0, embeddingCalls: 0, durationMs: 0, gaps: [] as string[] };
+  const matchingBase = { model, embeddingModel, promptVersion: PROMPT_VERSION, primaryProductsAssessed: 0, candidatePairsAssessed: 0, retrievalPairsScored: 0, judgeCalls: 0, embeddingCalls: 0, durationMs: 0, gaps: [] as string[], selectedPrimaryIds: [] as string[], assessedPrimaryIds: [] as string[], attempts: 1 };
   if (!apiKey) return { ...fallback, matching: { ...matchingBase, method: "lexical-fallback", available: false, gaps: ["AI product matching is not configured; lexical matching was used."] } };
 
   const fetcher = options.fetch || fetch;
@@ -419,6 +419,7 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   const totalBudgetMs = Math.max(1_000, options.totalBudgetMs || DEFAULT_TOTAL_BUDGET_MS);
   const deadlineAt = startedAt + totalBudgetMs;
   const primaryProducts = selectPrimaryProducts(primaryDomain, catalogs, fallback, maxPrimary);
+  matchingBase.selectedPrimaryIds = primaryProducts.map((product) => product.id);
   const competitors = catalogs.filter((catalog) => canonicalDomain(catalog.domain) !== canonicalDomain(primaryDomain)).map((catalog) => ({ domain: canonicalDomain(catalog.domain), products: selectPreferredProducts(catalog.products).slice(0, maxCompetitorProducts) }));
   if (!primaryProducts.length || !competitors.length) return { ...fallback, matching: { ...matchingBase, method: "lexical-fallback", available: false, gaps: ["AI product matching had no primary or competitor catalog records to assess."] } };
 
@@ -535,6 +536,9 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
       embeddingCalls,
       durationMs: Date.now() - startedAt,
       gaps,
+      selectedPrimaryIds: primaryProducts.map((product) => product.id),
+      assessedPrimaryIds: [...successfulPrimaryIds].sort(),
+      attempts: 1,
     },
   };
 }
