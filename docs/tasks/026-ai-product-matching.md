@@ -54,7 +54,7 @@ Fable 5 returned a conditional PASS for the hybrid approach. It rejected lexical
 - Live MyJam attempt 2 on Sites version 47 / commit `a5eb4a5`: the combined crawl-plus-AI request crossed the host request limit and returned an HTML 500 after 56.6 seconds. The combined architecture failed the production gate.
 - Attempt-2 response: move AI matching to `/api/match` after the crawl response. The UI runs market brief, ads, and AI product matching as independent progressive phases, so model latency cannot discard the verified crawl report.
 - Live MyJam attempt 3 on Sites version 48 / commit `b452584`: the independent crawl returned HTTP 200 in 38.0 seconds, and `/api/match` returned HTTP 200 in 47.1 seconds. This passed the real-data usefulness gate below.
-- Final Fable gate remains pending on a strict review of the progressive architecture and attempt-3 evidence.
+- Fable 5 code review round 2: PASS. It independently verified the narrowed service veto, bounded retrieval path, progressive endpoint isolation, route sanitization, matching tests, and attempt-3 usefulness/price-safety evidence. It retained multi-domain precision benchmarking and a formal endpoint contract as non-blocking follow-up work.
 
 ## Live validation record
 
