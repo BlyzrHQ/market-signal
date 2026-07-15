@@ -136,6 +136,8 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /productMatchLifecycle !== "idle"/);
   assert.match(page, /THREAT MAP/);
   assert.match(page, /RIVAL DOSSIERS/);
+  assert.match(page, /Remembered lead · re-verified live/);
+  assert.match(page, /jsonText\(competitor, "provenance"\) === "remembered-reverified"/);
   assert.match(page, /PRODUCT COMPARISON/);
   assert.match(page, /id="product-comparison"/);
   assert.match(page, /No defensible product pair was verified yet/);
@@ -166,6 +168,7 @@ test("real-data route and product metadata are present", async () => {
   assert.match(styles, /\.ad-creative-copy strong, \.ad-creative-copy p, \.ad-creative-copy small \{[^}]*overflow-wrap: anywhere/);
   assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.ad-creative-feed \{ grid-template-columns: 1fr/);
   assert.match(styles, /\.app-root\[dir="rtl"\]/);
+  assert.match(styles, /\.memory-provenance \{/);
   assert.match(styles, /\.battle-product\.no-image \{ grid-template-columns: minmax\(0, 1fr\); \}/);
   assert.match(styles, /\.battle-product\.no-image strong \{ grid-column: 1; \}/);
   assert.match(styles, /\.price-legend strong \{[^}]*white-space: nowrap/);

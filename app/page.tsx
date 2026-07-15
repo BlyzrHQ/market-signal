@@ -659,6 +659,7 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
                       <span className="threat-rank">{String(index + 1).padStart(2, "0")}</span>
                       <a className="threat-name" href={`#dossier-${domain}`}>
                         <strong>{jsonText(competitor, "companyName") || domain}</strong>
+                        {jsonText(competitor, "provenance") === "remembered-reverified" && <small className="memory-provenance">{ar ? "منافس متذكَّر · أُعيد التحقق منه الآن" : "Remembered lead · re-verified live"}</small>}
                         <span>{rivalBattles.length ? (ar ? `${rivalBattles.length} مواجهة منتجات موثوقة` : `${rivalBattles.length} defensible product battle${rivalBattles.length === 1 ? "" : "s"}`) : ar ? "لا توجد مواجهة منتجات موثوقة بعد" : "Verified company-level overlap; product pair pending"}</span>
                       </a>
                       <div className="threat-score">
@@ -788,6 +789,7 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
                       <span className="dossier-rank">{String(index + 1).padStart(2, "0")}</span>
                       <div>
                         <strong>{jsonText(competitor, "companyName") || domain}</strong>
+                        {jsonText(competitor, "provenance") === "remembered-reverified" && <small className="memory-provenance">{ar ? "منافس متذكَّر · أُعيد التحقق منه الآن" : "Remembered lead · re-verified live"}</small>}
                         <span>{jsonText(competitor, "matchedPrimaryProductName") && jsonText(competitor, "matchedProductName") ? `${jsonText(competitor, "matchedPrimaryProductName")} ↔ ${jsonText(competitor, "matchedProductName")}` : jsonText(competitor, "marketCategory", ar ? "منافس موثق على مستوى الشركة" : "Verified company-level competitor")}</span>
                       </div>
                       <div className="dossier-score">
