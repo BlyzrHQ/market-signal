@@ -1,0 +1,2092 @@
+{
+  "deployment": {
+    "sitesVersion": 38,
+    "commit": "82c4f782af299661f8d3eb3059e8da3346f74af9",
+    "url": "https://market-signal.abdulla617931.chatgpt.site",
+    "capturedAt": "2026-07-14T14:05:56.758Z",
+    "fixtureData": false,
+    "retries": 0
+  },
+  "summary": {
+    "reportsOk": 10,
+    "adScansOk": 10,
+    "correctRegions": 10,
+    "confidentWrongRegions": 0,
+    "domainsWithAtLeastThreeCompetitors": 10,
+    "domainsWithAtLeastFiveOfferings": 9,
+    "domainsWithVisibleProductOrServiceMatches": 5,
+    "domainsWithExactComparablePrices": 0,
+    "verifiedCreativeConcepts": 0,
+    "diagnosticGoodCount": 5,
+    "diagnosticMedianScore": 69.5,
+    "crawlLatencySeconds": {
+      "p50": 37,
+      "p95": 54.6
+    }
+  },
+  "dataBoundaries": [
+    "This is a no-retry production capture from the deployed application; no fixture data is included.",
+    "Every competitor record retains first-party homepage and discovery evidence URLs.",
+    "Visible matches include only Medium-confidence pairs returned by the production comparison engine.",
+    "Exact price comparisons require a server-approved priceComparison pair.",
+    "Missing or limited ad coverage is not evidence of zero advertising activity.",
+    "Diagnostic usefulness scores are transparent heuristics and are not the Fable 5 merge verdict."
+  ],
+  "reports": [
+    {
+      "domain": "myjam.co.uk",
+      "reportOk": true,
+      "reportStatus": 200,
+      "crawlSeconds": 42.4,
+      "adScanOk": true,
+      "adStatus": 200,
+      "adSeconds": 31.6,
+      "error": "",
+      "region": "United Kingdom",
+      "expectedRegion": "United Kingdom",
+      "regionCorrect": true,
+      "category": "A Marketplace for Cultural Food &ndash; MyJam Food",
+      "offeringCount": 401,
+      "offeringSamples": [
+        {
+          "name": "Lamb Leg Halal apx 2500g",
+          "type": "Product",
+          "sourceUrl": "https://myjam.co.uk/products/lamb-leg-halal-apx-2500g"
+        },
+        {
+          "name": "Lamb Shoulder Halal (apx 1.5kg)",
+          "type": "Product",
+          "sourceUrl": "https://myjam.co.uk/products/lamb-shoulder-halal-apx-1500g"
+        },
+        {
+          "name": "Beef Sirloin Steak Halal 500G",
+          "type": "Product",
+          "sourceUrl": "https://myjam.co.uk/products/beef-sirloin-steak-halal-500g"
+        },
+        {
+          "name": "Lamb Leg Slice Halal 500g",
+          "type": "Product",
+          "sourceUrl": "https://myjam.co.uk/products/lamb-leg-slice-halal-500g"
+        },
+        {
+          "name": "Beef Rump Steak Halal 500g",
+          "type": "Product",
+          "sourceUrl": "https://myjam.co.uk/products/beef-rump-steak-halal-500g"
+        }
+      ],
+      "competitors": [
+        {
+          "domain": "oasismarket.co.uk",
+          "companyName": "Oasis Market",
+          "score": 100,
+          "confidence": "High",
+          "category": "Middle Eastern grocery store",
+          "homepageEvidenceUrl": "https://oasismarket.co.uk/",
+          "discoveryEvidenceUrl": "https://oasismarket.co.uk/"
+        },
+        {
+          "domain": "halalo.co.uk",
+          "companyName": "Halalo",
+          "score": 81,
+          "confidence": "Medium",
+          "category": "halal and cultural marketplace",
+          "homepageEvidenceUrl": "https://halalo.co.uk/",
+          "discoveryEvidenceUrl": "https://halalo.co.uk/"
+        },
+        {
+          "domain": "ishopdesi.co.uk",
+          "companyName": "ISHOPDESI",
+          "score": 77,
+          "confidence": "Medium",
+          "category": "ethnic grocery marketplace",
+          "homepageEvidenceUrl": "https://www.ishopdesi.co.uk/",
+          "discoveryEvidenceUrl": "https://www.ishopdesi.co.uk/"
+        },
+        {
+          "domain": "afrigrub.co.uk",
+          "companyName": "Afri-Grub",
+          "score": 74,
+          "confidence": "Medium",
+          "category": "African food marketplace",
+          "homepageEvidenceUrl": "https://www.afrigrub.co.uk/",
+          "discoveryEvidenceUrl": "https://www.afrigrub.co.uk/"
+        }
+      ],
+      "comparisonCoverage": {
+        "primaryProductsAvailable": 401,
+        "primaryProductsScanned": 400,
+        "competitorProductsAvailable": 28,
+        "competitorProductsScanned": 28,
+        "assignedPairCount": 1,
+        "verifiedPairCount": 1,
+        "rowsReturned": 16,
+        "rowLimit": 80,
+        "truncated": false
+      },
+      "visibleMatches": [
+        {
+          "primary": "Lamb Leg Halal apx 2500g",
+          "primarySourceUrl": "https://myjam.co.uk/products/lamb-leg-halal-apx-2500g",
+          "primaryPrices": [],
+          "rival": "Lamb Leg Halal apx 2.3 - 2.5kg",
+          "rivalDomain": "oasismarket.co.uk",
+          "rivalSourceUrl": "https://oasismarket.co.uk/product/lamb-leg-halal-apx-2-3-2-5kg",
+          "rivalPrices": [
+            "GBP 49.99"
+          ],
+          "score": 0.63,
+          "verdict": "oasismarket.co.uk exposes a public price while yours was not observed.",
+          "recommendedMove": "Expose the comparable price earlier on the product or collection page.",
+          "exactPriceComparison": false
+        }
+      ],
+      "ads": {
+        "companies": [
+          {
+            "domain": "myjam.co.uk",
+            "states": [
+              "Meta access-limited",
+              "Google access-limited",
+              "TikTok access-limited"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "oasismarket.co.uk",
+            "states": [
+              "Meta access-limited",
+              "Google access-limited",
+              "TikTok access-limited"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "halalo.co.uk",
+            "states": [
+              "Meta access-limited",
+              "Google access-limited",
+              "TikTok access-limited"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "ishopdesi.co.uk",
+            "states": [
+              "Meta access-limited",
+              "Google access-limited",
+              "TikTok access-limited"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "afrigrub.co.uk",
+            "states": [
+              "Meta access-limited",
+              "Google access-limited",
+              "TikTok access-limited"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          }
+        ],
+        "verifiedCreativeConcepts": 0,
+        "limitation": "Commercial ad libraries do not provide exact spend for ordinary ads. Exact-Page Meta results use a temporary unofficial provider and are accepted only when the advertiser Page is linked from the company's own website and every returned Page ID matches. Google automatic API coverage is region-limited; TikTok API access requires approval and begins with EU data."
+      },
+      "diagnosticUsefulness": {
+        "breakdown": {
+          "reliableLiveReport": 10,
+          "correctRegion": 10,
+          "credibleCompetitorSet": 20,
+          "specificOfferings": 10,
+          "productOrServiceComparison": 18,
+          "exactComparablePrice": 0,
+          "truthfulAdCoverage": 3,
+          "firstPartyCompetitorEvidence": 5,
+          "actionableComparison": 5
+        },
+        "score": 81,
+        "grade": "GOOD",
+        "note": "Diagnostic only; Fable 5 independently scores the merge gate."
+      }
+    },
+    {
+      "domain": "birdandblendtea.com",
+      "reportOk": true,
+      "reportStatus": 200,
+      "crawlSeconds": 39,
+      "adScanOk": true,
+      "adStatus": 200,
+      "adSeconds": 15.6,
+      "error": "",
+      "region": "United Kingdom",
+      "expectedRegion": "United Kingdom",
+      "regionCorrect": true,
+      "category": "Loose Leaf Tea Blends",
+      "offeringCount": 340,
+      "offeringSamples": [
+        {
+          "name": "Tea Infuser Mug With Lid",
+          "type": "Product",
+          "sourceUrl": "https://www.birdandblendtea.com/products/tea-infuser-mug-with-lid"
+        },
+        {
+          "name": "E-Gift Card",
+          "type": "Product",
+          "sourceUrl": "https://www.birdandblendtea.com/products/e-gift-card"
+        },
+        {
+          "name": "Pure Grade Ceremonial Matcha",
+          "type": "Product",
+          "sourceUrl": "https://www.birdandblendtea.com/products/pure-grade-matcha-tea"
+        },
+        {
+          "name": "Perfect Tea Spoon",
+          "type": "Product",
+          "sourceUrl": "https://www.birdandblendtea.com/products/perfect-tea-spoon"
+        },
+        {
+          "name": "Cold Brew Tea Bottle",
+          "type": "Product",
+          "sourceUrl": "https://www.birdandblendtea.com/products/cold-brew-tea-bottle"
+        }
+      ],
+      "competitors": [
+        {
+          "domain": "ancientextracts.co.uk",
+          "companyName": "ancientextracts.co.uk",
+          "score": 82,
+          "confidence": "High",
+          "category": "",
+          "homepageEvidenceUrl": "https://www.ancientextracts.co.uk/",
+          "discoveryEvidenceUrl": "https://www.ancientextracts.co.uk/products/ceremonial-grade-matcha"
+        },
+        {
+          "domain": "birdandblendtea.us",
+          "companyName": "birdandblendtea.us",
+          "score": 82,
+          "confidence": "High",
+          "category": "",
+          "homepageEvidenceUrl": "https://www.birdandblendtea.us/",
+          "discoveryEvidenceUrl": "https://www.birdandblendtea.us/products/strawberry-lemonade-tea"
+        },
+        {
+          "domain": "breematcha.com",
+          "companyName": "breematcha.com",
+          "score": 76,
+          "confidence": "Medium",
+          "category": "",
+          "homepageEvidenceUrl": "https://www.breematcha.com/",
+          "discoveryEvidenceUrl": "https://www.breematcha.com/products/ceremonial-grade-matcha-by-bree"
+        },
+        {
+          "domain": "haki-tea.co.uk",
+          "companyName": "haki-tea.co.uk",
+          "score": 64,
+          "confidence": "Medium",
+          "category": "",
+          "homepageEvidenceUrl": "https://www.haki-tea.co.uk/",
+          "discoveryEvidenceUrl": "https://www.haki-tea.co.uk/shop/p/ceremonial-grade-matcha"
+        }
+      ],
+      "comparisonCoverage": {
+        "primaryProductsAvailable": 340,
+        "primaryProductsScanned": 340,
+        "competitorProductsAvailable": 296,
+        "competitorProductsScanned": 296,
+        "assignedPairCount": 200,
+        "verifiedPairCount": 198,
+        "rowsReturned": 80,
+        "rowLimit": 80,
+        "truncated": true
+      },
+      "visibleMatches": [
+        {
+          "primary": "A Moment of Calm Tea Selection Gift Box",
+          "primarySourceUrl": "https://www.birdandblendtea.com/products/a-moment-of-calm-tea-selection-gift-box",
+          "primaryPrices": [],
+          "rival": "A Moment of Calm Tea Selection Gift Box",
+          "rivalDomain": "birdandblendtea.us",
+          "rivalSourceUrl": "https://www.birdandblendtea.us/products/a-moment-of-calm-tea-selection-gift-box",
+          "rivalPrices": [],
+          "score": 0.82,
+          "verdict": "Public prices are not comparable yet.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer.",
+          "exactPriceComparison": false
+        },
+        {
+          "primary": "A Royal Brew-bilee Tea | The Crown x B&B",
+          "primarySourceUrl": "https://www.birdandblendtea.com/products/the-crown-a-royal-jubilee-tea",
+          "primaryPrices": [],
+          "rival": "A Royal Brew-bilee Tea | The Crown x B&B",
+          "rivalDomain": "birdandblendtea.us",
+          "rivalSourceUrl": "https://www.birdandblendtea.us/products/the-crown-a-royal-jubilee-tea",
+          "rivalPrices": [],
+          "score": 0.82,
+          "verdict": "Public prices are not comparable yet.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer.",
+          "exactPriceComparison": false
+        },
+        {
+          "primary": "All Nighter Tea",
+          "primarySourceUrl": "https://www.birdandblendtea.com/products/all-nighter-tea",
+          "primaryPrices": [],
+          "rival": "All Nighter Tea",
+          "rivalDomain": "birdandblendtea.us",
+          "rivalSourceUrl": "https://www.birdandblendtea.us/products/all-nighter-tea",
+          "rivalPrices": [],
+          "score": 0.82,
+          "verdict": "Public prices are not comparable yet.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer.",
+          "exactPriceComparison": false
+        },
+        {
+          "primary": "Ankara Turkish Apple Tea",
+          "primarySourceUrl": "https://www.birdandblendtea.com/products/ankara-apple-tea",
+          "primaryPrices": [],
+          "rival": "Ankara Turkish Apple Tea",
+          "rivalDomain": "birdandblendtea.us",
+          "rivalSourceUrl": "https://www.birdandblendtea.us/products/ankara-apple-tea",
+          "rivalPrices": [],
+          "score": 0.82,
+          "verdict": "Public prices are not comparable yet.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer.",
+          "exactPriceComparison": false
+        },
+        {
+          "primary": "Apple Strudel Tea",
+          "primarySourceUrl": "https://www.birdandblendtea.com/products/apple-strudel-tea",
+          "primaryPrices": [],
+          "rival": "Apple Strudel Tea",
+          "rivalDomain": "birdandblendtea.us",
+          "rivalSourceUrl": "https://www.birdandblendtea.us/products/apple-strudel-tea",
+          "rivalPrices": [],
+          "score": 0.82,
+          "verdict": "Public prices are not comparable yet.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer.",
+          "exactPriceComparison": false
+        },
+        {
+          "primary": "Baby Egg Tea",
+          "primarySourceUrl": "https://www.birdandblendtea.com/products/baby-cream-egg-tea",
+          "primaryPrices": [],
+          "rival": "Baby Egg Tea",
+          "rivalDomain": "birdandblendtea.us",
+          "rivalSourceUrl": "https://www.birdandblendtea.us/products/baby-cream-egg-tea",
+          "rivalPrices": [],
+          "score": 0.82,
+          "verdict": "Public prices are not comparable yet.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer.",
+          "exactPriceComparison": false
+        },
+        {
+          "primary": "Baby Spice Tea",
+          "primarySourceUrl": "https://www.birdandblendtea.com/products/baby-spice-tea",
+          "primaryPrices": [],
+          "rival": "Baby Spice Tea",
+          "rivalDomain": "birdandblendtea.us",
+          "rivalSourceUrl": "https://www.birdandblendtea.us/products/baby-spice-tea",
+          "rivalPrices": [],
+          "score": 0.82,
+          "verdict": "Public prices are not comparable yet.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer.",
+          "exactPriceComparison": false
+        },
+        {
+          "primary": "Bamboo Matcha Whisk",
+          "primarySourceUrl": "https://www.birdandblendtea.com/products/bamboo-matcha-whisk",
+          "primaryPrices": [],
+          "rival": "Bamboo Matcha Whisk",
+          "rivalDomain": "birdandblendtea.us",
+          "rivalSourceUrl": "https://www.birdandblendtea.us/products/bamboo-matcha-whisk",
+          "rivalPrices": [],
+          "score": 0.82,
+          "verdict": "Public prices are not comparable yet.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer.",
+          "exactPriceComparison": false
+        }
+      ],
+      "ads": {
+        "companies": [
+          {
+            "domain": "birdandblendtea.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "ancientextracts.co.uk",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "birdandblendtea.us",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "breematcha.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "haki-tea.co.uk",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          }
+        ],
+        "verifiedCreativeConcepts": 0,
+        "limitation": "Commercial ad libraries do not provide exact spend for ordinary ads. Exact-Page Meta results use a temporary unofficial provider and are accepted only when the advertiser Page is linked from the company's own website and every returned Page ID matches. Google automatic API coverage is region-limited; TikTok API access requires approval and begins with EU data."
+      },
+      "diagnosticUsefulness": {
+        "breakdown": {
+          "reliableLiveReport": 10,
+          "correctRegion": 10,
+          "credibleCompetitorSet": 20,
+          "specificOfferings": 10,
+          "productOrServiceComparison": 30,
+          "exactComparablePrice": 0,
+          "truthfulAdCoverage": 3,
+          "firstPartyCompetitorEvidence": 5,
+          "actionableComparison": 5
+        },
+        "score": 93,
+        "grade": "GOOD",
+        "note": "Diagnostic only; Fable 5 independently scores the merge gate."
+      }
+    },
+    {
+      "domain": "pipandnut.com",
+      "reportOk": true,
+      "reportStatus": 200,
+      "crawlSeconds": 27.7,
+      "adScanOk": true,
+      "adStatus": 200,
+      "adSeconds": 21.2,
+      "error": "",
+      "region": "United Kingdom",
+      "expectedRegion": "United Kingdom",
+      "regionCorrect": true,
+      "category": "Natural Nut Butters, Cups & Bars",
+      "offeringCount": 6,
+      "offeringSamples": [
+        {
+          "name": "Peanut Butter",
+          "type": "Product",
+          "sourceUrl": "https://www.pipandnut.com/products/peanut-butter-range"
+        },
+        {
+          "name": "Almond Butter",
+          "type": "Product",
+          "sourceUrl": "https://www.pipandnut.com/products/smooth-almond-butter-range"
+        },
+        {
+          "name": "Chocolate Hazelnut Spread",
+          "type": "Product",
+          "sourceUrl": "https://www.pipandnut.com/products/chocolate-hazelnut-range"
+        },
+        {
+          "name": "Protein Bars",
+          "type": "Product",
+          "sourceUrl": "https://www.pipandnut.com/products/protein-bars-range"
+        },
+        {
+          "name": "Stuffed Oat Bars",
+          "type": "Product",
+          "sourceUrl": "https://www.pipandnut.com/products/stuffed-oat-bars-range"
+        }
+      ],
+      "competitors": [
+        {
+          "domain": "shop.meridianfoods.co.uk",
+          "companyName": "Meridian",
+          "score": 93,
+          "confidence": "High",
+          "category": "Natural peanut and almond butters",
+          "homepageEvidenceUrl": "https://shop.meridianfoods.co.uk/",
+          "discoveryEvidenceUrl": "https://shop.meridianfoods.co.uk/collections/peanut-butters"
+        },
+        {
+          "domain": "yumello.com",
+          "companyName": "Yumello",
+          "score": 90,
+          "confidence": "High",
+          "category": "Natural peanut butters",
+          "homepageEvidenceUrl": "https://www.yumello.com/",
+          "discoveryEvidenceUrl": "https://www.yumello.com/collections"
+        },
+        {
+          "domain": "mani-life.com",
+          "companyName": "ManiLife",
+          "score": 77,
+          "confidence": "Medium",
+          "category": "Natural peanut butters",
+          "homepageEvidenceUrl": "https://mani-life.com/",
+          "discoveryEvidenceUrl": "https://mani-life.com/products/deep-roast-smooth-peanut-butter-tub"
+        },
+        {
+          "domain": "wholeearthfoods.com",
+          "companyName": "Whole Earth",
+          "score": 76,
+          "confidence": "Medium",
+          "category": "Natural peanut butters",
+          "homepageEvidenceUrl": "https://www.wholeearthfoods.com/",
+          "discoveryEvidenceUrl": "https://www.wholeearthfoods.com/our-products/"
+        },
+        {
+          "domain": "butter-nut.com",
+          "companyName": "ButterNut of London",
+          "score": 74,
+          "confidence": "Medium",
+          "category": "Natural nut butters",
+          "homepageEvidenceUrl": "https://www.butter-nut.com/",
+          "discoveryEvidenceUrl": "https://www.butter-nut.com/"
+        },
+        {
+          "domain": "hifoods.co.uk",
+          "companyName": "HI Foods",
+          "score": 66,
+          "confidence": "Medium",
+          "category": "Natural nut butters",
+          "homepageEvidenceUrl": "https://www.hifoods.co.uk/",
+          "discoveryEvidenceUrl": "https://www.hifoods.co.uk/"
+        }
+      ],
+      "comparisonCoverage": {
+        "primaryProductsAvailable": 6,
+        "primaryProductsScanned": 6,
+        "competitorProductsAvailable": 112,
+        "competitorProductsScanned": 112,
+        "assignedPairCount": 4,
+        "verifiedPairCount": 0,
+        "rowsReturned": 6,
+        "rowLimit": 80,
+        "truncated": false
+      },
+      "visibleMatches": [],
+      "ads": {
+        "companies": [
+          {
+            "domain": "pipandnut.com",
+            "states": [
+              "Meta access-limited",
+              "Google access-limited",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "shop.meridianfoods.co.uk",
+            "states": [
+              "Meta access-limited",
+              "Google access-limited",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "yumello.com",
+            "states": [
+              "Meta access-limited",
+              "Google access-limited",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "mani-life.com",
+            "states": [
+              "Meta access-limited",
+              "Google access-limited",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 1
+          },
+          {
+            "domain": "wholeearthfoods.com",
+            "states": [
+              "Meta access-limited",
+              "Google access-limited",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "butter-nut.com",
+            "states": [
+              "Meta access-limited",
+              "Google access-limited",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "hifoods.co.uk",
+            "states": [
+              "Meta access-limited",
+              "Google access-limited",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 1
+          }
+        ],
+        "verifiedCreativeConcepts": 0,
+        "limitation": "Commercial ad libraries do not provide exact spend for ordinary ads. Exact-Page Meta results use a temporary unofficial provider and are accepted only when the advertiser Page is linked from the company's own website and every returned Page ID matches. Google automatic API coverage is region-limited; TikTok API access requires approval and begins with EU data."
+      },
+      "diagnosticUsefulness": {
+        "breakdown": {
+          "reliableLiveReport": 10,
+          "correctRegion": 10,
+          "credibleCompetitorSet": 20,
+          "specificOfferings": 10,
+          "productOrServiceComparison": 0,
+          "exactComparablePrice": 0,
+          "truthfulAdCoverage": 3,
+          "firstPartyCompetitorEvidence": 5,
+          "actionableComparison": 0
+        },
+        "score": 58,
+        "grade": "NEEDS_WORK",
+        "note": "Diagnostic only; Fable 5 independently scores the merge gate."
+      }
+    },
+    {
+      "domain": "oddbox.co.uk",
+      "reportOk": true,
+      "reportStatus": 200,
+      "crawlSeconds": 37,
+      "adScanOk": true,
+      "adStatus": 200,
+      "adSeconds": 23.3,
+      "error": "",
+      "region": "United Kingdom",
+      "expectedRegion": "United Kingdom",
+      "regionCorrect": true,
+      "category": "Good Food Doing Good, Delivered to Your Door",
+      "offeringCount": 12,
+      "offeringSamples": [
+        {
+          "name": "Boxes in all shapes and sizes",
+          "type": "Service",
+          "sourceUrl": "https://www.oddbox.co.uk/"
+        },
+        {
+          "name": "Fruit & Veg Boxes",
+          "type": "Service",
+          "sourceUrl": "https://www.oddbox.co.uk/"
+        },
+        {
+          "name": "Veg Boxes",
+          "type": "Service",
+          "sourceUrl": "https://www.oddbox.co.uk/"
+        },
+        {
+          "name": "Pick a box",
+          "type": "Service",
+          "sourceUrl": "https://www.oddbox.co.uk/"
+        },
+        {
+          "name": "Behind the box",
+          "type": "Service",
+          "sourceUrl": "https://www.oddbox.co.uk/"
+        }
+      ],
+      "competitors": [
+        {
+          "domain": "abelandcole.co.uk",
+          "companyName": "Abel & Cole",
+          "score": 96,
+          "confidence": "High",
+          "category": "Organic food and veg box delivery",
+          "homepageEvidenceUrl": "https://www.abelandcole.co.uk/",
+          "discoveryEvidenceUrl": "https://www.abelandcole.co.uk/"
+        },
+        {
+          "domain": "wonkyvegboxes.co.uk",
+          "companyName": "Wonky Veg Boxes",
+          "score": 77,
+          "confidence": "Medium",
+          "category": "fruit-and-veg box subscription",
+          "homepageEvidenceUrl": "https://wonkyvegboxes.co.uk/",
+          "discoveryEvidenceUrl": "https://wonkyvegboxes.co.uk/about-us/"
+        },
+        {
+          "domain": "milkandmore.co.uk",
+          "companyName": "Milk & More",
+          "score": 73,
+          "confidence": "Medium",
+          "category": "Fruit and veg box delivery",
+          "homepageEvidenceUrl": "https://www.milkandmore.co.uk/",
+          "discoveryEvidenceUrl": "https://www.milkandmore.co.uk/fruit-and-veg/c/fruit-and-veg"
+        },
+        {
+          "domain": "which.co.uk",
+          "companyName": "Which?",
+          "score": 58,
+          "confidence": "Medium",
+          "category": "Comparison / review publisher",
+          "homepageEvidenceUrl": "https://www.which.co.uk/",
+          "discoveryEvidenceUrl": "https://www.which.co.uk/reviews/food-and-drink/article/best-fruit-and-veg-boxes-aTpfh5j8VGyH"
+        }
+      ],
+      "comparisonCoverage": {
+        "primaryProductsAvailable": 12,
+        "primaryProductsScanned": 12,
+        "competitorProductsAvailable": 23,
+        "competitorProductsScanned": 23,
+        "assignedPairCount": 2,
+        "verifiedPairCount": 1,
+        "rowsReturned": 12,
+        "rowLimit": 80,
+        "truncated": false
+      },
+      "visibleMatches": [
+        {
+          "primary": "Fruit & Veg Boxes",
+          "primarySourceUrl": "https://www.oddbox.co.uk/",
+          "primaryPrices": [],
+          "rival": "Fruit & Veg Boxes",
+          "rivalDomain": "abelandcole.co.uk",
+          "rivalSourceUrl": "https://www.abelandcole.co.uk/",
+          "rivalPrices": [],
+          "score": 0.76,
+          "verdict": "Public prices are not comparable yet.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer.",
+          "exactPriceComparison": false
+        }
+      ],
+      "ads": {
+        "companies": [
+          {
+            "domain": "oddbox.co.uk",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "abelandcole.co.uk",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "wonkyvegboxes.co.uk",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "milkandmore.co.uk",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "which.co.uk",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          }
+        ],
+        "verifiedCreativeConcepts": 0,
+        "limitation": "Commercial ad libraries do not provide exact spend for ordinary ads. Exact-Page Meta results use a temporary unofficial provider and are accepted only when the advertiser Page is linked from the company's own website and every returned Page ID matches. Google automatic API coverage is region-limited; TikTok API access requires approval and begins with EU data."
+      },
+      "diagnosticUsefulness": {
+        "breakdown": {
+          "reliableLiveReport": 10,
+          "correctRegion": 10,
+          "credibleCompetitorSet": 20,
+          "specificOfferings": 10,
+          "productOrServiceComparison": 18,
+          "exactComparablePrice": 0,
+          "truthfulAdCoverage": 3,
+          "firstPartyCompetitorEvidence": 5,
+          "actionableComparison": 5
+        },
+        "score": 81,
+        "grade": "GOOD",
+        "note": "Diagnostic only; Fable 5 independently scores the merge gate."
+      }
+    },
+    {
+      "domain": "beardbrand.com",
+      "reportOk": true,
+      "reportStatus": 200,
+      "crawlSeconds": 28.7,
+      "adScanOk": true,
+      "adStatus": 200,
+      "adSeconds": 26.7,
+      "error": "",
+      "region": "United States",
+      "expectedRegion": "United States",
+      "regionCorrect": true,
+      "category": "Simplify your grooming routine. Versatile beard, hair, and skin products for men. Invest in yourself and Keep on Growing.",
+      "offeringCount": 66,
+      "offeringSamples": [
+        {
+          "name": "Alliance Membership",
+          "type": "Product",
+          "sourceUrl": "https://www.beardbrand.com/products/alliance-membership"
+        },
+        {
+          "name": "Beard Comb",
+          "type": "Product",
+          "sourceUrl": "https://www.beardbrand.com/products/beard-combs"
+        },
+        {
+          "name": "Beard Brush",
+          "type": "Product",
+          "sourceUrl": "https://www.beardbrand.com/products/beard-brush"
+        },
+        {
+          "name": "Beard Trimming Scissors",
+          "type": "Product",
+          "sourceUrl": "https://www.beardbrand.com/products/trimming-scissors"
+        },
+        {
+          "name": "Book of Reminders",
+          "type": "Product",
+          "sourceUrl": "https://www.beardbrand.com/products/book-of-reminders"
+        }
+      ],
+      "competitors": [
+        {
+          "domain": "everymanjack.com",
+          "companyName": "Every Man Jack",
+          "score": 92,
+          "confidence": "High",
+          "category": "men's grooming",
+          "homepageEvidenceUrl": "https://www.everymanjack.com/",
+          "discoveryEvidenceUrl": "https://www.everymanjack.com/collections/beard"
+        },
+        {
+          "domain": "cremocompany.com",
+          "companyName": "Cremo",
+          "score": 87,
+          "confidence": "High",
+          "category": "men's grooming",
+          "homepageEvidenceUrl": "https://cremocompany.com/",
+          "discoveryEvidenceUrl": "https://cremocompany.com/collections/beard"
+        },
+        {
+          "domain": "livebearded.com",
+          "companyName": "Live Bearded",
+          "score": 82,
+          "confidence": "High",
+          "category": "beard care / grooming",
+          "homepageEvidenceUrl": "https://livebearded.com/",
+          "discoveryEvidenceUrl": "https://livebearded.com/pages/upgrade"
+        },
+        {
+          "domain": "scotchporter.com",
+          "companyName": "Scotch Porter",
+          "score": 81,
+          "confidence": "Medium",
+          "category": "men's grooming / beard care",
+          "homepageEvidenceUrl": "https://www.scotchporter.com/",
+          "discoveryEvidenceUrl": "https://www.scotchporter.com/pages/beard-care"
+        },
+        {
+          "domain": "getjackblack.com",
+          "companyName": "Jack Black",
+          "score": 77,
+          "confidence": "Medium",
+          "category": "men's grooming",
+          "homepageEvidenceUrl": "https://www.getjackblack.com/",
+          "discoveryEvidenceUrl": "https://www.getjackblack.com/collections/beard-care"
+        },
+        {
+          "domain": "honestamish.com",
+          "companyName": "Honest Amish",
+          "score": 70,
+          "confidence": "Medium",
+          "category": "beard care / grooming",
+          "homepageEvidenceUrl": "https://honestamish.com/",
+          "discoveryEvidenceUrl": "https://honestamish.com/"
+        }
+      ],
+      "comparisonCoverage": {
+        "primaryProductsAvailable": 66,
+        "primaryProductsScanned": 66,
+        "competitorProductsAvailable": 479,
+        "competitorProductsScanned": 479,
+        "assignedPairCount": 7,
+        "verifiedPairCount": 4,
+        "rowsReturned": 16,
+        "rowLimit": 80,
+        "truncated": false
+      },
+      "visibleMatches": [
+        {
+          "primary": "Beard Brush",
+          "primarySourceUrl": "https://www.beardbrand.com/products/beard-brush",
+          "primaryPrices": [
+            "USD 45",
+            "USD 40",
+            "USD 35"
+          ],
+          "rival": "Beard Brush",
+          "rivalDomain": "everymanjack.com",
+          "rivalSourceUrl": "https://www.everymanjack.com/products/beard-brush",
+          "rivalPrices": [
+            "USD 15"
+          ],
+          "score": 0.6039,
+          "verdict": "Both expose public prices, but variant or pack-size alignment is unresolved.",
+          "recommendedMove": "Normalize pack size and variant before using price in a campaign or merchandising decision.",
+          "exactPriceComparison": false
+        },
+        {
+          "primary": "Beard Brush",
+          "primarySourceUrl": "https://www.beardbrand.com/products/beard-brush",
+          "primaryPrices": [
+            "USD 45",
+            "USD 40",
+            "USD 35"
+          ],
+          "rival": "Beard Brush",
+          "rivalDomain": "cremocompany.com",
+          "rivalSourceUrl": "https://cremocompany.com/products/beard-brush",
+          "rivalPrices": [
+            "USD 11.99"
+          ],
+          "score": 0.6121,
+          "verdict": "Both expose public prices, but variant or pack-size alignment is unresolved.",
+          "recommendedMove": "Normalize pack size and variant before using price in a campaign or merchandising decision.",
+          "exactPriceComparison": false
+        },
+        {
+          "primary": "Beard Comb",
+          "primarySourceUrl": "https://www.beardbrand.com/products/beard-combs",
+          "primaryPrices": [
+            "USD 21",
+            "USD 19"
+          ],
+          "rival": "Beard Comb",
+          "rivalDomain": "everymanjack.com",
+          "rivalSourceUrl": "https://www.everymanjack.com/products/wooden-beard-comb",
+          "rivalPrices": [],
+          "score": 0.58,
+          "verdict": "You expose a public price while the rival did not in this crawl.",
+          "recommendedMove": "Keep price clarity and strengthen the product-specific reason to choose you.",
+          "exactPriceComparison": false
+        },
+        {
+          "primary": "Beard Comb",
+          "primarySourceUrl": "https://www.beardbrand.com/products/beard-combs",
+          "primaryPrices": [
+            "USD 21",
+            "USD 19"
+          ],
+          "rival": "Beard Comb",
+          "rivalDomain": "cremocompany.com",
+          "rivalSourceUrl": "https://cremocompany.com/products/beard-comb",
+          "rivalPrices": [
+            "USD 11.99"
+          ],
+          "score": 0.606,
+          "verdict": "Both expose public prices, but variant or pack-size alignment is unresolved.",
+          "recommendedMove": "Normalize pack size and variant before using price in a campaign or merchandising decision.",
+          "exactPriceComparison": false
+        }
+      ],
+      "ads": {
+        "companies": [
+          {
+            "domain": "beardbrand.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "everymanjack.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "cremocompany.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "livebearded.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "scotchporter.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "getjackblack.com",
+            "states": [
+              "Meta access-limited",
+              "Google access-limited",
+              "TikTok access-limited"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "honestamish.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          }
+        ],
+        "verifiedCreativeConcepts": 0,
+        "limitation": "Commercial ad libraries do not provide exact spend for ordinary ads. Exact-Page Meta results use a temporary unofficial provider and are accepted only when the advertiser Page is linked from the company's own website and every returned Page ID matches. Google automatic API coverage is region-limited; TikTok API access requires approval and begins with EU data."
+      },
+      "diagnosticUsefulness": {
+        "breakdown": {
+          "reliableLiveReport": 10,
+          "correctRegion": 10,
+          "credibleCompetitorSet": 20,
+          "specificOfferings": 10,
+          "productOrServiceComparison": 30,
+          "exactComparablePrice": 0,
+          "truthfulAdCoverage": 3,
+          "firstPartyCompetitorEvidence": 5,
+          "actionableComparison": 5
+        },
+        "score": 93,
+        "grade": "GOOD",
+        "note": "Diagnostic only; Fable 5 independently scores the merge gate."
+      }
+    },
+    {
+      "domain": "allbirds.com",
+      "reportOk": true,
+      "reportStatus": 200,
+      "crawlSeconds": 54.6,
+      "adScanOk": true,
+      "adStatus": 200,
+      "adSeconds": 29.1,
+      "error": "",
+      "region": "United States",
+      "expectedRegion": "United States",
+      "regionCorrect": true,
+      "category": "Allbirds: Comfortable, Sustainable Shoes & Apparel",
+      "offeringCount": 292,
+      "offeringSamples": [
+        {
+          "name": "Men's Wool Runner - Natural White (Cream Sole)",
+          "type": "Product",
+          "sourceUrl": "https://www.allbirds.com/products/mens-wool-runners-natural-white"
+        },
+        {
+          "name": "Women's Wool Runner - Natural Black (Black Sole)",
+          "type": "Product",
+          "sourceUrl": "https://www.allbirds.com/products/womens-wool-runners-natural-black"
+        },
+        {
+          "name": "Women's Wool Runner - Natural White (Cream Sole)",
+          "type": "Product",
+          "sourceUrl": "https://www.allbirds.com/products/womens-wool-runners-natural-white"
+        },
+        {
+          "name": "Trino® Tubers - Onyx",
+          "type": "Product",
+          "sourceUrl": "https://www.allbirds.com/products/trino-tubers-onyx"
+        },
+        {
+          "name": "Women's Wool Runner - Savanna Night (Navy Sole)",
+          "type": "Product",
+          "sourceUrl": "https://www.allbirds.com/products/womens-wool-runners-savanna-night-navy"
+        }
+      ],
+      "competitors": [
+        {
+          "domain": "keenfootwear.com",
+          "companyName": "KEEN",
+          "score": 83,
+          "confidence": "High",
+          "category": "conscious footwear",
+          "homepageEvidenceUrl": "https://www.keenfootwear.com/",
+          "discoveryEvidenceUrl": "https://www.keenfootwear.com/"
+        },
+        {
+          "domain": "blueviewfootwear.com",
+          "companyName": "BLUEVIEW",
+          "score": 77,
+          "confidence": "Medium",
+          "category": "sustainable comfort footwear",
+          "homepageEvidenceUrl": "https://blueviewfootwear.com/",
+          "discoveryEvidenceUrl": "https://blueviewfootwear.com/"
+        },
+        {
+          "domain": "vessi.com",
+          "companyName": "Vessi",
+          "score": 74,
+          "confidence": "Medium",
+          "category": "waterproof comfort sneakers",
+          "homepageEvidenceUrl": "https://vessi.com/",
+          "discoveryEvidenceUrl": "https://vessi.com/"
+        },
+        {
+          "domain": "rothys.com",
+          "companyName": "Rothy's",
+          "score": 72,
+          "confidence": "Medium",
+          "category": "sustainable lifestyle shoes",
+          "homepageEvidenceUrl": "https://rothys.com/",
+          "discoveryEvidenceUrl": "https://rothys.com/collections/cruiser"
+        },
+        {
+          "domain": "nativeshoes.com",
+          "companyName": "Native Shoes",
+          "score": 69,
+          "confidence": "Medium",
+          "category": "sustainable casual footwear",
+          "homepageEvidenceUrl": "https://www.nativeshoes.com/",
+          "discoveryEvidenceUrl": "https://www.nativeshoes.com/"
+        }
+      ],
+      "comparisonCoverage": {
+        "primaryProductsAvailable": 292,
+        "primaryProductsScanned": 292,
+        "competitorProductsAvailable": 1123,
+        "competitorProductsScanned": 1092,
+        "assignedPairCount": 1,
+        "verifiedPairCount": 0,
+        "rowsReturned": 16,
+        "rowLimit": 80,
+        "truncated": false
+      },
+      "visibleMatches": [],
+      "ads": {
+        "companies": [
+          {
+            "domain": "allbirds.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "keenfootwear.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "blueviewfootwear.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "vessi.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "rothys.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "nativeshoes.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          }
+        ],
+        "verifiedCreativeConcepts": 0,
+        "limitation": "Commercial ad libraries do not provide exact spend for ordinary ads. Exact-Page Meta results use a temporary unofficial provider and are accepted only when the advertiser Page is linked from the company's own website and every returned Page ID matches. Google automatic API coverage is region-limited; TikTok API access requires approval and begins with EU data."
+      },
+      "diagnosticUsefulness": {
+        "breakdown": {
+          "reliableLiveReport": 10,
+          "correctRegion": 10,
+          "credibleCompetitorSet": 20,
+          "specificOfferings": 10,
+          "productOrServiceComparison": 0,
+          "exactComparablePrice": 0,
+          "truthfulAdCoverage": 3,
+          "firstPartyCompetitorEvidence": 5,
+          "actionableComparison": 0
+        },
+        "score": 58,
+        "grade": "NEEDS_WORK",
+        "note": "Diagnostic only; Fable 5 independently scores the merge gate."
+      }
+    },
+    {
+      "domain": "linear.app",
+      "reportOk": true,
+      "reportStatus": 200,
+      "crawlSeconds": 42,
+      "adScanOk": true,
+      "adStatus": 200,
+      "adSeconds": 20.1,
+      "error": "",
+      "region": "United States",
+      "expectedRegion": "United States",
+      "regionCorrect": true,
+      "category": "The system for product development",
+      "offeringCount": 5,
+      "offeringSamples": [
+        {
+          "name": "Linear Plan",
+          "type": "PageSignal",
+          "sourceUrl": "https://linear.app/plan"
+        },
+        {
+          "name": "Free",
+          "type": "Service",
+          "sourceUrl": "https://linear.app/pricing"
+        },
+        {
+          "name": "Basic",
+          "type": "Service",
+          "sourceUrl": "https://linear.app/pricing"
+        },
+        {
+          "name": "Business",
+          "type": "Service",
+          "sourceUrl": "https://linear.app/pricing"
+        },
+        {
+          "name": "Enterprise",
+          "type": "Service",
+          "sourceUrl": "https://linear.app/pricing"
+        }
+      ],
+      "competitors": [
+        {
+          "domain": "shortcut.com",
+          "companyName": "Shortcut",
+          "score": 77,
+          "confidence": "Medium",
+          "category": "issue tracking / software project management",
+          "homepageEvidenceUrl": "https://www.shortcut.com/",
+          "discoveryEvidenceUrl": "https://www.shortcut.com/import/jira"
+        },
+        {
+          "domain": "clickup.com",
+          "companyName": "ClickUp",
+          "score": 73,
+          "confidence": "Medium",
+          "category": "work management / project management",
+          "homepageEvidenceUrl": "https://clickup.com/",
+          "discoveryEvidenceUrl": "https://clickup.com/compare/vs/linear"
+        },
+        {
+          "domain": "asana.com",
+          "companyName": "Asana",
+          "score": 71,
+          "confidence": "Medium",
+          "category": "work management / project management",
+          "homepageEvidenceUrl": "https://asana.com/",
+          "discoveryEvidenceUrl": "https://asana.com/compare/asana-vs-jira"
+        },
+        {
+          "domain": "monday.com",
+          "companyName": "monday dev",
+          "score": 70,
+          "confidence": "Medium",
+          "category": "work operating system / dev project management",
+          "homepageEvidenceUrl": "https://monday.com/",
+          "discoveryEvidenceUrl": "https://monday.com/blog/rnd/linear-or-jira/"
+        }
+      ],
+      "comparisonCoverage": {
+        "primaryProductsAvailable": 5,
+        "primaryProductsScanned": 5,
+        "competitorProductsAvailable": 6,
+        "competitorProductsScanned": 6,
+        "assignedPairCount": 0,
+        "verifiedPairCount": 0,
+        "rowsReturned": 5,
+        "rowLimit": 80,
+        "truncated": false
+      },
+      "visibleMatches": [],
+      "ads": {
+        "companies": [
+          {
+            "domain": "linear.app",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "shortcut.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "clickup.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "asana.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "monday.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          }
+        ],
+        "verifiedCreativeConcepts": 0,
+        "limitation": "Commercial ad libraries do not provide exact spend for ordinary ads. Exact-Page Meta results use a temporary unofficial provider and are accepted only when the advertiser Page is linked from the company's own website and every returned Page ID matches. Google automatic API coverage is region-limited; TikTok API access requires approval and begins with EU data."
+      },
+      "diagnosticUsefulness": {
+        "breakdown": {
+          "reliableLiveReport": 10,
+          "correctRegion": 10,
+          "credibleCompetitorSet": 20,
+          "specificOfferings": 10,
+          "productOrServiceComparison": 0,
+          "exactComparablePrice": 0,
+          "truthfulAdCoverage": 3,
+          "firstPartyCompetitorEvidence": 5,
+          "actionableComparison": 0
+        },
+        "score": 58,
+        "grade": "NEEDS_WORK",
+        "note": "Diagnostic only; Fable 5 independently scores the merge gate."
+      }
+    },
+    {
+      "domain": "buffer.com",
+      "reportOk": true,
+      "reportStatus": 200,
+      "crawlSeconds": 29.9,
+      "adScanOk": true,
+      "adStatus": 200,
+      "adSeconds": 26.5,
+      "error": "",
+      "region": "United States",
+      "expectedRegion": "United States",
+      "regionCorrect": true,
+      "category": "Buffer: Social media management for everyone",
+      "offeringCount": 7,
+      "offeringSamples": [
+        {
+          "name": "Free",
+          "type": "Service",
+          "sourceUrl": "https://buffer.com/pricing"
+        },
+        {
+          "name": "Essentials",
+          "type": "Service",
+          "sourceUrl": "https://buffer.com/pricing"
+        },
+        {
+          "name": "Team",
+          "type": "Service",
+          "sourceUrl": "https://buffer.com/pricing"
+        },
+        {
+          "name": "Mobile app",
+          "type": "Service",
+          "sourceUrl": "https://buffer.com/"
+        },
+        {
+          "name": "Content creation",
+          "type": "Service",
+          "sourceUrl": "https://buffer.com/pricing"
+        }
+      ],
+      "competitors": [
+        {
+          "domain": "agorapulse.com",
+          "companyName": "Agorapulse",
+          "score": 96,
+          "confidence": "High",
+          "category": "social media management",
+          "homepageEvidenceUrl": "https://www.agorapulse.com/",
+          "discoveryEvidenceUrl": "https://buffer.com/compare"
+        },
+        {
+          "domain": "later.com",
+          "companyName": "Later",
+          "score": 93,
+          "confidence": "High",
+          "category": "social media management",
+          "homepageEvidenceUrl": "https://later.com/",
+          "discoveryEvidenceUrl": "https://buffer.com/compare"
+        },
+        {
+          "domain": "loomly.com",
+          "companyName": "Loomly",
+          "score": 92,
+          "confidence": "High",
+          "category": "Social media management",
+          "homepageEvidenceUrl": "https://www.loomly.com/",
+          "discoveryEvidenceUrl": "https://www.loomly.com/"
+        },
+        {
+          "domain": "metricool.com",
+          "companyName": "Metricool",
+          "score": 91,
+          "confidence": "High",
+          "category": "social media management",
+          "homepageEvidenceUrl": "https://metricool.com/",
+          "discoveryEvidenceUrl": "https://buffer.com/compare"
+        },
+        {
+          "domain": "hootsuite.com",
+          "companyName": "Hootsuite",
+          "score": 81,
+          "confidence": "Medium",
+          "category": "social media management",
+          "homepageEvidenceUrl": "https://www.hootsuite.com/",
+          "discoveryEvidenceUrl": "https://buffer.com/compare"
+        },
+        {
+          "domain": "eclincher.com",
+          "companyName": "eClincher",
+          "score": 77,
+          "confidence": "Medium",
+          "category": "social media management",
+          "homepageEvidenceUrl": "https://www.eclincher.com/",
+          "discoveryEvidenceUrl": "https://buffer.com/compare"
+        }
+      ],
+      "comparisonCoverage": {
+        "primaryProductsAvailable": 7,
+        "primaryProductsScanned": 7,
+        "competitorProductsAvailable": 40,
+        "competitorProductsScanned": 40,
+        "assignedPairCount": 5,
+        "verifiedPairCount": 4,
+        "rowsReturned": 7,
+        "rowLimit": 80,
+        "truncated": false
+      },
+      "visibleMatches": [
+        {
+          "primary": "Essentials",
+          "primarySourceUrl": "https://buffer.com/pricing",
+          "primaryPrices": [
+            "$5 /month"
+          ],
+          "rival": "Standard",
+          "rivalDomain": "agorapulse.com",
+          "rivalSourceUrl": "https://www.agorapulse.com/pricing/",
+          "rivalPrices": [
+            "$99 per user /month"
+          ],
+          "score": 0.72,
+          "verdict": "Both expose public plan prices, but billing period, commitment, or unit basis is unresolved.",
+          "recommendedMove": "Normalize per-user, per-channel, or flat pricing, billing period, and commitment before changing packaging.",
+          "exactPriceComparison": false
+        },
+        {
+          "primary": "Essentials",
+          "primarySourceUrl": "https://buffer.com/pricing",
+          "primaryPrices": [
+            "$5 /month"
+          ],
+          "rival": "Starter",
+          "rivalDomain": "loomly.com",
+          "rivalSourceUrl": "https://www.loomly.com/pricing",
+          "rivalPrices": [
+            "$65 Per month"
+          ],
+          "score": 0.72,
+          "verdict": "Both expose public plan prices, but billing period, commitment, or unit basis is unresolved.",
+          "recommendedMove": "Normalize per-user, per-channel, or flat pricing, billing period, and commitment before changing packaging.",
+          "exactPriceComparison": false
+        },
+        {
+          "primary": "Team",
+          "primarySourceUrl": "https://buffer.com/pricing",
+          "primaryPrices": [
+            "$10 /month"
+          ],
+          "rival": "Advanced",
+          "rivalDomain": "agorapulse.com",
+          "rivalSourceUrl": "https://www.agorapulse.com/pricing/",
+          "rivalPrices": [
+            "$199 per user /month"
+          ],
+          "score": 0.72,
+          "verdict": "Both expose public plan prices, but billing period, commitment, or unit basis is unresolved.",
+          "recommendedMove": "Normalize per-user, per-channel, or flat pricing, billing period, and commitment before changing packaging.",
+          "exactPriceComparison": false
+        },
+        {
+          "primary": "Social media",
+          "primarySourceUrl": "https://buffer.com/2step",
+          "primaryPrices": [],
+          "rival": "Social Media",
+          "rivalDomain": "metricool.com",
+          "rivalSourceUrl": "https://metricool.com/pricing/",
+          "rivalPrices": [],
+          "score": 0.58,
+          "verdict": "Public prices are not comparable yet.",
+          "recommendedMove": "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer.",
+          "exactPriceComparison": false
+        }
+      ],
+      "ads": {
+        "companies": [
+          {
+            "domain": "buffer.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "agorapulse.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "later.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "loomly.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "metricool.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "hootsuite.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "eclincher.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          }
+        ],
+        "verifiedCreativeConcepts": 0,
+        "limitation": "Commercial ad libraries do not provide exact spend for ordinary ads. Exact-Page Meta results use a temporary unofficial provider and are accepted only when the advertiser Page is linked from the company's own website and every returned Page ID matches. Google automatic API coverage is region-limited; TikTok API access requires approval and begins with EU data."
+      },
+      "diagnosticUsefulness": {
+        "breakdown": {
+          "reliableLiveReport": 10,
+          "correctRegion": 10,
+          "credibleCompetitorSet": 20,
+          "specificOfferings": 10,
+          "productOrServiceComparison": 30,
+          "exactComparablePrice": 0,
+          "truthfulAdCoverage": 3,
+          "firstPartyCompetitorEvidence": 5,
+          "actionableComparison": 5
+        },
+        "score": 93,
+        "grade": "GOOD",
+        "note": "Diagnostic only; Fable 5 independently scores the merge gate."
+      }
+    },
+    {
+      "domain": "thoughtbot.com",
+      "reportOk": true,
+      "reportStatus": 200,
+      "crawlSeconds": 28.1,
+      "adScanOk": true,
+      "adStatus": 200,
+      "adSeconds": 31.7,
+      "error": "",
+      "region": "Global market",
+      "expectedRegion": "Global market",
+      "regionCorrect": true,
+      "category": "Design and Development agency building web and mobile products - thoughtbot",
+      "offeringCount": 15,
+      "offeringSamples": [
+        {
+          "name": "Senior Product Strategy, Design, and Development services for web apps, mobile apps, and websites.",
+          "type": "PageSignal",
+          "sourceUrl": "https://thoughtbot.com/services"
+        },
+        {
+          "name": "Seamless visuals and rapid product growth using a Design System",
+          "type": "PageSignal",
+          "sourceUrl": "https://thoughtbot.com/services/design-systems"
+        },
+        {
+          "name": "Fractional Product and Technical Leadership",
+          "type": "PageSignal",
+          "sourceUrl": "https://thoughtbot.com/services/fractional-product-technical-leadership"
+        },
+        {
+          "name": "Let’s design and develop a great product while leveling up your team",
+          "type": "Service",
+          "sourceUrl": "https://thoughtbot.com/services"
+        },
+        {
+          "name": "Design Research",
+          "type": "Service",
+          "sourceUrl": "https://thoughtbot.com/services"
+        }
+      ],
+      "competitors": [
+        {
+          "domain": "phenomenonstudio.com",
+          "companyName": "Phenomenon Studio",
+          "score": 90,
+          "confidence": "High",
+          "category": "Product design and development agency",
+          "homepageEvidenceUrl": "https://phenomenonstudio.com/",
+          "discoveryEvidenceUrl": "https://phenomenonstudio.com/services/"
+        },
+        {
+          "domain": "netguru.com",
+          "companyName": "Netguru",
+          "score": 77,
+          "confidence": "Medium",
+          "category": "software development and product studio",
+          "homepageEvidenceUrl": "https://www.netguru.com/",
+          "discoveryEvidenceUrl": "https://www.netguru.com/services/software-development"
+        },
+        {
+          "domain": "pixeloddity.com",
+          "companyName": "Pixeloddity",
+          "score": 77,
+          "confidence": "Medium",
+          "category": "UX / product design / development studio",
+          "homepageEvidenceUrl": "https://pixeloddity.com/",
+          "discoveryEvidenceUrl": "https://pixeloddity.com/"
+        },
+        {
+          "domain": "bakkenbaeck.com",
+          "companyName": "Bakken & Bæck",
+          "score": 70,
+          "confidence": "Medium",
+          "category": "design and technology studio",
+          "homepageEvidenceUrl": "https://bakkenbaeck.com/",
+          "discoveryEvidenceUrl": "https://bakkenbaeck.com/about"
+        },
+        {
+          "domain": "brainhub.eu",
+          "companyName": "Brainhub",
+          "score": 65,
+          "confidence": "Medium",
+          "category": "software engineering and digital product development",
+          "homepageEvidenceUrl": "https://brainhub.eu/",
+          "discoveryEvidenceUrl": "https://brainhub.eu/"
+        }
+      ],
+      "comparisonCoverage": {
+        "primaryProductsAvailable": 15,
+        "primaryProductsScanned": 15,
+        "competitorProductsAvailable": 14,
+        "competitorProductsScanned": 14,
+        "assignedPairCount": 1,
+        "verifiedPairCount": 0,
+        "rowsReturned": 15,
+        "rowLimit": 80,
+        "truncated": false
+      },
+      "visibleMatches": [],
+      "ads": {
+        "companies": [
+          {
+            "domain": "thoughtbot.com",
+            "states": [
+              "Meta access-limited",
+              "Google access-limited",
+              "TikTok access-limited"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "phenomenonstudio.com",
+            "states": [
+              "Meta access-limited",
+              "Google access-limited",
+              "TikTok access-limited"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "netguru.com",
+            "states": [
+              "Meta access-limited",
+              "Google access-limited",
+              "TikTok access-limited"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "pixeloddity.com",
+            "states": [
+              "Meta access-limited",
+              "Google access-limited",
+              "TikTok access-limited"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "bakkenbaeck.com",
+            "states": [
+              "Meta access-limited",
+              "Google access-limited",
+              "TikTok access-limited"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "brainhub.eu",
+            "states": [
+              "Meta access-limited",
+              "Google access-limited",
+              "TikTok access-limited"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          }
+        ],
+        "verifiedCreativeConcepts": 0,
+        "limitation": "Commercial ad libraries do not provide exact spend for ordinary ads. Exact-Page Meta results use a temporary unofficial provider and are accepted only when the advertiser Page is linked from the company's own website and every returned Page ID matches. Google automatic API coverage is region-limited; TikTok API access requires approval and begins with EU data."
+      },
+      "diagnosticUsefulness": {
+        "breakdown": {
+          "reliableLiveReport": 10,
+          "correctRegion": 10,
+          "credibleCompetitorSet": 20,
+          "specificOfferings": 10,
+          "productOrServiceComparison": 0,
+          "exactComparablePrice": 0,
+          "truthfulAdCoverage": 3,
+          "firstPartyCompetitorEvidence": 5,
+          "actionableComparison": 0
+        },
+        "score": 58,
+        "grade": "NEEDS_WORK",
+        "note": "Diagnostic only; Fable 5 independently scores the merge gate."
+      }
+    },
+    {
+      "domain": "ustwo.com",
+      "reportOk": true,
+      "reportStatus": 200,
+      "crawlSeconds": 43,
+      "adScanOk": true,
+      "adStatus": 200,
+      "adSeconds": 20.3,
+      "error": "",
+      "region": "Global market",
+      "expectedRegion": "Global market",
+      "regionCorrect": true,
+      "category": "Digital Product Studio",
+      "offeringCount": 3,
+      "offeringSamples": [
+        {
+          "name": "Pilot new services and brands through design and development",
+          "type": "Service",
+          "sourceUrl": "https://ustwo.com/services/"
+        },
+        {
+          "name": "Design and build digital products that users return to",
+          "type": "Service",
+          "sourceUrl": "https://ustwo.com/services/"
+        },
+        {
+          "name": "Product Innovation",
+          "type": "Service",
+          "sourceUrl": "https://ustwo.com/ai/"
+        }
+      ],
+      "competitors": [
+        {
+          "domain": "codeandtheory.com",
+          "companyName": "Code and Theory",
+          "score": 76,
+          "confidence": "Medium",
+          "category": "Digital Product Studio",
+          "homepageEvidenceUrl": "https://www.codeandtheory.com/",
+          "discoveryEvidenceUrl": "https://www.codeandtheory.com/about-us"
+        },
+        {
+          "domain": "hugeinc.com",
+          "companyName": "Huge",
+          "score": 73,
+          "confidence": "Medium",
+          "category": "Digital Product Studio",
+          "homepageEvidenceUrl": "https://www.hugeinc.com/",
+          "discoveryEvidenceUrl": "https://www.hugeinc.com/huge-faq.html"
+        },
+        {
+          "domain": "rga.com",
+          "companyName": "R/GA",
+          "score": 73,
+          "confidence": "Medium",
+          "category": "Digital Product Studio",
+          "homepageEvidenceUrl": "https://rga.com/",
+          "discoveryEvidenceUrl": "https://rga.com/"
+        },
+        {
+          "domain": "nicer.com",
+          "companyName": "Nicer Studio",
+          "score": 70,
+          "confidence": "Medium",
+          "category": "Digital Product Studio",
+          "homepageEvidenceUrl": "https://nicer.com/",
+          "discoveryEvidenceUrl": "https://www.nicer.com/"
+        }
+      ],
+      "comparisonCoverage": {
+        "primaryProductsAvailable": 3,
+        "primaryProductsScanned": 3,
+        "competitorProductsAvailable": 3,
+        "competitorProductsScanned": 3,
+        "assignedPairCount": 0,
+        "verifiedPairCount": 0,
+        "rowsReturned": 3,
+        "rowLimit": 80,
+        "truncated": false
+      },
+      "visibleMatches": [],
+      "ads": {
+        "companies": [
+          {
+            "domain": "ustwo.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "codeandtheory.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "hugeinc.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "rga.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          },
+          {
+            "domain": "nicer.com",
+            "states": [
+              "Meta access-limited",
+              "Google no-verified-result",
+              "TikTok no-verified-result"
+            ],
+            "verifiedCreativeConcepts": 0,
+            "publicEvidenceCount": 0
+          }
+        ],
+        "verifiedCreativeConcepts": 0,
+        "limitation": "Commercial ad libraries do not provide exact spend for ordinary ads. Exact-Page Meta results use a temporary unofficial provider and are accepted only when the advertiser Page is linked from the company's own website and every returned Page ID matches. Google automatic API coverage is region-limited; TikTok API access requires approval and begins with EU data."
+      },
+      "diagnosticUsefulness": {
+        "breakdown": {
+          "reliableLiveReport": 10,
+          "correctRegion": 10,
+          "credibleCompetitorSet": 20,
+          "specificOfferings": 6,
+          "productOrServiceComparison": 0,
+          "exactComparablePrice": 0,
+          "truthfulAdCoverage": 3,
+          "firstPartyCompetitorEvidence": 5,
+          "actionableComparison": 0
+        },
+        "score": 54,
+        "grade": "NEEDS_WORK",
+        "note": "Diagnostic only; Fable 5 independently scores the merge gate."
+      }
+    }
+  ]
+}

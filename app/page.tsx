@@ -255,19 +255,24 @@ function PricePicture({ battle, locale }: { battle: BattleView; locale: Locale }
   const maximum = Math.max(comparison.primary.amount, comparison.rival.amount) * 1.15 || 1;
   const yourPosition = Math.max(6, Math.min(94, (comparison.primary.amount / maximum) * 100));
   const rivalPosition = Math.max(6, Math.min(94, (comparison.rival.amount / maximum) * 100));
+  const closePrices = Math.abs(yourPosition - rivalPosition) < 8;
   const delta = comparison.percent;
   return (
     <div className="price-picture" dir="ltr">
-      <div className="price-axis">
+      <div className="price-legend">
+        <div className="your-price-label">
+          <span dir="auto">{ar ? "أنت" : "YOU"}</span>
+          <strong>{comparison.primaryRaw}</strong>
+        </div>
+        <div className="rival-price-label">
+          <span dir="auto">{ar ? "المنافس" : "RIVAL"}</span>
+          <strong>{comparison.rivalRaw}</strong>
+        </div>
+      </div>
+      <div className={`price-axis ${closePrices ? "close-prices" : ""}`} aria-hidden="true">
         <span className="price-line" />
-        <span className="price-dot your-dot" style={{ left: `${yourPosition}%` }}>
-          <b>{comparison.primaryRaw}</b>
-          <small>{ar ? "أنت" : "YOU"}</small>
-        </span>
-        <span className="price-dot rival-dot" style={{ left: `${rivalPosition}%` }}>
-          <b>{comparison.rivalRaw}</b>
-          <small>{ar ? "المنافس" : "RIVAL"}</small>
-        </span>
+        <span className="price-dot your-dot" style={{ left: `${yourPosition}%` }} />
+        <span className="price-dot rival-dot" style={{ left: `${rivalPosition}%` }} />
       </div>
       <p dir="auto">{comparison.equal ? (ar ? "السعران المعلنان متساويان" : "Observed prices are equal") : delta === 0 ? (ar ? "فرق السعر أقل من 1٪" : "Price difference is under 1%") : delta < 0 ? (ar ? `المنافس أرخص بنسبة ${Math.abs(delta)}٪` : `Rival is ${Math.abs(delta)}% cheaper`) : ar ? `أنت أرخص بنسبة ${delta}٪` : `You are ${delta}% cheaper`}</p>
     </div>
@@ -282,7 +287,7 @@ function ProductBattleCard({ battle, locale, rivalLabel }: { battle: BattleView;
     <article className="guided-battle">
       {rivalLabel && <div className="battle-rival-label"><span>{ar ? "المنافس" : "COMPETITOR"}</span><strong>{rivalLabel}</strong></div>}
       <div className="battle-product-head">
-        <div className="battle-product your-product">
+        <div className={`battle-product your-product ${battle.primary.imageUrl ? "has-image" : "no-image"}`}>
           {battle.primary.imageUrl && <img src={battle.primary.imageUrl} alt="" loading="lazy" />}
           <span>{ar ? "منتجك" : "YOUR PRODUCT"}</span>
           <strong dir="auto">{battle.primary.name}</strong>
@@ -291,7 +296,7 @@ function ProductBattleCard({ battle, locale, rivalLabel }: { battle: BattleView;
           <span>{planTierOf(battle.primary) && planTierOf(battle.primary) === planTierOf(battle.rival) ? (ar ? "نفس الفئة" : "SAME TIER") : `${Math.round(Number(battle.match.score || 0) * 100)}%`}</span>
           <i />
         </div>
-        <div className="battle-product rival-product">
+        <div className={`battle-product rival-product ${battle.rival.imageUrl ? "has-image" : "no-image"}`}>
           {battle.rival.imageUrl && <img src={battle.rival.imageUrl} alt="" loading="lazy" />}
           <span>{ar ? "منتج المنافس" : "RIVAL PRODUCT"}</span>
           <strong dir="auto">{battle.rival.name}</strong>

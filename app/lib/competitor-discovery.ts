@@ -58,6 +58,8 @@ const PUBLISHER_PATH = /\/(?:articles?|blog|guides?|news|recipes?|reviews?|wiki)
 const PRODUCT_DETAIL_PATH = /\/(?:items?|p|products?|shop|store)\//i;
 const ACCESSORY_ANCHOR = /\b(?:book|cookbook|cup|guide|infuser|mug|scoop|spoon|voucher|whisk)\b/i;
 const GENERIC_ANCHOR_TOKENS = new Set(["basic", "catalog", "collection", "edition", "plan", "pricing", "product", "products", "service", "shop", "store"]);
+const COUNTRY_SECOND_LEVEL_DOMAINS = new Set(["ac", "co", "com", "edu", "gov", "net", "org"]);
+const STOREFRONT_DOMAIN_TOKENS = new Set(["eu", "global", "official", "online", "shop", "store", "uk", "us", "usa"]);
 
 function outputText(payload: Record<string, unknown>) {
   if (typeof payload.output_text === "string") return payload.output_text;
@@ -96,6 +98,17 @@ function normalizedTokens(value: string) {
   return [...new Set(value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").split(/\s+/).filter((token) => token.length > 1 && !SEARCH_SOURCE_STOPWORDS.has(token) && !/^\d+(?:\.\d+)?(?:g|kg|ml|l|oz|lb|pk|pack|pcs?)?$/i.test(token)))];
 }
 
+function domainBrandIdentity(value: string) {
+  const labels = canonicalDomain(value).split(".").filter(Boolean);
+  if (labels.length < 2) return "";
+  const ccTldWithSecondLevel = labels.at(-1)?.length === 2 && COUNTRY_SECOND_LEVEL_DOMAINS.has(labels.at(-2) || "");
+  const registrableLabel = labels.at(ccTldWithSecondLevel ? -3 : -2) || "";
+  const tokens = registrableLabel.normalize("NFKD").toLowerCase().split(/[^\p{L}\p{N}]+/gu).filter(Boolean);
+  while (tokens.length > 1 && STOREFRONT_DOMAIN_TOKENS.has(tokens[0])) tokens.shift();
+  while (tokens.length > 1 && STOREFRONT_DOMAIN_TOKENS.has(tokens.at(-1) || "")) tokens.pop();
+  return tokens.join("");
+}
+
 function productMatchFromSource(title: string, url: string, products: ProductRecord[]) {
   const pathText = (() => { try { const parsed = new URL(url); return decodeURIComponent(`${parsed.pathname} ${parsed.search}`); } catch { return ""; } })();
   if (PUBLISHER_PATH.test(pathText) || /\b(?:how to|recipe|review)\b/i.test(title)) return undefined;
@@ -113,7 +126,8 @@ function sourceContainsPrimaryBrand(title: string, url: string, profile: Discove
   const brand = inferBusinessProfile(profile).brandName;
   const brandTokens = normalizedTokens(brand).filter((token) => token.length >= 4);
   const compactBrand = brand.normalize("NFKD").replace(/[^\p{L}\p{N}]+/gu, "").toLowerCase();
-  const source = `${title} ${decodeURIComponent(new URL(url).pathname)}`.normalize("NFKD").toLowerCase();
+  const parsed = new URL(url);
+  const source = `${title} ${parsed.hostname} ${decodeURIComponent(parsed.pathname)}`.normalize("NFKD").toLowerCase();
   const compactSource = source.replace(/[^\p{L}\p{N}]+/gu, "");
   return (compactBrand.length >= 5 && compactSource.includes(compactBrand)) || brandTokens.some((token) => normalizedTokens(source).includes(token));
 }
@@ -183,7 +197,10 @@ function searchSources(payload: Record<string, unknown>): SearchSource[] {
 }
 
 function excludedDomain(domain: string, primaryDomain: string) {
-  return !domain || domain === primaryDomain || domain.endsWith(`.${primaryDomain}`) || [...NON_COMPANY_HOSTS, ...MARKETPLACE_HOSTS].some((host) => domain === host || domain.endsWith(`.${host}`));
+  const primaryIdentity = domainBrandIdentity(primaryDomain);
+  const candidateIdentity = domainBrandIdentity(domain);
+  const sameBrand = primaryIdentity.length >= 5 && candidateIdentity === primaryIdentity;
+  return !domain || domain === primaryDomain || domain.endsWith(`.${primaryDomain}`) || sameBrand || [...NON_COMPANY_HOSTS, ...MARKETPLACE_HOSTS].some((host) => domain === host || domain.endsWith(`.${host}`));
 }
 
 export function candidatesFromSearchEvidence(payload: Record<string, unknown>, profile: DiscoveryProfile, queries: string[] = []) {
@@ -262,7 +279,7 @@ function sanitizeCandidate(value: unknown, primaryDomain: string, lane: SearchLa
     const websiteUrl = cleanSearchUrl(item.websiteUrl || `https://${domain}/`);
     if (!websiteUrl || canonicalDomain(websiteUrl) !== domain) return null;
     const evidenceUrl = cleanSearchUrl(item.evidenceUrl || item.sourceUrl || websiteUrl);
-    if (!evidenceUrl) return null;
+    if (!evidenceUrl || PUBLISHER_PATH.test(new URL(evidenceUrl).pathname)) return null;
     const matchedProductUrl = cleanSearchUrl(item.matchedProductUrl);
     if (matchedProductUrl && canonicalDomain(matchedProductUrl) !== domain) return null;
     const productMatch = lane === "product" && matchedProductUrl

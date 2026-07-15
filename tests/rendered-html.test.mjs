@@ -65,6 +65,10 @@ test("real-data route and product metadata are present", async () => {
   assert.match(crawl, /selectProductEnrichmentTargets/);
   assert.match(crawl, /enrichMatchedProductPages/);
   assert.match(crawl, /priceEnrichmentPagesFetched/);
+  assert.match(crawl, /async function crawlPrimaryDomain/);
+  assert.match(crawl, /if \(first\.homepage\)/);
+  assert.match(crawl, /coverage: \{ \.\.\.retry\.coverage, attempts: 2 \}/);
+  assert.match(crawl, /domain === primaryDomain \? crawlPrimaryDomain\(domain\)/);
   assert.match(ads, /scanOfficialAdLibraries/);
   assert.match(ads, /Verified companies are required/);
   assert.match(crawl, /product-catalog/);
@@ -128,6 +132,8 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /No defensible product pair was verified yet/);
   assert.match(page, /لم يتم التحقق من زوج منتجات قابل للدفاع عنه بعد/);
   assert.match(page, /ProductBattleCard/);
+  assert.match(page, /battle\.primary\.imageUrl \? "has-image" : "no-image"/);
+  assert.match(page, /battle\.rival\.imageUrl \? "has-image" : "no-image"/);
   assert.match(page, /catalog-scan-summary/);
   assert.match(page, /of your products scanned/);
   assert.match(page, /rival products scanned/);
@@ -135,6 +141,9 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /SAME TIER/);
   assert.match(page, /href=\{`#dossier-\$\{rivalDomain\}`\}/);
   assert.match(page, /price-picture/);
+  assert.match(page, /price-legend/);
+  assert.match(page, /Math\.abs\(yourPosition - rivalPosition\) < 8/);
+  assert.match(page, /closePrices \? "close-prices" : ""/);
   assert.doesNotMatch(page, /comparablePriceDelta/);
   assert.match(page, /isDefensibleProductMatch/);
   assert.match(page, /SafeExternalLink href=\{battle\.primary\.sourceUrl\}/);
@@ -148,6 +157,13 @@ test("real-data route and product metadata are present", async () => {
   assert.match(styles, /\.ad-creative-copy strong, \.ad-creative-copy p, \.ad-creative-copy small \{[^}]*overflow-wrap: anywhere/);
   assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.ad-creative-feed \{ grid-template-columns: 1fr/);
   assert.match(styles, /\.app-root\[dir="rtl"\]/);
+  assert.match(styles, /\.battle-product\.no-image \{ grid-template-columns: minmax\(0, 1fr\); \}/);
+  assert.match(styles, /\.battle-product\.no-image strong \{ grid-column: 1; \}/);
+  assert.match(styles, /\.price-legend strong \{[^}]*white-space: nowrap/);
+  assert.match(styles, /\.close-prices \.your-dot \{ top: 2px; \}/);
+  assert.match(styles, /\.close-prices \.rival-dot \{ top: 20px; \}/);
+  assert.doesNotMatch(styles, /\.price-dot b \{/);
+  assert.doesNotMatch(styles, /\.price-dot small \{/);
   assert.doesNotMatch(page, /className="metric-grid"/);
   assert.doesNotMatch(page, /className="report-actions"/);
   assert.doesNotMatch(page, /This scan did not collect ad-library/);

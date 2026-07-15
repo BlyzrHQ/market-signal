@@ -156,6 +156,18 @@ test("turns first-party SaaS capability headings into attributable service recor
   assert.ok(offerings.every((offering) => !/PR Agency/i.test(offering.name)));
 });
 
+test("does not turn business-type phrases into standalone comparable offerings", () => {
+  const offerings = extractFirstPartyOfferings({
+    domain: "buffer.com",
+    observedAt: "2026-07-14T00:00:00.000Z",
+    businessType: "saas",
+    pages: [
+      { sourceUrl: "https://buffer.com/features", title: "Buffer features", description: "Tools for growing brands", headings: ["Social media", "Mobile app", "Content creation", "AI social media scheduling", "Mobile app analytics for retailers"] },
+    ],
+  });
+  assert.deepEqual(offerings.map((offering) => offering.name), ["AI social media scheduling", "Mobile app analytics for retailers"]);
+});
+
 test("extracts named SaaS plans and their nearest public recurring price", () => {
   const result = extraction({
     sourceUrl: "https://buffer.com/pricing",
@@ -335,6 +347,55 @@ test("matching removes each company brand token before comparing product names",
   assert.equal(result.eligible, true);
   assert.ok(result.score >= 0.35);
   assert.deepEqual(result.sharedTerms.includes("billing"), true);
+});
+
+test("matching treats a fully contained two-token product identity as defensible", () => {
+  const contained = scoreProductPair(
+    { ...product("butter", "shop.test", "Peanut Butter", "nut butter", ""), jsonLdType: "Product" },
+    { ...product("crunchy-butter", "rival.test", "Crunchy Peanut Butter 1kg", "spread", ""), jsonLdType: "Product" },
+  );
+  assert.equal(contained.eligible, true);
+  assert.ok(contained.score >= 0.55);
+});
+
+test("matching rejects contained names when the rival is a different food form", () => {
+  const butter = { ...product("almond-butter", "shop.test", "Almond Butter", "nut butter", ""), jsonLdType: "Product" };
+  const granola = { ...product("almond-granola", "rival.test", "Almond Butter Granola", "granola", ""), jsonLdType: "Product" };
+  const bar = { ...product("almond-bar", "rival.test", "Almond Butter Bar", "snack bar", ""), jsonLdType: "Product" };
+  assert.equal(scoreProductPair(butter, granola).eligible, false);
+  assert.equal(scoreProductPair(butter, bar).eligible, false);
+  assert.equal(scoreProductPair(
+    { ...product("matcha", "shop.test", "Matcha", "tea", ""), jsonLdType: "Product" },
+    { ...product("ceremonial-matcha", "rival.test", "Ceremonial Matcha", "tea", ""), jsonLdType: "Product" },
+  ).eligible, false);
+});
+
+test("matching compares an apparel family without color and sole variants", () => {
+  const variant = { ...product("wool-runner-white", "allbirds.com", "Men's Wool Runner - Natural White (Cream Sole)", "shoes", ""), jsonLdType: "Product" };
+  const family = { ...product("wool-runner", "rival.test", "Men's Wool Runner", "footwear", ""), jsonLdType: "Product" };
+  const match = scoreProductPair(variant, family);
+  assert.equal(match.eligible, true);
+  assert.ok(match.score >= 0.55);
+});
+
+test("comparison collapses primary color variants into one family row", () => {
+  const white = { ...product("runner-white", "allbirds.com", "Men's Wool Runner - Natural White (Cream Sole)", "shoes", ""), jsonLdType: "Product" };
+  const black = { ...product("runner-black", "allbirds.com", "Men's Wool Runner - Natural Black (Black Sole)", "shoes", ""), jsonLdType: "Product", priceSignals: [{ raw: "USD 98", currency: "USD", amount: 98 }] };
+  const dasher = { ...product("tree-dasher", "allbirds.com", "Men's Tree Dasher - Blizzard (White Sole)", "shoes", ""), jsonLdType: "Product" };
+  const rival = { ...product("rival-runner", "rival.test", "Men's Wool Runner", "footwear", ""), jsonLdType: "Product" };
+  const comparison = buildProductComparison("allbirds.com", [
+    { domain: "allbirds.com", products: [white, black, dasher] },
+    { domain: "rival.test", products: [rival] },
+  ]);
+  assert.equal(comparison.coverage.primaryProductsAvailable, 3);
+  assert.equal(comparison.coverage.primaryProductsScanned, 3);
+  assert.equal(comparison.coverage.primaryProductFamiliesCompared, 2);
+  assert.equal(comparison.rows.length, 2);
+  const runnerRows = comparison.rows.filter((row) => /Wool Runner/.test(row.primary.name));
+  assert.equal(runnerRows.length, 1);
+  assert.equal(runnerRows[0].primary.id, "runner-black");
+  assert.equal(runnerRows[0].matches[0].confidence, "Medium");
+  assert.equal(comparison.rows.find((row) => row.primary.id === "tree-dasher").matches[0].product, null);
 });
 
 test("matching rejects an accessory even when its name contains the complete product name", () => {
