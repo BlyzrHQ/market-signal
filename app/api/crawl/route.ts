@@ -1,5 +1,5 @@
 import { canonicalDomain, normalizeDomain } from "../../lib/domain";
-import { buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, selectPreferredProducts, selectProductEnrichmentTargets, type ProductComparison, type ProductRecord } from "../../lib/product-intelligence";
+import { buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity, type ProductComparison, type ProductRecord } from "../../lib/product-intelligence";
 import { parseRobots } from "../../lib/robots";
 import { discoverCompetitors, type DiscoveryCandidate, type DiscoveryResult } from "../../lib/competitor-discovery";
 import { attributableFacebookUrl, type AdIntelligenceResult } from "../../lib/ad-intelligence";
@@ -399,8 +399,13 @@ async function enrichMatchedProductPages(results: DomainCrawl[], primaryDomain: 
       if (!fetched.ok || !/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { page: null, gap: { url: sourceUrl, reason: fetched.error || `Matched product price-enrichment page returned HTTP ${fetched.status} or non-HTML content.`, observedAt } as Gap };
       try {
         const page = await parsePage(fetched.text, fetched.url, new Date().toISOString(), domain, fetched.truncated);
-        const hasPrice = page.products.some((product) => product.priceSignals.some((signal) => typeof signal.amount === "number" && Boolean(signal.currency)));
-        return { page, gap: hasPrice ? null : { url: sourceUrl, reason: "The matched public product page was fetched but did not expose comparable structured price evidence.", observedAt } as Gap };
+        const sourceKey = (value: string) => value.split("#")[0].replace(/\/$/, "");
+        const expected = result.products.filter((product) => sourceKey(product.sourceUrl) === sourceKey(sourceUrl));
+        const identity = validateProductPageIdentity(expected, page.products, page.title);
+        if (!identity.accepted) return { page: null, gap: { url: sourceUrl, reason: identity.reason, observedAt } as Gap };
+        const acceptedPage = { ...page, products: identity.products };
+        const hasPrice = identity.products.some((product) => product.priceSignals.some((signal) => typeof signal.amount === "number" && Boolean(signal.currency)));
+        return { page: acceptedPage, gap: hasPrice ? null : { url: sourceUrl, reason: "The matched public product page was fetched but did not expose comparable structured price evidence.", observedAt } as Gap };
       } catch {
         return { page: null, gap: { url: sourceUrl, reason: "The matched public product page could not be parsed for price evidence.", observedAt } as Gap };
       }

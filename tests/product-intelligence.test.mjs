@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, scoreProductPair, selectPreferredProducts, selectProductEnrichmentTargets } from "../app/lib/product-intelligence.ts";
+import { applyFinalProductEnrichment, buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, scoreProductPair, selectFinalProductEnrichmentTargets, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
 
 function extraction(overrides = {}) {
   return extractProductsFromHtml({
@@ -78,6 +78,25 @@ test("creates a medium-confidence page signal only with path and page structure"
   assert.deepEqual(result.products[0].priceSignals[0], { raw: "$20/month", currency: "USD", amount: 20, period: "month" });
 });
 
+test("extracts authoritative Shopify price metadata and prefers the secure product image", () => {
+  const document = `<head>
+    <meta property="og:price:amount" content="39.05">
+    <meta property="og:price:currency" content="GBP">
+    <meta property="og:image" content="http://myjam.co.uk/cdn/lamb-leg.jpg">
+    <meta property="og:image:secure_url" content="https://cdn.shopify.com/lamb-leg.jpg">
+  </head>`;
+  const result = extraction({
+    document,
+    sourceUrl: "https://myjam.co.uk/products/lamb-leg-halal-apx-2500g",
+    domain: "myjam.co.uk",
+    pageTitle: "Lamb Leg Halal apx 2500g | MyJam",
+    headings: ["Lamb Leg Halal apx 2500g", "Choose your cut"],
+  });
+  assert.equal(result.products.length, 1);
+  assert.deepEqual(result.products[0].priceSignals, [{ raw: "GBP 39.05", currency: "GBP", amount: 39.05, period: undefined }]);
+  assert.equal(result.products[0].imageUrl, "https://cdn.shopify.com/lamb-leg.jpg");
+});
+
 test("creates a page signal for a branded shallow product page but not a company page", () => {
   const productPage = extraction({ sourceUrl: "https://acme.com/billing", pageTitle: "Acme Billing | Subscription management", headings: ["Acme Billing", "Automate invoices", "Manage subscriptions", "Recover revenue"] });
   const companyPage = extraction({ sourceUrl: "https://acme.com/company", pageTitle: "Acme Company", headings: ["Our company", "Our mission", "Our team", "Our offices"] });
@@ -109,6 +128,46 @@ test("catalog deduplication preserves high-confidence structured evidence", () =
   const pageSignal = { ...structured, id: "page", extraction: "page-signal", confidence: "Medium", sourceUrl: "https://acme.com/billing" };
   assert.equal(selectPreferredProducts([structured, pageSignal])[0].id, "structured");
   assert.equal(selectPreferredProducts([pageSignal, structured])[0].id, "structured");
+});
+
+test("catalog enrichment keeps a secure sitemap image while adding a page price", () => {
+  const sitemap = {
+    ...product("sitemap", "myjam.co.uk", "Lamb Leg Halal apx 2500g"),
+    extraction: "sitemap",
+    confidence: "Medium",
+    sourceUrl: "https://myjam.co.uk/products/lamb-leg-halal-apx-2500g",
+    imageUrl: "https://cdn.shopify.com/lamb-leg.jpg",
+  };
+  const enriched = {
+    ...sitemap,
+    id: "page",
+    extraction: "page-signal",
+    priceSignals: [{ raw: "GBP 39.05", currency: "GBP", amount: 39.05 }],
+    imageUrl: "http://myjam.co.uk/cdn/lamb-leg.jpg",
+  };
+  const selected = selectPreferredProducts([sitemap, enriched]);
+  assert.equal(selected.length, 1);
+  assert.deepEqual(selected[0].priceSignals, enriched.priceSignals);
+  assert.equal(selected[0].imageUrl, sitemap.imageUrl);
+});
+
+test("rejects enrichment when the fetched product contradicts the requested product URL", () => {
+  const expected = {
+    ...product("amul-butter", "egrocers.uk", "Amul Butter 500g"),
+    jsonLdType: "Product",
+    extraction: "sitemap",
+    sourceUrl: "https://www.egrocers.uk/product/amul-butter-500-g/",
+  };
+  const fetched = {
+    ...product("beef-on-bone", "egrocers.uk", "Beef On The Bone"),
+    jsonLdType: "Product",
+    sourceUrl: expected.sourceUrl,
+    priceSignals: [{ raw: "GBP 13.00", currency: "GBP", amount: 13 }],
+  };
+  const result = validateProductPageIdentity([expected], [fetched], "Beef On The Bone – E-Grocers UK");
+  assert.equal(result.accepted, false);
+  assert.deepEqual(result.products, []);
+  assert.match(result.reason, /contradicts/i);
 });
 
 test("malformed JSON-LD becomes a visible extraction gap without throwing", () => {
@@ -474,6 +533,32 @@ test("price enrichment skips the side that already has comparable structured pri
   const rival = { ...product("rival-tea", "tea.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://tea.test/products/lemon-ginger-tea" };
   const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "tea.test", products: [rival] }]);
   assert.deepEqual(selectProductEnrichmentTargets(comparison).map((target) => [target.role, target.domain]), [["rival", "tea.test"]]);
+});
+
+test("final match enrichment fetches the exact AI-selected pair when secure images are missing", () => {
+  const primary = { ...product("tea", "shop.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/lemon-ginger-tea", priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }] };
+  const rival = { ...product("rival-tea", "tea.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://tea.test/products/lemon-ginger-tea", priceSignals: [{ raw: "GBP 6", currency: "GBP", amount: 6 }] };
+  const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "tea.test", products: [rival] }]);
+  comparison.rows[0].matches[0].assessment = { method: "ai-hybrid", claimType: "Inferred", verdict: "same_product", confidence: 0.94, model: "gpt-5.4-mini", promptVersion: "test", reasons: ["same tea"], contradictions: [], normalizedCategory: "tea", normalizedVariant: "lemon ginger", normalizedSize: "", primarySourceUrl: primary.sourceUrl, rivalSourceUrl: rival.sourceUrl };
+  const targets = selectFinalProductEnrichmentTargets(comparison, 24);
+  assert.deepEqual(targets.map((target) => [target.role, target.productId, target.expectedName]), [
+    ["primary", primary.id, primary.name],
+    ["rival", rival.id, rival.name],
+  ]);
+});
+
+test("final enrichment updates the selected pair and recomputes its price decision", () => {
+  const primary = { ...product("tea", "shop.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/lemon-ginger-tea", extraction: "sitemap", confidence: "Medium" };
+  const rival = { ...product("rival-tea", "tea.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://tea.test/products/lemon-ginger-tea", extraction: "sitemap", confidence: "Medium" };
+  const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "tea.test", products: [rival] }]);
+  const enriched = applyFinalProductEnrichment(comparison, [
+    { ...primary, extraction: "page-signal", priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }], imageUrl: "https://cdn.shop.test/tea.jpg" },
+    { ...rival, extraction: "json-ld", priceSignals: [{ raw: "GBP 6", currency: "GBP", amount: 6 }], imageUrl: "https://cdn.tea.test/tea.jpg" },
+  ], { pagesRequested: 2, pagesFetched: 2, maxPages: 24, gaps: [] });
+  assert.equal(enriched.rows[0].primary.imageUrl, "https://cdn.shop.test/tea.jpg");
+  assert.equal(enriched.rows[0].matches[0].product.imageUrl, "https://cdn.tea.test/tea.jpg");
+  assert.match(enriched.rows[0].matches[0].decision.priceVerdict, /GBP 2\.00 cheaper/);
+  assert.deepEqual(enriched.enrichment, { pagesRequested: 2, pagesFetched: 2, maxPages: 24, gaps: [] });
 });
 
 test("enriched product evidence replaces sitemap placeholders and activates a price verdict", () => {

@@ -5,7 +5,7 @@ import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "reac
 import { postJson } from "./lib/json-response";
 import { composeProductMatchAttempts, hasProductMatchCoverageDefect, shouldRetryProductMatch, upsertProductComparisonBlock, type ProductMatchLifecycle } from "./lib/product-match-lifecycle";
 import { isDefensibleProductMatch, resolvedPriceDelta } from "./lib/report-presentation";
-import type { ProductComparison } from "./lib/product-intelligence";
+import { applyFinalProductEnrichment, selectFinalProductEnrichmentTargets, type ProductComparison, type ProductRecord } from "./lib/product-intelligence";
 
 type ClaimType = "Observed" | "Inferred" | "Estimated" | "Recommended";
 type Locale = "en" | "ar";
@@ -144,6 +144,7 @@ type CrawlPayload = {
 };
 type AdScanPayload = { ok: true; block: JsonBlock } | { ok: false; error?: string };
 type MatchPayload = { ok: true; comparison: ProductComparison } | { ok: false; error?: string };
+type ProductEnrichmentPayload = { ok: true; products: ProductRecord[]; coverage: NonNullable<ProductComparison["enrichment"]> } | { ok: false; error?: string };
 type CrawlFailure = {
   ok: false;
   live: false;
@@ -529,6 +530,8 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
   const comparison = doc.blocks.find((block) => block.type === "product-comparison");
   const comparisonCoverage = object(comparison?.coverage);
   const comparisonMatching = object(comparison?.matching);
+  const comparisonEnrichment = object(comparison?.enrichment);
+  const enrichmentGaps = Array.isArray(comparisonEnrichment.gaps) ? comparisonEnrichment.gaps.map(object) : [];
   const aiMatching = comparisonMatching.method === "ai-hybrid";
   const allBattles = productBattles(comparison);
   const competitorDomains = new Set(competitors.map((competitor) => jsonText(competitor, "domain")));
@@ -718,6 +721,13 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
                 <i aria-hidden="true" />
                 <div className="catalog-scan-result"><strong>{verifiedPairTotal}</strong><span>{ar ? "مقارنات موثقة" : `verified comparison${verifiedPairTotal === 1 ? "" : "s"}`}</span></div>
               </div>
+            )}
+            {comparison && Number(comparisonEnrichment.pagesRequested || 0) > 0 && (
+              <p className="comparison-limit-note">
+                {ar
+                  ? `تم جلب ${Number(comparisonEnrichment.pagesFetched || 0)} من ${Number(comparisonEnrichment.pagesRequested || 0)} صفحات المنتجات المختارة مباشرةً لإثراء الأسعار والصور.${enrichmentGaps.length ? ` بقيت ${enrichmentGaps.length} فجوة مصدر ظاهرة.` : ""}`
+                  : `Fetched ${Number(comparisonEnrichment.pagesFetched || 0)} of ${Number(comparisonEnrichment.pagesRequested || 0)} exact selected product pages for current prices and images.${enrichmentGaps.length ? ` ${enrichmentGaps.length} source gap${enrichmentGaps.length === 1 ? " remains" : "s remain"}.` : ""}`}
+              </p>
             )}
             {battles.length > 0 && <div className="battle-pair-count">{battles.length} {ar ? "أزواج معروضة" : `pair${battles.length === 1 ? "" : "s"} shown`}</div>}
             {comparisonTruncated && <p className="comparison-limit-note">{ar ? `نعرض أقوى ${battles.length} من أصل ${verifiedPairTotal} مقارنة موثقة.` : `Showing the strongest ${battles.length} of ${verifiedPairTotal} verified comparisons.`}</p>}
@@ -1015,8 +1025,24 @@ export default function Home() {
           }
           if (!active()) return;
           const comparison = composeProductMatchAttempts(baseline, attempts, requestCount);
-          if (comparison) setCrawlDocument((current) => current ? upsertProductComparisonBlock(current, comparison) : current);
-          const limited = attempts.length === 0 || hasProductMatchCoverageDefect(comparison);
+          let enrichedComparison = comparison;
+          if (comparison) {
+            const targets = selectFinalProductEnrichmentTargets(comparison, 24);
+            if (targets.length) {
+              try {
+                const enrichmentPayload = await postJson<ProductEnrichmentPayload>("/api/enrich-products", { targets }, "Selected product enrichment");
+                if (!active()) return;
+                enrichedComparison = enrichmentPayload.ok
+                  ? applyFinalProductEnrichment(comparison, enrichmentPayload.products, enrichmentPayload.coverage)
+                  : applyFinalProductEnrichment(comparison, [], { pagesRequested: targets.length, pagesFetched: 0, maxPages: 24, gaps: [{ url: "", reason: ("error" in enrichmentPayload ? enrichmentPayload.error : "") || "Selected product enrichment was unavailable." }] });
+              } catch (error) {
+                enrichedComparison = applyFinalProductEnrichment(comparison, [], { pagesRequested: targets.length, pagesFetched: 0, maxPages: 24, gaps: [{ url: "", reason: error instanceof Error ? error.message : "Selected product enrichment was unavailable." }] });
+              }
+            }
+          }
+          if (!active()) return;
+          if (enrichedComparison) setCrawlDocument((current) => current ? upsertProductComparisonBlock(current, enrichedComparison) : current);
+          const limited = attempts.length === 0 || hasProductMatchCoverageDefect(enrichedComparison);
           setProductMatchLifecycle(limited ? "limited" : "complete");
           setProductMatchNotice(limited
             ? (ar ? "ظلت تغطية المطابقة الدلالية غير مكتملة بعد المحاولة المحدودة. نعرض النتائج الموثقة فقط ولا نفترض وجود تطابق." : `Semantic matching coverage remained incomplete after the bounded retry. Only verified results are shown${lastError ? `; ${lastError}` : "."}`)

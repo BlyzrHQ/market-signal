@@ -10,7 +10,7 @@
     "build": "vinext build",
     "start": "vinext start",
     "test": "npm run typecheck && npm run build && node --test tests/*.test.mjs",
-    "typecheck": "tsc --noEmit --allowImportingTsExtensions --jsx react-jsx --moduleResolution bundler --module esnext --target es2022 --lib dom,es2022 --skipLibCheck app/cloudflare-workers.d.ts app/page.tsx app/api/crawl/route.ts app/api/match/route.ts app/api/ads/route.ts app/lib/report-presentation.ts app/lib/ad-intelligence.ts app/lib/ai-product-matching.ts app/lib/business-profile.ts app/lib/competitor-discovery.ts app/lib/competitor-memory.ts app/lib/competitor-verification.ts app/lib/product-intelligence.ts app/lib/product-match-lifecycle.ts app/lib/region-inference.ts db/schema.ts",
+    "typecheck": "tsc --noEmit --allowImportingTsExtensions --jsx react-jsx --moduleResolution bundler --module esnext --target es2022 --lib dom,es2022 --skipLibCheck app/cloudflare-workers.d.ts app/page.tsx app/api/crawl/route.ts app/api/match/route.ts app/api/enrich-products/route.ts app/api/ads/route.ts app/lib/report-presentation.ts app/lib/ad-intelligence.ts app/lib/ai-product-matching.ts app/lib/business-profile.ts app/lib/competitor-discovery.ts app/lib/competitor-memory.ts app/lib/competitor-verification.ts app/lib/product-intelligence.ts app/lib/product-match-lifecycle.ts app/lib/region-inference.ts db/schema.ts",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },

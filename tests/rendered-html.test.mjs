@@ -28,9 +28,10 @@ test("server-renders the Market Signal product shell", async () => {
 });
 
 test("real-data route and product metadata are present", async () => {
-  const [route, crawl, ads, report, page, layout, styles, packageJson, domainUtils, adIntelligence] = await Promise.all([
+  const [route, crawl, enrichment, ads, report, page, layout, styles, packageJson, domainUtils, adIntelligence] = await Promise.all([
     readFile(new URL("../app/api/analyze/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/crawl/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/enrich-products/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/ads/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/report/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
@@ -65,6 +66,9 @@ test("real-data route and product metadata are present", async () => {
   assert.match(crawl, /selectProductEnrichmentTargets/);
   assert.match(crawl, /enrichMatchedProductPages/);
   assert.match(crawl, /priceEnrichmentPagesFetched/);
+  assert.match(enrichment, /MAX_TARGETS = 24/);
+  assert.match(enrichment, /validateProductPageIdentity/);
+  assert.match(enrichment, /robots\.txt/);
   assert.match(crawl, /async function crawlPrimaryDomain/);
   assert.match(crawl, /if \(first\.homepage\)/);
   assert.match(crawl, /coverage: \{ \.\.\.retry\.coverage, attempts: 2 \}/);
@@ -84,6 +88,8 @@ test("real-data route and product metadata are present", async () => {
   assert.match(route, /application\/xhtml\+xml/);
   assert.match(page, /postJson<CrawlPayload \| CrawlFailure>[\s\S]{0,80}"\/api\/crawl"/);
   assert.match(page, /postJson<AdScanPayload>\("\/api\/ads"/);
+  assert.match(page, /postJson<ProductEnrichmentPayload>\("\/api\/enrich-products"/);
+  assert.match(page, /if \(!active\(\)\) return;\r?\n\s+if \(enrichedComparison\) setCrawlDocument/);
   assert.match(page, /adLoading/);
   assert.match(page, /not scanned/);
   assert.match(page, /postJson<[\s\S]{0,100}MarketBrief \| \{ ok: false; error\?: string \}[\s\S]{0,80}"\/api\/report"/);
