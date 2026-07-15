@@ -10,9 +10,9 @@ The Cobra CLI is the first language-neutral client of the versioned report
 contracts:
 
 ```bash
-go -C cli run ./cmd/marketsignal report myjam.co.uk --base-url http://localhost:3000
-go -C cli run ./cmd/marketsignal crawl myjam.co.uk --output json
-go -C cli run ./cmd/marketsignal ads myjam.co.uk --competitor halalo.co.uk --region "United Kingdom"
+go -C cli run ./cmd/marketsignal report company name.com --base-url http://localhost:3000
+go -C cli run ./cmd/marketsignal crawl company name.com --output json
+go -C cli run ./cmd/marketsignal ads company name.com --competitor rivals --region "United Kingdom"
 ```
 
 The default output is a compact decision summary. `--output json` returns the
