@@ -283,6 +283,10 @@ function ProductBattleCard({ battle, locale, rivalLabel }: { battle: BattleView;
   const ar = locale === "ar";
   const observedDates = [...new Set([battle.primary.observedAt, battle.rival.observedAt].filter(Boolean).map((value) => value.slice(0, 10)))];
   const rivalDomain = String(battle.match.domain || battle.rival.domain || "");
+  const assessment = object(battle.match.assessment);
+  const aiAssessed = assessment.method === "ai-hybrid";
+  const verdict = String(assessment.verdict || "");
+  const reasons = Array.isArray(assessment.reasons) ? assessment.reasons.map(String).filter(Boolean) : [];
   return (
     <article className="guided-battle">
       {rivalLabel && <div className="battle-rival-label"><span>{ar ? "المنافس" : "COMPETITOR"}</span><strong>{rivalLabel}</strong></div>}
@@ -293,7 +297,7 @@ function ProductBattleCard({ battle, locale, rivalLabel }: { battle: BattleView;
           <strong dir="auto">{battle.primary.name}</strong>
         </div>
         <div className="battle-connector">
-          <span>{planTierOf(battle.primary) && planTierOf(battle.primary) === planTierOf(battle.rival) ? (ar ? "نفس الفئة" : "SAME TIER") : `${Math.round(Number(battle.match.score || 0) * 100)}%`}</span>
+          <span>{aiAssessed ? verdict === "same_product" ? (ar ? "نفس المنتج" : "SAME PRODUCT") : (ar ? "بديل قريب" : "CLOSE SUBSTITUTE") : planTierOf(battle.primary) && planTierOf(battle.primary) === planTierOf(battle.rival) ? (ar ? "نفس الفئة" : "SAME TIER") : `${Math.round(Number(battle.match.score || 0) * 100)}%`}</span>
           <i />
         </div>
         <div className={`battle-product rival-product ${battle.rival.imageUrl ? "has-image" : "no-image"}`}>
@@ -305,7 +309,8 @@ function ProductBattleCard({ battle, locale, rivalLabel }: { battle: BattleView;
       <PricePicture battle={battle} locale={locale} />
       <div className="battle-evidence-meta">
         <Confidence value={String(battle.match.confidence || "Medium")} locale={locale} />
-        <span>{ar ? "أساس المطابقة: أسماء متقاربة وصفحتا منتج من الطرف الأول" : "MATCH BASIS: aligned names + two first-party product pages"}</span>
+        {aiAssessed && <span className="ai-assessed-badge">{ar ? "تقييم بالذكاء الاصطناعي · استنتاج" : "AI ASSESSED · INFERRED"}</span>}
+        <span>{aiAssessed ? reasons[0] || (ar ? "تم تقييم الاسم والفئة والوصف والحجم كبديل محتمل." : "Name, category, description, and variant were assessed as a potential substitute.") : ar ? "أساس المطابقة: أسماء متقاربة وصفحتا منتج من الطرف الأول" : "MATCH BASIS: aligned names + two first-party product pages"}</span>
         {observedDates.length > 0 && <span>{ar ? "تاريخ الرصد" : "OBSERVED"}: {observedDates.join(" / ")}</span>}
       </div>
       <div className="decision-path">
@@ -520,6 +525,8 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
   const competitors = doc.blocks.filter((block) => block.type === "competitor").sort((left, right) => jsonNumber(right, "verificationScore") - jsonNumber(left, "verificationScore"));
   const comparison = doc.blocks.find((block) => block.type === "product-comparison");
   const comparisonCoverage = object(comparison?.coverage);
+  const comparisonMatching = object(comparison?.matching);
+  const aiMatching = comparisonMatching.method === "ai-hybrid";
   const allBattles = productBattles(comparison);
   const competitorDomains = new Set(competitors.map((competitor) => jsonText(competitor, "domain")));
   const battles = allBattles.filter((battle) => competitorDomains.has(String(battle.match.domain)));
@@ -679,8 +686,9 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
                 <span className="chapter-kicker">03 · {ar ? "مقارنة المنتجات" : "PRODUCT COMPARISON"}</span>
                 <h3>{ar ? "ما الذي يبيعه المنافس مقابل منتجك؟" : "What are rivals selling against your products?"}</h3>
               </div>
-              <p>{ar ? "تظهر هنا فقط الأزواج التي اجتازت مطابقة الاسم والصفحة ومصدر الطرف الأول." : "Only pairs backed by matching names and crawled first-party product pages appear here."}</p>
+              <p>{aiMatching ? (ar ? "نستخدم البحث الدلالي ثم تقييماً منظماً بالذكاء الاصطناعي لاكتشاف المنتج نفسه والبدائل القريبة، مع إبقاء النتيجة كاستنتاج مرتبط بالمصادر." : "Semantic retrieval finds plausible products, then a structured AI assessment separates the same product from close substitutes. Every result remains an inference tied to both public sources.") : ar ? "تظهر هنا فقط الأزواج التي اجتازت مطابقة الاسم والصفحة ومصدر الطرف الأول." : "Only pairs backed by matching names and crawled first-party product pages appear here."}</p>
             </div>
+            {comparison && <div className={`matching-method-banner ${aiMatching ? "ai-live" : "fallback"}`}><strong>{aiMatching ? (ar ? "المطابقة الدلالية بالذكاء الاصطناعي مفعلة" : "AI semantic matching is active") : (ar ? "استخدام المطابقة النصية الاحتياطية" : "Lexical fallback matching")}</strong><span>{aiMatching ? (ar ? `${Number(comparisonMatching.primaryProductsAssessed || 0)} منتجات أساسية و${Number(comparisonMatching.candidatePairsAssessed || 0)} أزواج مرشحة تم تقييمها.` : `${Number(comparisonMatching.primaryProductsAssessed || 0)} primary products and ${Number(comparisonMatching.candidatePairsAssessed || 0)} candidate pairs assessed.`) : (ar ? "تعذر تشغيل التقييم الدلالي في هذا التقرير؛ النتيجة الحالية أضيق." : "Semantic assessment was unavailable for this report, so the result is narrower.")}</span></div>}
             {comparison && (
               <div className="catalog-scan-summary">
                 <div><strong>{primaryProductsScanned}{primaryProductsAvailable > primaryProductsScanned ? ` / ${primaryProductsAvailable}` : ""}</strong><span>{ar ? "من منتجاتك تم فحصها" : "of your products scanned"}</span></div>

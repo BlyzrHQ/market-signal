@@ -43,6 +43,21 @@ export type ProductMatch = {
     recommendedMove: string;
     priceComparison: { primaryRaw: string; rivalRaw: string } | null;
   } | null;
+  assessment?: {
+    method: "ai-hybrid";
+    claimType: "Inferred";
+    verdict: "same_product" | "close_substitute";
+    confidence: number;
+    model: string;
+    promptVersion: string;
+    reasons: string[];
+    contradictions: string[];
+    normalizedCategory: string;
+    normalizedVariant: string;
+    normalizedSize: string;
+    primarySourceUrl: string;
+    rivalSourceUrl: string;
+  };
 };
 
 export type ProductComparison = {
@@ -61,6 +76,20 @@ export type ProductComparison = {
     rowsReturned: number;
     rowLimit: number;
     truncated: boolean;
+  };
+  matching?: {
+    method: "ai-hybrid" | "lexical-fallback";
+    available: boolean;
+    model: string;
+    embeddingModel: string;
+    promptVersion: string;
+    primaryProductsAssessed: number;
+    candidatePairsAssessed: number;
+    retrievalPairsScored: number;
+    judgeCalls: number;
+    embeddingCalls: number;
+    durationMs: number;
+    gaps: string[];
   };
 };
 
@@ -592,6 +621,29 @@ function jaccard(left: string[], right: string[]) {
   return [...leftSet].filter((token) => rightSet.has(token)).length / union.size;
 }
 
+function accessoryGroups(product: ProductRecord) {
+  return new Set(fieldTokens(product, product.name).map((token) => ACCESSORY_PRODUCT_GROUPS.get(token)).filter((group): group is string => Boolean(group)));
+}
+
+export function productPairVetoes(primary: ProductRecord, candidate: ProductRecord) {
+  const vetoes: string[] = [];
+  const types = new Set([primary.jsonLdType, candidate.jsonLdType]);
+  if (types.has("Product") && types.has("Service")) {
+    const service = primary.jsonLdType === "Service" ? primary : candidate;
+    const serviceOnly = /\b(?:catering|consultancy|consulting|installation|maintenance|repair|training)\b/i.test(`${service.name} ${service.category}`);
+    const primaryIdentity = fieldTokens(primary, `${productFamilyName(primary.name)} ${primary.category}`);
+    const candidateIdentity = fieldTokens(candidate, `${productFamilyName(candidate.name)} ${candidate.category}`);
+    const sharedIdentity = primaryIdentity.filter((token) => candidateIdentity.some((candidateToken) => editDistanceAtMostOne(token, candidateToken)));
+    if (serviceOnly || sharedIdentity.length < 2) vetoes.push("The observed product and service identities are not substitutable.");
+  }
+  const primaryGroups = accessoryGroups(primary);
+  const candidateGroups = accessoryGroups(candidate);
+  for (const group of new Set([...primaryGroups, ...candidateGroups])) {
+    if (primaryGroups.has(group) !== candidateGroups.has(group)) vetoes.push(`Accessory or product-group contradiction: ${group}.`);
+  }
+  return [...new Set(vetoes)];
+}
+
 export function scoreProductPair(primary: ProductRecord, candidate: ProductRecord) {
   const primaryName = fieldTokens(primary, primary.name);
   const candidateName = fieldTokens(candidate, candidate.name);
@@ -617,14 +669,9 @@ export function scoreProductPair(primary: ProductRecord, candidate: ProductRecor
   const sameSaasPlanTier = Boolean(bothSaasPlans && primaryPlanTier === candidatePlanTier);
   const score = sameSaasPlanTier ? Math.max(baseScore, 0.72) : baseScore;
   if (sameSaasPlanTier) sharedTerms.push(`plan tier: ${primaryPlanTier}`);
-  const categoryOverlap = primaryCategory.some((token) => candidateCategory.includes(token));
-  const incompatiblePhysicalService = new Set([primary.jsonLdType, candidate.jsonLdType]).has("Product") && new Set([primary.jsonLdType, candidate.jsonLdType]).has("Service") && !categoryOverlap;
-  const primaryAccessoryGroups = new Set(primaryName.map((token) => ACCESSORY_PRODUCT_GROUPS.get(token)).filter((group): group is string => Boolean(group)));
-  const candidateAccessoryGroups = new Set(candidateName.map((token) => ACCESSORY_PRODUCT_GROUPS.get(token)).filter((group): group is string => Boolean(group)));
-  const incompatibleAccessory = [...new Set([...primaryAccessoryGroups, ...candidateAccessoryGroups])]
-    .some((group) => primaryAccessoryGroups.has(group) !== candidateAccessoryGroups.has(group));
+  const vetoes = productPairVetoes(primary, candidate);
   const ordinaryEligible = score >= 0.32 && sharedNameTerms.length >= 2;
-  return { score: Number(score.toFixed(4)), sharedTerms, imageScore: Number(imageScore.toFixed(4)), eligible: (sameSaasPlanTier || (!eitherSaasPlan && ordinaryEligible)) && !incompatiblePhysicalService && !incompatibleAccessory };
+  return { score: Number(score.toFixed(4)), sharedTerms, imageScore: Number(imageScore.toFixed(4)), eligible: (sameSaasPlanTier || (!eitherSaasPlan && ordinaryEligible)) && vetoes.length === 0 };
 }
 
 function comparablePrice(product: ProductRecord) {
@@ -642,7 +689,7 @@ function planAttribute(product: ProductRecord, label: string) {
   return product.attributes.find((value) => value.toLowerCase().startsWith(`${label.toLowerCase()}:`))?.split(":").slice(1).join(":").trim() || "";
 }
 
-function productDecision(primary: ProductRecord, candidate: ProductRecord, score: number): NonNullable<ProductMatch["decision"]> {
+export function productDecision(primary: ProductRecord, candidate: ProductRecord, score: number, exactProduct = true): NonNullable<ProductMatch["decision"]> {
   const primaryPrice = comparablePrice(primary);
   const candidatePrice = comparablePrice(candidate);
   const primaryHasPrice = hasPublicPrice(primary);
@@ -657,7 +704,7 @@ function productDecision(primary: ProductRecord, candidate: ProductRecord, score
     && planAttribute(primary, "Billing commitment") === planAttribute(candidate, "Billing commitment")
     && planAttribute(primary, "Billing commitment") !== "unspecified"
   );
-  const priceComparison = primaryPrice && candidatePrice && primaryPrice.currency === candidatePrice.currency && billingAligned
+  const priceComparison = exactProduct && primaryPrice && candidatePrice && primaryPrice.currency === candidatePrice.currency && billingAligned
     ? { primaryRaw: primaryPrice.raw, rivalRaw: candidatePrice.raw }
     : null;
   let priceVerdict = "Public prices are not comparable yet.";
@@ -665,7 +712,11 @@ function productDecision(primary: ProductRecord, candidate: ProductRecord, score
   let recommendedMove = saasPlanPair
     ? "Compare included users, usage limits, billing cadence, and annual commitment before changing the plan."
     : "Compare pack size, ingredients, delivery promise, and final basket price before changing the offer.";
-  if (saasPlanPair && primaryHasPrice && candidateHasPrice && !billingAligned) {
+  if (!exactProduct && primaryHasPrice && candidateHasPrice) {
+    priceVerdict = "This is an AI-assessed close substitute, not an identical observed variant, so its public prices are not presented as a direct delta.";
+    whyTheyMayWin = "The rival gives customers a closely substitutable option, but pack size, variant, or included value may differ.";
+    recommendedMove = "Compare the observed size, variant, ingredients or included features before testing a price response.";
+  } else if (saasPlanPair && primaryHasPrice && candidateHasPrice && !billingAligned) {
     priceVerdict = "Both expose public plan prices, but billing period, commitment, or unit basis is unresolved.";
     whyTheyMayWin = "The plans use different or unclear billing terms, so a simple price lead would be misleading.";
     recommendedMove = "Normalize per-user, per-channel, or flat pricing, billing period, and commitment before changing packaging.";
