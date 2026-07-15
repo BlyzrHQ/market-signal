@@ -53,8 +53,16 @@ Fable 5 returned a conditional PASS for the hybrid approach. It rejected lexical
 - Attempt-1 response: reduce the default AI surface to 30 primary products, eight finalists per primary, two primaries per judge call, and 6,000 output tokens; allow a 45-second report-wide budget with 30-second request bounds and four-way concurrency; aggregate repeated deadline gaps.
 - Live MyJam attempt 2 on Sites version 47 / commit `a5eb4a5`: the combined crawl-plus-AI request crossed the host request limit and returned an HTML 500 after 56.6 seconds. The combined architecture failed the production gate.
 - Attempt-2 response: move AI matching to `/api/match` after the crawl response. The UI runs market brief, ads, and AI product matching as independent progressive phases, so model latency cannot discard the verified crawl report.
-- Final Fable gate remains pending until a deployed MyJam run records real matching, latency, call counts, source URLs, and close-substitute price safety below.
+- Live MyJam attempt 3 on Sites version 48 / commit `b452584`: the independent crawl returned HTTP 200 in 38.0 seconds, and `/api/match` returned HTTP 200 in 47.1 seconds. This passed the real-data usefulness gate below.
+- Final Fable gate remains pending on a strict review of the progressive architecture and attempt-3 evidence.
 
 ## Live validation record
 
-Pending private deployment of this exact commit. Do not mark this task complete or merge until populated with observed evidence.
+Observed at `2026-07-15T11:12:58.531Z` against the deployed MyJam report:
+
+- Crawled 400 first-party products and 601 competitor products across `egrocers.uk`, `asianfresh.co.uk`, `asiangrocerystore.uk`, and `foodsouq.co.uk`.
+- `gpt-5.4-mini` with `text-embedding-3-small` assessed 28 primary products and 191 candidate pairs using 15 judge calls and two embedding calls. The bounded retrieval layer scored 1,578 possible pairs.
+- Returned 20 source-linked assigned comparisons. Eight were useful semantic matches that the deterministic lexical eligibility gate would not have admitted, including 500g vine tomatoes, whole lamb shoulder, chicken drumsticks, and baby chicken pack variants.
+- All rows retained first-party source URLs for both products and an AI verdict, confidence, and rationale. Examples include MyJam `Fine Beans 500g` versus Asian Fresh `Fine Beans 300g` (`close_substitute`, 0.96) and MyJam `Red Sweet Potato 500g` versus Asian Fresh `sweet potato red 500g` (`same_product`, 0.99).
+- No `close_substitute` produced an exact price delta. Two of 30 selected primary products reached the report deadline; that coverage limitation remained visible and their lexical fallback was retained.
+- This validates useful recovery and safety on one real public domain; it does not establish global precision. A labeled multi-domain benchmark remains follow-up work.
