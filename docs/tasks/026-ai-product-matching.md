@@ -49,6 +49,8 @@ Fable 5 returned a conditional PASS for the hybrid approach. It rejected lexical
 - Fable 5 architecture review: conditional PASS for embeddings retrieval plus a structured judge, deterministic vetoes, bounded calls, and visible lexical fallback.
 - Fable 5 code review round 1: FAIL. It identified an over-broad Product/Service veto, unbounded all-pairs lexical rescoring, and missing real-domain evidence.
 - Round-1 fixes: the veto now permits an observed subscription-box identity while retaining service-only contradictions such as catering; retrieval uses bounded token and embedding-locality pools and reports `retrievalPairsScored`.
+- Live MyJam attempt 1 on Sites version 46 / commit `083e900`: discovery verified five competitors, but all 12 five-primary judge batches reached the 18-second request limit. The report correctly degraded to lexical matching, exposing one Indomie pair and no unsafe price delta. This is a failed usefulness gate, not successful AI validation.
+- Attempt-1 response: reduce the default AI surface to 30 primary products, eight finalists per primary, two primaries per judge call, and 6,000 output tokens; allow a 45-second report-wide budget with 30-second request bounds and four-way concurrency; aggregate repeated deadline gaps.
 - Final Fable gate remains pending until a deployed MyJam run records real matching, latency, call counts, source URLs, and close-substitute price safety below.
 
 ## Live validation record
