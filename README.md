@@ -1,4 +1,34 @@
-# vinext-starter
+# Market Signal
+
+Market Signal turns one domain into an evidence-backed competitive-intelligence
+report: verified competitors, product-by-product comparison, market positioning,
+and truthful public-ad coverage states.
+
+## Go CLI
+
+The Cobra CLI is the first language-neutral client of the versioned report
+contracts:
+
+```bash
+go -C cli run ./cmd/marketsignal report myjam.co.uk --base-url http://localhost:3000
+go -C cli run ./cmd/marketsignal crawl myjam.co.uk --output json
+go -C cli run ./cmd/marketsignal ads myjam.co.uk --competitor halalo.co.uk --region "United Kingdom"
+```
+
+The default output is a compact decision summary. `--output json` returns the
+validated source response. Exit code `2` means the report is valid but declares
+coverage gaps; `3` means contract drift; `4` means transport, authentication, or
+API failure. For ads, `no-verified-result` and `access-limited` both return `2`
+because neither state establishes absence of advertising. The private Sites
+deployment does not yet expose a headless CLI
+authentication flow, so use `--base-url` with a reachable service deployment.
+
+The live scraper is currently a custom robots-aware TypeScript crawler using
+native fetch, sitemap XML, public HTML, and JSON-LD. It is not Apify, Scrapy,
+Playwright, or Puppeteer. The crawler will move into Go only after real-domain
+parity tests protect the existing production behavior.
+
+## Web application
 
 A clean full-stack starter running on
 [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
