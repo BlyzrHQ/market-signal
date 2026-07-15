@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://marketsignal.dev/contracts/report.v1.schema.json",
+  "title": "Market Signal crawl report v1",
+  "type": "object",
+  "required": ["ok", "live", "primaryDomain", "results", "document", "crawl"],
+  "properties": {
+    "ok": { "const": true },
+    "live": { "const": true },
+    "primaryDomain": { "type": "string", "minLength": 1 },
+    "results": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["domain", "role", "pages", "products", "gaps", "coverage", "fetchedAt"],
+        "properties": {
+          "domain": { "type": "string", "minLength": 1 },
+          "role": { "enum": ["primary", "submitted-comparison", "discovered-competitor"] },
+          "pages": { "type": "array" },
+          "products": { "type": "array" },
+          "gaps": { "type": "array" },
+          "coverage": {
+            "type": "object",
+            "required": ["pagesRequested", "pagesFetched", "maxPages", "robotsChecked"],
+            "properties": {
+              "pagesRequested": { "type": "integer", "minimum": 0 },
+              "pagesFetched": { "type": "integer", "minimum": 0 },
+              "maxPages": { "type": "integer", "minimum": 1 },
+              "robotsChecked": { "type": "boolean" }
+            },
+            "additionalProperties": true
+          },
+          "fetchedAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "document": {
+      "type": "object",
+      "required": ["version", "generatedAt", "blocks"],
+      "properties": {
+        "version": { "const": "1" },
+        "generatedAt": { "type": "string", "format": "date-time" },
+        "blocks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type", "id"],
+            "properties": {
+              "type": { "type": "string", "minLength": 1 },
+              "id": { "type": "string", "minLength": 1 }
+            },
+            "allOf": [
+              {
+                "if": { "properties": { "type": { "const": "evidence" } }, "required": ["type"] },
+                "then": {
+                  "required": ["claimType", "sourceUrl", "observedAt", "confidence"],
+                  "properties": {
+                    "claimType": { "enum": ["Observed", "Inferred", "Estimated", "Recommended"] },
+                    "sourceUrl": { "type": "string", "format": "uri" },
+                    "observedAt": { "type": "string", "format": "date-time" },
+                    "confidence": { "enum": ["High", "Medium", "Low"] }
+                  }
+                }
+              },
+              {
+                "if": { "properties": { "type": { "const": "gap" } }, "required": ["type"] },
+                "then": { "required": ["domain", "reason", "observedAt"] }
+              },
+              {
+                "if": { "properties": { "type": { "const": "competitor" } }, "required": ["type"] },
+                "then": { "required": ["domain", "discoverySourceUrl", "websiteSourceUrl"] }
+              }
+            ],
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "crawl": {
+      "type": "object",
+      "required": ["maxPagesPerDomain", "robotsAware", "generatedAt"],
+      "properties": {
+        "maxPagesPerDomain": { "type": "integer", "minimum": 1 },
+        "robotsAware": { "const": true },
+        "generatedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

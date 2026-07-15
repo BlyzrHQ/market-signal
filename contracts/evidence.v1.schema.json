@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://marketsignal.dev/contracts/evidence.v1.schema.json",
+  "title": "Market Signal evidence record v1",
+  "type": "object",
+  "required": ["claimType", "sourceUrl", "observedAt", "confidence"],
+  "properties": {
+    "claimType": { "enum": ["Observed", "Inferred", "Estimated", "Recommended"] },
+    "sourceUrl": { "type": "string", "format": "uri" },
+    "observedAt": { "type": "string", "format": "date-time" },
+    "confidence": { "enum": ["High", "Medium", "Low"] },
+    "methodology": { "type": "string" },
+    "region": { "type": "string" },
+    "language": { "type": "string" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "claimType": { "const": "Estimated" } }, "required": ["claimType"] },
+      "then": { "required": ["methodology"] }
+    }
+  ],
+  "additionalProperties": true
+}

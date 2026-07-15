@@ -1,5 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { reduceCompetitorForPanel, usefulnessBreakdown } from "./live-panel-utils.mjs";
+import { assertContract } from "./contract-validation.mjs";
 
 const siteUrl = (process.env.MARKET_SIGNAL_SITE_URL || "https://market-signal.abdulla617931.chatgpt.site").replace(/\/$/, "");
 const authorization = process.env.MARKET_SIGNAL_SITES_AUTH;
@@ -91,6 +92,7 @@ function reduceAdCompany(company) {
 async function runDomain(domain) {
   const crawl = await post("/api/crawl", { primary: domain, domains: [domain] });
   const payload = crawl.payload;
+  if (payload?.ok) assertContract("report", payload);
   const document = payload?.document || { blocks: [] };
   const blocks = Array.isArray(document.blocks) ? document.blocks : [];
   const results = Array.isArray(payload?.results) ? payload.results : [];
@@ -102,6 +104,7 @@ async function runDomain(domain) {
   const rows = Array.isArray(comparison.rows) ? comparison.rows : [];
   const matches = rows.flatMap((row) => (Array.isArray(row?.matches) ? row.matches : []).filter((match) => match?.product && match?.confidence === "Medium").map((match) => ({ primary: row.primary, match })));
   const ad = payload?.ok && payload?.adRequest ? await post("/api/ads", payload.adRequest) : { status: 0, seconds: 0, payload: { ok: false, error: "Crawl did not return verified ad targets." } };
+  if (ad.payload?.ok) assertContract("ads", ad.payload);
   const adBlock = ad.payload?.block || {};
   const adCompanies = (Array.isArray(adBlock.companies) ? adBlock.companies : []).map(reduceAdCompany);
   const verifiedCreativeConcepts = adCompanies.reduce((sum, company) => sum + company.verifiedCreativeConcepts, 0);
