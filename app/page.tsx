@@ -141,6 +141,7 @@ type CrawlPayload = {
   };
 };
 type AdScanPayload = { ok: true; block: JsonBlock } | { ok: false; error?: string };
+type MatchPayload = { ok: true; comparison: Record<string, unknown> } | { ok: false; error?: string };
 type CrawlFailure = {
   ok: false;
   live: false;
@@ -928,7 +929,19 @@ export default function Home() {
           setAdLoading(false);
         }
       })();
-      await Promise.all([briefWork, adWork]);
+      const matchWork = (async () => {
+        try {
+          const matchPayload = await postJson<MatchPayload>("/api/match", {
+            primaryDomain: primaryHost,
+            catalogs: crawlResults.map((result) => ({ domain: result.domain, products: result.products })),
+          }, "AI product matching");
+          if (!matchPayload.ok) throw new Error(("error" in matchPayload ? matchPayload.error : "") || "AI product matching was unavailable.");
+          setCrawlDocument((current) => current ? { ...current, blocks: current.blocks.map((block) => block.type === "product-comparison" ? { type: "product-comparison", id: "product-comparison", ...matchPayload.comparison } : block) } : current);
+        } catch (error) {
+          setAnalysisError(error instanceof Error ? `The source report is ready. ${error.message}` : "The source report is ready, but AI product matching was unavailable.");
+        }
+      })();
+      await Promise.all([briefWork, adWork, matchWork]);
     } catch (error) {
       setAnalysisError(error instanceof Error ? error.message : "Unable to analyze this domain.");
     } finally {

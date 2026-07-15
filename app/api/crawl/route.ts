@@ -1,6 +1,5 @@
 import { canonicalDomain, normalizeDomain } from "../../lib/domain";
 import { buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, selectPreferredProducts, selectProductEnrichmentTargets, type ProductComparison, type ProductRecord } from "../../lib/product-intelligence";
-import { buildAIProductComparison } from "../../lib/ai-product-matching";
 import { parseRobots } from "../../lib/robots";
 import { discoverCompetitors, type DiscoveryCandidate, type DiscoveryResult } from "../../lib/competitor-discovery";
 import { attributableFacebookUrl, type AdIntelligenceResult } from "../../lib/ad-intelligence";
@@ -490,10 +489,7 @@ export async function POST(request: Request) {
         facebookUrl: attributableFacebookUrl(result.pages.flatMap((page) => page.socialLinks)),
       })),
     };
-    const productComparison = enrichedPrimary.products.length
-      ? await buildAIProductComparison(primaryDomain, results.map((result) => ({ domain: result.domain, products: result.products })), comparisonSourceUrls(results, primaryDomain))
-      : undefined;
-    return Response.json({ ok: true, live: true, primaryDomain, results, discovery, adRequest, document: buildDocument(results, primaryDomain, discovery, discoveredResults, undefined, productComparison), crawl: { maxPagesPerDomain: MAX_HTML_PAGES, maxPagesPerDiscoveredCompetitor: MAX_DISCOVERED_HTML_PAGES, maxMatchedProductEnrichmentPages: MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES, robotsAware: true, generatedAt: new Date().toISOString() } });
+    return Response.json({ ok: true, live: true, primaryDomain, results, discovery, adRequest, document: buildDocument(results, primaryDomain, discovery, discoveredResults), crawl: { maxPagesPerDomain: MAX_HTML_PAGES, maxPagesPerDiscoveredCompetitor: MAX_DISCOVERED_HTML_PAGES, maxMatchedProductEnrichmentPages: MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES, robotsAware: true, generatedAt: new Date().toISOString() } });
   } catch (error) {
     return Response.json({ ok: false, live: false, error: error instanceof Error ? error.message : "Unable to crawl the submitted domains." }, { status: 400 });
   }

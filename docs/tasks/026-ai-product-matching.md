@@ -51,6 +51,8 @@ Fable 5 returned a conditional PASS for the hybrid approach. It rejected lexical
 - Round-1 fixes: the veto now permits an observed subscription-box identity while retaining service-only contradictions such as catering; retrieval uses bounded token and embedding-locality pools and reports `retrievalPairsScored`.
 - Live MyJam attempt 1 on Sites version 46 / commit `083e900`: discovery verified five competitors, but all 12 five-primary judge batches reached the 18-second request limit. The report correctly degraded to lexical matching, exposing one Indomie pair and no unsafe price delta. This is a failed usefulness gate, not successful AI validation.
 - Attempt-1 response: reduce the default AI surface to 30 primary products, eight finalists per primary, two primaries per judge call, and 6,000 output tokens; allow a 45-second report-wide budget with 30-second request bounds and four-way concurrency; aggregate repeated deadline gaps.
+- Live MyJam attempt 2 on Sites version 47 / commit `a5eb4a5`: the combined crawl-plus-AI request crossed the host request limit and returned an HTML 500 after 56.6 seconds. The combined architecture failed the production gate.
+- Attempt-2 response: move AI matching to `/api/match` after the crawl response. The UI runs market brief, ads, and AI product matching as independent progressive phases, so model latency cannot discard the verified crawl report.
 - Final Fable gate remains pending until a deployed MyJam run records real matching, latency, call counts, source URLs, and close-substitute price safety below.
 
 ## Live validation record
