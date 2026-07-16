@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { appendReportEvent, createReportRun, getStoredReport, MAX_REPORT_DOCUMENT_BYTES, saveReportDocument } from "../app/lib/report-store.ts";
+import { appendReportEvent, compactReportDocument, createReportRun, getStoredReport, MAX_REPORT_DOCUMENT_BYTES, saveReportDocument } from "../app/lib/report-store.ts";
 import { mutateReport, PATCH, POST } from "../app/api/reports/[publicId]/route.ts";
 
 class FakeStatement {
@@ -104,6 +104,22 @@ test("terminal reports cannot regress or be overwritten", async () => {
   await saveReportDocument(created.publicId, { blocks: [] }, {}, new Date("2026-07-16T00:01:00.000Z"), database);
   await assert.rejects(() => appendReportEvent(created.publicId, { idempotencyKey: "late", phase: "crawl", status: "running", message: "Late event." }, new Date(), database), /terminal report/);
   await assert.rejects(() => saveReportDocument(created.publicId, { blocks: [{ id: "replacement" }] }, {}, new Date(), database), /terminal report/);
+});
+
+test("only a persisted document can declare a report complete", async () => {
+  const database = new FakeDatabase();
+  const created = await createReportRun({ primaryDomain: "example.com" }, new Date(), database);
+  await assert.rejects(() => appendReportEvent(created.publicId, { idempotencyKey: "false-complete", phase: "complete", status: "complete", message: "Done without a document." }, new Date(), database), /saved report document/);
+});
+
+test("large catalogs become a bounded truthful presentation snapshot", () => {
+  const products = Array.from({ length: 500 }, (_, index) => ({ id: `p-${index}`, name: `Product ${index}`, description: "x".repeat(1800) }));
+  const compacted = compactReportDocument({ primaryDomain: "example.com", document: { version: "1", blocks: [{ type: "product-catalog", id: "catalog", products }, { type: "product-unmatched", id: "unmatched", products }] } });
+  assert.equal(compacted.document.blocks[0].products.length, 40);
+  assert.equal(compacted.document.blocks[0].totalProductCount, 500);
+  assert.equal(compacted.document.blocks[0].productsTruncated, true);
+  assert.equal(compacted.document.blocks[1].products.length, 20);
+  assert.ok(new TextEncoder().encode(JSON.stringify(compacted)).byteLength < MAX_REPORT_DOCUMENT_BYTES);
 });
 
 test("the deployed mutation route accepts the POST method used by postJson", () => {

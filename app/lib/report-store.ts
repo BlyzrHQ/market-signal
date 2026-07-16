@@ -44,6 +44,8 @@ const REPORT_SCHEMA_VERSION = 1;
 const REPORT_RETENTION_DAYS = 90;
 const STALE_RUN_MS = 10 * 60 * 1000;
 export const MAX_REPORT_DOCUMENT_BYTES = 750_000;
+const MAX_SNAPSHOT_CATALOG_PRODUCTS = 40;
+const MAX_SNAPSHOT_UNMATCHED_PRODUCTS = 20;
 const PUBLIC_ID_PATTERN = /^[a-f0-9]{32}$/;
 const PHASES = new Set<ReportPhase>(["queued", "crawl", "competitors", "products", "matching", "enrichment", "ads", "complete", "failed", "interrupted"]);
 const STATUSES = new Set<ReportRunStatus>(["queued", "running", "complete", "limited", "failed", "interrupted"]);
@@ -100,6 +102,23 @@ function safeMetadata(value: unknown) {
   return JSON.parse(json) as Record<string, unknown>;
 }
 
+export function compactReportDocument(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const root = value as Record<string, unknown>;
+  const nested = root.document && typeof root.document === "object" && !Array.isArray(root.document) ? root.document as Record<string, unknown> : root;
+  if (!Array.isArray(nested.blocks)) return value;
+  const blocks = nested.blocks.map((raw) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+    const block = raw as Record<string, unknown>;
+    const products = Array.isArray(block.products) ? block.products : null;
+    if (block.type === "product-catalog" && products) return { ...block, products: products.slice(0, MAX_SNAPSHOT_CATALOG_PRODUCTS), persistedProductCount: Math.min(products.length, MAX_SNAPSHOT_CATALOG_PRODUCTS), totalProductCount: products.length, productsTruncated: products.length > MAX_SNAPSHOT_CATALOG_PRODUCTS };
+    if (block.type === "product-unmatched" && products) return { ...block, products: products.slice(0, MAX_SNAPSHOT_UNMATCHED_PRODUCTS), persistedProductCount: Math.min(products.length, MAX_SNAPSHOT_UNMATCHED_PRODUCTS), totalProductCount: products.length, productsTruncated: products.length > MAX_SNAPSHOT_UNMATCHED_PRODUCTS };
+    return block;
+  });
+  const compactNested = { ...nested, blocks };
+  return nested === root ? compactNested : { ...root, document: compactNested };
+}
+
 function rowRun(row: Record<string, unknown>): StoredReportRun {
   return {
     id: String(row.id || ""),
@@ -152,6 +171,7 @@ export async function appendReportEvent(publicReportId: string, input: { idempot
   const key = cleanText(input.idempotencyKey, 120);
   const message = cleanText(input.message, 280);
   if (!key || !message || !PHASES.has(input.phase) || !STATUSES.has(input.status)) throw new Error("Invalid report event.");
+  if (["complete", "limited"].includes(input.status)) throw new Error("Only a saved report document can complete a report.");
   const metadata = safeMetadata(input.metadata);
   const observedAt = now.toISOString();
   await ensureSchema(database);
@@ -169,7 +189,8 @@ export async function saveReportDocument(publicReportId: string, document: unkno
   const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
   if (!database) throw new Error("Persistent report storage is unavailable.");
   if (!PUBLIC_ID_PATTERN.test(publicReportId) || !document || typeof document !== "object" || Array.isArray(document)) throw new Error("Invalid report document.");
-  const documentJson = JSON.stringify(document);
+  const compactedDocument = compactReportDocument(document);
+  const documentJson = JSON.stringify(compactedDocument);
   if (new TextEncoder().encode(documentJson).byteLength > MAX_REPORT_DOCUMENT_BYTES) throw new Error("The presentation snapshot is too large; store catalogs as relational report products.");
   const requestedObservedAt = cleanText(options.observedAt, 40);
   const observedAt = requestedObservedAt && Number.isFinite(Date.parse(requestedObservedAt)) ? new Date(requestedObservedAt).toISOString() : now.toISOString();

@@ -42,7 +42,7 @@ export async function mutateReport(request: Request, context: RouteContext) {
     return Response.json({ ok: false, error: "Unknown report persistence action." }, { status: 400 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "The persistent report could not be updated.";
-    const status = /invalid|not found|too large|terminal report/i.test(message) ? 400 : 503;
+    const status = /not found/i.test(message) ? 404 : /invalid|too large|terminal report|saved report document/i.test(message) ? 400 : 503;
     return Response.json({ ok: false, error: message }, { status });
   }
 }
