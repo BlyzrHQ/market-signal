@@ -18,6 +18,12 @@ test("submission exposes a dedicated loading URL and navigates only after docume
   assert.doesNotMatch(home, /loadingPercent|progressPercent/);
 });
 
+test("an interrupted crawl is persisted and remains addressable by its report URL", () => {
+  assert.match(home, /interruptedReportRecovery\(publicReportId, message\)/);
+  assert.match(home, /postJson\(`\/api\/reports\/\$\{publicReportId\}`,[\s\S]*recovery\.event/);
+  assert.match(home, /window\.location\.assign\(recovery\.path\)/);
+});
+
 test("reopened loading routes poll persisted events and redirect only with a document", () => {
   assert.match(loading, /fetch\(`\/api\/reports\/\$\{publicId\}`/);
   assert.match(loading, /\["complete", "limited"\]\.includes\(body\.report\.run\.status\) && body\.report\.document/);

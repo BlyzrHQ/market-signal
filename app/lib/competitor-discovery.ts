@@ -52,7 +52,7 @@ type LaneResult = { lane: SearchLane; category: string; region: string; queries:
 
 const MAX_CANDIDATES = 6;
 const MAX_PRODUCT_SEARCHES = 4;
-const SEARCH_TIMEOUT_MS = 32_000;
+const SEARCH_TIMEOUT_MS = 24_000;
 const SEARCH_SOURCE_STOPWORDS = new Set([
   "apx", "approximately", "buy", "delivered", "delivery", "fresh", "halal", "home", "online", "order", "price", "product", "products", "shop", "store", "uk",
 ]);
