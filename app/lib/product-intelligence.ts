@@ -95,6 +95,7 @@ export type ProductComparison = {
     attempts?: number;
     primaryProductsSynchronized?: number;
     competitorProductsSynchronized?: number;
+    candidateSlotsByDomain?: Record<string, number>;
   };
   enrichment?: {
     pagesRequested: number;

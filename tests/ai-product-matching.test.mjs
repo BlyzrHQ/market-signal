@@ -298,11 +298,47 @@ test("judge batches are bounded by candidate-pair count across many competitor d
     apiKey: "test",
     fetch,
     maxPrimaryProducts: 20,
+    maxCandidatesPerPrimary: 5,
+    maxCandidatesPerDomain: 1,
     maxPairsPerJudgeCall: 25,
   });
 
   assert.ok(pairCounts.length > 1);
   assert.ok(pairCounts.every((count) => count <= 25));
+});
+
+test("the fixed two-slot budget follows the strongest candidates instead of forcing domain diversity", async () => {
+  const primary = product("p1", "shop.test", "Organic Honey");
+  const strong = [product("a1", "strong.test", "Organic Honey 500g"), product("a2", "strong.test", "Raw Organic Honey")];
+  const weak = [product("b1", "weak.test", "Unrelated Soup"), product("b2", "weak.test", "Kitchen Towels")];
+  let judgedCandidates = [];
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((text, index) => ({
+      index,
+      embedding: /Unrelated Soup|Kitchen Towels/i.test(text) ? [0, 1] : [1, index === 0 ? 0 : index / 100],
+    })) });
+    const request = JSON.parse(body.input[1].content);
+    judgedCandidates = request.groups[0].candidates;
+    return response({ output_text: JSON.stringify({ assessments: judgedCandidates.map((candidate) => ({
+      primaryId: primary.id,
+      candidateId: candidate.id,
+      verdict: "no_match",
+      confidence: 0.99,
+      reason: "Test assessment.",
+      contradiction: "",
+    })) }) });
+  };
+
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [primary] },
+    { domain: "strong.test", products: strong },
+    { domain: "weak.test", products: weak },
+  ], {}, { apiKey: "test", fetch });
+
+  assert.deepEqual(judgedCandidates.map((candidate) => candidate.domain), ["strong.test", "strong.test"]);
+  assert.deepEqual(comparison.matching?.candidateSlotsByDomain, { "strong.test": 2 });
+  assert.equal(comparison.matching?.candidatePairsAssessed, 2);
 });
 
 test("synchronizes complete catalogs before selecting the strongest groups for AI judging", async () => {

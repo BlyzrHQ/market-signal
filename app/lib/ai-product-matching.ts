@@ -44,8 +44,8 @@ const PROMPT_VERSION = "ai-product-match-v2";
 const DEFAULT_MODEL = "gpt-5.4-mini";
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
 const DEFAULT_MAX_PRIMARY = 60;
-const DEFAULT_MAX_CANDIDATES = 8;
-const DEFAULT_MAX_PER_DOMAIN = 1;
+const DEFAULT_MAX_CANDIDATES = 2;
+const DEFAULT_MAX_PER_DOMAIN = 2;
 const DEFAULT_MAX_COMPETITOR_PRODUCTS = 600;
 const DEFAULT_MAX_RETRIEVAL_POOL_PER_DOMAIN = 24;
 const DEFAULT_GROUPS_PER_BATCH = 20;
@@ -427,7 +427,7 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   const apiKey = options.apiKey ?? process.env.OPENAI_API_KEY ?? "";
   const model = options.model || process.env.MARKET_SIGNAL_MATCH_MODEL || DEFAULT_MODEL;
   const embeddingModel = options.embeddingModel || process.env.MARKET_SIGNAL_MATCH_EMBEDDING_MODEL || DEFAULT_EMBEDDING_MODEL;
-  const matchingBase = { model, embeddingModel, promptVersion: PROMPT_VERSION, primaryProductsAssessed: 0, candidatePairsAssessed: 0, retrievalPairsScored: 0, judgeCalls: 0, embeddingCalls: 0, durationMs: 0, gaps: [] as string[], selectedPrimaryIds: [] as string[], assessedPrimaryIds: [] as string[], attempts: 1, primaryProductsSynchronized: 0, competitorProductsSynchronized: 0 };
+  const matchingBase = { model, embeddingModel, promptVersion: PROMPT_VERSION, primaryProductsAssessed: 0, candidatePairsAssessed: 0, retrievalPairsScored: 0, judgeCalls: 0, embeddingCalls: 0, durationMs: 0, gaps: [] as string[], selectedPrimaryIds: [] as string[], assessedPrimaryIds: [] as string[], attempts: 1, primaryProductsSynchronized: 0, competitorProductsSynchronized: 0, candidateSlotsByDomain: {} as Record<string, number> };
   if (!apiKey) return { ...withoutUnassessedMatches(fallback), matching: { ...matchingBase, method: "lexical-fallback", available: false, gaps: ["AI product matching is not configured; no product pair was accepted without AI assessment."] } };
 
   const fetcher = options.fetch || fetch;
@@ -465,6 +465,11 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   const retrieved = retrieveGroups(synchronizedPrimary, competitors, embeddings, fallback, maxCandidates, maxPerDomain, maxRetrievalPool);
   const groups = selectJudgeGroups(retrieved.groups, maxPrimary);
   matchingBase.selectedPrimaryIds = groups.map((group) => group.primary.id);
+  matchingBase.candidateSlotsByDomain = groups.flatMap((group) => group.candidates).reduce((counts, candidate) => {
+    const domain = canonicalDomain(candidate.product.domain);
+    counts[domain] = (counts[domain] || 0) + 1;
+    return counts;
+  }, {} as Record<string, number>);
   const primaryProducts = groups.map((group) => group.primary);
   const groupMap = new Map(groups.map((group) => [group.primary.id, group]));
   const judgeBatches = packJudgeBatches(groups, maxPairsPerBatch, maxGroupsPerBatch);
@@ -574,6 +579,7 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
       attempts: 1,
       primaryProductsSynchronized: matchingBase.primaryProductsSynchronized,
       competitorProductsSynchronized: matchingBase.competitorProductsSynchronized,
+      candidateSlotsByDomain: matchingBase.candidateSlotsByDomain,
     },
   };
 }
