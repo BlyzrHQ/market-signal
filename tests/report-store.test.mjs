@@ -122,6 +122,17 @@ test("large catalogs become a bounded truthful presentation snapshot", () => {
   assert.ok(new TextEncoder().encode(JSON.stringify(compacted)).byteLength < MAX_REPORT_DOCUMENT_BYTES);
 });
 
+test("persistence preserves original counts on an already compacted transport snapshot", () => {
+  const products = Array.from({ length: 40 }, (_, index) => ({ id: `p-${index}` }));
+  const compacted = compactReportDocument({ version: "1", blocks: [{ type: "product-catalog", id: "catalog", products, persistedProductCount: 40, totalProductCount: 312, productsTruncated: true }] });
+  const catalog = compacted.blocks[0];
+
+  assert.equal(catalog.products.length, 40);
+  assert.equal(catalog.persistedProductCount, 40);
+  assert.equal(catalog.totalProductCount, 312);
+  assert.equal(catalog.productsTruncated, true);
+});
+
 test("the deployed mutation route accepts the POST method used by postJson", () => {
   assert.equal(POST, mutateReport);
   assert.equal(PATCH, mutateReport);

@@ -111,8 +111,16 @@ export function compactReportDocument(value: unknown): unknown {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
     const block = raw as Record<string, unknown>;
     const products = Array.isArray(block.products) ? block.products : null;
-    if (block.type === "product-catalog" && products) return { ...block, products: products.slice(0, MAX_SNAPSHOT_CATALOG_PRODUCTS), persistedProductCount: Math.min(products.length, MAX_SNAPSHOT_CATALOG_PRODUCTS), totalProductCount: products.length, productsTruncated: products.length > MAX_SNAPSHOT_CATALOG_PRODUCTS };
-    if (block.type === "product-unmatched" && products) return { ...block, products: products.slice(0, MAX_SNAPSHOT_UNMATCHED_PRODUCTS), persistedProductCount: Math.min(products.length, MAX_SNAPSHOT_UNMATCHED_PRODUCTS), totalProductCount: products.length, productsTruncated: products.length > MAX_SNAPSHOT_UNMATCHED_PRODUCTS };
+    const declaredTotal = Number(block.totalProductCount);
+    const totalProductCount = Number.isFinite(declaredTotal) && declaredTotal >= (products?.length || 0) ? Math.floor(declaredTotal) : products?.length || 0;
+    if (block.type === "product-catalog" && products) {
+      const compactProducts = products.slice(0, MAX_SNAPSHOT_CATALOG_PRODUCTS);
+      return { ...block, products: compactProducts, persistedProductCount: compactProducts.length, totalProductCount, productsTruncated: totalProductCount > compactProducts.length };
+    }
+    if (block.type === "product-unmatched" && products) {
+      const compactProducts = products.slice(0, MAX_SNAPSHOT_UNMATCHED_PRODUCTS);
+      return { ...block, products: compactProducts, persistedProductCount: compactProducts.length, totalProductCount, productsTruncated: totalProductCount > compactProducts.length };
+    }
     return block;
   });
   const compactNested = { ...nested, blocks };
