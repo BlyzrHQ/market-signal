@@ -28,9 +28,10 @@ test("server-renders the Market Signal product shell", async () => {
 });
 
 test("real-data route and product metadata are present", async () => {
-  const [route, crawl, ads, report, page, layout, styles, packageJson, domainUtils, adIntelligence] = await Promise.all([
+  const [route, crawl, enrichment, ads, report, page, layout, styles, packageJson, domainUtils, adIntelligence] = await Promise.all([
     readFile(new URL("../app/api/analyze/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/crawl/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/enrich-products/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/ads/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/report/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
@@ -65,6 +66,9 @@ test("real-data route and product metadata are present", async () => {
   assert.match(crawl, /selectProductEnrichmentTargets/);
   assert.match(crawl, /enrichMatchedProductPages/);
   assert.match(crawl, /priceEnrichmentPagesFetched/);
+  assert.match(enrichment, /MAX_TARGETS = 24/);
+  assert.match(enrichment, /validateProductPageIdentity/);
+  assert.match(enrichment, /robots\.txt/);
   assert.match(crawl, /async function crawlPrimaryDomain/);
   assert.match(crawl, /if \(first\.homepage\)/);
   assert.match(crawl, /coverage: \{ \.\.\.retry\.coverage, attempts: 2 \}/);
@@ -84,6 +88,8 @@ test("real-data route and product metadata are present", async () => {
   assert.match(route, /application\/xhtml\+xml/);
   assert.match(page, /postJson<CrawlPayload \| CrawlFailure>[\s\S]{0,80}"\/api\/crawl"/);
   assert.match(page, /postJson<AdScanPayload>\("\/api\/ads"/);
+  assert.match(page, /postJson<ProductEnrichmentPayload>\("\/api\/enrich-products"/);
+  assert.match(page, /if \(!active\(\)\) return;\r?\n\s+if \(enrichedComparison\) setCrawlDocument/);
   assert.match(page, /adLoading/);
   assert.match(page, /not scanned/);
   assert.match(page, /postJson<[\s\S]{0,100}MarketBrief \| \{ ok: false; error\?: string \}[\s\S]{0,80}"\/api\/report"/);
@@ -125,8 +131,23 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /const primaryHost = payload\.primaryDomain/);
   assert.doesNotMatch(page, /function getDomainHost/);
   assert.match(page, /GuidedReportRenderer/);
+  assert.match(page, /data-product-match-state/);
+  assert.match(page, /Preliminary product matches/);
+  assert.match(page, /Product matching finished with limited coverage/);
+  assert.match(page, /primaryProductsSynchronized/);
+  assert.match(page, /AI reviewed the strongest/);
+  assert.match(page, /candidate pairs/);
+  assert.match(page, /\$\{verifiedPairTotal\} verified comparison/);
+  assert.match(page, /shouldRetryProductMatch/);
+  assert.match(page, /analysisRunRef/);
+  assert.match(page, /matchAttemptRef/);
+  assert.match(page, /upsertProductComparisonBlock/);
+  assert.match(page, /No attributable public product pages were found/);
+  assert.match(page, /productMatchLifecycle !== "idle"/);
   assert.match(page, /THREAT MAP/);
   assert.match(page, /RIVAL DOSSIERS/);
+  assert.match(page, /Remembered lead · re-verified live/);
+  assert.match(page, /jsonText\(competitor, "provenance"\) === "remembered-reverified"/);
   assert.match(page, /PRODUCT COMPARISON/);
   assert.match(page, /id="product-comparison"/);
   assert.match(page, /No defensible product pair was verified yet/);
@@ -157,6 +178,7 @@ test("real-data route and product metadata are present", async () => {
   assert.match(styles, /\.ad-creative-copy strong, \.ad-creative-copy p, \.ad-creative-copy small \{[^}]*overflow-wrap: anywhere/);
   assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.ad-creative-feed \{ grid-template-columns: 1fr/);
   assert.match(styles, /\.app-root\[dir="rtl"\]/);
+  assert.match(styles, /\.memory-provenance \{/);
   assert.match(styles, /\.battle-product\.no-image \{ grid-template-columns: minmax\(0, 1fr\); \}/);
   assert.match(styles, /\.battle-product\.no-image strong \{ grid-column: 1; \}/);
   assert.match(styles, /\.price-legend strong \{[^}]*white-space: nowrap/);

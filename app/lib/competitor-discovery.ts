@@ -8,6 +8,8 @@ export type DiscoveryEvidence = {
   method: "entity-search" | "category-search" | "product-search" | "search-source";
 };
 
+export type DiscoveryProvenance = "discovered-this-run" | "remembered-reverified";
+
 export type DiscoveryCandidate = {
   domain: string;
   companyName: string;
@@ -25,6 +27,8 @@ export type DiscoveryCandidate = {
   matchedPrimaryProductNames?: string[];
   matchedProductUrls?: string[];
   evidenceMethod?: "model-summarized" | "search-source";
+  provenance?: DiscoveryProvenance;
+  rememberedVerifiedAt?: string;
 };
 
 export type DiscoveryProfile = BusinessProfileInput;

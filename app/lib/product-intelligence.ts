@@ -90,6 +90,18 @@ export type ProductComparison = {
     embeddingCalls: number;
     durationMs: number;
     gaps: string[];
+    selectedPrimaryIds?: string[];
+    assessedPrimaryIds?: string[];
+    attempts?: number;
+    primaryProductsSynchronized?: number;
+    competitorProductsSynchronized?: number;
+    candidateSlotsByDomain?: Record<string, number>;
+  };
+  enrichment?: {
+    pagesRequested: number;
+    pagesFetched: number;
+    maxPages: number;
+    gaps: Array<{ url: string; reason: string }>;
   };
 };
 
@@ -97,6 +109,8 @@ export type ProductEnrichmentTarget = {
   domain: string;
   sourceUrl: string;
   productId: string;
+  expectedName: string;
+  expectedType: ProductRecord["jsonLdType"];
   pairScore: number;
   role: "primary" | "rival";
 };
@@ -221,6 +235,25 @@ function offerSignals(value: unknown): ProductPriceSignal[] {
     found.push(...offerSignals(offer.priceSpecification));
   }
   return [...new Map(found.map((signal) => [signal.raw, signal])).values()].slice(0, 12);
+}
+
+function metaProperty(document: string, property: string) {
+  const escaped = property.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const propertyFirst = new RegExp(`<meta[^>]+property\\s*=\\s*["']${escaped}["'][^>]+content\\s*=\\s*["']([^"']*)["']`, "i");
+  const contentFirst = new RegExp(`<meta[^>]+content\\s*=\\s*["']([^"']*)["'][^>]+property\\s*=\\s*["']${escaped}["']`, "i");
+  return clean(document.match(propertyFirst)?.[1] || document.match(contentFirst)?.[1] || "");
+}
+
+function openGraphOffer(document: string) {
+  const amount = metaProperty(document, "og:price:amount");
+  const currency = metaProperty(document, "og:price:currency");
+  return amount && currency ? priceSignal(amount, currency) : null;
+}
+
+function openGraphImage(document: string) {
+  const secure = metaProperty(document, "og:image:secure_url");
+  const fallback = metaProperty(document, "og:image");
+  return /^https:\/\//i.test(secure) ? secure : /^https:\/\//i.test(fallback) ? fallback : secure || fallback;
 }
 
 function attributes(record: JsonRecord) {
@@ -413,6 +446,7 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
   const products: ProductRecord[] = extractSaasPlans(input);
   const thirdPartyReferenced: ProductRecord[] = [];
   const gaps: string[] = [];
+  const authoritativeOffer = openGraphOffer(input.document);
   const scripts = [...input.document.matchAll(/<script[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
   for (const script of scripts) {
     try {
@@ -427,7 +461,9 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
       gaps.push(`Malformed JSON-LD on ${input.sourceUrl} was skipped.`);
     }
   }
-  if (!products.length && isProductLikePage(input)) {
+  let productPath = false;
+  try { productPath = PRODUCT_PATH.test(new URL(input.sourceUrl).pathname); } catch { productPath = false; }
+  if (!products.length && (isProductLikePage(input) || (productPath && Boolean(authoritativeOffer)))) {
     const titleName = clean(input.pageTitle.split(/\s+(?:\||—|–|-)\s+/)[0] || input.pageTitle);
     const observedHeading = input.headings.find((heading) => !/\b(?:logo|menu|skip navigation|home)\b/i.test(heading));
     const name = titleName && !/\b(?:logo|home)\b/i.test(titleName) ? titleName : clean(observedHeading || input.pageTitle);
@@ -441,13 +477,13 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
         description: clean(input.pageDescription).slice(0, 400),
         category: new URL(input.sourceUrl).pathname.split("/").filter(Boolean)[0] || "product page",
         jsonLdType: "PageSignal",
-        priceSignals: input.pagePriceSignals.map((value) => priceSignal(value)).filter((value): value is ProductPriceSignal => Boolean(value)).slice(0, 12),
+        priceSignals: authoritativeOffer ? [authoritativeOffer] : input.pagePriceSignals.map((value) => priceSignal(value)).filter((value): value is ProductPriceSignal => Boolean(value)).slice(0, 12),
         attributes: input.headings.filter((heading) => normalized(heading) !== normalized(name)).slice(0, 8),
         ownership: "path-inferred",
         extraction: "page-signal",
         confidence: "Medium",
         sourceUrl: input.sourceUrl,
-        imageUrl: clean(input.document.match(/<meta[^>]+property\s*=\s*["']og:image["'][^>]+content\s*=\s*["']([^"']+)/i)?.[1] || ""),
+        imageUrl: openGraphImage(input.document),
         observedAt: input.observedAt,
         claimIds: [`${id}-observed`],
       });
@@ -541,7 +577,10 @@ export function extractProductsFromSitemap(document: string, domain: string, obs
     const catalogPath = /\/(?:products?|shop|store)\//i.test(url.pathname);
     if (canonicalHost(url.hostname) !== canonicalHost(domain) || !catalogPath) continue;
     const sitemapTitle = clean(entry.match(/<(?:image:)?title>\s*([\s\S]*?)\s*<\/(?:image:)?title>/i)?.[1] || "");
-    const name = sitemapTitle || clean(url.pathname.split("/").filter(Boolean).at(-1)?.replace(/[-_]+/g, " ") || "");
+    const rawPathName = url.pathname.split("/").filter(Boolean).at(-1) || "";
+    let decodedPathName = rawPathName;
+    try { decodedPathName = decodeURIComponent(rawPathName); } catch { /* Preserve malformed public path evidence verbatim. */ }
+    const name = sitemapTitle || clean(decodedPathName.replace(/[-_]+/g, " "));
     if (!name) continue;
     const description = clean(entry.match(/<(?:image:)?caption>\s*([\s\S]*?)\s*<\/(?:image:)?caption>/i)?.[1] || "");
     const imageUrl = clean(entry.match(/<image:loc>\s*(https?:\/\/[^<]+)\s*<\/image:loc>/i)?.[1] || "").replace(/&amp;/gi, "&");
@@ -564,7 +603,7 @@ export function extractProductsFromSitemap(document: string, domain: string, obs
       observedAt,
       claimIds: [`${id}-sitemap-observed`],
     });
-    if (products.length >= 400) break;
+    if (products.length >= 600) break;
   }
   return selectPreferredProducts(products);
 }
@@ -580,7 +619,26 @@ export function selectPreferredProducts(items: ProductRecord[]) {
   for (const item of items) {
     const key = `${item.domain}|${item.normalizedName}`;
     const current = selected.get(key);
-    if (!current || quality(item) > quality(current)) selected.set(key, item);
+    if (!current) {
+      selected.set(key, item);
+      continue;
+    }
+    const preferred = quality(item) > quality(current) ? item : current;
+    const supplemental = preferred === item ? current : item;
+    const sameSource = preferred.sourceUrl.split("#")[0].replace(/\/$/, "") === supplemental.sourceUrl.split("#")[0].replace(/\/$/, "");
+    if (!sameSource) {
+      selected.set(key, preferred);
+      continue;
+    }
+    const secureImage = [preferred.imageUrl, supplemental.imageUrl].find((value) => /^https:\/\//i.test(value));
+    selected.set(key, {
+      ...preferred,
+      description: preferred.description || supplemental.description,
+      priceSignals: preferred.priceSignals.length ? preferred.priceSignals : supplemental.priceSignals,
+      attributes: preferred.attributes.length ? preferred.attributes : supplemental.attributes,
+      imageUrl: secureImage || preferred.imageUrl || supplemental.imageUrl,
+      claimIds: [...new Set([...preferred.claimIds, ...supplemental.claimIds])],
+    });
   }
   return [...selected.values()];
 }
@@ -674,6 +732,22 @@ export function scoreProductPair(primary: ProductRecord, candidate: ProductRecor
   return { score: Number(score.toFixed(4)), sharedTerms, imageScore: Number(imageScore.toFixed(4)), eligible: (sameSaasPlanTier || (!eitherSaasPlan && ordinaryEligible)) && vetoes.length === 0 };
 }
 
+export function validateProductPageIdentity(expected: ProductRecord[], fetched: ProductRecord[], pageTitle = "") {
+  if (!expected.length) return { accepted: false, products: [] as ProductRecord[], reason: "No expected product identity was available for this enrichment page." };
+  const products = fetched.filter((candidate) => expected.some((product) => {
+    if (product.normalizedName === candidate.normalizedName) return true;
+    const scored = scoreProductPair(product, candidate);
+    return scored.eligible && scored.score >= 0.45;
+  }));
+  if (products.length) return { accepted: true, products, reason: "" };
+  const observed = fetched.map((product) => product.name).filter(Boolean).slice(0, 3).join(", ") || pageTitle || "an unrelated product";
+  return {
+    accepted: false,
+    products: [] as ProductRecord[],
+    reason: `The fetched page identity (${observed}) contradicts the requested product identity (${expected.map((product) => product.name).slice(0, 3).join(", ")}).`,
+  };
+}
+
 function comparablePrice(product: ProductRecord) {
   const prices = product.priceSignals.filter((signal) => typeof signal.amount === "number" && signal.currency);
   const currencies = new Set(prices.map((signal) => signal.currency));
@@ -756,7 +830,7 @@ export function productDecision(primary: ProductRecord, candidate: ProductRecord
 
 export function buildProductComparison(primaryDomain: string, catalogs: Array<{ domain: string; products: ProductRecord[] }>, requiredSourceUrls: Record<string, string[]> = {}): ProductComparison {
   const canonicalPrimary = canonicalHost(primaryDomain);
-  const maxProductsPerCatalog = 400;
+  const maxProductsPerCatalog = 600;
   const rowLimit = 80;
   const minimumCoverageRows = 16;
   const maxUnmatchedProductsPerDomain = 24;
@@ -890,8 +964,8 @@ export function selectProductEnrichmentTargets(comparison: ProductComparison, ma
     const key = `${pair.primary.id}|${pair.rival.id}`;
     if (selectedPairs.has(key)) return;
     const missing = [
-      ...(!hasComparablePublicPrice(pair.primary) ? [{ domain: pair.primary.domain, sourceUrl: pair.primaryUrl, productId: pair.primary.id, pairScore: pair.score, role: "primary" as const }] : []),
-      ...(!hasComparablePublicPrice(pair.rival) ? [{ domain: pair.rival.domain, sourceUrl: pair.rivalUrl, productId: pair.rival.id, pairScore: pair.score, role: "rival" as const }] : []),
+      ...(!hasComparablePublicPrice(pair.primary) ? [{ domain: pair.primary.domain, sourceUrl: pair.primaryUrl, productId: pair.primary.id, expectedName: pair.primary.name, expectedType: pair.primary.jsonLdType, pairScore: pair.score, role: "primary" as const }] : []),
+      ...(!hasComparablePublicPrice(pair.rival) ? [{ domain: pair.rival.domain, sourceUrl: pair.rivalUrl, productId: pair.rival.id, expectedName: pair.rival.name, expectedType: pair.rival.jsonLdType, pairScore: pair.score, role: "rival" as const }] : []),
     ].filter((target) => !selectedUrls.has(target.sourceUrl));
     if (!missing.length || selected.length + missing.length > boundedMax) return;
     selectedPairs.add(key);
@@ -908,4 +982,70 @@ export function selectProductEnrichmentTargets(comparison: ProductComparison, ma
   }
   for (const pair of pairs) addPair(pair);
   return selected;
+}
+
+export function selectFinalProductEnrichmentTargets(comparison: ProductComparison, maxPages = 24): ProductEnrichmentTarget[] {
+  const boundedMax = Math.max(0, Math.min(24, Math.floor(maxPages)));
+  if (!boundedMax) return [];
+  const selected: ProductEnrichmentTarget[] = [];
+  const seenUrls = new Set<string>();
+  const add = (product: ProductRecord, role: ProductEnrichmentTarget["role"], pairScore: number) => {
+    if (selected.length >= boundedMax || product.jsonLdType !== "Product") return;
+    const sourceUrl = safeProductSource(product);
+    const needsPrice = !hasComparablePublicPrice(product);
+    const needsSecureImage = !/^https:\/\//i.test(product.imageUrl);
+    if (!sourceUrl || (!needsPrice && !needsSecureImage) || seenUrls.has(sourceUrl)) return;
+    seenUrls.add(sourceUrl);
+    selected.push({ domain: product.domain, sourceUrl, productId: product.id, expectedName: product.name, expectedType: product.jsonLdType, pairScore, role });
+  };
+  for (const row of comparison.rows) {
+    for (const match of row.matches) {
+      if (!match.product || match.confidence !== "Medium") continue;
+      add(row.primary, "primary", match.score);
+      add(match.product, "rival", match.score);
+      if (selected.length >= boundedMax) return selected;
+    }
+  }
+  return selected;
+}
+
+export function applyFinalProductEnrichment(
+  comparison: ProductComparison,
+  products: ProductRecord[],
+  enrichment: NonNullable<ProductComparison["enrichment"]>,
+) {
+  const sourceKey = (value: string) => value.split("#")[0].replace(/\/$/, "");
+  const merge = (base: ProductRecord) => {
+    const fresh = products.find((product) => canonicalHost(product.domain) === canonicalHost(base.domain) && sourceKey(product.sourceUrl) === sourceKey(base.sourceUrl));
+    if (!fresh) return base;
+    const secureImage = [fresh.imageUrl, base.imageUrl].find((value) => /^https:\/\//i.test(value));
+    return {
+      ...base,
+      description: fresh.description || base.description,
+      category: fresh.category || base.category,
+      priceSignals: fresh.priceSignals.length ? fresh.priceSignals : base.priceSignals,
+      attributes: fresh.attributes.length ? fresh.attributes : base.attributes,
+      extraction: fresh.extraction,
+      confidence: fresh.confidence,
+      imageUrl: secureImage || fresh.imageUrl || base.imageUrl,
+      observedAt: fresh.observedAt || base.observedAt,
+      claimIds: [...new Set([...base.claimIds, ...fresh.claimIds])],
+    } satisfies ProductRecord;
+  };
+  const rows = comparison.rows.map((row) => {
+    const primary = merge(row.primary);
+    const matches = row.matches.map((match) => {
+      if (!match.product) return match;
+      const product = merge(match.product);
+      const exactProduct = match.assessment ? match.assessment.verdict === "same_product" : true;
+      return {
+        ...match,
+        product,
+        claimIds: [...new Set([...match.claimIds, ...primary.claimIds, ...product.claimIds])],
+        decision: match.confidence === "Medium" ? productDecision(primary, product, match.score, exactProduct) : match.decision,
+      };
+    });
+    return { primary, matches };
+  });
+  return { ...comparison, rows, enrichment } satisfies ProductComparison;
 }

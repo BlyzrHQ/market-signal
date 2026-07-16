@@ -3,7 +3,7 @@ import { canonicalDomain } from "../../lib/domain.ts";
 import type { ProductRecord } from "../../lib/product-intelligence.ts";
 
 const MAX_CATALOGS = 7;
-const MAX_PRODUCTS_PER_CATALOG = 400;
+const MAX_PRODUCTS_PER_CATALOG = 600;
 
 function text(value: unknown, limit: number) {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";

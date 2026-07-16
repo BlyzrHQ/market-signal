@@ -1,5 +1,5 @@
 import { canonicalDomain, normalizeDomain } from "../../lib/domain";
-import { buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, selectPreferredProducts, selectProductEnrichmentTargets, type ProductComparison, type ProductRecord } from "../../lib/product-intelligence";
+import { buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity, type ProductComparison, type ProductRecord } from "../../lib/product-intelligence";
 import { parseRobots } from "../../lib/robots";
 import { discoverCompetitors, type DiscoveryCandidate, type DiscoveryResult } from "../../lib/competitor-discovery";
 import { attributableFacebookUrl, type AdIntelligenceResult } from "../../lib/ad-intelligence";
@@ -7,6 +7,8 @@ import { compareVerifiedCompetitors, verifyCompetitorEntity, type CompetitorVeri
 import { inferBusinessProfile } from "../../lib/business-profile";
 import { seededCrawlPaths } from "../../lib/crawl-planning";
 import { combineRegionSignals, displayRegion, inferRegion as inferRegionEvidence, type RegionSignal } from "../../lib/region-inference";
+import { forgetRememberedCompetitors, loadRememberedCompetitors, mergeRememberedCandidates, rememberVerifiedCompetitors, type MemoryCandidate } from "../../lib/competitor-memory";
+import { discoverDomainAlternatives, extractStaticClientRedirect, parkingProvider } from "../../lib/domain-recovery";
 
 type ClaimType = "Observed" | "Inferred";
 type Confidence = "High" | "Medium" | "Low";
@@ -65,6 +67,7 @@ type DomainCrawl = {
   discovery?: DiscoveryCandidate & CompetitorVerification;
   enrichmentPages?: CrawlPage[];
   priceEnrichment?: { pagesRequested: number; pagesFetched: number; maxPages: number };
+  siteState?: { status: "parked"; provider: string; evidenceUrl: string; redirectDomain: string };
 };
 
 type ReportBlock = Record<string, unknown> & { type: string; id: string };
@@ -82,7 +85,21 @@ const PRIORITY_PATHS = ["/pricing", "/plans", "/products", "/features", "/compar
 const SOCIAL_HOSTS = ["facebook.com", "instagram.com", "linkedin.com", "tiktok.com", "youtube.com", "x.com", "twitter.com"];
 
 function verifyDiscoveredCompetitor(primary: DomainCrawl, candidate: DomainCrawl, discovery: DiscoveryCandidate) {
-  if (!primary.homepage || !candidate.homepage) return candidate;
+  if (!primary.homepage || !candidate.homepage) return {
+    ...candidate,
+    discovery: {
+      ...discovery,
+      accepted: false,
+      verificationScore: 0,
+      confidence: "Low" as const,
+      categoryAlignment: false,
+      regionCompatibility: false,
+      primaryRegionKnown: Boolean(primary.homepage?.region),
+      candidateRegionKnown: false,
+      overlapTerms: [],
+      hasProductOverlap: false,
+    },
+  };
   const verification = verifyCompetitorEntity(
     { domain: primary.domain, title: primary.homepage.title, description: primary.homepage.description, region: primary.homepage.region, headings: primary.pages.flatMap((page) => page.headings), products: primary.products },
     { domain: candidate.domain, title: candidate.homepage.title, description: candidate.homepage.description, region: candidate.homepage.region, headings: candidate.pages.flatMap((page) => page.headings), products: candidate.products },
@@ -157,7 +174,11 @@ async function fetchText(url: string, accept: string, expectedDomain?: string) {
       if (![301, 302, 303, 307, 308].includes(response.status)) break;
       const location = response.headers.get("location");
       if (!location || redirect === 3) throw new Error("redirect limit reached");
-      currentUrl = new URL(location, currentUrl).toString();
+      const nextUrl = new URL(location, currentUrl);
+      if (expectedDomain && canonicalDomain(nextUrl.hostname) !== canonicalDomain(expectedDomain)) {
+        return { ok: false, status: response.status, contentType: response.headers.get("content-type") ?? "", url: currentUrl, text: "", truncated: false, error: `redirected off the submitted domain to ${canonicalDomain(nextUrl.hostname)}.`, redirectDomain: canonicalDomain(nextUrl.hostname) };
+      }
+      currentUrl = nextUrl.toString();
     }
     if (!response) throw new Error("request failed");
     const buffer = await response.arrayBuffer();
@@ -276,6 +297,15 @@ async function crawlDomain(input: string, role: DomainCrawl["role"], seededProdu
     gaps.push({ url: base.toString(), reason: "homepage redirected off the submitted domain.", observedAt: startedAt });
     return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: 1, pagesFetched: 0, maxPages: maxHtmlPages, robotsChecked: robotsResult.ok }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt };
   }
+  const clientRedirect = extractStaticClientRedirect(homepageResult.text, homepageResult.url);
+  if (clientRedirect) {
+    const redirectResult = await fetchText(clientRedirect, "text/html,application/xhtml+xml", domain);
+    const provider = redirectResult.redirectDomain ? parkingProvider(redirectResult.redirectDomain) : "";
+    if (provider) {
+      gaps.push({ url: clientRedirect, reason: `${domain} redirects to a ${provider} domain-for-sale service; no company report was generated.`, observedAt: startedAt });
+      return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: 2, pagesFetched: 1, maxPages: maxHtmlPages, robotsChecked: robotsResult.ok }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt, siteState: { status: "parked", provider, evidenceUrl: clientRedirect, redirectDomain: redirectResult.redirectDomain! } };
+    }
+  }
   const homepage = await parsePage(homepageResult.text, homepageResult.url, startedAt, domain, homepageResult.truncated);
   const discovered = extractLinks(homepageResult.text, new URL(homepageResult.url), domain);
   let sitemapPaths: string[] = [];
@@ -384,8 +414,13 @@ async function enrichMatchedProductPages(results: DomainCrawl[], primaryDomain: 
       if (!fetched.ok || !/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { page: null, gap: { url: sourceUrl, reason: fetched.error || `Matched product price-enrichment page returned HTTP ${fetched.status} or non-HTML content.`, observedAt } as Gap };
       try {
         const page = await parsePage(fetched.text, fetched.url, new Date().toISOString(), domain, fetched.truncated);
-        const hasPrice = page.products.some((product) => product.priceSignals.some((signal) => typeof signal.amount === "number" && Boolean(signal.currency)));
-        return { page, gap: hasPrice ? null : { url: sourceUrl, reason: "The matched public product page was fetched but did not expose comparable structured price evidence.", observedAt } as Gap };
+        const sourceKey = (value: string) => value.split("#")[0].replace(/\/$/, "");
+        const expected = result.products.filter((product) => sourceKey(product.sourceUrl) === sourceKey(sourceUrl));
+        const identity = validateProductPageIdentity(expected, page.products, page.title);
+        if (!identity.accepted) return { page: null, gap: { url: sourceUrl, reason: identity.reason, observedAt } as Gap };
+        const acceptedPage = { ...page, products: identity.products };
+        const hasPrice = identity.products.some((product) => product.priceSignals.some((signal) => typeof signal.amount === "number" && Boolean(signal.currency)));
+        return { page: acceptedPage, gap: hasPrice ? null : { url: sourceUrl, reason: "The matched public product page was fetched but did not expose comparable structured price evidence.", observedAt } as Gap };
       } catch {
         return { page: null, gap: { url: sourceUrl, reason: "The matched public product page could not be parsed for price evidence.", observedAt } as Gap };
       }
@@ -409,6 +444,7 @@ async function enrichMatchedProductPages(results: DomainCrawl[], primaryDomain: 
 async function crawlPrimaryDomain(domain: string) {
   const first = await crawlDomain(domain, "primary");
   if (first.homepage) return { ...first, coverage: { ...first.coverage, attempts: 1 } };
+  if (first.siteState?.status === "parked") return { ...first, coverage: { ...first.coverage, attempts: 1 } };
 
   const retry = await crawlDomain(domain, "primary");
   return {
@@ -423,7 +459,7 @@ function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?
   const productMatched = discovered.filter((result) => result.discovery?.hasProductOverlap).length;
   const blocks: ReportBlock[] = [{ type: "summary", id: "scan-summary", title: discovered.length ? `We verified ${discovered.length} market competitor${discovered.length === 1 ? "" : "s"}` : "No company passed independent verification", body: discovered.length ? `${productMatched} had a comparable public product match. Every included company was crawled and had to describe itself in the same core category; product overlap increased confidence but was not required.` : discovery?.gap || "No searched company exposed enough first-party category evidence to include without guessing." }];
   if (discovery) blocks.push({ type: "market-profile", id: "market-profile", category: discovery.category, region: discovery.region, businessType: discovery.businessType, queries: discovery.queries, provider: discovery.provider, model: discovery.model, available: discovery.available, gaps: discovery.gaps, gap: discovery.gap || "" });
-  for (const result of discovered) blocks.push({ type: "competitor", id: `competitor-${result.domain}`, domain: result.domain, companyName: result.discovery?.companyName, title: result.homepage?.title, description: result.homepage?.description, reason: result.discovery?.reason, marketCategory: result.discovery?.marketCategory, relationship: result.discovery?.relationship, sharedOfferings: result.discovery?.sharedOfferings, categoryAlignment: result.discovery?.categoryAlignment, regionCompatibility: result.discovery?.regionCompatibility, hasProductOverlap: result.discovery?.hasProductOverlap, matchedPrimaryProductName: result.discovery?.provenPrimaryProduct?.name, matchedProductName: result.discovery?.provenRivalProduct?.name, matchedProductUrl: result.discovery?.provenRivalProduct?.sourceUrl || result.discovery?.websiteUrl, searchQuery: result.discovery?.searchQuery, discoverySourceUrl: result.discovery?.sourceUrl, websiteSourceUrl: result.homepage?.sourceUrl, verificationScore: result.discovery?.verificationScore, confidence: result.discovery?.confidence, overlapTerms: result.discovery?.overlapTerms, productCount: result.products.length, prices: result.products.flatMap((product) => product.priceSignals.map((price) => price.raw)).slice(0, 6) });
+  for (const result of discovered) blocks.push({ type: "competitor", id: `competitor-${result.domain}`, domain: result.domain, companyName: result.discovery?.companyName, title: result.homepage?.title, description: result.homepage?.description, reason: result.discovery?.reason, marketCategory: result.discovery?.marketCategory, relationship: result.discovery?.relationship, sharedOfferings: result.discovery?.sharedOfferings, categoryAlignment: result.discovery?.categoryAlignment, regionCompatibility: result.discovery?.regionCompatibility, hasProductOverlap: result.discovery?.hasProductOverlap, matchedPrimaryProductName: result.discovery?.provenPrimaryProduct?.name, matchedProductName: result.discovery?.provenRivalProduct?.name, matchedProductUrl: result.discovery?.provenRivalProduct?.sourceUrl || result.discovery?.websiteUrl, searchQuery: result.discovery?.searchQuery, discoverySourceUrl: result.discovery?.sourceUrl, websiteSourceUrl: result.homepage?.sourceUrl, verificationScore: result.discovery?.verificationScore, confidence: result.discovery?.confidence, overlapTerms: result.discovery?.overlapTerms, productCount: result.products.length, prices: result.products.flatMap((product) => product.priceSignals.map((price) => price.raw)).slice(0, 6), provenance: result.discovery?.provenance || "discovered-this-run", rememberedVerifiedAt: result.discovery?.rememberedVerifiedAt || "" });
   for (const result of results) {
     blocks.push({ type: "coverage", id: `coverage-${result.domain}`, domain: result.domain, role: result.role, pagesRequested: result.coverage.pagesRequested, pagesFetched: result.coverage.pagesFetched, maxPages: result.coverage.maxPages, robotsChecked: result.coverage.robotsChecked, attempts: result.coverage.attempts || 1, priceEnrichmentPagesRequested: result.priceEnrichment?.pagesRequested || 0, priceEnrichmentPagesFetched: result.priceEnrichment?.pagesFetched || 0, priceEnrichmentMaxPagesPerReport: MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES, gaps: result.gaps });
     if (result.homepage) {
@@ -447,7 +483,8 @@ function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?
   if (ads) blocks.push({ type: "ad-intelligence", id: "ad-intelligence", primaryDomain, ...ads });
   for (const candidate of investigated) {
     if (!candidate || results.some((result) => result.domain === candidate.domain)) continue;
-    blocks.push({ type: "gap", id: `investigation-gap-${candidate.domain}`, domain: candidate.domain, url: candidate.homepage?.sourceUrl || candidate.discovery?.sourceUrl || "", reason: candidate.homepage ? (!candidate.discovery?.regionCompatibility ? "Investigated but not confirmed: first-party evidence placed this company in a different market region." : !candidate.discovery?.categoryAlignment ? "Investigated but not confirmed: the company's own website did not establish the same core market category." : `Investigated but not confirmed: entity verification score ${candidate.discovery?.verificationScore || 0}/100 did not meet the inclusion threshold.`) : `Investigated but not confirmed: ${candidate.gaps[0]?.reason || "the public site could not be verified."}`, observedAt: candidate.fetchedAt });
+    const rememberedPrefix = candidate.discovery?.provenance === "remembered-reverified" ? "Remembered lead was re-crawled, not reconfirmed, and removed from memory: " : "Investigated but not confirmed: ";
+    blocks.push({ type: "gap", id: `investigation-gap-${candidate.domain}`, domain: candidate.domain, url: candidate.homepage?.sourceUrl || candidate.discovery?.sourceUrl || "", reason: candidate.homepage ? (!candidate.discovery?.regionCompatibility ? `${rememberedPrefix}first-party evidence placed this company in a different market region.` : !candidate.discovery?.categoryAlignment ? `${rememberedPrefix}the company's own website did not establish the same core market category.` : `${rememberedPrefix}entity verification score ${candidate.discovery?.verificationScore || 0}/100 did not meet the inclusion threshold.`) : `${rememberedPrefix}${candidate.gaps[0]?.reason || "the public site could not be verified."}`, observedAt: candidate.fetchedAt });
   }
   return { version: "1", generatedAt: new Date().toISOString(), blocks };
 }
@@ -461,6 +498,10 @@ export async function POST(request: Request) {
     const primaryDomain = canonicalDomain(typeof payload.primary === "string" ? payload.primary : domains[0]);
     const submittedResults = await Promise.all(domains.map((domain) => domain === primaryDomain ? crawlPrimaryDomain(domain) : crawlDomain(domain, "submitted-comparison")));
     const primary = submittedResults.find((result) => result.domain === primaryDomain);
+    if (primary?.siteState?.status === "parked") {
+      const alternatives = await discoverDomainAlternatives(primaryDomain, 3);
+      return Response.json({ ok: false, live: false, code: "parked-domain", error: `${primaryDomain} appears to be parked or offered for sale through ${primary.siteState.provider}. Select another domain only if it belongs to your company.`, alternatives, results: submittedResults, document: buildDocument(submittedResults, primaryDomain) }, { status: 409 });
+    }
     if (!primary?.homepage) {
       const reason = primary?.gaps[0]?.reason;
       const error = reason ? `The primary domain could not be crawled: ${reason}` : "The primary domain could not be crawled.";
@@ -473,10 +514,26 @@ export async function POST(request: Request) {
       const gap = error instanceof Error ? error.message : "Web competitor discovery failed.";
       discovery = { available: false, provider: "unavailable", model: process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini", category: "", region: primary.homepage.region, businessType: "unknown", queries: [], candidates: [], gaps: [gap], gap };
     }
-    const discoveredResults = await Promise.all(discovery.candidates.filter((candidate) => !domains.includes(candidate.domain)).map(async (candidate) => {
+    const memory = await loadRememberedCompetitors(primary.domain);
+    const investigationCandidates = mergeRememberedCandidates(
+      discovery.candidates.filter((candidate) => !domains.includes(candidate.domain)),
+      memory.candidates.filter((candidate) => !domains.includes(candidate.domain)),
+    );
+    discovery = {
+      ...discovery,
+      candidates: investigationCandidates,
+      gaps: memory.gap ? [...discovery.gaps, memory.gap] : discovery.gaps,
+    };
+    const discoveredResults = await Promise.all(investigationCandidates.map(async (candidate) => {
       try { return verifyDiscoveredCompetitor(primary, await crawlDomain(candidate.domain, "discovered-competitor", candidate.matchedProductUrls?.length ? candidate.matchedProductUrls : [candidate.matchedProductUrl || candidate.websiteUrl]), candidate); } catch { return null; }
     }));
     const confirmed: DomainCrawl[] = discoveredResults.filter((result): result is NonNullable<typeof result> => Boolean(result?.homepage && result.discovery?.accepted)).sort((left, right) => compareVerifiedCompetitors(left.discovery!, right.discovery!));
+    const rememberedFailures = investigationCandidates.filter((candidate, index) => candidate.provenance === "remembered-reverified" && !discoveredResults[index]?.discovery?.accepted);
+    const forgotten = await forgetRememberedCompetitors(primary.domain, rememberedFailures.map((candidate) => candidate.domain));
+    const remembered = await rememberVerifiedCompetitors(primary.domain, confirmed.map((result) => ({ candidate: result.discovery as MemoryCandidate, verificationScore: result.discovery!.verificationScore })));
+    if ((!forgotten.available && rememberedFailures.length) || (!remembered.available && confirmed.length)) {
+      discovery = { ...discovery, gaps: [...discovery.gaps, "Verified competitor memory could not be updated; this report still uses only the current live crawl."] };
+    }
     const results = await enrichMatchedProductPages([...submittedResults, ...confirmed], primaryDomain);
     const enrichedPrimary = results.find((result) => result.domain === primaryDomain) || primary;
     const enrichedConfirmed = results.filter((result) => result.role === "discovered-competitor");
