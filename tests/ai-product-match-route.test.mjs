@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { parseCatalogs } from "../app/api/match/route.ts";
 
-test("AI matching input keeps only bounded first-party product evidence", () => {
-  const products = Array.from({ length: 405 }, (_, index) => ({
+test("AI matching input keeps a broad but bounded first-party catalog", () => {
+  const products = Array.from({ length: 605 }, (_, index) => ({
     id: `p${index}`,
     domain: "shop.test",
     name: `Product ${index}`,
@@ -26,7 +26,7 @@ test("AI matching input keeps only bounded first-party product evidence", () => 
   const catalogs = parseCatalogs([{ domain: "shop.test", products }]);
 
   assert.equal(catalogs.length, 1);
-  assert.equal(catalogs[0].products.length, 400);
+  assert.equal(catalogs[0].products.length, 600);
   assert.equal(catalogs[0].products[0].imageUrl, "");
   assert.ok(catalogs[0].products.every((product) => new URL(product.sourceUrl).hostname === "shop.test"));
 });
