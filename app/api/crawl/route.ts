@@ -9,6 +9,7 @@ import { seededCrawlPaths } from "../../lib/crawl-planning";
 import { combineRegionSignals, displayRegion, inferRegion as inferRegionEvidence, type RegionSignal } from "../../lib/region-inference";
 import { forgetRememberedCompetitors, loadRememberedCompetitors, mergeRememberedCandidates, rememberVerifiedCompetitors, type MemoryCandidate } from "../../lib/competitor-memory";
 import { discoverDomainAlternatives, extractStaticClientRedirect, parkingProvider } from "../../lib/domain-recovery";
+import { boundedExtractionDocument, compactCatalogSnapshots, settleWithConcurrency } from "../../lib/crawl-runtime";
 
 type ClaimType = "Observed" | "Inferred";
 type Confidence = "High" | "Medium" | "Low";
@@ -79,6 +80,8 @@ const MAX_SITEMAP_DOCUMENTS = 4;
 const MAX_DISCOVERED_SITEMAP_DOCUMENTS = 2;
 const MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES = 6;
 const MAX_DOCUMENT_BYTES = 1_500_000;
+const MAX_HTML_EXTRACTION_BYTES = 400_000;
+const COMPETITOR_CRAWL_CONCURRENCY = 3;
 const REQUEST_TIMEOUT_MS = 6_000;
 const USER_AGENT = "MarketSignalPublicScanner/0.1";
 const PRIORITY_PATHS = ["/pricing", "/plans", "/products", "/features", "/compare", "/integrations", "/about", "/customers", "/blog"];
@@ -241,30 +244,31 @@ function makeClaim(domain: string, suffix: string, text: string, sourceUrl: stri
   return { id: `${domain}-${suffix}`, claimType, text: text.slice(0, 300), sourceUrl, observedAt, confidence };
 }
 
-async function parsePage(document: string, sourceUrl: string, fetchedAt: string, domain: string, truncated: boolean): Promise<CrawlPage> {
+async function parsePage(document: string, sourceUrl: string, fetchedAt: string, domain: string, truncated: boolean, preparedExtractionDocument?: string): Promise<CrawlPage> {
   const url = new URL(sourceUrl);
-  const readable = stripMarkup(document.replace(/<(script|style|noscript)[^>]*>[\s\S]*?<\/\1>/gi, " "));
-  const title = stripMarkup(firstMatch(document, /<title[^>]*>([\s\S]*?)<\/title>/i)) || domain;
-  const description = decodeEntities(firstMatch(document, /<meta[^>]+name\s*=\s*["']description["'][^>]+content\s*=\s*["']([^"']*)["']/i) || firstMatch(document, /<meta[^>]+content\s*=\s*["']([^"']*)["'][^>]+name\s*=\s*["']description["']/i));
-  const headings = unique(allMatches(document, /<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/gi).map(stripMarkup), 16);
-  const internalLinks = unique(extractLinks(document, url, domain).paths, 20);
-  const language = firstMatch(document, /<html[^>]*\blang\s*=\s*["']([^"']+)["']/i).toLowerCase() || "unknown";
+  const extractionDocument = preparedExtractionDocument || boundedExtractionDocument(document, MAX_HTML_EXTRACTION_BYTES);
+  const readable = stripMarkup(extractionDocument.replace(/<(script|style|noscript)[^>]*>[\s\S]*?<\/\1>/gi, " "));
+  const title = stripMarkup(firstMatch(extractionDocument, /<title[^>]*>([\s\S]*?)<\/title>/i)) || domain;
+  const description = decodeEntities(firstMatch(extractionDocument, /<meta[^>]+name\s*=\s*["']description["'][^>]+content\s*=\s*["']([^"']*)["']/i) || firstMatch(extractionDocument, /<meta[^>]+content\s*=\s*["']([^"']*)["'][^>]+name\s*=\s*["']description["']/i));
+  const headings = unique(allMatches(extractionDocument, /<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/gi).map(stripMarkup), 16);
+  const internalLinks = unique(extractLinks(extractionDocument, url, domain).paths, 20);
+  const language = firstMatch(extractionDocument, /<html[^>]*\blang\s*=\s*["']([^"']+)["']/i).toLowerCase() || "unknown";
   const observedAt = fetchedAt;
   const textContent = `${title} ${description} ${readable}`;
   const observedPrices = prices(readable);
   const priceSignals = /\/(?:products?|shop|store|catalog|pricing|plans?)(?:\/|$)/i.test(url.pathname) ? observedPrices : [];
-  const regionInference = inferRegionEvidence({ domain, language, document, text: textContent, priceSignals: observedPrices, sourceUrl });
-  const productExtraction = extractProductsFromHtml({ document, sourceUrl, domain, observedAt, pageTitle: title, pageDescription: description, headings, pagePriceSignals: priceSignals });
+  const regionInference = inferRegionEvidence({ domain, language, document: extractionDocument, text: textContent, priceSignals: observedPrices, sourceUrl });
+  const productExtraction = extractProductsFromHtml({ document: extractionDocument, sourceUrl, domain, observedAt, pageTitle: title, pageDescription: description, headings, pagePriceSignals: priceSignals });
   const claims: Claim[] = [
     makeClaim(domain, `${url.pathname}-title`, `${domain} presents itself as “${title}”.`, sourceUrl, observedAt),
     ...(description ? [makeClaim(domain, `${url.pathname}-description`, `${domain} describes itself as “${description}”.`, sourceUrl, observedAt)] : []),
     ...(priceSignals.length ? [makeClaim(domain, `${url.pathname}-prices`, `${domain} exposes these public price patterns: ${priceSignals.join(", ")}.`, sourceUrl, observedAt)] : []),
     ...(headings.length ? [makeClaim(domain, `${url.pathname}-headings`, `${domain} uses these public headings: ${headings.slice(0, 5).join("; ")}.`, sourceUrl, observedAt)] : []),
     makeClaim(domain, `${url.pathname}-language`, `${domain} exposes language ${language || "unknown"} and region signal ${displayRegion(regionInference)}.`, sourceUrl, observedAt, "Inferred", regionInference.confidence),
-    makeClaim(domain, `${url.pathname}-social`, `${domain} links to ${socialLinks(document, url).length} public social profiles from this page.`, sourceUrl, observedAt),
+    makeClaim(domain, `${url.pathname}-social`, `${domain} links to ${socialLinks(extractionDocument, url).length} public social profiles from this page.`, sourceUrl, observedAt),
     ...productExtraction.products.map((product) => ({ id: product.claimIds[0], claimType: "Observed" as const, text: `${domain} exposes product or service “${product.name}” via ${product.extraction === "json-ld" ? "structured JSON-LD" : "a product-like public page"}.`, sourceUrl: product.sourceUrl, observedAt: product.observedAt, confidence: product.confidence })),
   ];
-  return { ok: true, live: true, domain, url: sourceUrl, path: url.pathname, sourceUrl, fetchedAt, title, description: description || "No meta description was exposed on the public page.", language: language || "unknown", region: displayRegion(regionInference), regionCountryCode: regionInference.countryCode, regionConfidence: regionInference.confidence, regionSignals: regionInference.signals, headings, prices: priceSignals, socialLinks: socialLinks(document, url), internalLinks, wordCount: readable ? readable.split(/\s+/).length : 0, truncated, contentHash: await hash(document), claims, products: productExtraction.products, productGaps: productExtraction.gaps, thirdPartyProductCount: productExtraction.thirdPartyReferenced.length };
+  return { ok: true, live: true, domain, url: sourceUrl, path: url.pathname, sourceUrl, fetchedAt, title, description: description || "No meta description was exposed on the public page.", language: language || "unknown", region: displayRegion(regionInference), regionCountryCode: regionInference.countryCode, regionConfidence: regionInference.confidence, regionSignals: regionInference.signals, headings, prices: priceSignals, socialLinks: socialLinks(extractionDocument, url), internalLinks, wordCount: readable ? readable.split(/\s+/).length : 0, truncated, contentHash: await hash(document), claims, products: productExtraction.products, productGaps: productExtraction.gaps, thirdPartyProductCount: productExtraction.thirdPartyReferenced.length };
 }
 
 async function crawlDomain(input: string, role: DomainCrawl["role"], seededProductUrls: string[] = []): Promise<DomainCrawl> {
@@ -306,8 +310,9 @@ async function crawlDomain(input: string, role: DomainCrawl["role"], seededProdu
       return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: 2, pagesFetched: 1, maxPages: maxHtmlPages, robotsChecked: robotsResult.ok }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt, siteState: { status: "parked", provider, evidenceUrl: clientRedirect, redirectDomain: redirectResult.redirectDomain! } };
     }
   }
-  const homepage = await parsePage(homepageResult.text, homepageResult.url, startedAt, domain, homepageResult.truncated);
-  const discovered = extractLinks(homepageResult.text, new URL(homepageResult.url), domain);
+  const homepageExtractionDocument = boundedExtractionDocument(homepageResult.text, MAX_HTML_EXTRACTION_BYTES);
+  const homepage = await parsePage(homepageResult.text, homepageResult.url, startedAt, domain, homepageResult.truncated, homepageExtractionDocument);
+  const discovered = extractLinks(homepageExtractionDocument, new URL(homepageResult.url), domain);
   let sitemapPaths: string[] = [];
   let sitemapProducts: ProductRecord[] = [];
   const sitemapUrl = (() => { try { const candidate = new URL(robots.sitemaps[0] || "/sitemap.xml", base); return canonicalDomain(candidate.hostname) === canonicalDomain(domain) && /^https?:$/.test(candidate.protocol) ? candidate.toString() : new URL("/sitemap.xml", base).toString(); } catch { return new URL("/sitemap.xml", base).toString(); } })();
@@ -524,9 +529,8 @@ export async function POST(request: Request) {
       candidates: investigationCandidates,
       gaps: memory.gap ? [...discovery.gaps, memory.gap] : discovery.gaps,
     };
-    const discoveredResults = await Promise.all(investigationCandidates.map(async (candidate) => {
-      try { return verifyDiscoveredCompetitor(primary, await crawlDomain(candidate.domain, "discovered-competitor", candidate.matchedProductUrls?.length ? candidate.matchedProductUrls : [candidate.matchedProductUrl || candidate.websiteUrl]), candidate); } catch { return null; }
-    }));
+    const investigatedSettled = await settleWithConcurrency(investigationCandidates, COMPETITOR_CRAWL_CONCURRENCY, async (candidate) => verifyDiscoveredCompetitor(primary, await crawlDomain(candidate.domain, "discovered-competitor", candidate.matchedProductUrls?.length ? candidate.matchedProductUrls : [candidate.matchedProductUrl || candidate.websiteUrl]), candidate));
+    const discoveredResults = investigatedSettled.map((result) => result.status === "fulfilled" ? result.value : null);
     const confirmed: DomainCrawl[] = discoveredResults.filter((result): result is NonNullable<typeof result> => Boolean(result?.homepage && result.discovery?.accepted)).sort((left, right) => compareVerifiedCompetitors(left.discovery!, right.discovery!));
     const rememberedFailures = investigationCandidates.filter((candidate, index) => candidate.provenance === "remembered-reverified" && !discoveredResults[index]?.discovery?.accepted);
     const forgotten = await forgetRememberedCompetitors(primary.domain, rememberedFailures.map((candidate) => candidate.domain));
@@ -546,7 +550,8 @@ export async function POST(request: Request) {
         facebookUrl: attributableFacebookUrl(result.pages.flatMap((page) => page.socialLinks)),
       })),
     };
-    return Response.json({ ok: true, live: true, primaryDomain, results, discovery, adRequest, document: buildDocument(results, primaryDomain, discovery, discoveredResults), crawl: { maxPagesPerDomain: MAX_HTML_PAGES, maxPagesPerDiscoveredCompetitor: MAX_DISCOVERED_HTML_PAGES, maxMatchedProductEnrichmentPages: MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES, robotsAware: true, generatedAt: new Date().toISOString() } });
+    const document = compactCatalogSnapshots(buildDocument(results, primaryDomain, discovery, discoveredResults));
+    return Response.json({ ok: true, live: true, primaryDomain, results, discovery, adRequest, document, crawl: { maxPagesPerDomain: MAX_HTML_PAGES, maxPagesPerDiscoveredCompetitor: MAX_DISCOVERED_HTML_PAGES, maxMatchedProductEnrichmentPages: MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES, competitorCrawlConcurrency: COMPETITOR_CRAWL_CONCURRENCY, htmlExtractionBytes: MAX_HTML_EXTRACTION_BYTES, robotsAware: true, generatedAt: new Date().toISOString() } });
   } catch (error) {
     return Response.json({ ok: false, live: false, error: error instanceof Error ? error.message : "Unable to crawl the submitted domains." }, { status: 400 });
   }

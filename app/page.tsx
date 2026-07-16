@@ -3,6 +3,7 @@
 
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { postJson } from "./lib/json-response";
+import { interruptedReportRecovery } from "./lib/crawl-runtime";
 import { composeProductMatchAttempts, hasProductMatchCoverageDefect, shouldRetryProductMatch, upsertProductComparisonBlock, type ProductMatchLifecycle } from "./lib/product-match-lifecycle";
 import { isDefensibleProductMatch, resolvedPriceDelta } from "./lib/report-presentation";
 import { applyFinalProductEnrichment, selectFinalProductEnrichmentTargets, type ProductComparison, type ProductRecord } from "./lib/product-intelligence";
@@ -977,10 +978,11 @@ export default function Home() {
     setProductMatchNotice("");
     setSavedReportId("");
     setLoadingMessage("");
+    let publicReportId = "";
     try {
       const created = await postJson<{ ok: true; report: { publicId: string } } | { ok: false; error?: string }>("/api/reports", { primaryDomain: cleanDomain, locale }, "Persistent report creation");
       if (!created.ok || !created.report?.publicId) throw new Error(("error" in created ? created.error : "") || "Persistent report storage is unavailable.");
-      const publicReportId = created.report.publicId;
+      publicReportId = created.report.publicId;
       setSavedReportId(publicReportId);
       setLoadingMessage(ar ? "تم إنشاء التقرير وبدأ جمع المصادر العامة." : "Report queued for public-source collection.");
       window.history.pushState({}, "", `/reports/${publicReportId}/loading`);
@@ -1172,8 +1174,19 @@ export default function Home() {
       if (persistenceGap && active()) setAnalysisError(`The analysis completed, but its persistent report has a storage gap: ${persistenceGap}`);
     } catch (error) {
       if (active()) {
-        setAnalysisError(error instanceof Error ? error.message : "Unable to analyze this domain.");
-        window.history.replaceState({}, "", "/");
+        const message = error instanceof Error ? error.message : "Unable to analyze this domain.";
+        setAnalysisError(message);
+        if (publicReportId) {
+          const recovery = interruptedReportRecovery(publicReportId, message);
+          try {
+            await postJson(`/api/reports/${publicReportId}`, recovery.event, "Interrupted report persistence");
+            window.location.assign(recovery.path);
+          } catch {
+            window.history.replaceState({}, "", recovery.path);
+          }
+        } else {
+          window.history.replaceState({}, "", "/");
+        }
       }
     } finally {
       if (active()) setIsAnalyzing(false);
