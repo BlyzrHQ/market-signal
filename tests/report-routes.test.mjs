@@ -33,10 +33,36 @@ test("reopened loading routes poll persisted events and redirect only with a doc
 
 test("completed report route reconstructs the evidence renderer from D1", () => {
   assert.match(report, /fetch\(`\/api\/reports\/\$\{publicId\}`/);
-  assert.match(report, /<ReportSnapshot/);
+  assert.match(report, /<ReportWorkspace/);
   assert.match(report, /documentSchemaVersion !== 1/);
   assert.match(report, /window\.location\.replace\(`\/reports\/\$\{publicId\}\/loading`\)/);
   assert.doesNotMatch(report, /from "\.\.\/\.\.\/page"/);
+});
+
+test("saved reports expose deep-linkable accessible intelligence tabs", () => {
+  assert.match(report, /type View = "overview" \| "competitors" \| "products" \| "ads" \| "evidence" \| "methodology"/);
+  assert.match(report, /new URLSearchParams\(window\.location\.search\)\.get\("view"\)/);
+  assert.match(report, /window\.addEventListener\("popstate", sync\)/);
+  assert.match(report, /role="tablist"/);
+  assert.match(report, /role="tab"/);
+  assert.match(report, /aria-controls=\{`panel-\$\{item\}`\}/);
+  assert.match(report, /role="tabpanel"/);
+  assert.match(report, /const forwardKey = ar \? "ArrowLeft" : "ArrowRight"/);
+  assert.match(report, /scrollToReportHash/);
+  assert.match(report, /scrollIntoView\(\{ block: "start" \}\)/);
+  assert.match(report, /onClick=\{onWorkspaceClick\}/);
+  assert.match(report, /viewHref\("products", productAnchor\(domain\)\)/);
+  assert.match(report, /viewHref\("ads", adAnchor\(domain\)\)/);
+  assert.match(report, /viewHref\("evidence", evidenceAnchor\(domain\)\)/);
+});
+
+test("saved product and ad views preserve truth boundaries and source links", () => {
+  assert.match(report, /Your product source ↗/);
+  assert.match(report, /Rival product source ↗/);
+  assert.match(report, /not proof of zero ads/);
+  assert.match(report, /This does not mean the companies do not advertise/);
+  assert.match(report, /truth-pill/);
+  assert.match(report, /repairEncoding/);
 });
 
 test("dark routes fill the viewport and keep responsive width bounded", () => {
@@ -45,6 +71,8 @@ test("dark routes fill the viewport and keep responsive width bounded", () => {
   assert.match(css, /overflow-x: hidden/);
   assert.match(css, /@media\(max-width:700px\)/);
   assert.match(css, /overflow-y: auto/);
+  assert.match(css, /\.stored-report-page \{ min-width: 0; overflow-x: clip/);
+  assert.match(css, /\.workspace-tabs \{ position: sticky/);
 });
 
 test("new routes preserve Arabic direction and controls", () => {
@@ -52,4 +80,5 @@ test("new routes preserve Arabic direction and controls", () => {
   assert.match(loading, /ابدأ تقريراً جديداً/);
   assert.match(report, /dir=\{dir\}/);
   assert.match(report, /تقرير جديد/);
+  assert.match(report, /setLocaleOverride\(ar \? "en" : "ar"\)/);
 });
