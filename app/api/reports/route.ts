@@ -14,4 +14,3 @@ export async function POST(request: Request) {
     return Response.json({ ok: false, error: message }, { status });
   }
 }
-
