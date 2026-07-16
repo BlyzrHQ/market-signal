@@ -37,6 +37,28 @@ test("falls back honestly without an API key", async () => {
   assert.equal(calls, 0);
   assert.equal(comparison.matching?.method, "lexical-fallback");
   assert.match(comparison.matching?.gaps[0] || "", /not configured/i);
+  assert.equal(comparison.rows[0].matches[0].product, null);
+  assert.equal(comparison.coverage.assignedPairCount, 0);
+});
+
+test("an incomplete Responses API output is visible and never exposes a fallback pair", async () => {
+  const primary = product("p1", "shop.test", "Sidr Honey 500g");
+  const rival = product("r1", "rival.test", "Sidr Honey 500g");
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, 0] })) });
+    return response({ status: "incomplete", incomplete_details: { reason: "max_output_tokens" }, output: [] });
+  };
+
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [primary] },
+    { domain: "rival.test", products: [rival] },
+  ], {}, { apiKey: "test", fetch });
+
+  assert.equal(comparison.matching?.method, "lexical-fallback");
+  assert.equal(comparison.rows[0].matches[0].product, null);
+  assert.equal(comparison.coverage.assignedPairCount, 0);
+  assert.match(comparison.matching?.gaps.join(" ") || "", /incomplete model output/i);
 });
 
 test("embedding retrieval gives a cross-language pair to the structured judge", async () => {
@@ -88,6 +110,8 @@ test("embedding retrieval gives a cross-language pair to the structured judge", 
   assert.equal(match?.assessment?.verdict, "close_substitute");
   assert.equal(comparison.matching?.method, "ai-hybrid");
   assert.equal(calls.filter((call) => call.url.endsWith("/responses")).length, 1);
+  assert.equal(calls.find((call) => call.url.endsWith("/embeddings"))?.body.dimensions, 256);
+  assert.equal(calls.find((call) => call.url.endsWith("/responses"))?.body.max_output_tokens, 6_000);
 });
 
 test("deterministic veto rejects an AI same-product service mismatch", async () => {
@@ -146,7 +170,7 @@ test("close substitutes never produce exact price deltas", async () => {
   assert.match(match.decision?.priceVerdict || "", /substitute|pack|variant/i);
 });
 
-test("an incomplete AI batch is rejected and preserves lexical fallback matches", async () => {
+test("an incomplete AI batch never exposes an unassessed lexical fallback match", async () => {
   const primary = product("p1", "shop.test", "Sidr Honey 500g");
   const rivals = [
     product("r1", "rival.test", "Sidr Honey 500g"),
@@ -161,11 +185,12 @@ test("an incomplete AI batch is rejected and preserves lexical fallback matches"
   const comparison = await buildAIProductComparison("shop.test", [
     { domain: "shop.test", products: [primary] },
     { domain: "rival.test", products: rivals },
-  ], {}, { apiKey: "test", fetch, maxCandidatesPerPrimary: 2 });
+  ], {}, { apiKey: "test", fetch, maxCandidatesPerPrimary: 2, maxCandidatesPerDomain: 2 });
 
   assert.equal(comparison.matching?.method, "lexical-fallback");
-  assert.equal(comparison.rows[0].matches[0].product?.id, "r1");
-  assert.match(comparison.matching?.gaps.join(" ") || "", /failed/i);
+  assert.equal(comparison.rows[0].matches[0].product, null);
+  assert.equal(comparison.coverage.assignedPairCount, 0);
+  assert.match(comparison.matching?.gaps.join(" ") || "", /incomplete|failed/i);
 });
 
 test("AI coverage is not limited to the lexical fallback's sixteen visible rows", async () => {
@@ -199,7 +224,7 @@ test("AI coverage is not limited to the lexical fallback's sixteen visible rows"
   assert.equal(comparison.rows.length, 20);
 });
 
-test("candidate retrieval scores a hard-bounded pool instead of every catalog pair", async () => {
+test("candidate retrieval performs an exact semantic scan across the bounded catalogs", async () => {
   const primaryProducts = Array.from({ length: 10 }, (_, index) => product(`p${index}`, "shop.test", `Primary ${index}`));
   const rivalProducts = Array.from({ length: 500 }, (_, index) => product(`r${index}`, "rival.test", `Rival ${index}`));
   const fetch = async (url, init) => {
@@ -214,6 +239,149 @@ test("candidate retrieval scores a hard-bounded pool instead of every catalog pa
     { domain: "rival.test", products: rivalProducts },
   ], {}, { apiKey: "test", fetch, maxPrimaryProducts: 10, maxProductsPerCompetitor: 500, maxRetrievalPoolPerDomain: 12 });
 
-  assert.ok((comparison.matching?.retrievalPairsScored || 0) <= 120);
-  assert.ok((comparison.matching?.retrievalPairsScored || 0) < primaryProducts.length * rivalProducts.length);
+  assert.equal(comparison.matching?.retrievalPairsScored, primaryProducts.length * rivalProducts.length);
+});
+
+test("a complete group is salvaged when another group is incomplete in the same judge response", async () => {
+  const primaries = [product("p1", "shop.test", "Sidr Honey 500g"), product("p2", "shop.test", "Olive Oil 1L")];
+  const rivals = [product("r1", "rival.test", "Sidr Honey 500g"), product("r2", "rival.test", "Olive Oil 1L")];
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((text, index) => ({ index, embedding: /honey/i.test(text) ? [1, 0] : [0, 1] })) });
+    const request = JSON.parse(body.input[1].content);
+    const first = request.groups[0];
+    return response({ output_text: JSON.stringify({ assessments: first.candidates.map((candidate) => ({
+      primaryId: first.primary.id,
+      candidateId: candidate.id,
+      verdict: "same_product",
+      confidence: 0.98,
+      reason: "Same observed offer.",
+      contradiction: "",
+    })) }) });
+  };
+
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: primaries },
+    { domain: "rival.test", products: rivals },
+  ], {}, { apiKey: "test", fetch, maxPrimaryProducts: 2 });
+
+  assert.equal(comparison.matching?.method, "ai-hybrid");
+  assert.equal(comparison.matching?.primaryProductsAssessed, 1);
+  assert.equal(comparison.coverage.assignedPairCount, 1);
+  assert.equal(comparison.rows.find((row) => row.primary.id === primaries[1].id)?.matches[0].product, null);
+  assert.match(comparison.matching?.gaps.join(" ") || "", /incomplete/i);
+});
+
+test("judge batches are bounded by candidate-pair count across many competitor domains", async () => {
+  const primaries = Array.from({ length: 20 }, (_, index) => product(`p${index}`, "shop.test", `Local Item ${index}`));
+  const catalogs = Array.from({ length: 5 }, (_, domainIndex) => ({
+    domain: `rival-${domainIndex}.test`,
+    products: primaries.map((_, index) => product(`r${domainIndex}-${index}`, `rival-${domainIndex}.test`, `Rival Item ${index}`)),
+  }));
+  const pairCounts = [];
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, index % 3, index % 5] })) });
+    const request = JSON.parse(body.input[1].content);
+    pairCounts.push(request.groups.reduce((sum, group) => sum + group.candidates.length, 0));
+    return response({ output_text: JSON.stringify({ assessments: request.groups.flatMap((group) => group.candidates.map((candidate) => ({
+      primaryId: group.primary.id,
+      candidateId: candidate.id,
+      verdict: "no_match",
+      confidence: 0.99,
+      reason: "Different products.",
+      contradiction: "",
+    }))) }) });
+  };
+
+  await buildAIProductComparison("shop.test", [{ domain: "shop.test", products: primaries }, ...catalogs], {}, {
+    apiKey: "test",
+    fetch,
+    maxPrimaryProducts: 20,
+    maxCandidatesPerPrimary: 5,
+    maxCandidatesPerDomain: 1,
+    maxPairsPerJudgeCall: 25,
+  });
+
+  assert.ok(pairCounts.length > 1);
+  assert.ok(pairCounts.every((count) => count <= 25));
+});
+
+test("the fixed two-slot budget follows the strongest candidates instead of forcing domain diversity", async () => {
+  const primary = product("p1", "shop.test", "Organic Honey");
+  const strong = [product("a1", "strong.test", "Organic Honey 500g"), product("a2", "strong.test", "Raw Organic Honey")];
+  const weak = [product("b1", "weak.test", "Unrelated Soup"), product("b2", "weak.test", "Kitchen Towels")];
+  let judgedCandidates = [];
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((text, index) => ({
+      index,
+      embedding: /Unrelated Soup|Kitchen Towels/i.test(text) ? [0, 1] : [1, index === 0 ? 0 : index / 100],
+    })) });
+    const request = JSON.parse(body.input[1].content);
+    judgedCandidates = request.groups[0].candidates;
+    return response({ output_text: JSON.stringify({ assessments: judgedCandidates.map((candidate) => ({
+      primaryId: primary.id,
+      candidateId: candidate.id,
+      verdict: "no_match",
+      confidence: 0.99,
+      reason: "Test assessment.",
+      contradiction: "",
+    })) }) });
+  };
+
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [primary] },
+    { domain: "strong.test", products: strong },
+    { domain: "weak.test", products: weak },
+  ], {}, { apiKey: "test", fetch });
+
+  assert.deepEqual(judgedCandidates.map((candidate) => candidate.domain), ["strong.test", "strong.test"]);
+  assert.deepEqual(comparison.matching?.candidateSlotsByDomain, { "strong.test": 2 });
+  assert.equal(comparison.matching?.candidatePairsAssessed, 2);
+});
+
+test("synchronizes complete catalogs before selecting the strongest groups for AI judging", async () => {
+  const primaryProducts = Array.from({ length: 80 }, (_, index) => product(
+    `p${index}`,
+    "shop.test",
+    index === 79 ? "عسل سدر عضوي 500 جرام" : `Unrelated local item ${index}`,
+  ));
+  const rivalProducts = Array.from({ length: 100 }, (_, index) => product(
+    `r${index}`,
+    "rival.test",
+    index === 99 ? "Organic Sidr Honey 500g" : `Different imported item ${index}`,
+  ));
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) {
+      return response({ data: body.input.map((text, index) => ({
+        index,
+        embedding: /سدر|sidr/i.test(text) ? [1, 0, 0, 0] : (/name: Unrelated/i.test(text) ? [0, 1, 0, 0] : [0, -1, 0, 0]),
+      })) });
+    }
+    const request = JSON.parse(body.input[1].content);
+    return response({ output_text: JSON.stringify({ assessments: request.groups.flatMap((group) => group.candidates.map((candidate) => ({
+      primaryId: group.primary.id,
+      candidateId: candidate.id,
+      verdict: group.primary.id === "p79" && candidate.id === "r99" ? "close_substitute" : "no_match",
+      confidence: 0.97,
+      normalizedCategory: group.primary.id === "p79" && candidate.id === "r99" ? "sidr honey" : "",
+      normalizedVariant: "",
+      normalizedSize: group.primary.id === "p79" && candidate.id === "r99" ? "500g" : "",
+      reasons: group.primary.id === "p79" && candidate.id === "r99" ? ["Same product family across Arabic and English."] : ["Different products."],
+      contradictions: [],
+      needsImageReview: false,
+    }))) }) });
+  };
+
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: primaryProducts },
+    { domain: "rival.test", products: rivalProducts },
+  ], {}, { apiKey: "test", fetch, maxPrimaryProducts: 10, maxProductsPerCompetitor: 100, primaryProductsPerJudgeCall: 5 });
+
+  assert.equal(comparison.matching?.primaryProductsSynchronized, 80);
+  assert.equal(comparison.matching?.competitorProductsSynchronized, 100);
+  assert.ok(comparison.matching?.selectedPrimaryIds?.includes("p79"));
+  assert.equal(comparison.rows.find((row) => row.primary.id === "p79")?.matches[0].product?.id, "r99");
 });

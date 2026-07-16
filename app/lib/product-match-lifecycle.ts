@@ -22,6 +22,14 @@ function gapCount(comparison: ProductComparison) {
   return matching(comparison)?.gaps.length || 0;
 }
 
+function withoutUnassessedMatches(comparison: ProductComparison) {
+  const rows = comparison.rows.map((row) => ({
+    ...row,
+    matches: row.matches.map((match) => ({ ...match, product: null, score: 0, confidence: null, sharedTerms: [], claimIds: row.primary.claimIds, decision: null, assessment: undefined })),
+  }));
+  return { ...comparison, rows, coverage: { ...comparison.coverage, assignedPairCount: 0, verifiedPairCount: 0 } };
+}
+
 export function hasProductMatchCoverageDefect(comparison: ProductComparison | null | undefined) {
   if (!comparison?.matching || comparison.matching.method !== "ai-hybrid" || !comparison.matching.available) return true;
   const selected = selectedIds(comparison);
@@ -47,7 +55,12 @@ function attemptRank(left: ProductComparison, right: ProductComparison) {
 
 export function composeProductMatchAttempts(baseline: ProductComparison | null, attempts: ProductComparison[], requestCount = attempts.length) {
   const usable = attempts.filter((attempt) => attempt.matching?.method === "ai-hybrid" && attempt.matching.available);
-  if (!usable.length) return baseline;
+  if (!usable.length) {
+    const latest = attempts.at(-1) || baseline;
+    if (!latest) return latest;
+    const stripped = withoutUnassessedMatches(latest);
+    return stripped.matching ? { ...stripped, matching: { ...stripped.matching, attempts: Math.max(stripped.matching.attempts || 1, requestCount) } } : stripped;
+  }
   const ranked = usable.map((attempt, index) => ({ attempt, index })).sort((left, right) => attemptRank(left.attempt, right.attempt) || left.index - right.index).map((item) => item.attempt);
   const preferred = ranked[0];
   const assessedByAttempt = new Map(ranked.map((attempt) => [attempt, assessedIds(attempt)]));
@@ -56,8 +69,10 @@ export function composeProductMatchAttempts(baseline: ProductComparison | null, 
   const orderedIds = [...new Set([...ranked.flatMap((attempt) => attempt.rows.map((row) => row.primary.id)), ...(baseline?.rows || []).map((row) => row.primary.id)])];
   const rows = orderedIds.flatMap((id) => {
     const authoritative = ranked.find((attempt) => assessedByAttempt.get(attempt)?.has(id));
-    const row = authoritative ? rowMaps.get(authoritative)?.get(id) : baselineRows.get(id) || rowMaps.get(preferred)?.get(id);
-    return row ? [row] : [];
+    const row = authoritative ? rowMaps.get(authoritative)?.get(id) : rowMaps.get(preferred)?.get(id) || baselineRows.get(id);
+    if (!row) return [];
+    if (authoritative) return [row];
+    return [{ ...row, matches: row.matches.map((match) => ({ ...match, product: null, score: 0, confidence: null, sharedTerms: [], claimIds: row.primary.claimIds, decision: null, assessment: undefined })) }];
   });
   const selected = new Set(ranked.flatMap((attempt) => [...selectedIds(attempt)]));
   const assessed = new Set(ranked.flatMap((attempt) => [...assessedIds(attempt)]));
@@ -65,7 +80,7 @@ export function composeProductMatchAttempts(baseline: ProductComparison | null, 
   const preferredGaps = preferred.matching?.gaps || [];
   const gaps = unresolved.length
     ? [...preferredGaps, `AI product matching did not assess ${unresolved.length} selected primary product${unresolved.length === 1 ? "" : "s"} after the bounded retry.`]
-    : preferredGaps.filter((gap) => !/judging (?:reached|failed)|deadline for \d+ primary/i.test(gap));
+    : preferredGaps.filter((gap) => !/judging (?:reached|failed|returned incomplete|hit an incomplete)|deadline for \d+ primary/i.test(gap));
   const assignedPairCount = rows.reduce((sum, row) => sum + row.matches.filter((match) => match.product).length, 0);
   const verifiedPairCount = rows.reduce((sum, row) => sum + row.matches.filter((match) => match.product && match.confidence === "Medium").length, 0);
   const sumMetric = (key: "candidatePairsAssessed" | "retrievalPairsScored" | "judgeCalls" | "embeddingCalls" | "durationMs") => ranked.reduce((sum, attempt) => sum + (attempt.matching?.[key] || 0), 0);

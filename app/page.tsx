@@ -551,6 +551,10 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
   const competitorProductsScanned = Number(comparisonCoverage.competitorProductsScanned || 0);
   const competitorProductsAvailable = Number(comparisonCoverage.competitorProductsAvailable || competitorProductsScanned);
   const verifiedPairTotal = Number(comparisonCoverage.verifiedPairCount || battles.length);
+  const primaryProductsSynchronized = Number(comparisonMatching.primaryProductsSynchronized || primaryProductsScanned);
+  const competitorProductsSynchronized = Number(comparisonMatching.competitorProductsSynchronized || competitorProductsScanned);
+  const primaryProductsAssessed = Number(comparisonMatching.primaryProductsAssessed || 0);
+  const candidatePairsAssessed = Number(comparisonMatching.candidatePairsAssessed || 0);
   const comparisonTruncated = comparisonCoverage.truncated === true;
   const ads = doc.blocks.find((block) => block.type === "ad-intelligence");
   const adCompanies = jsonList(ads || { type: "", id: "" }, "companies").map(object);
@@ -720,6 +724,13 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
                           : (ar ? "تعذر تشغيل التقييم الدلالي في هذا التقرير؛ النتيجة الحالية أضيق." : "Semantic assessment was unavailable for this report, so the result is narrower.")}
                 </span>
               </div>
+            )}
+            {comparison && aiMatching && (
+              <p className="catalog-sync-truth">
+                {ar
+                  ? `تمت مزامنة ${primaryProductsSynchronized} من منتجاتك مع ${competitorProductsSynchronized} منتجاً منافساً. راجع الذكاء الاصطناعي أقوى ${primaryProductsAssessed} عائلة و${candidatePairsAssessed} زوجاً مرشحاً، وتظهر ${verifiedPairTotal} مقارنة موثقة.`
+                  : `${primaryProductsSynchronized} of your products were synchronized against ${competitorProductsSynchronized} rival listings. AI reviewed the strongest ${primaryProductsAssessed} product families (${candidatePairsAssessed} candidate pairs), and ${verifiedPairTotal} verified comparison${verifiedPairTotal === 1 ? " is" : "s are"} shown.`}
+              </p>
             )}
             {comparison && (
               <div className="catalog-scan-summary">

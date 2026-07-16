@@ -104,6 +104,25 @@ test("an explicitly unconfigured matcher stays limited without wasting a retry",
   assert.equal(shouldRetryProductMatch(unconfigured), false);
 });
 
+test("transport failure without a usable AI attempt strips the lexical baseline", () => {
+  const baseline = comparison({ method: "lexical-fallback", available: false, rows: [row("p1", "lexical-rival")], accepted: 1 });
+
+  const result = composeProductMatchAttempts(baseline, [], 2);
+
+  assert.equal(result.rows[0].matches[0].product, null);
+  assert.equal(result.coverage.assignedPairCount, 0);
+});
+
+test("an unavailable AI attempt is defensively stripped and records the request count", () => {
+  const unsafeAttempt = comparison({ method: "lexical-fallback", available: false, rows: [row("p1", "stale-lexical")], accepted: 1 });
+
+  const result = composeProductMatchAttempts(null, [unsafeAttempt], 2);
+
+  assert.equal(result.rows[0].matches[0].product, null);
+  assert.equal(result.coverage.assignedPairCount, 0);
+  assert.equal(result.matching.attempts, 2);
+});
+
 test("AI no-match remains authoritative instead of restoring a lexical false positive", () => {
   const baseline = comparison({ method: "lexical-fallback", available: false, rows: [row("p1", "lexical-rival")], accepted: 1 });
   const ai = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1")], accepted: 0 });
@@ -112,6 +131,17 @@ test("AI no-match remains authoritative instead of restoring a lexical false pos
 
   assert.equal(result.rows[0].matches[0].product, null);
   assert.equal(result.coverage.assignedPairCount, 0);
+});
+
+test("an unresolved primary never restores a lexical baseline pair", () => {
+  const baseline = comparison({ method: "lexical-fallback", available: false, selected: ["p1", "p2"], assessed: [], rows: [row("p1", "lexical-1"), row("p2", "lexical-2")], accepted: 2 });
+  const partial = comparison({ selected: ["p1", "p2"], assessed: ["p1"], rows: [row("p1", "ai-1"), row("p2")], gaps: ["AI product judging reached the report deadline for 1 primary product."], accepted: 1 });
+
+  const result = composeProductMatchAttempts(baseline, [partial]);
+
+  assert.equal(result.rows.find((item) => item.primary.id === "p1").matches[0].product.id, "ai-1");
+  assert.equal(result.rows.find((item) => item.primary.id === "p2").matches[0].product, null);
+  assert.equal(result.coverage.assignedPairCount, 1);
 });
 
 test("a retry fills only primaries the first attempt did not assess", () => {

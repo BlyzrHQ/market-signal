@@ -134,6 +134,10 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /data-product-match-state/);
   assert.match(page, /Preliminary product matches/);
   assert.match(page, /Product matching finished with limited coverage/);
+  assert.match(page, /primaryProductsSynchronized/);
+  assert.match(page, /AI reviewed the strongest/);
+  assert.match(page, /candidate pairs/);
+  assert.match(page, /\$\{verifiedPairTotal\} verified comparison/);
   assert.match(page, /shouldRetryProductMatch/);
   assert.match(page, /analysisRunRef/);
   assert.match(page, /matchAttemptRef/);

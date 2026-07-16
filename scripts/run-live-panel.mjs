@@ -89,6 +89,27 @@ function reduceAdCompany(company) {
   };
 }
 
+function mergeSemanticPanelComparison(baseline, semantic) {
+  const semanticRows = Array.isArray(semantic?.rows) ? semantic.rows : [];
+  const semanticIds = new Set(semanticRows.map((row) => String(row?.primary?.id || "")));
+  const baselineRows = Array.isArray(baseline?.rows) ? baseline.rows : [];
+  const rows = [...semanticRows, ...baselineRows.filter((row) => !semanticIds.has(String(row?.primary?.id || "")))];
+  const assignedPairCount = rows.reduce((sum, row) => sum + (Array.isArray(row?.matches) ? row.matches.filter((match) => match?.product).length : 0), 0);
+  const verifiedPairCount = rows.reduce((sum, row) => sum + (Array.isArray(row?.matches) ? row.matches.filter((match) => match?.product && match?.confidence === "Medium").length : 0), 0);
+  return {
+    ...semantic,
+    rows,
+    coverage: {
+      ...(baseline?.coverage || semantic?.coverage || {}),
+      primaryProductFamiliesCompared: rows.length,
+      assignedPairCount,
+      verifiedPairCount,
+      rowsReturned: rows.length,
+      truncated: Boolean(baseline?.coverage?.truncated || semantic?.coverage?.truncated),
+    },
+  };
+}
+
 async function runDomain(domain) {
   const crawl = await post("/api/crawl", { primary: domain, domains: [domain] });
   const payload = crawl.payload;
@@ -100,7 +121,11 @@ async function runDomain(domain) {
   const competitors = results.filter((result) => result?.role === "discovered-competitor" && result?.homepage && result?.discovery?.accepted);
   const reducedCompetitors = competitors.map(reduceCompetitorForPanel);
   const profile = blocks.find((block) => block?.type === "market-profile") || {};
-  const comparison = blocks.find((block) => block?.type === "product-comparison") || {};
+  const baselineComparison = blocks.find((block) => block?.type === "product-comparison") || {};
+  const match = payload?.ok && primary?.products?.length && competitors.length
+    ? await post("/api/match", { primaryDomain: payload.primaryDomain, catalogs: results.map((result) => ({ domain: result.domain, products: result.products })) })
+    : { status: 0, seconds: 0, payload: { ok: false, error: "Crawl did not return a primary catalog and verified rival catalog." } };
+  const comparison = match.payload?.ok ? mergeSemanticPanelComparison(baselineComparison, match.payload.comparison) : baselineComparison;
   const rows = Array.isArray(comparison.rows) ? comparison.rows : [];
   const matches = rows.flatMap((row) => (Array.isArray(row?.matches) ? row.matches : []).filter((match) => match?.product && match?.confidence === "Medium").map((match) => ({ primary: row.primary, match })));
   const ad = payload?.ok && payload?.adRequest ? await post("/api/ads", payload.adRequest) : { status: 0, seconds: 0, payload: { ok: false, error: "Crawl did not return verified ad targets." } };
@@ -125,6 +150,10 @@ async function runDomain(domain) {
     adScanOk: Boolean(ad.payload?.ok),
     adStatus: ad.status,
     adSeconds: ad.seconds,
+    semanticMatchOk: Boolean(match.payload?.ok),
+    semanticMatchStatus: match.status,
+    semanticMatchSeconds: match.seconds,
+    semanticMatchError: String(match.payload?.error || ""),
     error: String(payload?.error || ""),
     region,
     expectedRegion,
@@ -135,6 +164,7 @@ async function runDomain(domain) {
     competitors: reducedCompetitors,
     positioningComparisonCount,
     comparisonCoverage: comparison.coverage || null,
+    matchingCoverage: comparison.matching || null,
     visibleMatches: matches.slice(0, 8).map(({ primary: primaryProduct, match }) => ({
       primary: String(primaryProduct?.name || ""),
       primarySourceUrl: String(primaryProduct?.sourceUrl || ""),
@@ -192,7 +222,7 @@ const artifact = {
   dataBoundaries: [
     "This is a no-retry production capture from the deployed application; no fixture data is included.",
     "Every competitor record retains first-party homepage and discovery evidence URLs.",
-    "Visible matches include only Medium-confidence pairs returned by the production comparison engine.",
+    "Visible matches include Medium-confidence semantic rows returned by /api/match plus non-overridden Medium-confidence rows from the explicitly merged lexical baseline.",
     "A cited positioning comparison is counted only when at least three verified rivals have first-party and discovery evidence plus category alignment.",
     "Exact price comparisons require a server-approved priceComparison pair.",
     "Missing or limited ad coverage is not evidence of zero advertising activity.",
