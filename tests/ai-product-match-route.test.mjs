@@ -39,3 +39,26 @@ test("AI matching input rejects missing and off-domain product sources", () => {
 
   assert.equal(catalogs[0].products.length, 0);
 });
+
+test("AI matching input revalidates identifiers and recomputes canonical quantity", () => {
+  const catalogs = parseCatalogs([{ domain: "shop.test", products: [{
+    id: "p1",
+    name: "\u0639\u0633\u0644 \u0665\u0660\u0660 \u062c\u0631\u0627\u0645",
+    sourceUrl: "https://shop.test/products/honey",
+    identifiers: { gtins: ["4006381333931", "4006381333932"], sku: "SKU-42", brand: "Noor" },
+    attributes: [],
+  }] }]);
+
+  assert.deepEqual(catalogs[0].products[0].identifiers, { gtins: ["04006381333931"], sku: "SKU-42", mpn: undefined, brand: "Noor" });
+  assert.deepEqual(catalogs[0].products[0].quantity, { kind: "mass", amount: 500, unit: "g" });
+});
+
+test("AI matching input does not infer quantity from an identifier attribute", () => {
+  const catalogs = parseCatalogs([{ domain: "shop.test", products: [{
+    name: "Organic Honey",
+    sourceUrl: "https://shop.test/products/honey",
+    attributes: ["sku: HONEY-500G"],
+  }] }]);
+
+  assert.equal(catalogs[0].products[0].quantity, undefined);
+});

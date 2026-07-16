@@ -1,3 +1,15 @@
+import {
+  bilingualNormalize,
+  bilingualTokens,
+  conflictingValidGtins,
+  extractProductIdentifiers,
+  parseCanonicalQuantity,
+  quantitiesConflict,
+  sharedValidGtin,
+  type CanonicalProductQuantity,
+  type ProductIdentifiers,
+} from "./product-normalization.ts";
+
 export type ProductPriceSignal = {
   raw: string;
   currency?: string;
@@ -22,6 +34,8 @@ export type ProductRecord = {
   imageUrl: string;
   observedAt: string;
   claimIds: string[];
+  identifiers?: ProductIdentifiers;
+  quantity?: CanonicalProductQuantity;
 };
 
 export type ProductExtractionResult = {
@@ -127,6 +141,13 @@ const SAAS_OFFERING_WORDS = /\b(?:analy(?:s(?:e|is)|tics?)|automat(?:e|ion)|camp
 const AGENCY_OFFERING_WORDS = /\b(?:brand|design|development|engineering|innovation|mobile|product strategy|prototyping|research|strategy|user experience|ux|web)\b/i;
 const ECOMMERCE_OFFERING_WORDS = /\b(?:box(?:es)?|bundles?|delivery|membership|subscriptions?)\b/i;
 const GENERIC_OFFERING_HEADING = /^(?:all features|benefits|built for .+|customer stories|everything you need|get started|how it works|learn more|our (?:features|products|services|work)|pricing|services|solutions|what we do|why .+)$/i;
+const GENERIC_PRODUCT_IDENTITY_TOKENS = new Set([
+  "bundle", "bundles", "set", "sets", "box", "boxes", "pack", "packs", "kit", "kits",
+  "collection", "collections", "product", "products", "item", "items",
+  "\u0645\u062c\u0645\u0648\u0639\u0629", "\u062d\u0632\u0645\u0629", "\u0639\u0644\u0628\u0629", "\u0628\u0627\u0642\u0629", "\u0637\u0642\u0645", "\u0639\u0628\u0648\u0629",
+].map((token) => bilingualNormalize(token)));
+const PRODUCT_ROUTE_SEGMENTS = new Set(["product", "products"]);
+const LOCALE_PATH_PREFIX = /^[a-z]{2}(?:-[a-z]{2})?$/i;
 const BUSINESS_TYPE_ONLY_OFFERING = /^(?:content creation|mobile app|social media)$/i;
 const GENERIC_PAGE_NAME = /^(?:features?|platform|pricing|products?|services?|solutions?|plans?)$/i;
 const SAAS_PLAN_NAME = /^(?:free|personal|basic|essentials?|starter|standard|unlimited|professional|pro|team|business|advanced|growth|premium|scale|enterprise|custom)$/i;
@@ -298,6 +319,10 @@ function productFromNode(record: JsonRecord, input: ProductExtractionInput): Pro
   const id = makeId(input.domain, name, input.sourceUrl);
   const imageRecord = records(record.image)[0];
   const imageUrl = text(typeof record.image === "string" ? record.image : imageRecord?.url || imageRecord?.contentUrl);
+  const productAttributes = attributes(record);
+  const identifiers = extractProductIdentifiers(record);
+  const quantityAttributes = productAttributes.filter((value) => !/^(?:barcode|ean|gtin|isbn|mpn|sku|upc)\s*:/i.test(value));
+  const quantity = parseCanonicalQuantity(`${name} ${quantityAttributes.join(" ")}`) || undefined;
   return {
     id,
     domain: canonicalHost(input.domain),
@@ -307,7 +332,7 @@ function productFromNode(record: JsonRecord, input: ProductExtractionInput): Pro
     category: text(record.category || record.applicationCategory || record.serviceType).slice(0, 120),
     jsonLdType: type,
     priceSignals: offerSignals(record.offers),
-    attributes: attributes(record),
+    attributes: productAttributes,
     ownership: relation,
     extraction: "json-ld",
     confidence: relation === "self-declared-brand" ? "High" : "Medium",
@@ -315,6 +340,8 @@ function productFromNode(record: JsonRecord, input: ProductExtractionInput): Pro
     imageUrl: /^https?:\/\//i.test(imageUrl) ? imageUrl : "",
     observedAt: input.observedAt,
     claimIds: [`${id}-observed`],
+    identifiers: identifiers.gtins.length || identifiers.sku || identifiers.mpn || identifiers.brand ? identifiers : undefined,
+    quantity,
   };
 }
 
@@ -609,6 +636,15 @@ export function extractProductsFromSitemap(document: string, domain: string, obs
 }
 
 export function selectPreferredProducts(items: ProductRecord[]) {
+  const mergeIdentifiers = (preferred: ProductIdentifiers | undefined, supplemental: ProductIdentifiers | undefined) => {
+    if (!preferred && !supplemental) return undefined;
+    return {
+      gtins: [...new Set([...(preferred?.gtins || []), ...(supplemental?.gtins || [])])],
+      sku: preferred?.sku || supplemental?.sku,
+      mpn: preferred?.mpn || supplemental?.mpn,
+      brand: preferred?.brand || supplemental?.brand,
+    } satisfies ProductIdentifiers;
+  };
   const quality = (item: ProductRecord) =>
     (item.extraction === "json-ld" ? 40 : item.extraction === "page-signal" ? 20 : 10)
     + (item.confidence === "High" ? 20 : 0)
@@ -617,7 +653,7 @@ export function selectPreferredProducts(items: ProductRecord[]) {
     + (item.imageUrl ? 3 : 0);
   const selected = new Map<string, ProductRecord>();
   for (const item of items) {
-    const key = `${item.domain}|${item.normalizedName}`;
+    const key = productIdentityKey(item);
     const current = selected.get(key);
     if (!current) {
       selected.set(key, item);
@@ -625,7 +661,11 @@ export function selectPreferredProducts(items: ProductRecord[]) {
     }
     const preferred = quality(item) > quality(current) ? item : current;
     const supplemental = preferred === item ? current : item;
-    const sameSource = preferred.sourceUrl.split("#")[0].replace(/\/$/, "") === supplemental.sourceUrl.split("#")[0].replace(/\/$/, "");
+    const preferredSource = canonicalProductSourceKey(preferred);
+    const supplementalSource = canonicalProductSourceKey(supplemental);
+    const sameSource = preferred.sourceUrl.split("#")[0].replace(/\/$/, "") === supplemental.sourceUrl.split("#")[0].replace(/\/$/, "")
+      || Boolean(preferredSource && preferredSource === supplementalSource)
+      || Boolean(sharedValidGtin(preferred.identifiers, supplemental.identifiers));
     if (!sameSource) {
       selected.set(key, preferred);
       continue;
@@ -636,6 +676,8 @@ export function selectPreferredProducts(items: ProductRecord[]) {
       description: preferred.description || supplemental.description,
       priceSignals: preferred.priceSignals.length ? preferred.priceSignals : supplemental.priceSignals,
       attributes: preferred.attributes.length ? preferred.attributes : supplemental.attributes,
+      identifiers: mergeIdentifiers(preferred.identifiers, supplemental.identifiers),
+      quantity: preferred.quantity || supplemental.quantity,
       imageUrl: secureImage || preferred.imageUrl || supplemental.imageUrl,
       claimIds: [...new Set([...preferred.claimIds, ...supplemental.claimIds])],
     });
@@ -643,9 +685,48 @@ export function selectPreferredProducts(items: ProductRecord[]) {
   return [...selected.values()];
 }
 
+function canonicalProductSourceKey(product: ProductRecord) {
+  try {
+    const url = new URL(product.sourceUrl);
+    const segments = url.pathname.split("/").filter(Boolean).map((segment) => {
+      try { return decodeURIComponent(segment).toLowerCase(); } catch { return segment.toLowerCase(); }
+    });
+    if (segments.length > 2 && LOCALE_PATH_PREFIX.test(segments[0]) && PRODUCT_ROUTE_SEGMENTS.has(segments[1])) segments.shift();
+    const productIndex = segments.findIndex((segment) => PRODUCT_ROUTE_SEGMENTS.has(segment));
+    if (productIndex < 0 || !segments[productIndex + 1]) return "";
+    return `${canonicalHost(product.domain)}|/${segments.slice(productIndex).join("/")}`;
+  } catch {
+    return "";
+  }
+}
+
+export function isGenericProductIdentityToken(token: string) {
+  return GENERIC_PRODUCT_IDENTITY_TOKENS.has(bilingualNormalize(token));
+}
+
+export function productIdentityTokens(product: ProductRecord) {
+  const domainToken = bilingualNormalize(canonicalHost(product.domain).split(".")[0]);
+  return bilingualTokens(product.name).filter((token) => token.length > 1
+    && token !== domainToken
+    && !isGenericProductIdentityToken(token)
+    && !/^\d/.test(token));
+}
+
+export function productIdentityKey(product: ProductRecord) {
+  const domain = canonicalHost(product.domain);
+  const gtin = [...(product.identifiers?.gtins || [])].sort()[0];
+  if (gtin) return `${domain}|gtin|${gtin}`;
+  const source = canonicalProductSourceKey(product);
+  if (source) return `${domain}|source|${source}`;
+  const quantity = product.quantity ? `${product.quantity.kind}|${product.quantity.amount}|${product.quantity.unit}` : "";
+  return `${domain}|name|${bilingualNormalize(product.name)}|${quantity}`;
+}
+
 function fieldTokens(product: ProductRecord, value: string) {
   const identityTokens = new Set(tokens(canonicalHost(product.domain).split(".")[0], true));
-  return tokens(value).filter((token) => !identityTokens.has(token) && !/^\d+(?:\.\d+)?(?:g|kg|ml|l|oz|lb|pk|pack|pcs?)?$/i.test(token));
+  return tokens(value).filter((token) => !identityTokens.has(token)
+    && !isGenericProductIdentityToken(token)
+    && !/^\d+(?:\.\d+)?(?:g|kg|ml|l|oz|lb|pk|pack|pcs?)?$/i.test(token));
 }
 
 function productFamilyName(value: string) {
@@ -685,6 +766,8 @@ function accessoryGroups(product: ProductRecord) {
 
 export function productPairVetoes(primary: ProductRecord, candidate: ProductRecord) {
   const vetoes: string[] = [];
+  if (conflictingValidGtins(primary.identifiers, candidate.identifiers)) vetoes.push("The observed products expose conflicting validated GTINs.");
+  if (quantitiesConflict(primary.quantity, candidate.quantity)) vetoes.push("The observed products expose incompatible canonical quantities.");
   const types = new Set([primary.jsonLdType, candidate.jsonLdType]);
   if (types.has("Product") && types.has("Service")) {
     const service = primary.jsonLdType === "Service" ? primary : candidate;
@@ -893,16 +976,17 @@ export function buildProductComparison(primaryDomain: string, catalogs: Array<{ 
     const usedProducts = new Set<string>();
     const assignments = new Map<string, typeof pairs[number]>();
     for (const pair of pairs) {
-      if (usedPrimary.has(pair.primary.id) || usedProducts.has(pair.product.id)) continue;
+      const rivalIdentity = productIdentityKey(pair.product);
+      if (usedPrimary.has(pair.primary.id) || usedProducts.has(rivalIdentity)) continue;
       usedPrimary.add(pair.primary.id);
-      usedProducts.add(pair.product.id);
+      usedProducts.add(rivalIdentity);
       assignments.set(pair.primary.id, pair);
     }
     for (const row of rows) {
       const pair = assignments.get(row.primary.id);
       row.matches.push(pair ? { domain: competitor.domain, product: pair.product, score: pair.score, confidence: pair.score >= 0.55 ? "Medium" : "Low", sharedTerms: pair.sharedTerms.slice(0, 8), claimIds: [...row.primary.claimIds, ...pair.product.claimIds], decision: productDecision(row.primary, pair.product, pair.score) } : { domain: competitor.domain, product: null, score: 0, confidence: null, sharedTerms: [], claimIds: row.primary.claimIds, decision: null });
     }
-    unmatched.push({ domain: competitor.domain, products: competitor.products.filter((product) => !usedProducts.has(product.id)).slice(0, maxUnmatchedProductsPerDomain) });
+    unmatched.push({ domain: competitor.domain, products: competitor.products.filter((product) => !usedProducts.has(productIdentityKey(product))).slice(0, maxUnmatchedProductsPerDomain) });
   }
   const matchedRows = rows
     .filter((row) => row.matches.some((match) => match.product))
@@ -1014,6 +1098,15 @@ export function applyFinalProductEnrichment(
   products: ProductRecord[],
   enrichment: NonNullable<ProductComparison["enrichment"]>,
 ) {
+  const mergeIdentifiers = (fresh: ProductIdentifiers | undefined, base: ProductIdentifiers | undefined) => {
+    if (!fresh && !base) return undefined;
+    return {
+      gtins: [...new Set([...(fresh?.gtins || []), ...(base?.gtins || [])])],
+      sku: fresh?.sku || base?.sku,
+      mpn: fresh?.mpn || base?.mpn,
+      brand: fresh?.brand || base?.brand,
+    } satisfies ProductIdentifiers;
+  };
   const sourceKey = (value: string) => value.split("#")[0].replace(/\/$/, "");
   const merge = (base: ProductRecord) => {
     const fresh = products.find((product) => canonicalHost(product.domain) === canonicalHost(base.domain) && sourceKey(product.sourceUrl) === sourceKey(base.sourceUrl));
@@ -1025,6 +1118,8 @@ export function applyFinalProductEnrichment(
       category: fresh.category || base.category,
       priceSignals: fresh.priceSignals.length ? fresh.priceSignals : base.priceSignals,
       attributes: fresh.attributes.length ? fresh.attributes : base.attributes,
+      identifiers: mergeIdentifiers(fresh.identifiers, base.identifiers),
+      quantity: fresh.quantity || base.quantity,
       extraction: fresh.extraction,
       confidence: fresh.confidence,
       imageUrl: secureImage || fresh.imageUrl || base.imageUrl,
