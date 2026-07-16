@@ -940,6 +940,21 @@ export default function Home() {
     setProductMatchLifecycle("idle");
     setProductMatchNotice("");
     try {
+      const created = await postJson<{ ok: true; report: { publicId: string } } | { ok: false; error?: string }>("/api/reports", { primaryDomain: cleanDomain, locale }, "Persistent report creation");
+      if (!created.ok || !created.report?.publicId) throw new Error(("error" in created ? created.error : "") || "Persistent report storage is unavailable.");
+      const publicReportId = created.report.publicId;
+      let persistenceGap = "";
+      let persistedDocument: JsonReportDocument | null = null;
+      let persistedBrief: MarketBrief | null = null;
+      let persistedMatchLimited = false;
+      const persistEvent = async (idempotencyKey: string, phase: string, status: string, message: string, metadata?: Record<string, unknown>) => {
+        try {
+          await postJson(`/api/reports/${publicReportId}`, { action: "event", idempotencyKey, phase, status, message, metadata }, "Report progress persistence");
+        } catch (error) {
+          persistenceGap = error instanceof Error ? error.message : "Report progress could not be saved.";
+        }
+      };
+      await persistEvent("crawl-started", "crawl", "running", "Crawling the submitted website and collecting public product pages.");
       const payload = await postJson<CrawlPayload | CrawlFailure>("/api/crawl", { primary: cleanDomain, domains: requestedDomains }, "The competitor scan");
       if (!active()) return;
       if (!payload.ok) {
@@ -948,9 +963,11 @@ export default function Home() {
         if (!parked) setReportDomain(cleanDomain);
         setDomainAlternatives(parked && "alternatives" in payload ? payload.alternatives || [] : []);
         setAnalysisError(("error" in payload ? payload.error : "") || "The public crawl could not be completed.");
+        await persistEvent("crawl-failed", "failed", "failed", ("error" in payload ? payload.error : "") || "The public crawl could not be completed.");
         if (!parked) window.setTimeout(() => document.getElementById("report")?.scrollIntoView({ behavior: "smooth" }), 50);
         return;
       }
+      persistedDocument = payload.document;
       const crawlResults = payload.results;
       const successful = crawlResults.flatMap((result) => (result.homepage ? [result.homepage] : []));
       const primaryHost = payload.primaryDomain;
@@ -962,6 +979,10 @@ export default function Home() {
       setBriefLoading(true);
       setAdLoading(true);
       setProductMatchLifecycle("matching");
+      await persistEvent("crawl-complete", "competitors", "running", "The primary catalog was collected and competitor websites were verified.", {
+        primaryProducts: crawlResults.find((result) => result.domain === primaryHost)?.products.length || 0,
+        verifiedCompetitors: crawlResults.filter((result) => result.role === "discovered-competitor" && result.homepage && (result.discovery?.verificationScore || 0) >= 55).length,
+      });
       window.setTimeout(() => document.getElementById("report")?.scrollIntoView({ behavior: "smooth" }), 50);
       const briefWork = (async () => {
         try {
@@ -974,7 +995,10 @@ export default function Home() {
             "The market brief",
           );
           if (!active()) return;
-          if (briefPayload.ok) setMarketBrief(briefPayload);
+          if (briefPayload.ok) {
+            persistedBrief = briefPayload;
+            setMarketBrief(briefPayload);
+          }
           else setAnalysisError(("error" in briefPayload ? briefPayload.error : "") || "The source scan completed, but the market brief was unavailable.");
         } catch {
           if (active()) setAnalysisError("The source scan completed, but the market brief was unavailable.");
@@ -983,6 +1007,7 @@ export default function Home() {
         }
       })();
       const adWork = (async () => {
+        await persistEvent("ads-started", "ads", "running", "Checking attributable public advertiser records for the verified companies.");
         try {
           const adPayload = await postJson<AdScanPayload>("/api/ads", payload.adRequest, "The ad-library scan");
           if (!active()) return;
@@ -990,7 +1015,9 @@ export default function Home() {
             setAdError(("error" in adPayload ? adPayload.error : "") || "The market report is ready, but the public ad-library scan was unavailable.");
             return;
           }
+          if (persistedDocument) persistedDocument = { ...persistedDocument, blocks: [...persistedDocument.blocks.filter((block) => block.type !== "ad-intelligence"), adPayload.block] };
           setCrawlDocument((current) => current ? { ...current, blocks: [...current.blocks.filter((block) => block.type !== "ad-intelligence"), adPayload.block] } : current);
+          await persistEvent("ads-complete", "ads", "running", "The public ad-library phase finished with explicit advertiser coverage states.");
         } catch (error) {
           if (active()) setAdError(error instanceof Error ? error.message : "The market report is ready, but the public ad-library scan was unavailable.");
         } finally {
@@ -998,8 +1025,10 @@ export default function Home() {
         }
       })();
       const matchWork = (async () => {
+        await persistEvent("matching-started", "matching", "running", "Comparing the strongest product families across the synchronized catalogs.");
         const primaryCatalog = crawlResults.find((result) => result.domain === primaryHost);
         if (!primaryCatalog?.products.length) {
+          persistedMatchLimited = true;
           if (active()) {
             setProductMatchLifecycle("limited");
             setProductMatchNotice(ar ? "لم نجد صفحات منتجات عامة منسوبة إلى موقعك، لذلك لم نتمكن من تشغيل المقارنة الدلالية." : "No attributable public product pages were found on your site, so semantic product comparison could not run.");
@@ -1066,12 +1095,17 @@ export default function Home() {
             }
           }
           if (!active()) return;
-          if (enrichedComparison) setCrawlDocument((current) => current ? upsertProductComparisonBlock(current, enrichedComparison) : current);
+          if (enrichedComparison) {
+            if (persistedDocument) persistedDocument = upsertProductComparisonBlock(persistedDocument, enrichedComparison);
+            setCrawlDocument((current) => current ? upsertProductComparisonBlock(current, enrichedComparison) : current);
+          }
           const limited = attempts.length === 0 || hasProductMatchCoverageDefect(enrichedComparison);
+          persistedMatchLimited = limited;
           setProductMatchLifecycle(limited ? "limited" : "complete");
           setProductMatchNotice(limited
             ? (ar ? "ظلت تغطية المطابقة الدلالية غير مكتملة بعد المحاولة المحدودة. نعرض النتائج الموثقة فقط ولا نفترض وجود تطابق." : `Semantic matching coverage remained incomplete after the bounded retry. Only verified results are shown${lastError ? `; ${lastError}` : "."}`)
             : "");
+          await persistEvent("matching-complete", "matching", "running", limited ? "Product matching finished with a visible coverage limitation." : "Product matching finished and accepted comparisons were source-linked.", { limited, attempts: requestCount });
         } catch (error) {
           if (!active()) return;
           setProductMatchLifecycle("limited");
@@ -1079,6 +1113,18 @@ export default function Home() {
         }
       })();
       await Promise.all([briefWork, adWork, matchWork]);
+      if (!persistedDocument) throw new Error("The report document could not be prepared for persistent storage.");
+      try {
+        await postJson(`/api/reports/${publicReportId}`, {
+          action: "document",
+          status: persistedMatchLimited ? "limited" : "complete",
+          observedAt: new Date().toISOString(),
+          document: { primaryDomain: payload.primaryDomain, document: persistedDocument, marketBrief: persistedBrief },
+        }, "Completed report persistence");
+      } catch (error) {
+        persistenceGap = error instanceof Error ? error.message : "The completed report could not be saved.";
+      }
+      if (persistenceGap && active()) setAnalysisError(`The analysis completed, but its persistent report has a storage gap: ${persistenceGap}`);
     } catch (error) {
       if (active()) setAnalysisError(error instanceof Error ? error.message : "Unable to analyze this domain.");
     } finally {
