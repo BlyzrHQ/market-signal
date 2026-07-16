@@ -89,7 +89,9 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /postJson<CrawlPayload \| CrawlFailure>[\s\S]{0,80}"\/api\/crawl"/);
   assert.match(page, /postJson<AdScanPayload>\("\/api\/ads"/);
   assert.match(page, /postJson<ProductEnrichmentPayload>\("\/api\/enrich-products"/);
-  assert.match(page, /if \(!active\(\)\) return;\r?\n\s+if \(enrichedComparison\) setCrawlDocument/);
+  assert.match(page, /if \(!active\(\)\) return;\r?\n\s+if \(enrichedComparison\) \{[\s\S]{0,240}setCrawlDocument/);
+  assert.match(page, /postJson<\{ ok: true; report: \{ publicId: string \} \}/);
+  assert.match(page, /action: "document"/);
   assert.match(page, /adLoading/);
   assert.match(page, /not scanned/);
   assert.match(page, /postJson<[\s\S]{0,100}MarketBrief \| \{ ok: false; error\?: string \}[\s\S]{0,80}"\/api\/report"/);
