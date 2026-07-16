@@ -145,10 +145,18 @@ type CrawlPayload = {
 type AdScanPayload = { ok: true; block: JsonBlock } | { ok: false; error?: string };
 type MatchPayload = { ok: true; comparison: ProductComparison } | { ok: false; error?: string };
 type ProductEnrichmentPayload = { ok: true; products: ProductRecord[]; coverage: NonNullable<ProductComparison["enrichment"]> } | { ok: false; error?: string };
+type DomainAlternative = {
+  domain: string;
+  title: string;
+  reason: string;
+  sourceUrl: string;
+};
 type CrawlFailure = {
   ok: false;
   live: false;
   error: string;
+  code?: string;
+  alternatives?: DomainAlternative[];
   results?: CrawlDomain[];
   document?: JsonReportDocument;
 };
@@ -543,6 +551,10 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
   const competitorProductsScanned = Number(comparisonCoverage.competitorProductsScanned || 0);
   const competitorProductsAvailable = Number(comparisonCoverage.competitorProductsAvailable || competitorProductsScanned);
   const verifiedPairTotal = Number(comparisonCoverage.verifiedPairCount || battles.length);
+  const primaryProductsSynchronized = Number(comparisonMatching.primaryProductsSynchronized || primaryProductsScanned);
+  const competitorProductsSynchronized = Number(comparisonMatching.competitorProductsSynchronized || competitorProductsScanned);
+  const primaryProductsAssessed = Number(comparisonMatching.primaryProductsAssessed || 0);
+  const candidatePairsAssessed = Number(comparisonMatching.candidatePairsAssessed || 0);
   const comparisonTruncated = comparisonCoverage.truncated === true;
   const ads = doc.blocks.find((block) => block.type === "ad-intelligence");
   const adCompanies = jsonList(ads || { type: "", id: "" }, "companies").map(object);
@@ -712,6 +724,13 @@ function GuidedReportRenderer({ document: doc, locale, marketBrief, briefLoading
                           : (ar ? "تعذر تشغيل التقييم الدلالي في هذا التقرير؛ النتيجة الحالية أضيق." : "Semantic assessment was unavailable for this report, so the result is narrower.")}
                 </span>
               </div>
+            )}
+            {comparison && aiMatching && (
+              <p className="catalog-sync-truth">
+                {ar
+                  ? `تمت مزامنة ${primaryProductsSynchronized} من منتجاتك مع ${competitorProductsSynchronized} منتجاً منافساً. راجع الذكاء الاصطناعي أقوى ${primaryProductsAssessed} عائلة و${candidatePairsAssessed} زوجاً مرشحاً، وتظهر ${verifiedPairTotal} مقارنة موثقة.`
+                  : `${primaryProductsSynchronized} of your products were synchronized against ${competitorProductsSynchronized} rival listings. AI reviewed the strongest ${primaryProductsAssessed} product families (${candidatePairsAssessed} candidate pairs), and ${verifiedPairTotal} verified comparison${verifiedPairTotal === 1 ? " is" : "s are"} shown.`}
+              </p>
             )}
             {comparison && (
               <div className="catalog-scan-summary">
@@ -885,6 +904,7 @@ export default function Home() {
   const [adLoading, setAdLoading] = useState(false);
   const [adError, setAdError] = useState("");
   const [analysisError, setAnalysisError] = useState("");
+  const [domainAlternatives, setDomainAlternatives] = useState<DomainAlternative[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [productMatchLifecycle, setProductMatchLifecycle] = useState<ProductMatchLifecycle>("idle");
   const [productMatchNotice, setProductMatchNotice] = useState("");
@@ -900,14 +920,17 @@ export default function Home() {
     document.documentElement.dir = ar ? "rtl" : "ltr";
   }, [ar, locale]);
 
-  async function analyze(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function analyze(event: FormEvent<HTMLFormElement> | string) {
+    const selectedDomain = typeof event === "string" ? event : "";
+    if (typeof event !== "string") event.preventDefault();
     const runToken = ++analysisRunRef.current;
     const active = () => analysisRunRef.current === runToken;
-    const cleanDomain = domain.trim();
+    const cleanDomain = (selectedDomain || domain).trim();
+    if (selectedDomain) setDomain(selectedDomain);
     const requestedDomains = [cleanDomain];
     setIsAnalyzing(true);
     setAnalysisError("");
+    setDomainAlternatives([]);
     setLiveAnalysis(null);
     setMarketBrief(null);
     setCrawlDocument(null);
@@ -920,10 +943,12 @@ export default function Home() {
       const payload = await postJson<CrawlPayload | CrawlFailure>("/api/crawl", { primary: cleanDomain, domains: requestedDomains }, "The competitor scan");
       if (!active()) return;
       if (!payload.ok) {
-        if (payload.document) setCrawlDocument(payload.document);
-        setReportDomain(cleanDomain);
+        const parked = "code" in payload && payload.code === "parked-domain";
+        if (!parked && payload.document) setCrawlDocument(payload.document);
+        if (!parked) setReportDomain(cleanDomain);
+        setDomainAlternatives(parked && "alternatives" in payload ? payload.alternatives || [] : []);
         setAnalysisError(("error" in payload ? payload.error : "") || "The public crawl could not be completed.");
-        window.setTimeout(() => document.getElementById("report")?.scrollIntoView({ behavior: "smooth" }), 50);
+        if (!parked) window.setTimeout(() => document.getElementById("report")?.scrollIntoView({ behavior: "smooth" }), 50);
         return;
       }
       const crawlResults = payload.results;
@@ -1124,6 +1149,26 @@ export default function Home() {
             {analysisError && (
               <div className="analysis-error" role="alert">
                 {analysisError}
+              </div>
+            )}
+            {domainAlternatives.length > 0 && (
+              <div className="domain-alternatives" aria-label={ar ? "نطاقات محتملة تحتاج إلى تأكيدك" : "Possible domains requiring your confirmation"}>
+                <strong>{ar ? "هل أحد هذه المواقع هو موقع شركتك الفعلي؟" : "Is one of these your actual company website?"}</strong>
+                <p>{ar ? "هذه اقتراحات من نتائج بحث عامة وليست تأكيداً للهوية. لن نفحص أي موقع حتى تختاره بنفسك." : "These are public-search suggestions, not identity confirmation. We will scan one only after you select it."}</p>
+                <div className="domain-alternative-list">
+                  {domainAlternatives.map((alternative) => (
+                    <div className="domain-alternative" key={alternative.domain}>
+                      <div>
+                        <b dir="ltr">{alternative.domain}</b>
+                        <span>{alternative.title}</span>
+                        <a href={alternative.sourceUrl} target="_blank" rel="noreferrer">{ar ? "عرض مصدر البحث ↗" : "View search source ↗"}</a>
+                      </div>
+                      <button type="button" onClick={() => analyze(alternative.domain)} disabled={isAnalyzing}>
+                        {ar ? "نعم، افحص هذا الموقع" : "Yes, scan this site"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </form>

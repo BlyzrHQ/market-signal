@@ -535,6 +535,29 @@ test("price enrichment skips the side that already has comparable structured pri
   assert.deepEqual(selectProductEnrichmentTargets(comparison).map((target) => [target.role, target.domain]), [["rival", "tea.test"]]);
 });
 
+test("decodes an Arabic product identity from a percent-encoded sitemap path", () => {
+  const sitemap = `<?xml version="1.0"?><urlset><url><loc>https://shop.example/products/%D8%B9%D8%B3%D9%84-%D8%B3%D8%AF%D8%B1-%D8%B9%D8%B6%D9%88%D9%8A-500-%D8%AC%D8%B1%D8%A7%D9%85</loc></url></urlset>`;
+  const products = extractProductsFromSitemap(sitemap, "shop.example", "2026-07-15T00:00:00.000Z");
+
+  assert.equal(products[0].name, "عسل سدر عضوي 500 جرام");
+  assert.equal(products[0].normalizedName, "عسل سدر عضوي 500 جرام");
+});
+
+test("keeps malformed sitemap path escapes safe and deterministic", () => {
+  const sitemap = `<?xml version="1.0"?><urlset><url><loc>https://shop.example/products/raw-honey-%ZZ-500g</loc></url></urlset>`;
+
+  assert.doesNotThrow(() => extractProductsFromSitemap(sitemap, "shop.example", "2026-07-15T00:00:00.000Z"));
+  assert.equal(extractProductsFromSitemap(sitemap, "shop.example", "2026-07-15T00:00:00.000Z")[0].name, "raw honey %ZZ 500g");
+});
+
+test("keeps a single public sitemap broad but bounded at six hundred products", () => {
+  const entries = Array.from({ length: 605 }, (_, index) => `<url><loc>https://shop.example/products/catalog-item-${index}</loc></url>`).join("");
+  const products = extractProductsFromSitemap(`<urlset>${entries}</urlset>`, "shop.example", "2026-07-15T00:00:00.000Z");
+
+  assert.equal(products.length, 600);
+  assert.equal(products.at(-1).name, "catalog item 599");
+});
+
 test("final match enrichment fetches the exact AI-selected pair when secure images are missing", () => {
   const primary = { ...product("tea", "shop.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/lemon-ginger-tea", priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }] };
   const rival = { ...product("rival-tea", "tea.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://tea.test/products/lemon-ginger-tea", priceSignals: [{ raw: "GBP 6", currency: "GBP", amount: 6 }] };

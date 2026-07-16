@@ -8,6 +8,7 @@ import { inferBusinessProfile } from "../../lib/business-profile";
 import { seededCrawlPaths } from "../../lib/crawl-planning";
 import { combineRegionSignals, displayRegion, inferRegion as inferRegionEvidence, type RegionSignal } from "../../lib/region-inference";
 import { forgetRememberedCompetitors, loadRememberedCompetitors, mergeRememberedCandidates, rememberVerifiedCompetitors, type MemoryCandidate } from "../../lib/competitor-memory";
+import { discoverDomainAlternatives, extractStaticClientRedirect, parkingProvider } from "../../lib/domain-recovery";
 
 type ClaimType = "Observed" | "Inferred";
 type Confidence = "High" | "Medium" | "Low";
@@ -66,6 +67,7 @@ type DomainCrawl = {
   discovery?: DiscoveryCandidate & CompetitorVerification;
   enrichmentPages?: CrawlPage[];
   priceEnrichment?: { pagesRequested: number; pagesFetched: number; maxPages: number };
+  siteState?: { status: "parked"; provider: string; evidenceUrl: string; redirectDomain: string };
 };
 
 type ReportBlock = Record<string, unknown> & { type: string; id: string };
@@ -172,7 +174,11 @@ async function fetchText(url: string, accept: string, expectedDomain?: string) {
       if (![301, 302, 303, 307, 308].includes(response.status)) break;
       const location = response.headers.get("location");
       if (!location || redirect === 3) throw new Error("redirect limit reached");
-      currentUrl = new URL(location, currentUrl).toString();
+      const nextUrl = new URL(location, currentUrl);
+      if (expectedDomain && canonicalDomain(nextUrl.hostname) !== canonicalDomain(expectedDomain)) {
+        return { ok: false, status: response.status, contentType: response.headers.get("content-type") ?? "", url: currentUrl, text: "", truncated: false, error: `redirected off the submitted domain to ${canonicalDomain(nextUrl.hostname)}.`, redirectDomain: canonicalDomain(nextUrl.hostname) };
+      }
+      currentUrl = nextUrl.toString();
     }
     if (!response) throw new Error("request failed");
     const buffer = await response.arrayBuffer();
@@ -290,6 +296,15 @@ async function crawlDomain(input: string, role: DomainCrawl["role"], seededProdu
   if (homepageHost !== domain.replace(/^www\./, "")) {
     gaps.push({ url: base.toString(), reason: "homepage redirected off the submitted domain.", observedAt: startedAt });
     return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: 1, pagesFetched: 0, maxPages: maxHtmlPages, robotsChecked: robotsResult.ok }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt };
+  }
+  const clientRedirect = extractStaticClientRedirect(homepageResult.text, homepageResult.url);
+  if (clientRedirect) {
+    const redirectResult = await fetchText(clientRedirect, "text/html,application/xhtml+xml", domain);
+    const provider = redirectResult.redirectDomain ? parkingProvider(redirectResult.redirectDomain) : "";
+    if (provider) {
+      gaps.push({ url: clientRedirect, reason: `${domain} redirects to a ${provider} domain-for-sale service; no company report was generated.`, observedAt: startedAt });
+      return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: 2, pagesFetched: 1, maxPages: maxHtmlPages, robotsChecked: robotsResult.ok }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt, siteState: { status: "parked", provider, evidenceUrl: clientRedirect, redirectDomain: redirectResult.redirectDomain! } };
+    }
   }
   const homepage = await parsePage(homepageResult.text, homepageResult.url, startedAt, domain, homepageResult.truncated);
   const discovered = extractLinks(homepageResult.text, new URL(homepageResult.url), domain);
@@ -429,6 +444,7 @@ async function enrichMatchedProductPages(results: DomainCrawl[], primaryDomain: 
 async function crawlPrimaryDomain(domain: string) {
   const first = await crawlDomain(domain, "primary");
   if (first.homepage) return { ...first, coverage: { ...first.coverage, attempts: 1 } };
+  if (first.siteState?.status === "parked") return { ...first, coverage: { ...first.coverage, attempts: 1 } };
 
   const retry = await crawlDomain(domain, "primary");
   return {
@@ -482,6 +498,10 @@ export async function POST(request: Request) {
     const primaryDomain = canonicalDomain(typeof payload.primary === "string" ? payload.primary : domains[0]);
     const submittedResults = await Promise.all(domains.map((domain) => domain === primaryDomain ? crawlPrimaryDomain(domain) : crawlDomain(domain, "submitted-comparison")));
     const primary = submittedResults.find((result) => result.domain === primaryDomain);
+    if (primary?.siteState?.status === "parked") {
+      const alternatives = await discoverDomainAlternatives(primaryDomain, 3);
+      return Response.json({ ok: false, live: false, code: "parked-domain", error: `${primaryDomain} appears to be parked or offered for sale through ${primary.siteState.provider}. Select another domain only if it belongs to your company.`, alternatives, results: submittedResults, document: buildDocument(submittedResults, primaryDomain) }, { status: 409 });
+    }
     if (!primary?.homepage) {
       const reason = primary?.gaps[0]?.reason;
       const error = reason ? `The primary domain could not be crawled: ${reason}` : "The primary domain could not be crawled.";
