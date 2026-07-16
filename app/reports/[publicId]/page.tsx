@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { KeyboardEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Block = { type: string; id: string } & Record<string, unknown>;
 type View = "overview" | "competitors" | "products" | "ads" | "evidence" | "methodology";
@@ -35,15 +35,27 @@ function viewFromLocation(): View { const value = new URLSearchParams(window.loc
 function viewHref(view: View, anchor = "") { return `?view=${view}${anchor ? `#${anchor}` : ""}`; }
 function productPrice(product: Record<string, unknown>) { return list(product.priceSignals).map((item) => display(object(item).raw)).filter(Boolean)[0] || ""; }
 function statusTone(status: string) { return status === "verified-active" ? "observed" : status === "access-limited" ? "limited" : status === "no-verified-result" ? "unavailable" : "inferred"; }
+function scrollToReportHash() {
+  const raw = window.location.hash.slice(1); if (!raw) return;
+  let id = raw; try { id = decodeURIComponent(raw); } catch { /* Keep a malformed but harmless literal fragment. */ }
+  document.getElementById(id)?.scrollIntoView({ block: "start" });
+}
 
 function ReportWorkspace({ blocks, marketBrief, primaryDomain, observedAt, ar }: { blocks: Block[]; marketBrief: Record<string, unknown>; primaryDomain: string; observedAt: string; ar: boolean }) {
   const [view, setView] = useState<View>("overview");
   const tabs = useRef<Array<HTMLButtonElement | null>>([]);
   useEffect(() => { const sync = () => setView(viewFromLocation()); sync(); window.addEventListener("popstate", sync); return () => window.removeEventListener("popstate", sync); }, []);
-  const selectView = (next: View, replace = false) => { const url = new URL(window.location.href); url.searchParams.set("view", next); url.hash = ""; window.history[replace ? "replaceState" : "pushState"]({}, "", url); setView(next); };
+  useEffect(() => { const frame = window.requestAnimationFrame(scrollToReportHash); window.addEventListener("hashchange", scrollToReportHash); return () => { window.cancelAnimationFrame(frame); window.removeEventListener("hashchange", scrollToReportHash); }; }, [view, blocks]);
+  const selectView = (next: View, replace = false, hash = "") => { const url = new URL(window.location.href); url.searchParams.set("view", next); url.hash = hash; window.history[replace ? "replaceState" : "pushState"]({}, "", url); setView(next); };
   const onTabKey = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
-    const next = event.key === "ArrowRight" ? (index + 1) % VIEWS.length : event.key === "ArrowLeft" ? (index - 1 + VIEWS.length) % VIEWS.length : event.key === "Home" ? 0 : event.key === "End" ? VIEWS.length - 1 : -1;
+    const forwardKey = ar ? "ArrowLeft" : "ArrowRight"; const backwardKey = ar ? "ArrowRight" : "ArrowLeft";
+    const next = event.key === forwardKey ? (index + 1) % VIEWS.length : event.key === backwardKey ? (index - 1 + VIEWS.length) % VIEWS.length : event.key === "Home" ? 0 : event.key === "End" ? VIEWS.length - 1 : -1;
     if (next < 0) return; event.preventDefault(); tabs.current[next]?.focus(); selectView(VIEWS[next]);
+  };
+  const onWorkspaceClick = (event: MouseEvent<HTMLDivElement>) => {
+    const anchor = (event.target as Element).closest<HTMLAnchorElement>('a[href^="?view="]'); if (!anchor) return;
+    const url = new URL(anchor.href); const next = url.searchParams.get("view") as View; if (!VIEWS.includes(next)) return;
+    event.preventDefault(); selectView(next, false, url.hash);
   };
 
   const competitors = useMemo(() => blocks.filter((block) => block.type === "competitor").sort((a, b) => numeric(b.verificationScore) - numeric(a.verificationScore)), [blocks]);
@@ -73,7 +85,7 @@ function ReportWorkspace({ blocks, marketBrief, primaryDomain, observedAt, ar }:
   const adAnchor = (domain: unknown) => `ad-${slug(domain)}`;
   const evidenceAnchor = (domain: unknown) => `evidence-${slug(domain)}`;
 
-  return <div className="intelligence-workspace">
+  return <div className="intelligence-workspace" onClick={onWorkspaceClick}>
     <nav className="workspace-tabs" role="tablist" aria-label={ar ? "أقسام التقرير" : "Report sections"}>
       {VIEWS.map((item, index) => <button key={item} ref={(node) => { tabs.current[index] = node; }} id={`tab-${item}`} type="button" role="tab" aria-selected={view === item} aria-controls={`panel-${item}`} tabIndex={view === item ? 0 : -1} onClick={() => selectView(item)} onKeyDown={(event) => onTabKey(event, index)}><span>{String(index + 1).padStart(2, "0")}</span>{VIEW_LABELS[item][ar ? "ar" : "en"]}{item === "competitors" && <b>{competitors.length}</b>}{item === "products" && <b>{battles.length}</b>}</button>)}
     </nav>

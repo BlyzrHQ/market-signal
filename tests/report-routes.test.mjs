@@ -47,7 +47,10 @@ test("saved reports expose deep-linkable accessible intelligence tabs", () => {
   assert.match(report, /role="tab"/);
   assert.match(report, /aria-controls=\{`panel-\$\{item\}`\}/);
   assert.match(report, /role="tabpanel"/);
-  assert.match(report, /event\.key === "ArrowRight"/);
+  assert.match(report, /const forwardKey = ar \? "ArrowLeft" : "ArrowRight"/);
+  assert.match(report, /scrollToReportHash/);
+  assert.match(report, /scrollIntoView\(\{ block: "start" \}\)/);
+  assert.match(report, /onClick=\{onWorkspaceClick\}/);
   assert.match(report, /viewHref\("products", productAnchor\(domain\)\)/);
   assert.match(report, /viewHref\("ads", adAnchor\(domain\)\)/);
   assert.match(report, /viewHref\("evidence", evidenceAnchor\(domain\)\)/);
@@ -74,6 +77,7 @@ test("dark routes fill the viewport and keep responsive width bounded", () => {
 
 test("new routes preserve Arabic direction and controls", () => {
   assert.match(loading, /dir=\{ar \? "rtl" : "ltr"\}/);
+  assert.match(loading, /ابدأ تقريراً جديداً/);
   assert.match(report, /dir=\{dir\}/);
   assert.match(report, /تقرير جديد/);
   assert.match(report, /setLocaleOverride\(ar \? "en" : "ar"\)/);

@@ -36,4 +36,5 @@ Tabs reorganize the saved report; they do not strengthen evidence or convert his
 - Added keyboard tab semantics, browser history support, Arabic/English controls, entity cross-links, public source links, and explicit observed/inferred/limited/unavailable states.
 - Validated against the saved `noororganicfood.com` public-data report: 2 competitors, 3 source-linked product battles, 3 advertiser coverage records, and 49 source-linked claims rendered from D1.
 - Desktop and 390px mobile browser QA found zero horizontal overflow. Reload, Back, Arrow-key navigation, Arabic direction, repaired Arabic product text, exact competitor-to-product anchors, and six product source links passed.
+- Strict Fable review found and blocked two edge cases: asynchronous fragment targets and RTL Arrow-key direction. Client-side cross-link routing now preserves the saved D1 document, scrolls after the destination panel renders, and reverses horizontal Arrow-key movement in RTL.
 - Automated validation: build/typecheck, 178 tests, lint with no errors, and both Go modules pass.
