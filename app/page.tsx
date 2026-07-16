@@ -909,6 +909,8 @@ export default function Home() {
   const [productMatchLifecycle, setProductMatchLifecycle] = useState<ProductMatchLifecycle>("idle");
   const [productMatchNotice, setProductMatchNotice] = useState("");
   const [toast, setToast] = useState("");
+  const [savedReportId, setSavedReportId] = useState("");
+  const [loadingMessage, setLoadingMessage] = useState("");
   const analysisRunRef = useRef(0);
   const matchAttemptRef = useRef(0);
 
@@ -919,6 +921,40 @@ export default function Home() {
     document.documentElement.lang = locale;
     document.documentElement.dir = ar ? "rtl" : "ltr";
   }, [ar, locale]);
+
+  useEffect(() => {
+    if (!isAnalyzing || !savedReportId) return;
+    const loadingPath = `/reports/${savedReportId}/loading`;
+    const stopOnNavigation = () => {
+      if (window.location.pathname === loadingPath) return;
+      analysisRunRef.current += 1;
+      setIsAnalyzing(false);
+      setSavedReportId("");
+    };
+    window.addEventListener("popstate", stopOnNavigation);
+    return () => window.removeEventListener("popstate", stopOnNavigation);
+  }, [isAnalyzing, savedReportId]);
+
+  function translatedProgress(idempotencyKey: string, message: string) {
+    if (!ar) return message;
+    const messages: Record<string, string> = {
+      "crawl-started": "نفحص موقعك وصفحات المنتجات العامة.",
+      "crawl-complete": "اكتمل جمع الكتالوج الأساسي والتحقق من مواقع المنافسين.",
+      "ads-started": "نفحص سجلات المعلنين العامة المنسوبة إلى الشركات المتحققة.",
+      "ads-complete": "اكتمل فحص مكتبات الإعلانات مع توضيح حدود التغطية.",
+      "matching-started": "نقارن أقوى عائلات المنتجات بين الكتالوجات.",
+      "matching-complete": "اكتملت مطابقة المنتجات مع ربط النتائج بالمصادر.",
+    };
+    return messages[idempotencyKey] || message;
+  }
+
+  function cancelAnalysis() {
+    analysisRunRef.current += 1;
+    setIsAnalyzing(false);
+    setSavedReportId("");
+    setLoadingMessage("");
+    window.history.replaceState({}, "", "/");
+  }
 
   async function analyze(event: FormEvent<HTMLFormElement> | string) {
     const selectedDomain = typeof event === "string" ? event : "";
@@ -939,10 +975,15 @@ export default function Home() {
     setAdError("");
     setProductMatchLifecycle("idle");
     setProductMatchNotice("");
+    setSavedReportId("");
+    setLoadingMessage("");
     try {
       const created = await postJson<{ ok: true; report: { publicId: string } } | { ok: false; error?: string }>("/api/reports", { primaryDomain: cleanDomain, locale }, "Persistent report creation");
       if (!created.ok || !created.report?.publicId) throw new Error(("error" in created ? created.error : "") || "Persistent report storage is unavailable.");
       const publicReportId = created.report.publicId;
+      setSavedReportId(publicReportId);
+      setLoadingMessage(ar ? "تم إنشاء التقرير وبدأ جمع المصادر العامة." : "Report queued for public-source collection.");
+      window.history.pushState({}, "", `/reports/${publicReportId}/loading`);
       let persistenceGap = "";
       let persistedDocument: JsonReportDocument | null = null;
       let persistedBrief: MarketBrief | null = null;
@@ -950,6 +991,7 @@ export default function Home() {
       const persistEvent = async (idempotencyKey: string, phase: string, status: string, message: string, metadata?: Record<string, unknown>) => {
         try {
           await postJson(`/api/reports/${publicReportId}`, { action: "event", idempotencyKey, phase, status, message, metadata }, "Report progress persistence");
+          setLoadingMessage(translatedProgress(idempotencyKey, message));
         } catch (error) {
           persistenceGap = error instanceof Error ? error.message : "Report progress could not be saved.";
         }
@@ -964,6 +1006,7 @@ export default function Home() {
         setDomainAlternatives(parked && "alternatives" in payload ? payload.alternatives || [] : []);
         setAnalysisError(("error" in payload ? payload.error : "") || "The public crawl could not be completed.");
         await persistEvent("crawl-failed", "failed", "failed", ("error" in payload ? payload.error : "") || "The public crawl could not be completed.");
+        window.history.replaceState({}, "", "/");
         if (!parked) window.setTimeout(() => document.getElementById("report")?.scrollIntoView({ behavior: "smooth" }), 50);
         return;
       }
@@ -1121,12 +1164,17 @@ export default function Home() {
           observedAt: new Date().toISOString(),
           document: { primaryDomain: payload.primaryDomain, document: persistedDocument, marketBrief: persistedBrief },
         }, "Completed report persistence");
+        if (active() && window.location.pathname === `/reports/${publicReportId}/loading`) window.location.assign(`/reports/${publicReportId}`);
       } catch (error) {
         persistenceGap = error instanceof Error ? error.message : "The completed report could not be saved.";
+        window.history.replaceState({}, "", "/");
       }
       if (persistenceGap && active()) setAnalysisError(`The analysis completed, but its persistent report has a storage gap: ${persistenceGap}`);
     } catch (error) {
-      if (active()) setAnalysisError(error instanceof Error ? error.message : "Unable to analyze this domain.");
+      if (active()) {
+        setAnalysisError(error instanceof Error ? error.message : "Unable to analyze this domain.");
+        window.history.replaceState({}, "", "/");
+      }
     } finally {
       if (active()) setIsAnalyzing(false);
     }
@@ -1136,6 +1184,23 @@ export default function Home() {
     setToast(message);
     window.setTimeout(() => setToast(""), 3200);
   }
+
+  if (isAnalyzing && savedReportId) return (
+    <main className="analysis-loading-page" lang={locale} dir={ar ? "rtl" : "ltr"}>
+      <button className="loading-brand loading-brand-button" type="button" onClick={cancelAnalysis}>Market Signal <span>LIVE RUN</span></button>
+      <section className="loading-stage" aria-live="polite">
+        <div className="market-radar" aria-hidden="true"><i /><i /><i /><b /></div>
+        <p className="loading-kicker">{ar ? "نبني خريطة السوق" : "BUILDING YOUR MARKET MAP"}</p>
+        <h1>{ar ? "نجمع الأدلة التي تستحق قرارك." : "Collecting the evidence worth acting on."}</h1>
+        <p className="loading-status">{loadingMessage}</p>
+        <div className="loading-phases">
+          <span>{ar ? "الموقع" : "Website"}</span><span>{ar ? "المنافسون" : "Competitors"}</span><span>{ar ? "المنتجات" : "Products"}</span><span>{ar ? "الإعلانات" : "Ads"}</span>
+        </div>
+        <small>{ar ? "أبقِ هذه الصفحة مفتوحة بينما تُحفظ كل مرحلة في تقريرك." : "Keep this page open while each phase is saved into your report."}</small>
+        <button className="loading-cancel" type="button" onClick={cancelAnalysis}>{ar ? "إلغاء والعودة" : "Cancel and return"}</button>
+      </section>
+    </main>
+  );
 
   return (
     <main className="app-root" lang={locale} dir={ar ? "rtl" : "ltr"}>
