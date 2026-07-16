@@ -130,6 +130,27 @@ test("catalog deduplication preserves high-confidence structured evidence", () =
   assert.equal(selectPreferredProducts([pageSignal, structured])[0].id, "structured");
 });
 
+test("catalog deduplication collapses locale variants of the same product URL", () => {
+  const arabic = {
+    ...product("bundle-ar", "shop.example", "\u0645\u062c\u0645\u0648\u0639\u0629 \u0627\u0644\u062f\u0642\u064a\u0642"),
+    jsonLdType: "Product",
+    sourceUrl: "https://shop.example/ar/products/flours-bundle",
+    claimIds: ["bundle-ar-observed"],
+  };
+  const english = {
+    ...product("bundle-en", "shop.example", "Flours Value Bundle"),
+    jsonLdType: "Product",
+    sourceUrl: "https://shop.example/products/flours-bundle",
+    priceSignals: [{ raw: "KWD 9.00", currency: "KWD", amount: 9 }],
+    claimIds: ["bundle-en-observed"],
+  };
+
+  const selected = selectPreferredProducts([arabic, english]);
+  assert.equal(selected.length, 1);
+  assert.equal(selected[0].id, english.id);
+  assert.deepEqual(new Set(selected[0].claimIds), new Set(["bundle-ar-observed", "bundle-en-observed"]));
+});
+
 test("catalog enrichment keeps a secure sitemap image while adding a page price", () => {
   const sitemap = {
     ...product("sitemap", "myjam.co.uk", "Lamb Leg Halal apx 2500g"),
@@ -475,7 +496,7 @@ test("matching rejects an accessory even when its name contains the complete pro
   assert.equal(scoreProductPair(
     { ...product("recipe-box", "shop.test", "Classic Recipe Box"), jsonLdType: "Product" },
     { ...product("meal-box", "rival.test", "Classic Meal Box"), jsonLdType: "Product" },
-  ).eligible, true);
+  ).eligible, false);
 });
 
 test("matching is deterministic and one-to-one per competitor", () => {

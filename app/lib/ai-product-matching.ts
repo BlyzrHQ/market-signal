@@ -1,5 +1,8 @@
 import {
   buildProductComparison,
+  isGenericProductIdentityToken,
+  productIdentityKey,
+  productIdentityTokens,
   productDecision,
   productPairVetoes,
   scoreProductPair,
@@ -50,7 +53,7 @@ export type AIProductMatchingOptions = {
   totalBudgetMs?: number;
 };
 
-const PROMPT_VERSION = "ai-product-match-v3-identifiers";
+const PROMPT_VERSION = "ai-product-match-v4-useful-identity";
 const DEFAULT_MODEL = "gpt-5.4-mini";
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
 const DEFAULT_MAX_PRIMARY = 60;
@@ -184,7 +187,10 @@ function retrievalTokens(product: ProductRecord) {
     ...(`${product.name} ${product.category}`.toLowerCase().normalize("NFKC").match(/[\p{L}\p{N}]+/gu) || []),
     ...bilingualTokens(`${product.name} ${product.category} ${product.attributes.join(" ")}`),
   ])]
-    .filter((token) => token.length > 1 && token !== brand && !/^(?:product|products|service|services|shop|store|the|and|with|for)$/.test(token));
+    .filter((token) => token.length > 1
+      && token !== brand
+      && !isGenericProductIdentityToken(token)
+      && !/^(?:service|services|shop|store|the|and|with|for)$/.test(token));
 }
 
 function quantityKey(product: ProductRecord) {
@@ -260,6 +266,29 @@ function quantityHasIdentitySupport(primary: ProductRecord, rival: ProductRecord
   if (primaryBrand && primaryBrand === rivalBrand) return true;
   const rivalTokens = new Set(retrievalTokens(rival).filter((token) => !/^\d/.test(token)));
   return retrievalTokens(primary).filter((token) => !/^\d/.test(token)).some((token) => rivalTokens.has(token));
+}
+
+function sharedNonGenericIdentityTokens(primary: ProductRecord, rival: ProductRecord) {
+  const rivalTokens = new Set(productIdentityTokens(rival));
+  return productIdentityTokens(primary).filter((token) => rivalTokens.has(token));
+}
+
+function hasGenericContainerToken(product: ProductRecord) {
+  return bilingualTokens(`${product.name} ${product.category}`).some(isGenericProductIdentityToken);
+}
+
+function deterministicAssignmentSignal(primary: ProductRecord, rival: ProductRecord) {
+  return Boolean(sharedValidGtin(primary.identifiers, rival.identifiers)
+    || scopedCodeMatch(primary, rival)
+    || sharedNonGenericIdentityTokens(primary, rival).length >= 2);
+}
+
+function isUsefulAssignment(primary: ProductRecord, rival: ProductRecord, confidence: number) {
+  if (deterministicAssignmentSignal(primary, rival)) return true;
+  if (confidence < 0.65) return false;
+  return !(hasGenericContainerToken(primary)
+    && hasGenericContainerToken(rival)
+    && sharedNonGenericIdentityTokens(primary, rival).length === 0);
 }
 
 function retrieveGroups(primaryProducts: ProductRecord[], competitors: ProductCatalog[], embeddings: Map<string, number[]>, fallback: ProductComparison, maxCandidates: number, maxPerDomain: number, maxPool: number) {
@@ -567,13 +596,14 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   });
   if (!successfulPrimaryIds.size) return { ...withoutUnassessedMatches(fallback), matching: { ...matchingBase, method: "lexical-fallback", available: false, retrievalPairsScored: retrieved.scoredPairs, judgeCalls, embeddingCalls, durationMs: Date.now() - startedAt, selectedPrimaryIds: primaryProducts.map((product) => product.id), gaps: gaps.length ? gaps : ["AI product judging returned no usable assessments; no product pair was accepted."] } };
 
-  const proposals = sanitized.filter((item): item is typeof item & { verdict: "same_product" | "close_substitute" } => item.verdict === "same_product" || item.verdict === "close_substitute")
+  const proposals = sanitized.filter((item): item is typeof item & { verdict: "same_product" | "close_substitute" } => (item.verdict === "same_product" || item.verdict === "close_substitute")
+      && isUsefulAssignment(item.primary, item.candidate.product, item.confidence))
     .sort((left, right) => Number(right.verdict === "same_product") - Number(left.verdict === "same_product") || right.confidence - left.confidence || right.candidate.retrievalScore - left.candidate.retrievalScore || left.candidate.product.id.localeCompare(right.candidate.product.id));
   const assignments = new Map<string, typeof proposals[number]>();
   const usedRivals = new Set<string>();
   for (const proposal of proposals) {
     const key = `${proposal.primary.id}|${proposal.candidate.product.domain}`;
-    const rivalKey = `${proposal.candidate.product.domain}|${proposal.candidate.product.id}`;
+    const rivalKey = productIdentityKey(proposal.candidate.product);
     if (assignments.has(key) || usedRivals.has(rivalKey)) continue;
     assignments.set(key, proposal);
     usedRivals.add(rivalKey);
@@ -616,8 +646,8 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
     });
     return { ...row, matches };
   });
-  const assignedIds = new Set(rows.flatMap((row) => row.matches.flatMap((match) => match.product ? [`${match.domain}|${match.product.id}`] : [])));
-  const unmatched = competitors.map((catalog) => ({ domain: catalog.domain, products: catalog.products.filter((product) => !assignedIds.has(`${catalog.domain}|${product.id}`)).slice(0, 24) }));
+  const assignedIds = new Set(rows.flatMap((row) => row.matches.flatMap((match) => match.product ? [productIdentityKey(match.product)] : [])));
+  const unmatched = competitors.map((catalog) => ({ domain: catalog.domain, products: catalog.products.filter((product) => !assignedIds.has(productIdentityKey(product))).slice(0, 24) }));
   const assignedPairCount = rows.reduce((sum, row) => sum + row.matches.filter((match) => match.product).length, 0);
   const verifiedPairCount = rows.reduce((sum, row) => sum + row.matches.filter((match) => match.product && match.confidence === "Medium").length, 0);
   return {

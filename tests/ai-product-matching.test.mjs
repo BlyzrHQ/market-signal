@@ -161,6 +161,75 @@ test("embedding outage does not send zero-signal random products to the judge", 
   assert.equal(comparison.rows[0].matches[0].product, null);
 });
 
+test("generic bilingual container words cannot produce an accepted battle", async () => {
+  const primary = product("p-fiber-bundle", "shop.test", "\u0645\u062c\u0645\u0648\u0639\u0629 \u0627\u0644\u0627\u062d\u062a\u064a\u0627\u062c \u0627\u0644\u064a\u0648\u0645\u064a \u0645\u0646 \u0645\u0646\u062a\u062c\u0627\u062a \u0627\u0644\u0623\u0644\u064a\u0627\u0641 \u0627\u0644\u0637\u0628\u064a\u0639\u064a\u0629");
+  const rival = product("r-flour-bundle", "rival.test", "Flours Value Bundle");
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, 0] })) });
+    return response({ output_text: JSON.stringify({ assessments: [{ primaryId: primary.id, candidateId: rival.id, verdict: "close_substitute", confidence: 0.96, reason: "Both are bundles.", contradiction: "The contents differ." }] }) });
+  };
+
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [primary] },
+    { domain: "rival.test", products: [rival] },
+  ], {}, { apiKey: "test", fetch });
+
+  assert.equal(comparison.rows[0].matches[0].product, null);
+  assert.equal(comparison.coverage.assignedPairCount, 0);
+});
+
+test("low-confidence close substitutes are not assigned without deterministic identity", async () => {
+  const primary = product("p-low", "shop.test", "\u0639\u0633\u0644 \u0633\u062f\u0631 \u0641\u0627\u062e\u0631");
+  const rival = product("r-low", "rival.test", "Premium Yemeni Sidr Honey");
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, 0] })) });
+    return response({ output_text: JSON.stringify({ assessments: [{ primaryId: primary.id, candidateId: rival.id, verdict: "close_substitute", confidence: 0.61, reason: "Possibly the same honey family.", contradiction: "Cross-language identity is uncertain." }] }) });
+  };
+
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [primary] },
+    { domain: "rival.test", products: [rival] },
+  ], {}, { apiKey: "test", fetch });
+
+  assert.equal(comparison.rows[0].matches[0].product, null);
+  assert.equal(comparison.coverage.assignedPairCount, 0);
+});
+
+test("localized rival URLs collapse to one physical product and one assignment", async () => {
+  const primaries = [
+    product("p-vinegar-original", "shop.test", "Organic Apple Vinegar 500ml Original"),
+    product("p-vinegar-unfiltered", "shop.test", "Organic Apple Vinegar 500ml Unfiltered"),
+  ];
+  const rivals = [
+    product("r-vinegar-ar", "rival.test", "Organic Apple Vinegar 500ml", { sourceUrl: "https://rival.test/ar/products/apple-vinegar-500ml" }),
+    product("r-vinegar-en", "rival.test", "Organic Apple Vinegar 500ml", { sourceUrl: "https://rival.test/products/apple-vinegar-500ml", price: { raw: "KWD 1.00", currency: "KWD", amount: 1 } }),
+  ];
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, 0] })) });
+    const request = JSON.parse(body.input[1].content);
+    return response({ output_text: JSON.stringify({ assessments: request.groups.flatMap((group) => group.candidates.map((candidate) => ({
+      primaryId: group.primary.id,
+      candidateId: candidate.id,
+      verdict: "close_substitute",
+      confidence: 0.94,
+      reason: "Same apple vinegar family.",
+      contradiction: "Variant detail differs.",
+    }))) }) });
+  };
+
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: primaries },
+    { domain: "rival.test", products: rivals },
+  ], {}, { apiKey: "test", fetch });
+
+  assert.equal(comparison.matching?.competitorProductsSynchronized, 1);
+  assert.equal(comparison.coverage.assignedPairCount, 1);
+  assert.equal(comparison.rows.flatMap((row) => row.matches).filter((match) => match.product).length, 1);
+});
+
 test("validated GTIN retrieval is guaranteed without semantic or lexical overlap", async () => {
   const identifiers = { gtins: ["04006381333931"], brand: "Acme" };
   const primary = product("p-gtin", "shop.test", "Local Item Alpha", { identifiers, price: { raw: "GBP 10", currency: "GBP", amount: 10 } });
