@@ -1,6 +1,7 @@
 import { buildAIProductComparison } from "../../lib/ai-product-matching.ts";
 import { canonicalDomain } from "../../lib/domain.ts";
 import type { ProductRecord } from "../../lib/product-intelligence.ts";
+import { canonicalGtin, parseCanonicalQuantity, type ProductIdentifiers } from "../../lib/product-normalization.ts";
 
 const MAX_CATALOGS = 7;
 const MAX_PRODUCTS_PER_CATALOG = 600;
@@ -22,6 +23,16 @@ function publicUrl(value: unknown, domain: string) {
   }
 }
 
+function identifiers(value: unknown): ProductIdentifiers | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const item = value as Record<string, unknown>;
+  const gtins = [...new Set((Array.isArray(item.gtins) ? item.gtins : []).map(canonicalGtin).filter((gtin): gtin is string => Boolean(gtin)))].slice(0, 8);
+  const sku = text(item.sku, 120) || undefined;
+  const mpn = text(item.mpn, 120) || undefined;
+  const brand = text(item.brand, 120) || undefined;
+  return gtins.length || sku || mpn || brand ? { gtins, sku, mpn, brand } : undefined;
+}
+
 function product(value: unknown, catalogDomain: string): ProductRecord | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const item = value as Record<string, unknown>;
@@ -37,6 +48,8 @@ function product(value: unknown, catalogDomain: string): ProductRecord | null {
     const amount = typeof signal.amount === "number" && Number.isFinite(signal.amount) ? signal.amount : undefined;
     return [{ raw: text(signal.raw, 100), currency: text(signal.currency, 12) || undefined, amount, period: text(signal.period, 40) || undefined }];
   }).slice(0, 8) : [];
+  const attributes = strings(item.attributes, 12, 120);
+  const quantityAttributes = attributes.filter((value) => !/^(?:barcode|ean|gtin|isbn|mpn|sku|upc)\s*:/i.test(value));
   return {
     id: text(item.id, 300) || `${canonicalDomain(catalogDomain)}-${name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-")}`,
     domain: canonicalDomain(catalogDomain),
@@ -46,7 +59,7 @@ function product(value: unknown, catalogDomain: string): ProductRecord | null {
     category: text(item.category, 120),
     jsonLdType: allowedTypes.has(item.jsonLdType as ProductRecord["jsonLdType"]) ? item.jsonLdType as ProductRecord["jsonLdType"] : "PageSignal",
     priceSignals,
-    attributes: strings(item.attributes, 12, 120),
+    attributes,
     ownership: allowedOwnership.has(item.ownership as ProductRecord["ownership"]) ? item.ownership as ProductRecord["ownership"] : "path-inferred",
     extraction: allowedExtraction.has(item.extraction as ProductRecord["extraction"]) ? item.extraction as ProductRecord["extraction"] : "page-signal",
     confidence: item.confidence === "High" ? "High" : "Medium",
@@ -54,6 +67,8 @@ function product(value: unknown, catalogDomain: string): ProductRecord | null {
     imageUrl: publicUrl(item.imageUrl, catalogDomain),
     observedAt: text(item.observedAt, 40) || new Date().toISOString(),
     claimIds: strings(item.claimIds, 20, 300),
+    identifiers: identifiers(item.identifiers),
+    quantity: parseCanonicalQuantity(`${name} ${quantityAttributes.join(" ")}`) || undefined,
   };
 }
 
