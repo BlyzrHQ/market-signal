@@ -186,6 +186,9 @@ test("real-data route and product metadata are present", async () => {
   assert.match(styles, /\.price-legend strong \{[^}]*white-space: nowrap/);
   assert.match(styles, /\.close-prices \.your-dot \{ top: 2px; \}/);
   assert.match(styles, /\.close-prices \.rival-dot \{ top: 20px; \}/);
+  assert.match(styles, /\.hero-copy, \.domain-form, \.input-row, \.domain-input \{ min-width: 0; \}/);
+  assert.match(styles, /\.domain-input \{[^}]*flex: 1 1 0;[^}]*background: #0d1c18/);
+  assert.match(styles, /@media \(max-width: 900px\) \{[\s\S]*?\.hero \{ grid-template-columns: minmax\(0, 1fr\); \}[\s\S]*?\.input-row \{ flex-direction: column; \}[\s\S]*?\.primary-button \{ width: 100%; \}/);
   assert.doesNotMatch(styles, /\.price-dot b \{/);
   assert.doesNotMatch(styles, /\.price-dot small \{/);
   assert.doesNotMatch(page, /className="metric-grid"/);
