@@ -216,6 +216,7 @@ body { background: #07110f; color: #eaf4ef; }
 .workspace-product-pair img { grid-row: 1/4; width: 62px; height: 72px; border: 1px solid #dce3df; border-radius: 8px; object-fit: contain; background: #fff; }
 .workspace-product-pair span { color: #4e7666; font-size: 8px; font-weight: 900; letter-spacing: .1em; }
 .workspace-product-pair h3 { grid-column: 2; overflow-wrap: anywhere; margin: 7px 0 5px; font-size: 15px; line-height: 1.35; }
+.workspace-product-pair > div:not(:has(img)) { grid-template-columns: minmax(0,1fr); }
 .workspace-product-pair > div:not(:has(img)) h3,.workspace-product-pair > div:not(:has(img)) strong { grid-column: 1; }
 .workspace-product-pair strong { grid-column: 2; color: #2b775b; font-size: 11px; }
 .workspace-product-pair > i { display: grid; place-items: center; background: #142d25; color: #7ce0b4; font-style: normal; }

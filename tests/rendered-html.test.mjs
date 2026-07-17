@@ -183,6 +183,7 @@ test("real-data route and product metadata are present", async () => {
   assert.match(styles, /\.memory-provenance \{/);
   assert.match(styles, /\.battle-product\.no-image \{ grid-template-columns: minmax\(0, 1fr\); \}/);
   assert.match(styles, /\.battle-product\.no-image strong \{ grid-column: 1; \}/);
+  assert.match(styles, /\.workspace-product-pair > div:not\(:has\(img\)\) \{ grid-template-columns: minmax\(0,1fr\); \}/);
   assert.match(styles, /\.price-legend strong \{[^}]*white-space: nowrap/);
   assert.match(styles, /\.close-prices \.your-dot \{ top: 2px; \}/);
   assert.match(styles, /\.close-prices \.rival-dot \{ top: 20px; \}/);
