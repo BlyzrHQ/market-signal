@@ -47,6 +47,10 @@ body { background: #07110f; color: #eaf4ef; }
 .domain-input input { background: #0d1c18; border-color: #294139; color: #f6fbf8; }
 .domain-input input::placeholder { color: #647a72; }
 .primary-button { background: #7bedad; color: #07110f; }
+.hero-copy, .domain-form, .input-row, .domain-input { min-width: 0; }
+.input-row { width: 100%; }
+.domain-input { flex: 1 1 0; background: #0d1c18; border-color: #294139; color: #72877f; }
+.primary-button { flex: 0 0 auto; max-width: 100%; white-space: nowrap; }
 .hero-preview { border-color: #294139; background: #0d1c18; box-shadow: 0 28px 100px rgba(0,0,0,.35); }
 .method-preview .preview-body { background: linear-gradient(145deg,#0d1c18,#101f1b); color: #e7f1ec; }
 .preview-top, .preview-foot { border-color: #294139; }
@@ -54,6 +58,14 @@ body { background: #07110f; color: #eaf4ef; }
 .report-section.shell { width: 100%; box-sizing: border-box; max-width: none; padding-inline: max(36px, calc((100% - 1368px)/2)); background: #f4f6f1; color: #17211d; }
 .method-section, .site-footer { color: #dce9e3; }
 .method-section h2 { color: #f4faf7; }
+
+/* Task 038: keep the domain entry usable through the narrow desktop range. */
+@media (max-width: 900px) {
+  .hero { grid-template-columns: minmax(0, 1fr); }
+  .hero-copy, .hero-preview { width: 100%; }
+  .input-row { flex-direction: column; }
+  .primary-button { width: 100%; }
+}
 
 .analysis-loading-page, .stored-report-state { min-height: 100vh; box-sizing: border-box; background: radial-gradient(circle at 50% 35%,#16362c 0,#0a1a16 34%,#050b09 78%); color: #edf8f2; padding: 30px clamp(22px,5vw,72px); overflow-x: hidden; overflow-y: auto; }
 .loading-brand { color: #f4faf7; text-decoration: none; font-weight: 700; letter-spacing: -.02em; }
