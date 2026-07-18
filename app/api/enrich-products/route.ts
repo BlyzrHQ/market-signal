@@ -1,4 +1,5 @@
 import { canonicalDomain, normalizeDomain } from "../../lib/domain.ts";
+import { parseCanonicalQuantity } from "../../lib/product-normalization.ts";
 import { extractProductsFromHtml, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "../../lib/product-intelligence.ts";
 import { parseRobots } from "../../lib/robots.ts";
 
@@ -110,6 +111,7 @@ function expectedProduct(item: ProductEnrichmentTarget): ProductRecord {
     imageUrl: "",
     observedAt: new Date().toISOString(),
     claimIds: [],
+    quantity: parseCanonicalQuantity(item.expectedName) || undefined,
   };
 }
 

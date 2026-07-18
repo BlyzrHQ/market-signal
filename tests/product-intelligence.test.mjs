@@ -191,6 +191,132 @@ test("rejects enrichment when the fetched product contradicts the requested prod
   assert.match(result.reason, /contradicts/i);
 });
 
+test("accepts harmless Babanuj sitemap title drift on the exact final product URL", () => {
+  const sourceUrl = "https://www.babanuj.com/product/zaitoune-sweets-pistachio-maamoul-500g";
+  const expected = {
+    ...product("babanuj-sitemap", "babanuj.com", "zaitoune sweets pistachio maamoul 500g"),
+    jsonLdType: "Product",
+    extraction: "sitemap",
+    sourceUrl,
+    quantity: { kind: "mass", amount: 500, unit: "g" },
+  };
+  const fetched = {
+    ...product("babanuj-live", "babanuj.com", "Zaitoune Mamoul With Pistachio 500g"),
+    normalizedName: "zaitoune mamoul with pistachio 500g",
+    jsonLdType: "Product",
+    sourceUrl,
+    quantity: { kind: "mass", amount: 500, unit: "g" },
+    priceSignals: [{ raw: "USD 43.2", currency: "USD", amount: 43.2 }],
+    imageUrl: "https://cdn.shopify.com/zaitoune-maamoul.jpg",
+  };
+
+  const result = validateProductPageIdentity([expected], [fetched], fetched.name);
+  assert.equal(result.accepted, true);
+  assert.equal(result.products[0].name, fetched.name);
+});
+
+test("accepts an exact singular-to-plural product term without broad short-token fuzziness", () => {
+  const sourceUrl = "https://www.babanuj.com/product/zaitoune-maamoul-date-250g";
+  const expected = {
+    ...product("date-sitemap", "babanuj.com", "Zaitoune Maamoul Date 250g"),
+    normalizedName: "zaitoune maamoul date 250g",
+    jsonLdType: "Product",
+    sourceUrl,
+    quantity: { kind: "mass", amount: 250, unit: "g" },
+  };
+  const fetched = {
+    ...product("date-live", "babanuj.com", "Zaitoune Mamoul With Dates 250g"),
+    normalizedName: "zaitoune mamoul with dates 250g",
+    jsonLdType: "Product",
+    sourceUrl,
+    quantity: { kind: "mass", amount: 250, unit: "g" },
+  };
+
+  assert.equal(validateProductPageIdentity([expected], [fetched], fetched.name).accepted, true);
+});
+
+test("prefers the most specific accepted Product node over extraction order", () => {
+  const sourceUrl = "https://www.babanuj.com/product/zaitoune-pistachio-maamoul-500g";
+  const expected = {
+    ...product("specific-sitemap", "babanuj.com", "Zaitoune Pistachio Maamoul 500g"),
+    normalizedName: "zaitoune pistachio maamoul 500g",
+    jsonLdType: "Product",
+    sourceUrl,
+    quantity: { kind: "mass", amount: 500, unit: "g" },
+  };
+  const generic = {
+    ...product("generic-node", "babanuj.com", "Zaitoune Maamoul"),
+    normalizedName: "zaitoune maamoul",
+    jsonLdType: "Product",
+    sourceUrl,
+  };
+  const specific = {
+    ...product("specific-node", "babanuj.com", "Zaitoune Mamoul With Pistachio 500g"),
+    normalizedName: "zaitoune mamoul with pistachio 500g",
+    jsonLdType: "Product",
+    sourceUrl,
+    quantity: { kind: "mass", amount: 500, unit: "g" },
+  };
+
+  const result = validateProductPageIdentity([expected], [generic, specific], specific.name);
+  assert.equal(result.accepted, true);
+  assert.equal(result.products[0].id, specific.id);
+});
+
+test("rejects a repurposed same-URL product and conflicting variants", () => {
+  const sourceUrl = "https://www.babanuj.com/product/zaitoune-sweets-mixed-nawashif-500g";
+  const expected = {
+    ...product("stale", "babanuj.com", "Zaitoune Sweets Mixed Nawashif 500g"),
+    normalizedName: "zaitoune sweets mixed nawashif 500g",
+    jsonLdType: "Product",
+    sourceUrl,
+    quantity: { kind: "mass", amount: 500, unit: "g" },
+  };
+  const repurposed = {
+    ...product("live", "babanuj.com", "Zaitoune Sesame Cookies Barazek 500g"),
+    normalizedName: "zaitoune sesame cookies barazek 500g",
+    jsonLdType: "Product",
+    sourceUrl,
+    quantity: { kind: "mass", amount: 500, unit: "g" },
+  };
+  const conflictingVariant = {
+    ...product("walnut", "babanuj.com", "Zaitoune Walnut Maamoul 500g"),
+    normalizedName: "zaitoune walnut maamoul 500g",
+    jsonLdType: "Product",
+    sourceUrl: "https://www.babanuj.com/product/zaitoune-pistachio-maamoul-500g",
+    quantity: { kind: "mass", amount: 500, unit: "g" },
+  };
+  const pistachio = {
+    ...expected,
+    name: "Zaitoune Pistachio Maamoul 500g",
+    normalizedName: "zaitoune pistachio maamoul 500g",
+    sourceUrl: conflictingVariant.sourceUrl,
+  };
+
+  assert.equal(validateProductPageIdentity([expected], [repurposed], repurposed.name).accepted, false);
+  assert.equal(validateProductPageIdentity([pistachio], [conflictingVariant], conflictingVariant.name).accepted, false);
+});
+
+test("rejects enrichment when quantity, SKU, or final product URL conflicts", () => {
+  const base = {
+    ...product("expected", "babanuj.com", "Zaitoune Pistachio Maamoul 500g"),
+    normalizedName: "zaitoune pistachio maamoul 500g",
+    jsonLdType: "Product",
+    sourceUrl: "https://www.babanuj.com/product/zaitoune-pistachio-maamoul-500g",
+    quantity: { kind: "mass", amount: 500, unit: "g" },
+    identifiers: { gtins: [], sku: "PISTACHIO-500" },
+  };
+  const wrongQuantity = { ...base, id: "wrong-quantity", quantity: { kind: "mass", amount: 600, unit: "g" } };
+  const wrongSku = { ...base, id: "wrong-sku", identifiers: { gtins: [], sku: "WALNUT-500" } };
+  const redirected = { ...base, id: "redirected", sourceUrl: "https://www.babanuj.com/product/zaitoune-pistachio-maamoul-new" };
+
+  assert.equal(validateProductPageIdentity([base], [wrongQuantity], wrongQuantity.name).accepted, false);
+  assert.equal(validateProductPageIdentity([base], [wrongSku], wrongSku.name).accepted, false);
+  assert.equal(validateProductPageIdentity([base], [redirected], redirected.name).accepted, true, "an identical structured name remains authoritative even if the canonical source URL changed");
+  const driftedRedirect = { ...redirected, name: "Zaitoune Mamoul With Pistachio 500g", normalizedName: "zaitoune mamoul with pistachio 500g" };
+  assert.equal(validateProductPageIdentity([base], [driftedRedirect], driftedRedirect.name).accepted, false);
+});
+
 test("malformed JSON-LD becomes a visible extraction gap without throwing", () => {
   const result = extraction({ document: '<script type="application/ld+json">{"@type":"Product",</script>' });
   assert.equal(result.products.length, 0);
@@ -596,13 +722,26 @@ test("final enrichment updates the selected pair and recomputes its price decisi
   const rival = { ...product("rival-tea", "tea.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://tea.test/products/lemon-ginger-tea", extraction: "sitemap", confidence: "Medium" };
   const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "tea.test", products: [rival] }]);
   const enriched = applyFinalProductEnrichment(comparison, [
-    { ...primary, extraction: "page-signal", priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }], imageUrl: "https://cdn.shop.test/tea.jpg" },
+    { ...primary, name: "Lemon & Ginger Tea", normalizedName: "lemon & ginger tea", extraction: "page-signal", priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }], imageUrl: "https://cdn.shop.test/tea.jpg" },
     { ...rival, extraction: "json-ld", priceSignals: [{ raw: "GBP 6", currency: "GBP", amount: 6 }], imageUrl: "https://cdn.tea.test/tea.jpg" },
   ], { pagesRequested: 2, pagesFetched: 2, maxPages: 24, gaps: [] });
   assert.equal(enriched.rows[0].primary.imageUrl, "https://cdn.shop.test/tea.jpg");
+  assert.equal(enriched.rows[0].primary.name, "Lemon & Ginger Tea");
   assert.equal(enriched.rows[0].matches[0].product.imageUrl, "https://cdn.tea.test/tea.jpg");
   assert.match(enriched.rows[0].matches[0].decision.priceVerdict, /GBP 2\.00 cheaper/);
   assert.deepEqual(enriched.enrichment, { pagesRequested: 2, pagesFetched: 2, maxPages: 24, gaps: [] });
+});
+
+test("final enrichment joins equivalent canonical product URLs after host and scheme redirects", () => {
+  const primary = { ...product("tea", "shop.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://www.shop.test/products/lemon-ginger-tea" };
+  const rival = { ...product("rival-tea", "tea.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://tea.test/products/lemon-ginger-tea" };
+  const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "tea.test", products: [rival] }]);
+  const enriched = applyFinalProductEnrichment(comparison, [
+    { ...primary, sourceUrl: "http://shop.test/products/lemon-ginger-tea?variant=1", priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }], imageUrl: "https://cdn.shop.test/tea.jpg" },
+  ], { pagesRequested: 1, pagesFetched: 1, maxPages: 24, gaps: [] });
+
+  assert.equal(enriched.rows[0].primary.priceSignals[0].amount, 8);
+  assert.equal(enriched.rows[0].primary.imageUrl, "https://cdn.shop.test/tea.jpg");
 });
 
 test("enriched product evidence replaces sitemap placeholders and activates a price verdict", () => {
