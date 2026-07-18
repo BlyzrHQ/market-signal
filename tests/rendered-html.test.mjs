@@ -28,13 +28,15 @@ test("server-renders the Market Signal product shell", async () => {
 });
 
 test("real-data route and product metadata are present", async () => {
-  const [route, crawl, enrichment, ads, report, page, layout, styles, packageJson, domainUtils, adIntelligence] = await Promise.all([
+  const [route, crawl, enrichment, ads, report, page, savedReport, pricePosition, layout, styles, packageJson, domainUtils, adIntelligence] = await Promise.all([
     readFile(new URL("../app/api/analyze/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/crawl/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/enrich-products/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/ads/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/report/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/reports/[publicId]/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/price-position.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
@@ -105,7 +107,16 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /YOUR NEXT DECISION/);
   assert.match(page, /WHY THEY MAY WIN/);
   assert.match(page, /WHAT WE SEE/);
-  assert.match(page, /resolvedPriceDelta\(battle\.decision\.priceComparison\)/);
+  assert.match(page, /<PricePosition comparisonValue=\{battle\.decision\.priceComparison\}/);
+  assert.match(savedReport, /<PricePosition comparisonValue=\{decision\.priceComparison\}/);
+  assert.match(pricePosition, /resolvedPriceDelta\(comparisonValue\)/);
+  assert.match(pricePosition, /You are \$\{percent\}% cheaper/);
+  assert.match(pricePosition, /Rival is \$\{percent\}% cheaper/);
+  assert.match(pricePosition, /Same observed price/);
+  assert.match(pricePosition, /Price difference is under 1%/);
+  assert.match(pricePosition, /No direct price comparison/);
+  assert.match(pricePosition, /priceVerdict \|\| copy\.unavailableDetail/);
+  assert.match(pricePosition, /comparison && !comparison\.equal/);
   assert.doesNotMatch(page, /battle\.primary\.prices\[0\]/);
   assert.doesNotMatch(page, /sharedTerms\.map/);
   assert.match(page, /AD PULSE/);
@@ -163,10 +174,8 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /verified comparison/);
   assert.match(page, /SAME TIER/);
   assert.match(page, /href=\{`#dossier-\$\{rivalDomain\}`\}/);
-  assert.match(page, /price-picture/);
-  assert.match(page, /price-legend/);
-  assert.match(page, /Math\.abs\(yourPosition - rivalPosition\) < 8/);
-  assert.match(page, /closePrices \? "close-prices" : ""/);
+  assert.doesNotMatch(page, /price-axis|price-line|price-dot|close-prices|price-picture|price-fallback/);
+  assert.doesNotMatch(savedReport, /price-axis|price-line|price-dot|close-prices|price-picture|price-fallback/);
   assert.doesNotMatch(page, /comparablePriceDelta/);
   assert.match(page, /isDefensibleProductMatch/);
   assert.match(page, /SafeExternalLink href=\{battle\.primary\.sourceUrl\}/);
@@ -184,14 +193,12 @@ test("real-data route and product metadata are present", async () => {
   assert.match(styles, /\.battle-product\.no-image \{ grid-template-columns: minmax\(0, 1fr\); \}/);
   assert.match(styles, /\.battle-product\.no-image strong \{ grid-column: 1; \}/);
   assert.match(styles, /\.workspace-product-pair > div:not\(:has\(img\)\) \{ grid-template-columns: minmax\(0,1fr\); \}/);
-  assert.match(styles, /\.price-legend strong \{[^}]*white-space: nowrap/);
-  assert.match(styles, /\.close-prices \.your-dot \{ top: 2px; \}/);
-  assert.match(styles, /\.close-prices \.rival-dot \{ top: 20px; \}/);
+  assert.match(styles, /\.price-position-grid \{[^}]*grid-template-columns: minmax\(0,1fr\) minmax\(220px,1\.15fr\) minmax\(0,1fr\)/);
+  assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.price-position-grid, \.decision-path, \.dossier-ad-row \{ grid-template-columns: 1fr; \}/);
+  assert.doesNotMatch(styles, /\.price-axis|\.price-line|\.price-dot|\.close-prices|\.price-picture|\.price-fallback/);
   assert.match(styles, /\.hero-copy, \.domain-form, \.input-row, \.domain-input \{ min-width: 0; \}/);
   assert.match(styles, /\.domain-input \{[^}]*flex: 1 1 0;[^}]*background: #0d1c18/);
   assert.match(styles, /@media \(max-width: 900px\) \{[\s\S]*?\.hero \{ grid-template-columns: minmax\(0, 1fr\); \}[\s\S]*?\.input-row \{ flex-direction: column; \}[\s\S]*?\.primary-button \{ width: 100%; \}/);
-  assert.doesNotMatch(styles, /\.price-dot b \{/);
-  assert.doesNotMatch(styles, /\.price-dot small \{/);
   assert.doesNotMatch(page, /className="metric-grid"/);
   assert.doesNotMatch(page, /className="report-actions"/);
   assert.doesNotMatch(page, /This scan did not collect ad-library/);

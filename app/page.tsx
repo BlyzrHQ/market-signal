@@ -2,10 +2,11 @@
 /* eslint-disable @next/next/no-img-element -- remote competitor images are evidence URLs with unknown hosts */
 
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { PricePosition } from "./components/price-position";
 import { postJson } from "./lib/json-response";
 import { interruptedReportRecovery } from "./lib/crawl-runtime";
 import { composeProductMatchAttempts, hasProductMatchCoverageDefect, shouldRetryProductMatch, upsertProductComparisonBlock, type ProductMatchLifecycle } from "./lib/product-match-lifecycle";
-import { isDefensibleProductMatch, resolvedPriceDelta } from "./lib/report-presentation";
+import { isDefensibleProductMatch } from "./lib/report-presentation";
 import { applyFinalProductEnrichment, selectFinalProductEnrichmentTargets, type ProductComparison, type ProductRecord } from "./lib/product-intelligence";
 
 type ClaimType = "Observed" | "Inferred" | "Estimated" | "Recommended";
@@ -247,51 +248,6 @@ function planTierOf(item: ReturnType<typeof product>) {
   return item.attributes.find((attribute) => attribute.toLowerCase().startsWith("plan tier:"))?.split(":").slice(1).join(":").trim() || "";
 }
 
-function PricePicture({ battle, locale }: { battle: BattleView; locale: Locale }) {
-  const ar = locale === "ar";
-  const comparison = resolvedPriceDelta(battle.decision.priceComparison);
-  const yourDisplay = battle.primary.prices.join(" · ");
-  const rivalDisplay = battle.rival.prices.join(" · ");
-  if (!comparison)
-    return (
-      <div className="price-fallback">
-        <div>
-          <span>{ar ? "سعرك المعلن" : "YOUR PUBLIC PRICE"}</span>
-          <strong dir="auto">{yourDisplay || (ar ? "غير متاح" : "Not observed")}</strong>
-        </div>
-        <div>
-          <span>{ar ? "سعر المنافس" : "RIVAL PUBLIC PRICE"}</span>
-          <strong dir="auto">{rivalDisplay || (ar ? "غير متاح" : "Not observed")}</strong>
-        </div>
-      </div>
-    );
-  const maximum = Math.max(comparison.primary.amount, comparison.rival.amount) * 1.15 || 1;
-  const yourPosition = Math.max(6, Math.min(94, (comparison.primary.amount / maximum) * 100));
-  const rivalPosition = Math.max(6, Math.min(94, (comparison.rival.amount / maximum) * 100));
-  const closePrices = Math.abs(yourPosition - rivalPosition) < 8;
-  const delta = comparison.percent;
-  return (
-    <div className="price-picture" dir="ltr">
-      <div className="price-legend">
-        <div className="your-price-label">
-          <span dir="auto">{ar ? "أنت" : "YOU"}</span>
-          <strong>{comparison.primaryRaw}</strong>
-        </div>
-        <div className="rival-price-label">
-          <span dir="auto">{ar ? "المنافس" : "RIVAL"}</span>
-          <strong>{comparison.rivalRaw}</strong>
-        </div>
-      </div>
-      <div className={`price-axis ${closePrices ? "close-prices" : ""}`} aria-hidden="true">
-        <span className="price-line" />
-        <span className="price-dot your-dot" style={{ left: `${yourPosition}%` }} />
-        <span className="price-dot rival-dot" style={{ left: `${rivalPosition}%` }} />
-      </div>
-      <p dir="auto">{comparison.equal ? (ar ? "السعران المعلنان متساويان" : "Observed prices are equal") : delta === 0 ? (ar ? "فرق السعر أقل من 1٪" : "Price difference is under 1%") : delta < 0 ? (ar ? `المنافس أرخص بنسبة ${Math.abs(delta)}٪` : `Rival is ${Math.abs(delta)}% cheaper`) : ar ? `أنت أرخص بنسبة ${delta}٪` : `You are ${delta}% cheaper`}</p>
-    </div>
-  );
-}
-
 function ProductBattleCard({ battle, locale, rivalLabel }: { battle: BattleView; locale: Locale; rivalLabel?: string }) {
   const ar = locale === "ar";
   const observedDates = [...new Set([battle.primary.observedAt, battle.rival.observedAt].filter(Boolean).map((value) => value.slice(0, 10)))];
@@ -319,7 +275,7 @@ function ProductBattleCard({ battle, locale, rivalLabel }: { battle: BattleView;
           <strong dir="auto">{battle.rival.name}</strong>
         </div>
       </div>
-      <PricePicture battle={battle} locale={locale} />
+      <PricePosition comparisonValue={battle.decision.priceComparison} primaryRaw={battle.primary.prices.join(" · ")} rivalRaw={battle.rival.prices.join(" · ")} priceVerdict={String(battle.decision.priceVerdict || "")} locale={locale} />
       <div className="battle-evidence-meta">
         <Confidence value={String(battle.match.confidence || "Medium")} locale={locale} />
         {aiAssessed && <span className="ai-assessed-badge">{ar ? "تقييم بالذكاء الاصطناعي · استنتاج" : "AI ASSESSED · INFERRED"}</span>}
