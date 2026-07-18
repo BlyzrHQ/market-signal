@@ -629,6 +629,7 @@ export function extractProductsFromSitemap(document: string, domain: string, obs
       imageUrl,
       observedAt,
       claimIds: [`${id}-sitemap-observed`],
+      quantity: parseCanonicalQuantity(name) || undefined,
     });
     if (products.length >= 600) break;
   }
@@ -815,13 +816,64 @@ export function scoreProductPair(primary: ProductRecord, candidate: ProductRecor
   return { score: Number(score.toFixed(4)), sharedTerms, imageScore: Number(imageScore.toFixed(4)), eligible: (sameSaasPlanTier || (!eitherSaasPlan && ordinaryEligible)) && vetoes.length === 0 };
 }
 
+function canonicalProductPageUrl(value: string) {
+  try {
+    const url = new URL(value);
+    const path = url.pathname.replace(/\/+$/, "") || "/";
+    return `${canonicalHost(url.hostname)}${path}`;
+  } catch {
+    return "";
+  }
+}
+
+function enrichmentIdentityAlignment(product: ProductRecord, candidate: ProductRecord) {
+  const identityTokens = (record: ProductRecord) => productIdentityTokens(record).filter((token) => !STOPWORDS.has(token));
+  const left = identityTokens(product);
+  const right = identityTokens(candidate);
+  const alignedLeft = new Set<number>();
+  const alignedRight = new Set<number>();
+  const tokensAlign = (leftToken: string, rightToken: string) => leftToken === rightToken
+    || (Math.min(leftToken.length, rightToken.length) >= 4 && (`${leftToken}s` === rightToken || `${rightToken}s` === leftToken))
+    || (leftToken.length >= 5 && rightToken.length >= 5 && editDistanceAtMostOne(leftToken, rightToken));
+  for (let leftIndex = 0; leftIndex < left.length; leftIndex += 1) {
+    const rightIndex = right.findIndex((token, index) => !alignedRight.has(index) && tokensAlign(left[leftIndex], token));
+    if (rightIndex < 0) continue;
+    alignedLeft.add(leftIndex);
+    alignedRight.add(rightIndex);
+  }
+  return {
+    aligned: alignedLeft.size,
+    leftCoverage: alignedLeft.size / Math.max(1, left.length),
+    rightCoverage: alignedRight.size / Math.max(1, right.length),
+    leftHasConflict: left.some((_, index) => !alignedLeft.has(index)),
+    rightHasConflict: right.some((_, index) => !alignedRight.has(index)),
+  };
+}
+
 export function validateProductPageIdentity(expected: ProductRecord[], fetched: ProductRecord[], pageTitle = "") {
   if (!expected.length) return { accepted: false, products: [] as ProductRecord[], reason: "No expected product identity was available for this enrichment page." };
-  const products = fetched.filter((candidate) => expected.some((product) => {
-    if (product.normalizedName === candidate.normalizedName) return true;
-    const scored = scoreProductPair(product, candidate);
-    return scored.eligible && scored.score >= 0.45;
-  }));
+  const accepted = fetched.flatMap((candidate) => {
+    let strength = -1;
+    for (const product of expected) {
+    const conflictingIdentifier = (left: string | undefined, right: string | undefined) => Boolean(left && right && bilingualNormalize(left) !== bilingualNormalize(right));
+    const hardIdentityConflict = conflictingValidGtins(product.identifiers, candidate.identifiers)
+      || quantitiesConflict(product.quantity, candidate.quantity)
+      || conflictingIdentifier(product.identifiers?.sku, candidate.identifiers?.sku)
+      || conflictingIdentifier(product.identifiers?.mpn, candidate.identifiers?.mpn);
+      if (hardIdentityConflict) continue;
+      if (product.normalizedName === candidate.normalizedName) {
+        strength = Math.max(strength, 100_000);
+        continue;
+      }
+      const sameFinalProductPage = canonicalProductPageUrl(product.sourceUrl) === canonicalProductPageUrl(candidate.sourceUrl);
+      if (!sameFinalProductPage || product.jsonLdType !== "Product" || candidate.jsonLdType !== "Product") continue;
+      const alignment = enrichmentIdentityAlignment(product, candidate);
+      if (alignment.aligned < 2 || alignment.leftCoverage < 0.5 || alignment.rightCoverage < 0.5 || (alignment.leftHasConflict && alignment.rightHasConflict)) continue;
+      strength = Math.max(strength, (alignment.aligned * 1_000) + (Math.min(alignment.leftCoverage, alignment.rightCoverage) * 100));
+    }
+    return strength >= 0 ? [{ candidate, strength: strength + (candidate.priceSignals.length ? 10 : 0) + (candidate.imageUrl ? 1 : 0) }] : [];
+  }).sort((left, right) => right.strength - left.strength || left.candidate.name.localeCompare(right.candidate.name));
+  const products = accepted.map((entry) => entry.candidate);
   if (products.length) return { accepted: true, products, reason: "" };
   const observed = fetched.map((product) => product.name).filter(Boolean).slice(0, 3).join(", ") || pageTitle || "an unrelated product";
   return {
@@ -1107,13 +1159,14 @@ export function applyFinalProductEnrichment(
       brand: fresh?.brand || base?.brand,
     } satisfies ProductIdentifiers;
   };
-  const sourceKey = (value: string) => value.split("#")[0].replace(/\/$/, "");
   const merge = (base: ProductRecord) => {
-    const fresh = products.find((product) => canonicalHost(product.domain) === canonicalHost(base.domain) && sourceKey(product.sourceUrl) === sourceKey(base.sourceUrl));
+    const fresh = products.find((product) => canonicalHost(product.domain) === canonicalHost(base.domain) && canonicalProductPageUrl(product.sourceUrl) === canonicalProductPageUrl(base.sourceUrl));
     if (!fresh) return base;
     const secureImage = [fresh.imageUrl, base.imageUrl].find((value) => /^https:\/\//i.test(value));
     return {
       ...base,
+      name: fresh.name,
+      normalizedName: fresh.normalizedName,
       description: fresh.description || base.description,
       category: fresh.category || base.category,
       priceSignals: fresh.priceSignals.length ? fresh.priceSignals : base.priceSignals,
