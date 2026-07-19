@@ -42,14 +42,17 @@ function scrollToReportHash() {
   document.getElementById(id)?.scrollIntoView({ block: "start" });
 }
 
-function ReportWorkspace({ blocks, marketBrief, primaryDomain, observedAt, ar }: { blocks: Block[]; marketBrief: Record<string, unknown>; primaryDomain: string; observedAt: string; ar: boolean }) {
+function ReportWorkspace({ blocks, marketBrief, primaryDomain, observedAt, reportStatus, ar, onToggleLocale }: { blocks: Block[]; marketBrief: Record<string, unknown>; primaryDomain: string; observedAt: string; reportStatus: string; ar: boolean; onToggleLocale: () => void }) {
   const [view, setView] = useState<View>("overview");
+  const [compactNav, setCompactNav] = useState(false);
   const tabs = useRef<Array<HTMLButtonElement | null>>([]);
   useEffect(() => { const sync = () => setView(viewFromLocation()); sync(); window.addEventListener("popstate", sync); return () => window.removeEventListener("popstate", sync); }, []);
+  useEffect(() => { const media = window.matchMedia("(max-width: 1023px)"); const sync = () => setCompactNav(media.matches); sync(); media.addEventListener("change", sync); return () => media.removeEventListener("change", sync); }, []);
   useEffect(() => { const frame = window.requestAnimationFrame(scrollToReportHash); window.addEventListener("hashchange", scrollToReportHash); return () => { window.cancelAnimationFrame(frame); window.removeEventListener("hashchange", scrollToReportHash); }; }, [view, blocks]);
+  useEffect(() => { if (compactNav) tabs.current[VIEWS.indexOf(view)]?.scrollIntoView({ inline: "nearest", block: "nearest" }); }, [compactNav, view]);
   const selectView = (next: View, replace = false, hash = "") => { const url = new URL(window.location.href); url.searchParams.set("view", next); url.hash = hash; window.history[replace ? "replaceState" : "pushState"]({}, "", url); setView(next); };
   const onTabKey = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
-    const forwardKey = ar ? "ArrowLeft" : "ArrowRight"; const backwardKey = ar ? "ArrowRight" : "ArrowLeft";
+    const forwardKey = compactNav ? (ar ? "ArrowLeft" : "ArrowRight") : "ArrowDown"; const backwardKey = compactNav ? (ar ? "ArrowRight" : "ArrowLeft") : "ArrowUp";
     const next = event.key === forwardKey ? (index + 1) % VIEWS.length : event.key === backwardKey ? (index - 1 + VIEWS.length) % VIEWS.length : event.key === "Home" ? 0 : event.key === "End" ? VIEWS.length - 1 : -1;
     if (next < 0) return; event.preventDefault(); tabs.current[next]?.focus(); selectView(VIEWS[next]);
   };
@@ -86,12 +89,17 @@ function ReportWorkspace({ blocks, marketBrief, primaryDomain, observedAt, ar }:
   const adAnchor = (domain: unknown) => `ad-${slug(domain)}`;
   const evidenceAnchor = (domain: unknown) => `evidence-${slug(domain)}`;
 
-  return <div className="intelligence-workspace" onClick={onWorkspaceClick}>
-    <nav className="workspace-tabs" role="tablist" aria-label={ar ? "أقسام التقرير" : "Report sections"}>
-      {VIEWS.map((item, index) => <button key={item} ref={(node) => { tabs.current[index] = node; }} id={`tab-${item}`} type="button" role="tab" aria-selected={view === item} aria-controls={`panel-${item}`} tabIndex={view === item ? 0 : -1} onClick={() => selectView(item)} onKeyDown={(event) => onTabKey(event, index)}><span>{String(index + 1).padStart(2, "0")}</span>{VIEW_LABELS[item][ar ? "ar" : "en"]}{item === "competitors" && <b>{competitors.length}</b>}{item === "products" && <b>{battles.length}</b>}</button>)}
-    </nav>
-
-    <section className="workspace-panel" id={`panel-${view}`} role="tabpanel" aria-labelledby={`tab-${view}`} tabIndex={0}>
+  return <div className="intelligence-workspace report-dashboard-shell" onClick={onWorkspaceClick}>
+    <aside className="report-dashboard-sidebar">
+      <Link className="dashboard-brand" href="/">Market Signal</Link>
+      <div className="dashboard-report-identity"><span>{reportStatus.toUpperCase()}</span><strong dir="auto">{primaryDomain}</strong><small>{ar ? "آخر تحديث" : "Updated"} {new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</small></div>
+      <nav className="workspace-tabs" role="tablist" aria-orientation={compactNav ? "horizontal" : "vertical"} aria-label={ar ? "أقسام التقرير" : "Report sections"}>
+        {VIEWS.map((item, index) => <button key={item} ref={(node) => { tabs.current[index] = node; }} id={`tab-${item}`} type="button" role="tab" aria-selected={view === item} aria-controls={`panel-${item}`} tabIndex={view === item ? 0 : -1} onClick={() => selectView(item)} onKeyDown={(event) => onTabKey(event, index)}>{VIEW_LABELS[item][ar ? "ar" : "en"]}{item === "competitors" && <b>{competitors.length}</b>}{item === "products" && <b>{battles.length}</b>}{item === "evidence" && <b>{evidence.length}</b>}</button>)}
+      </nav>
+    </aside>
+    <div className="report-dashboard-main">
+      <header className="report-route-header"><div className="dashboard-view-title"><span>{ar ? "معلومات السوق" : "MARKET INTELLIGENCE"}</span><b>{VIEW_LABELS[view][ar ? "ar" : "en"]}</b></div><div className="report-route-meta"><span>{reportStatus.toUpperCase()}</span><time>{ar ? "لوحظ" : "Observed"} {new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</time></div><div className="report-route-actions"><button type="button" onClick={onToggleLocale} aria-label={ar ? "Switch to English" : "التبديل إلى العربية"}>{ar ? "EN" : "ع"}</button><Link href="/">{ar ? "تقرير جديد" : "New report"}</Link></div></header>
+      <section className="workspace-panel" id={`panel-${view}`} role="tabpanel" aria-labelledby={`tab-${view}`} tabIndex={0}>
       {view === "overview" && <>
         <header className="panel-intro"><div><span>{ar ? "القرار أولاً" : "DECISION FIRST"}</span><h2>{display(marketBrief.headline, ar ? `${primaryDomain} في مواجهة السوق` : `${primaryDomain} against the market`)}</h2><p>{display(marketBrief.summary, ar ? "تستند هذه الخلاصة إلى الأدلة العامة المحفوظة في هذا التقرير." : "This verdict uses only the public evidence saved with this report.")}</p></div><time>{ar ? "لوحظ" : "Observed"}<b>{new Date(observedAt).toLocaleString(ar ? "ar" : "en")}</b></time></header>
         <div className="decision-signals">
@@ -137,7 +145,8 @@ function ReportWorkspace({ blocks, marketBrief, primaryDomain, observedAt, ar }:
         <div className="coverage-list"><h3>{ar ? "تغطية الزحف" : "Crawl coverage"}</h3>{coverage.map((item) => <article key={item.id}><strong>{display(item.domain)}</strong><span>{numeric(item.pagesFetched)}/{numeric(item.pagesRequested)} {ar ? "صفحات" : "pages"}</span><p>{list(item.gaps).map((gap) => display(gap)).filter(Boolean).join(" · ") || (ar ? "لم تُحفظ فجوة لهذا النطاق." : "No crawl gap was saved for this domain.")}</p></article>)}</div>
         <div className="coverage-list gaps"><h3>{ar ? "فجوات التحقيق" : "Investigation gaps"}</h3>{gaps.slice(0, 30).map((gap) => <article key={gap.id}><strong>{display(gap.domain, ar ? "مصدر عام" : "Public source")}</strong><span>{display(gap.observedAt) && new Date(display(gap.observedAt)).toLocaleDateString(ar ? "ar" : "en")}</span><p>{display(gap.reason)}</p>{safeUrl(gap.url) && <a href={safeUrl(gap.url)} target="_blank" rel="noreferrer">{ar ? "افتح المصدر ↗" : "Open source ↗"}</a>}</article>)}</div>
       </>}
-    </section>
+      </section>
+    </div>
   </div>;
 }
 
@@ -149,5 +158,5 @@ export default function StoredReportPage({ params }: { params: Promise<{ publicI
   if (report && !document && ["failed", "interrupted"].includes(report.run.status)) return <main className="stored-report-state" lang={ar ? "ar" : "en"} dir={dir}><Link href="/">Market Signal</Link><h1>{ar ? "توقف هذا التقرير" : "This report stopped"}</h1><p>{report.run.errorMessage || (ar ? "ابدأ تقريراً جديداً للمحاولة مرة أخرى." : "Start a fresh report to try again.")}</p></main>;
   if (!report || !document) return <main className="stored-report-state"><div className="route-spinner" /><p>Opening the saved market report…</p></main>;
   if (report.documentSchemaVersion !== 1) return <main className="stored-report-state" lang={ar ? "ar" : "en"} dir={dir}><Link href="/">Market Signal</Link><h1>{ar ? "نسخة التقرير غير مدعومة" : "Unsupported report version"}</h1></main>;
-  return <main className="stored-report-page" lang={ar ? "ar" : "en"} dir={dir}><header className="report-route-header"><Link href="/">Market Signal</Link><div><span>{report.run.status.toUpperCase()}</span><b>{report.run.primaryDomain}</b></div><div className="report-route-actions"><button type="button" onClick={() => setLocaleOverride(ar ? "en" : "ar")} aria-label={ar ? "Switch to English" : "التبديل إلى العربية"}>{ar ? "EN" : "ع"}</button><Link href="/">{ar ? "تقرير جديد" : "New report"}</Link></div></header><section className="stored-report-hero"><p>{ar ? "معلومات تنافسية / تقرير محفوظ" : "COMPETITIVE INTELLIGENCE / SAVED REPORT"}</p><h1>{ar ? `${report.run.primaryDomain} في مواجهة السوق.` : `${report.run.primaryDomain} against the market.`}</h1><span>{ar ? "آخر تحديث" : "Last updated"} {new Date(report.run.updatedAt).toLocaleString(ar ? "ar" : "en")}</span></section><ReportWorkspace blocks={document.blocks} marketBrief={object(stored?.marketBrief)} primaryDomain={report.run.primaryDomain} observedAt={report.run.updatedAt} ar={ar} /></main>;
+  return <main className="stored-report-page" lang={ar ? "ar" : "en"} dir={dir}><ReportWorkspace blocks={document.blocks} marketBrief={object(stored?.marketBrief)} primaryDomain={report.run.primaryDomain} observedAt={report.run.updatedAt} reportStatus={report.run.status} ar={ar} onToggleLocale={() => setLocaleOverride(ar ? "en" : "ar")} /></main>;
 }
