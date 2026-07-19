@@ -103,6 +103,46 @@ test("uses comparable products as a confidence booster and returns the strongest
   assert.equal(result.provenRivalProduct.name, rivalProduct.name);
 });
 
+test("verification finds the strongest pair at the end of MyJam-sized catalogs", () => {
+  const primaryProducts = Array.from({ length: 599 }, (_, index) => product("myjam.co.uk", `Primary Grocery Item ${index}`, `primary-category-${index}`));
+  const rivalProducts = Array.from({ length: 599 }, (_, index) => product("rival.example", `Different Market Item ${index}`, `rival-category-${index}`));
+  const primaryMatch = product("myjam.co.uk", "Halal Lamb Chops 500g", "halal meat");
+  const rivalMatch = product("rival.example", "Fresh Halal Lamb Chops 500g", "halal meat");
+  const result = verifyCompetitorEntity(
+    site("myjam.co.uk", "UK halal grocery delivery", "Fresh halal meat and cultural groceries", "United Kingdom (inferred)", [...primaryProducts, primaryMatch]),
+    site("rival.example", "Halal grocery delivery", "Fresh halal grocery and meat delivery", "United Kingdom (inferred)", [...rivalProducts, rivalMatch]),
+    discovery(),
+  );
+  assert.equal(result.hasProductOverlap, true);
+  assert.equal(result.provenPrimaryProduct.name, primaryMatch.name);
+  assert.equal(result.provenRivalProduct.name, rivalMatch.name);
+});
+
+test("verification preserves SaaS same-tier matching without shared name terms", () => {
+  const primaryPlan = product("primary.example", "Growth", "saas-plan-growth", "SoftwareApplication");
+  const rivalPlan = product("rival.example", "Professional", "saas-plan-professional", "SoftwareApplication");
+  const result = verifyCompetitorEntity(
+    site("primary.example", "Marketing automation software", "Campaign automation for growing teams", "Global market (inferred)", [primaryPlan]),
+    site("rival.example", "Marketing automation platform", "Campaign automation software for teams", "Global market (inferred)", [rivalPlan]),
+    discovery({ marketCategory: "marketing automation software", sharedOfferings: ["campaign automation"] }),
+  );
+  assert.equal(result.hasProductOverlap, true);
+  assert.equal(result.provenPrimaryProduct.name, "Growth");
+  assert.equal(result.provenRivalProduct.name, "Professional");
+});
+
+test("verification preserves catalog order when rival pairs tie exactly", () => {
+  const primaryProduct = product("primary.example", "Halal Lamb Chops", "halal meat");
+  const firstRival = { ...product("rival.example", "Fresh Halal Lamb Chops", "halal meat"), id: "first-rival" };
+  const secondRival = { ...firstRival, id: "second-rival", sourceUrl: "https://rival.example/products/second-rival" };
+  const result = verifyCompetitorEntity(
+    site("primary.example", "Halal grocery delivery", "Fresh halal meat online", "United Kingdom (inferred)", [primaryProduct]),
+    site("rival.example", "Halal grocery delivery", "Fresh halal meat online", "United Kingdom (inferred)", [firstRival, secondRival]),
+    discovery(),
+  );
+  assert.equal(result.provenRivalProduct.id, "first-rival");
+});
+
 test("uses both agencies' first-party capability headings for category alignment", () => {
   const primary = { ...site("studio.example", "Digital Product Studio", "We make digital experiences", "Global market (inferred)"), headings: ["Product strategy", "UX and UI design", "Web and mobile development"] };
   const rival = { ...site("rival.example", "Product design and engineering agency", "Digital products for ambitious companies", "United States (inferred)"), headings: ["Product strategy", "UX design", "Mobile app development"] };

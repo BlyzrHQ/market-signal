@@ -791,6 +791,62 @@ function editDistanceAtMostOne(left: string, right: string) {
   return true;
 }
 
+function oneEditSignatures(token: string) {
+  if (token.length < 5) return [token];
+  const signatures = new Set<string>([token]);
+  for (let index = 0; index < token.length; index += 1) signatures.add(`${token.slice(0, index)}${token.slice(index + 1)}`);
+  return [...signatures];
+}
+
+export function buildProductPairCandidateIndex(products: ProductRecord[]) {
+  const productsByToken = new Map<string, ProductRecord[]>();
+  const tokensBySignature = new Map<string, Set<string>>();
+  const nearbyProductsByToken = new Map<string, ProductRecord[]>();
+  const productOrder = new Map<string, number>();
+  for (const [position, product] of products.entries()) {
+    if (!productOrder.has(product.id)) productOrder.set(product.id, position);
+    for (const token of fieldTokens(product, product.name)) {
+      const entries = productsByToken.get(token) || [];
+      entries.push(product);
+      productsByToken.set(token, entries);
+      for (const signature of oneEditSignatures(token)) {
+        const tokens = tokensBySignature.get(signature) || new Set<string>();
+        tokens.add(token);
+        tokensBySignature.set(signature, tokens);
+      }
+    }
+  }
+  return { products, productsByToken, tokensBySignature, nearbyProductsByToken, productOrder };
+}
+
+function nearbyProductsForToken(primaryToken: string, index: ReturnType<typeof buildProductPairCandidateIndex>) {
+  const cached = index.nearbyProductsByToken.get(primaryToken);
+  if (cached) return cached;
+  const foundTokens = new Set<string>();
+  for (const signature of oneEditSignatures(primaryToken)) {
+    for (const competitorToken of index.tokensBySignature.get(signature) || []) {
+      if (editDistanceAtMostOne(primaryToken, competitorToken)) foundTokens.add(competitorToken);
+    }
+  }
+  const foundProducts = new Map<string, ProductRecord>();
+  for (const token of foundTokens) for (const product of index.productsByToken.get(token) || []) foundProducts.set(product.id, product);
+  const result = [...foundProducts.values()].sort((left, right) => (index.productOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (index.productOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER));
+  index.nearbyProductsByToken.set(primaryToken, result);
+  return result;
+}
+
+export function retrieveProductPairCandidates(primary: ProductRecord, index: ReturnType<typeof buildProductPairCandidateIndex>) {
+  if (primary.category.startsWith("saas-plan")) return index.products.filter((product) => product.category.startsWith("saas-plan"));
+  const hitCounts = new Map<string, { product: ProductRecord; count: number }>();
+  for (const token of fieldTokens(primary, primary.name)) {
+    for (const product of nearbyProductsForToken(token, index)) {
+      const hit = hitCounts.get(product.id);
+      hitCounts.set(product.id, { product, count: (hit?.count || 0) + 1 });
+    }
+  }
+  return [...hitCounts.values()].filter((hit) => hit.count >= 2).map((hit) => hit.product);
+}
+
 function jaccard(left: string[], right: string[]) {
   const leftSet = new Set(left);
   const rightSet = new Set(right);
@@ -1028,38 +1084,9 @@ export function buildProductComparison(primaryDomain: string, catalogs: Array<{ 
   const rows = primaryProducts.map((primary) => ({ primary, matches: [] as ProductMatch[] }));
   const unmatched: ProductComparison["unmatched"] = [];
   for (const competitor of competitors) {
-    const competitorTokenIndex = new Map<string, ProductRecord[]>();
-    for (const product of competitor.products) {
-      for (const token of fieldTokens(product, product.name)) {
-        const entries = competitorTokenIndex.get(token) || [];
-        entries.push(product);
-        competitorTokenIndex.set(token, entries);
-      }
-    }
-    const nearbyProductsByToken = new Map<string, ProductRecord[]>();
-    const nearbyProducts = (primaryToken: string) => {
-      const cached = nearbyProductsByToken.get(primaryToken);
-      if (cached) return cached;
-      const found = new Map<string, ProductRecord>();
-      for (const [competitorToken, products] of competitorTokenIndex) {
-        if (!editDistanceAtMostOne(primaryToken, competitorToken)) continue;
-        for (const product of products) found.set(product.id, product);
-      }
-      const result = [...found.values()];
-      nearbyProductsByToken.set(primaryToken, result);
-      return result;
-    };
+    const competitorTokenIndex = buildProductPairCandidateIndex(competitor.products);
     const pairs = primaryProducts.flatMap((primary) => {
-      const hitCounts = new Map<string, { product: ProductRecord; count: number }>();
-      for (const token of fieldTokens(primary, primary.name)) {
-        for (const product of nearbyProducts(token)) {
-          const hit = hitCounts.get(product.id);
-          hitCounts.set(product.id, { product, count: (hit?.count || 0) + 1 });
-        }
-      }
-      const candidates = primary.category.startsWith("saas-plan")
-        ? competitor.products.filter((product) => product.category.startsWith("saas-plan"))
-        : [...hitCounts.values()].filter((hit) => hit.count >= 2).map((hit) => hit.product);
+      const candidates = retrieveProductPairCandidates(primary, competitorTokenIndex);
       return candidates.map((product) => ({ primary, product, ...scoreProductPair(primary, product) }));
     }).filter((pair) => pair.eligible).sort((left, right) => right.score - left.score || Number(right.primary.jsonLdType === right.product.jsonLdType) - Number(left.primary.jsonLdType === left.product.jsonLdType) || left.primary.id.localeCompare(right.primary.id) || left.product.id.localeCompare(right.product.id));
     const usedPrimary = new Set<string>();

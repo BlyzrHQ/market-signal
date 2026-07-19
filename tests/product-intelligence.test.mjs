@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyFinalProductEnrichment, buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, scoreProductPair, selectFinalProductEnrichmentTargets, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
+import { applyFinalProductEnrichment, buildProductComparison, buildProductPairCandidateIndex, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, retrieveProductPairCandidates, scoreProductPair, selectFinalProductEnrichmentTargets, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
 
 function extraction(overrides = {}) {
   return extractProductsFromHtml({
@@ -748,6 +748,61 @@ test("matching is deterministic and one-to-one per competitor", () => {
   assert.match(first.rows.find((row) => row.primary.id === "primary-a").matches[0].decision.recommendedMove, /Compare|price|offer/i);
   assert.equal(first.rows.find((row) => row.primary.id === "primary-b").matches[0].product, null);
   assert.equal(first.unmatched[0].products.length, 0);
+});
+
+test("indexed product retrieval preserves exact and one-edit token matches", () => {
+  const variants = [
+    ["exact", "Golden Pistachio Maamoul"],
+    ["substitution", "Gxlden Pistachio Maamoul"],
+    ["insertion", "Goldenn Pistachio Maamoul"],
+    ["deletion", "Golde Pistachio Maamoul"],
+  ];
+  for (const [id, rivalName] of variants) {
+    const primary = { ...product(`primary-${id}`, "shop.test", "Golden Pistachio Maamoul"), jsonLdType: "Product" };
+    const rival = { ...product(`rival-${id}`, "rival.test", rivalName), jsonLdType: "Product" };
+    const comparison = buildProductComparison("shop.test", [
+      { domain: "shop.test", products: [primary] },
+      { domain: "rival.test", products: [rival] },
+    ]);
+    assert.equal(comparison.rows[0].matches[0].product?.id, rival.id, `${id} variant should remain retrievable`);
+  }
+});
+
+test("indexed product retrieval preserves short-token and unrelated-token rejection", () => {
+  const primary = { ...product("primary-tea", "shop.test", "Tea Pot"), jsonLdType: "Product" };
+  const shortTypo = { ...product("rival-typo", "rival.test", "Tee Pot"), jsonLdType: "Product" };
+  const unrelated = { ...product("rival-unrelated", "rival.test", "Coffee Grinder"), jsonLdType: "Product" };
+  const comparison = buildProductComparison("shop.test", [
+    { domain: "shop.test", products: [primary] },
+    { domain: "rival.test", products: [shortTypo, unrelated] },
+  ]);
+  assert.equal(comparison.rows[0].matches[0].product, null);
+});
+
+test("indexed candidate retrieval matches the one-edit boundary without double-counting", () => {
+  const primary = { ...product("primary", "shop.test", "Anchor Golden"), jsonLdType: "Product" };
+  const candidates = [
+    { ...product("exact-short", "rival.test", "Anchor Tea"), jsonLdType: "Product" },
+    { ...product("substitution", "rival.test", "Anchor Gxlden"), jsonLdType: "Product" },
+    { ...product("insertion", "rival.test", "Anchor Goldenn"), jsonLdType: "Product" },
+    { ...product("deletion", "rival.test", "Anchor Golde"), jsonLdType: "Product" },
+    { ...product("transposition", "rival.test", "Anchor Gloden"), jsonLdType: "Product" },
+    { ...product("length-two", "rival.test", "Anchor Goldennn"), jsonLdType: "Product" },
+    { ...product("short-typo", "rival.test", "Anchor Tee"), jsonLdType: "Product" },
+  ];
+  const goldenIds = retrieveProductPairCandidates(primary, buildProductPairCandidateIndex(candidates)).map((item) => item.id).sort();
+  assert.deepEqual(goldenIds, ["deletion", "insertion", "substitution"]);
+
+  const shortPrimary = { ...product("short-primary", "shop.test", "Anchor Tea"), jsonLdType: "Product" };
+  const shortIds = retrieveProductPairCandidates(shortPrimary, buildProductPairCandidateIndex(candidates)).map((item) => item.id).sort();
+  assert.deepEqual(shortIds, ["exact-short"]);
+});
+
+test("indexed candidate retrieval counts each primary token once per product", () => {
+  const primary = { ...product("primary", "shop.test", "Golden Pistachio"), jsonLdType: "Product" };
+  const oneTokenOnly = { ...product("one-token", "rival.test", "Gxlden Goldenn"), jsonLdType: "Product" };
+  const candidates = retrieveProductPairCandidates(primary, buildProductPairCandidateIndex([oneTokenOnly]));
+  assert.deepEqual(candidates, []);
 });
 
 test("comparison scans the crawled catalog beyond the first sixteen products and reports bounded coverage", () => {
