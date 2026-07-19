@@ -114,8 +114,14 @@ test("real-data route and product metadata are present", async () => {
   assert.match(pricePosition, /Rival is \$\{percent\}% cheaper/);
   assert.match(pricePosition, /Same observed price/);
   assert.match(pricePosition, /Price difference is under 1%/);
-  assert.match(pricePosition, /No direct price comparison/);
-  assert.match(pricePosition, /priceVerdict \|\| copy\.unavailableDetail/);
+  assert.match(pricePosition, /Prices found — comparison basis unverified/);
+  assert.match(pricePosition, /Only one public price found/);
+  assert.match(pricePosition, /No public prices found/);
+  assert.match(pricePosition, /Comparable pair confirmed/);
+  assert.match(pricePosition, /const approvedPair = comparisonValue !== null && comparisonValue !== undefined/);
+  assert.match(pricePosition, /else if \(approvedPair\)/);
+  assert.match(pricePosition, /Both prices are public observations\. We do not call either side cheaper/);
+  assert.doesNotMatch(pricePosition, /priceVerdict \|\| copy\.unavailableDetail/);
   assert.match(pricePosition, /comparison && !comparison\.equal/);
   assert.doesNotMatch(page, /battle\.primary\.prices\[0\]/);
   assert.doesNotMatch(page, /sharedTerms\.map/);
