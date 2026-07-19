@@ -50,4 +50,5 @@ Fable 5 blocked the first proposal because three states omitted a server-approve
 - `npm run lint`: 0 errors; the two existing raw product-image warnings remain visible.
 - `go test ./cli/... ./contracts/...`: pass.
 - Strict Fable 5 implementation review: **PASS**. It verified that both proposal blockers were resolved, sticky geometry does not recreate an independent sidebar scroll, deep links retain anchor behavior, exact deltas are unchanged, and the new wording does not widen the claim.
+- First production browser QA rejected the static sticky assumption: the tab list exposed `position: sticky` in computed CSS but still moved out of the viewport during document scroll. Fable's blocker re-review traced the cause to `body { overflow-x: hidden }`, which made `body` a non-scrolling sticky container. The root fix changes body overflow to `clip`, preserving horizontal containment without creating a scroll container; the original sidebar flex layout and compact behavior remain unchanged.
 - Pull request, exact Sites deployment, and live browser verification remain pending.

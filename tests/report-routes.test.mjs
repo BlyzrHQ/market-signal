@@ -92,6 +92,7 @@ test("dark routes fill the viewport and keep responsive width bounded", () => {
   assert.match(css, /\.analysis-loading-page, \.stored-report-state \{ min-height: 100vh/);
   assert.match(css, /\.report-section\.shell \{ width: 100%/);
   assert.match(css, /overflow-x: hidden/);
+  assert.match(css, /body \{[^}]*overflow-x: clip/);
   assert.match(css, /@media\(max-width:700px\)/);
   assert.match(css, /overflow-y: auto/);
   assert.match(css, /\.stored-report-page \{ min-width: 0; min-height: 100vh; overflow-x: clip/);
