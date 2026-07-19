@@ -1,6 +1,6 @@
 import { profileTerms } from "./business-profile.ts";
 import type { DiscoveryCandidate } from "./competitor-discovery.ts";
-import { scoreProductPair, type ProductRecord } from "./product-intelligence.ts";
+import { buildProductPairCandidateIndex, retrieveProductPairCandidates, scoreProductPair, type ProductRecord } from "./product-intelligence.ts";
 import { regionCode } from "./region-inference.ts";
 
 export type VerificationSite = {
@@ -41,7 +41,8 @@ function siteTerms(site: VerificationSite) {
 }
 
 function strongestProductPair(primary: ProductRecord[], candidate: ProductRecord[]) {
-  return primary.flatMap((left) => candidate.map((right) => ({ left, right, ...scoreProductPair(left, right) })))
+  const index = buildProductPairCandidateIndex(candidate);
+  return primary.flatMap((left) => retrieveProductPairCandidates(left, index).map((right) => ({ left, right, ...scoreProductPair(left, right) })))
     .filter((pair) => pair.eligible)
     .sort((left, right) => right.score - left.score || left.left.name.localeCompare(right.left.name))[0];
 }
