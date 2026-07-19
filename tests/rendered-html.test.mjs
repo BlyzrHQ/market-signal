@@ -192,7 +192,11 @@ test("real-data route and product metadata are present", async () => {
   assert.match(styles, /\.memory-provenance \{/);
   assert.match(styles, /\.battle-product\.no-image \{ grid-template-columns: minmax\(0, 1fr\); \}/);
   assert.match(styles, /\.battle-product\.no-image strong \{ grid-column: 1; \}/);
-  assert.match(styles, /\.workspace-product-pair > div:not\(:has\(img\)\) \{ grid-template-columns: minmax\(0,1fr\); \}/);
+  assert.match(savedReport, /className="product-comparison-table" role="table"/);
+  assert.match(savedReport, /role="columnheader" scope="col"/);
+  assert.match(savedReport, /const comparablePrice = resolvedPriceDelta\(decision\.priceComparison\)/);
+  assert.match(styles, /@media \(max-width: 1180px\)[\s\S]*\.product-comparison-table tbody tr \{[^}]*grid-template-areas: "your rival" "price price" "match action"/);
+  assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.product-comparison-table tbody tr \{[^}]*grid-template-areas: "your" "rival" "price" "match" "action"/);
   assert.match(styles, /\.price-position-grid \{[^}]*grid-template-columns: minmax\(0,1fr\) minmax\(220px,1\.15fr\) minmax\(0,1fr\)/);
   assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.price-position-grid, \.decision-path, \.dossier-ad-row \{ grid-template-columns: 1fr; \}/);
   assert.doesNotMatch(styles, /\.price-axis|\.price-line|\.price-dot|\.close-prices|\.price-picture|\.price-fallback/);
