@@ -97,6 +97,118 @@ test("extracts authoritative Shopify price metadata and prefers the secure produ
   assert.equal(result.products[0].imageUrl, "https://cdn.shopify.com/lamb-leg.jpg");
 });
 
+test("prefers an exact product H1 when a marketing-prefixed title contains that identity", () => {
+  const document = `<head><meta property="product:price:amount" content="39.05"><meta property="product:price:currency" content="GBP"></head>`;
+  const result = extraction({
+    document,
+    sourceUrl: "https://myjam.co.uk/products/lamb-leg-halal-apx-2500g",
+    domain: "myjam.co.uk",
+    pageTitle: "Fresh halal lamb meat: Order Lamb Leg Halal apx 2500g | MyJam",
+    headings: ["Lamb Leg Halal apx 2500g", "Product details"],
+  });
+
+  assert.equal(result.products[0].name, "Lamb Leg Halal apx 2500g");
+  assert.equal(result.products[0].priceSignals[0].currency, "GBP");
+});
+
+test("supplements the title-matched JSON-LD product from same-page metadata and resolves public images", () => {
+  const document = `<head>
+    <meta property="product:price:amount" content="43.20">
+    <meta property="product:price:currency" content="USD">
+    <meta name="twitter:image" content="/media/pistachio-maamoul.jpg">
+  </head><script type="application/ld+json">${JSON.stringify({
+    "@type": "Product",
+    name: "Zaitoune Mamoul With Pistachio 500g",
+    brand: { name: "Zaitoune" },
+  })}</script>`;
+  const result = extraction({
+    document,
+    sourceUrl: "https://www.babanuj.com/product/zaitoune-sweets-pistachio-maamoul-500g",
+    domain: "babanuj.com",
+    pageTitle: "Zaitoune Mamoul With Pistachio 500g | Babanuj",
+    headings: ["Zaitoune Mamoul With Pistachio 500g"],
+  });
+
+  assert.deepEqual(result.products[0].priceSignals, [{ raw: "USD 43.20", currency: "USD", amount: 43.2, period: undefined }]);
+  assert.equal(result.products[0].imageUrl, "https://www.babanuj.com/media/pistachio-maamoul.jpg");
+});
+
+test("same-page metadata supplements only the exact title product and never a related product", () => {
+  const document = `<head>
+    <meta property="product:price:amount" content="43.20">
+    <meta property="product:price:currency" content="USD">
+    <meta property="og:image" content="https://cdn.shopify.com/pistachio-maamoul.jpg">
+  </head><script type="application/ld+json">${JSON.stringify([
+    { "@type": "Product", name: "Zaitoune Mamoul With Pistachio 500g", brand: { name: "Zaitoune" } },
+    { "@type": "Product", name: "Zaitoune Mamoul With Walnut 500g", brand: { name: "Zaitoune" } },
+  ])}</script>`;
+  const result = extraction({
+    document,
+    sourceUrl: "https://www.babanuj.com/product/zaitoune-sweets-pistachio-maamoul-500g",
+    domain: "babanuj.com",
+    pageTitle: "Zaitoune Mamoul With Pistachio 500g | Babanuj",
+  });
+  const target = result.products.find((item) => item.name.includes("Pistachio"));
+  const related = result.products.find((item) => item.name.includes("Walnut"));
+
+  assert.equal(target.priceSignals[0].amount, 43.2);
+  assert.equal(target.imageUrl, "https://cdn.shopify.com/pistachio-maamoul.jpg");
+  assert.deepEqual(related.priceSignals, []);
+  assert.equal(related.imageUrl, "");
+});
+
+test("same-page metadata is rejected when two structured products claim the exact page identity", () => {
+  const document = `<head>
+    <meta property="product:price:amount" content="43.20">
+    <meta property="product:price:currency" content="USD">
+    <meta property="og:image" content="https://cdn.shopify.com/ambiguous.jpg">
+  </head><script type="application/ld+json">${JSON.stringify([
+    { "@type": "Product", "@id": "primary", name: "Zaitoune Mamoul With Pistachio 500g", brand: { name: "Zaitoune" } },
+    { "@type": "Product", "@id": "related", name: "Zaitoune Mamoul With Pistachio 500g", brand: { name: "Zaitoune" } },
+  ])}</script>`;
+  const result = extraction({
+    document,
+    sourceUrl: "https://www.babanuj.com/product/zaitoune-sweets-pistachio-maamoul-500g",
+    domain: "babanuj.com",
+    pageTitle: "Zaitoune Mamoul With Pistachio 500g | Babanuj",
+  });
+
+  assert.deepEqual(result.products[0].priceSignals, []);
+  assert.equal(result.products[0].imageUrl, "");
+});
+
+test("resolves a protocol-relative structured product image against the public product page", () => {
+  const document = `<script type="application/ld+json">${JSON.stringify({
+    "@type": "Product",
+    name: "Zaitoune Mamoul With Dates 500g",
+    brand: { name: "Zaitoune" },
+    image: "//cdn.shopify.com/s/files/date-maamoul.jpg",
+    offers: { price: "21.60", priceCurrency: "USD" },
+  })}</script>`;
+  const result = extraction({
+    document,
+    sourceUrl: "https://www.babanuj.com/product/zaitoune-dates-maamoul-500g",
+    domain: "babanuj.com",
+    pageTitle: "Zaitoune Mamoul With Dates 500g | Babanuj",
+  });
+
+  assert.equal(result.products[0].imageUrl, "https://cdn.shopify.com/s/files/date-maamoul.jpg");
+});
+
+test("does not treat a shipping threshold as an exact product price", () => {
+  const result = extraction({
+    document: "<h1>Organic Honey 500g</h1><h2>Product details</h2><p>Free shipping over $75</p>",
+    sourceUrl: "https://shop.example/products/organic-honey-500g",
+    domain: "shop.example",
+    pageTitle: "Organic Honey 500g | Shop",
+    headings: ["Organic Honey 500g", "Product details"],
+    pagePriceSignals: ["$75"],
+  });
+
+  assert.equal(result.products.length, 1);
+  assert.deepEqual(result.products[0].priceSignals, []);
+});
+
 test("creates a page signal for a branded shallow product page but not a company page", () => {
   const productPage = extraction({ sourceUrl: "https://acme.com/billing", pageTitle: "Acme Billing | Subscription management", headings: ["Acme Billing", "Automate invoices", "Manage subscriptions", "Recover revenue"] });
   const companyPage = extraction({ sourceUrl: "https://acme.com/company", pageTitle: "Acme Company", headings: ["Our company", "Our mission", "Our team", "Our offices"] });
@@ -738,6 +850,18 @@ test("final enrichment joins equivalent canonical product URLs after host and sc
   const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "tea.test", products: [rival] }]);
   const enriched = applyFinalProductEnrichment(comparison, [
     { ...primary, sourceUrl: "http://shop.test/products/lemon-ginger-tea?variant=1", priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }], imageUrl: "https://cdn.shop.test/tea.jpg" },
+  ], { pagesRequested: 1, pagesFetched: 1, maxPages: 24, gaps: [] });
+
+  assert.equal(enriched.rows[0].primary.priceSignals[0].amount, 8);
+  assert.equal(enriched.rows[0].primary.imageUrl, "https://cdn.shop.test/tea.jpg");
+});
+
+test("final enrichment joins a validated redirected product by its selected product id", () => {
+  const primary = { ...product("tea", "shop.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/lemon-ginger-tea" };
+  const rival = { ...product("rival-tea", "tea.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://tea.test/products/lemon-ginger-tea" };
+  const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "tea.test", products: [rival] }]);
+  const enriched = applyFinalProductEnrichment(comparison, [
+    { ...primary, sourceUrl: "https://shop.test/en/products/lemon-and-ginger-tea", priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }], imageUrl: "https://cdn.shop.test/tea.jpg" },
   ], { pagesRequested: 1, pagesFetched: 1, maxPages: 24, gaps: [] });
 
   assert.equal(enriched.rows[0].primary.priceSignals[0].amount, 8);

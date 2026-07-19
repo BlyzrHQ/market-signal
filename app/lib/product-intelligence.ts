@@ -115,7 +115,7 @@ export type ProductComparison = {
     pagesRequested: number;
     pagesFetched: number;
     maxPages: number;
-    gaps: Array<{ url: string; reason: string }>;
+    gaps: Array<{ url: string; reason: string; productId?: string; role?: "primary" | "rival" }>;
   };
 };
 
@@ -258,23 +258,39 @@ function offerSignals(value: unknown): ProductPriceSignal[] {
   return [...new Map(found.map((signal) => [signal.raw, signal])).values()].slice(0, 12);
 }
 
-function metaProperty(document: string, property: string) {
-  const escaped = property.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const propertyFirst = new RegExp(`<meta[^>]+property\\s*=\\s*["']${escaped}["'][^>]+content\\s*=\\s*["']([^"']*)["']`, "i");
-  const contentFirst = new RegExp(`<meta[^>]+content\\s*=\\s*["']([^"']*)["'][^>]+property\\s*=\\s*["']${escaped}["']`, "i");
-  return clean(document.match(propertyFirst)?.[1] || document.match(contentFirst)?.[1] || "");
+function metaContent(document: string, key: string) {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const identity = `(?:property|name|itemprop)\\s*=\\s*["']${escaped}["']`;
+  const identityFirst = new RegExp(`<meta[^>]+${identity}[^>]+content\\s*=\\s*["']([^"']*)["']`, "i");
+  const contentFirst = new RegExp(`<meta[^>]+content\\s*=\\s*["']([^"']*)["'][^>]+${identity}`, "i");
+  return clean(document.match(identityFirst)?.[1] || document.match(contentFirst)?.[1] || "");
 }
 
 function openGraphOffer(document: string) {
-  const amount = metaProperty(document, "og:price:amount");
-  const currency = metaProperty(document, "og:price:currency");
+  const amount = metaContent(document, "product:price:amount") || metaContent(document, "og:price:amount") || metaContent(document, "price");
+  const currency = metaContent(document, "product:price:currency") || metaContent(document, "og:price:currency") || metaContent(document, "priceCurrency");
   return amount && currency ? priceSignal(amount, currency) : null;
 }
 
-function openGraphImage(document: string) {
-  const secure = metaProperty(document, "og:image:secure_url");
-  const fallback = metaProperty(document, "og:image");
-  return /^https:\/\//i.test(secure) ? secure : /^https:\/\//i.test(fallback) ? fallback : secure || fallback;
+function publicImageUrl(value: string, sourceUrl: string) {
+  try {
+    const candidate = clean(value);
+    if (!candidate) return "";
+    const url = new URL(candidate, sourceUrl);
+    return /^https?:$/.test(url.protocol) && !url.username && !url.password ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
+function openGraphImage(document: string, sourceUrl: string) {
+  const candidates = [
+    metaContent(document, "og:image:secure_url"),
+    metaContent(document, "og:image"),
+    metaContent(document, "twitter:image"),
+    metaContent(document, "image"),
+  ].map((value) => publicImageUrl(value, sourceUrl)).filter(Boolean);
+  return candidates.find((value) => /^https:\/\//i.test(value)) || candidates[0] || "";
 }
 
 function attributes(record: JsonRecord) {
@@ -318,7 +334,7 @@ function productFromNode(record: JsonRecord, input: ProductExtractionInput): Pro
   const relation = ownership(record, input.domain, new URL(input.sourceUrl).pathname);
   const id = makeId(input.domain, name, input.sourceUrl);
   const imageRecord = records(record.image)[0];
-  const imageUrl = text(typeof record.image === "string" ? record.image : imageRecord?.url || imageRecord?.contentUrl);
+  const imageUrl = publicImageUrl(text(typeof record.image === "string" ? record.image : imageRecord?.url || imageRecord?.contentUrl), input.sourceUrl);
   const productAttributes = attributes(record);
   const identifiers = extractProductIdentifiers(record);
   const quantityAttributes = productAttributes.filter((value) => !/^(?:barcode|ean|gtin|isbn|mpn|sku|upc)\s*:/i.test(value));
@@ -337,7 +353,7 @@ function productFromNode(record: JsonRecord, input: ProductExtractionInput): Pro
     extraction: "json-ld",
     confidence: relation === "self-declared-brand" ? "High" : "Medium",
     sourceUrl: input.sourceUrl,
-    imageUrl: /^https?:\/\//i.test(imageUrl) ? imageUrl : "",
+    imageUrl,
     observedAt: input.observedAt,
     claimIds: [`${id}-observed`],
     identifiers: identifiers.gtins.length || identifiers.sku || identifiers.mpn || identifiers.brand ? identifiers : undefined,
@@ -470,7 +486,7 @@ export function isProductLikePage(input: Pick<ProductExtractionInput, "sourceUrl
 }
 
 export function extractProductsFromHtml(input: ProductExtractionInput): ProductExtractionResult {
-  const products: ProductRecord[] = extractSaasPlans(input);
+  let products: ProductRecord[] = extractSaasPlans(input);
   const thirdPartyReferenced: ProductRecord[] = [];
   const gaps: string[] = [];
   const authoritativeOffer = openGraphOffer(input.document);
@@ -488,12 +504,30 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
       gaps.push(`Malformed JSON-LD on ${input.sourceUrl} was skipped.`);
     }
   }
+  const pageIdentity = clean(input.pageTitle.split(/\s+(?:\||—|–|-)\s+/)[0] || input.pageTitle);
+  const metadataCandidates = products.filter((product) => {
+    if (product.jsonLdType !== "Product") return false;
+    return normalized(product.name) === normalized(pageIdentity);
+  });
+  if (metadataCandidates.length === 1) {
+    const selectedId = metadataCandidates[0].id;
+    const metadataOffer = authoritativeOffer;
+    const metadataImage = openGraphImage(input.document, input.sourceUrl);
+    products = products.map((product) => product.id === selectedId ? {
+      ...product,
+      priceSignals: hasComparablePublicPrice(product) || !metadataOffer ? product.priceSignals : [metadataOffer],
+      imageUrl: product.imageUrl || metadataImage,
+    } : product);
+  }
   let productPath = false;
-  try { productPath = PRODUCT_PATH.test(new URL(input.sourceUrl).pathname); } catch { productPath = false; }
+  let pagePath = "";
+  try { pagePath = new URL(input.sourceUrl).pathname; productPath = PRODUCT_PATH.test(pagePath); } catch { productPath = false; }
   if (!products.length && (isProductLikePage(input) || (productPath && Boolean(authoritativeOffer)))) {
     const titleName = clean(input.pageTitle.split(/\s+(?:\||—|–|-)\s+/)[0] || input.pageTitle);
     const observedHeading = input.headings.find((heading) => !/\b(?:logo|menu|skip navigation|home)\b/i.test(heading));
-    const name = titleName && !/\b(?:logo|home)\b/i.test(titleName) ? titleName : clean(observedHeading || input.pageTitle);
+    const headingName = clean(observedHeading || "");
+    const titleSupportsHeading = headingName && tokens(headingName).length >= 2 && normalized(input.pageTitle).includes(normalized(headingName));
+    const name = titleSupportsHeading ? headingName : titleName && !/\b(?:logo|home)\b/i.test(titleName) ? titleName : clean(observedHeading || input.pageTitle);
     if (name && !GENERIC_PAGE_NAME.test(name)) {
       const id = makeId(input.domain, name, input.sourceUrl);
       products.push({
@@ -504,13 +538,17 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
         description: clean(input.pageDescription).slice(0, 400),
         category: new URL(input.sourceUrl).pathname.split("/").filter(Boolean)[0] || "product page",
         jsonLdType: "PageSignal",
-        priceSignals: authoritativeOffer ? [authoritativeOffer] : input.pagePriceSignals.map((value) => priceSignal(value)).filter((value): value is ProductPriceSignal => Boolean(value)).slice(0, 12),
+        priceSignals: authoritativeOffer
+          ? [authoritativeOffer]
+          : PRICING_PATH.test(pagePath)
+            ? input.pagePriceSignals.map((value) => priceSignal(value)).filter((value): value is ProductPriceSignal => Boolean(value)).slice(0, 12)
+            : [],
         attributes: input.headings.filter((heading) => normalized(heading) !== normalized(name)).slice(0, 8),
         ownership: "path-inferred",
         extraction: "page-signal",
         confidence: "Medium",
         sourceUrl: input.sourceUrl,
-        imageUrl: openGraphImage(input.document),
+        imageUrl: openGraphImage(input.document, input.sourceUrl),
         observedAt: input.observedAt,
         claimIds: [`${id}-observed`],
       });
@@ -1160,7 +1198,8 @@ export function applyFinalProductEnrichment(
     } satisfies ProductIdentifiers;
   };
   const merge = (base: ProductRecord) => {
-    const fresh = products.find((product) => canonicalHost(product.domain) === canonicalHost(base.domain) && canonicalProductPageUrl(product.sourceUrl) === canonicalProductPageUrl(base.sourceUrl));
+    const fresh = products.find((product) => product.id === base.id
+      || (canonicalHost(product.domain) === canonicalHost(base.domain) && canonicalProductPageUrl(product.sourceUrl) === canonicalProductPageUrl(base.sourceUrl)));
     if (!fresh) return base;
     const secureImage = [fresh.imageUrl, base.imageUrl].find((value) => /^https:\/\//i.test(value));
     return {

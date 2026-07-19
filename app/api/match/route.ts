@@ -1,5 +1,5 @@
 import { buildAIProductComparison } from "../../lib/ai-product-matching.ts";
-import { canonicalDomain } from "../../lib/domain.ts";
+import { canonicalDomain, normalizeDomain } from "../../lib/domain.ts";
 import type { ProductRecord } from "../../lib/product-intelligence.ts";
 import { canonicalGtin, parseCanonicalQuantity, type ProductIdentifiers } from "../../lib/product-normalization.ts";
 
@@ -18,6 +18,16 @@ function publicUrl(value: unknown, domain: string) {
   try {
     const url = new URL(text(value, 1_000));
     return /^https?:$/.test(url.protocol) && canonicalDomain(url.hostname) === canonicalDomain(domain) ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
+function publicImageUrl(value: unknown) {
+  try {
+    const url = new URL(text(value, 1_000));
+    normalizeDomain(url.hostname);
+    return url.protocol === "https:" && !url.username && !url.password ? url.toString() : "";
   } catch {
     return "";
   }
@@ -64,7 +74,7 @@ function product(value: unknown, catalogDomain: string): ProductRecord | null {
     extraction: allowedExtraction.has(item.extraction as ProductRecord["extraction"]) ? item.extraction as ProductRecord["extraction"] : "page-signal",
     confidence: item.confidence === "High" ? "High" : "Medium",
     sourceUrl,
-    imageUrl: publicUrl(item.imageUrl, catalogDomain),
+    imageUrl: publicImageUrl(item.imageUrl),
     observedAt: text(item.observedAt, 40) || new Date().toISOString(),
     claimIds: strings(item.claimIds, 20, 300),
     identifiers: identifiers(item.identifiers),

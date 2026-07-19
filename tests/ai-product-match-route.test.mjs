@@ -17,7 +17,7 @@ test("AI matching input keeps a broad but bounded first-party catalog", () => {
     extraction: "json-ld",
     confidence: "High",
     sourceUrl: `https://shop.test/products/${index}`,
-    imageUrl: "https://images.example.test/untrusted.jpg",
+    imageUrl: "https://cdn.shopify.com/public-product.jpg",
     observedAt: "2026-07-15T00:00:00.000Z",
     claimIds: [`claim-${index}`],
   }));
@@ -27,8 +27,21 @@ test("AI matching input keeps a broad but bounded first-party catalog", () => {
 
   assert.equal(catalogs.length, 1);
   assert.equal(catalogs[0].products.length, 600);
-  assert.equal(catalogs[0].products[0].imageUrl, "");
+  assert.equal(catalogs[0].products[0].imageUrl, "https://cdn.shopify.com/public-product.jpg");
   assert.ok(catalogs[0].products.every((product) => new URL(product.sourceUrl).hostname === "shop.test"));
+});
+
+test("AI matching keeps public HTTPS CDN images but rejects unsafe image URLs", () => {
+  const products = [
+    { name: "Public image", sourceUrl: "https://shop.test/products/public", imageUrl: "https://cdn.shopify.com/public.jpg" },
+    { name: "Private image", sourceUrl: "https://shop.test/products/private", imageUrl: "https://127.0.0.1/private.jpg" },
+    { name: "Script image", sourceUrl: "https://shop.test/products/script", imageUrl: "javascript:alert(1)" },
+  ];
+  const [catalog] = parseCatalogs([{ domain: "shop.test", products }]);
+
+  assert.equal(catalog.products[0].imageUrl, "https://cdn.shopify.com/public.jpg");
+  assert.equal(catalog.products[1].imageUrl, "");
+  assert.equal(catalog.products[2].imageUrl, "");
 });
 
 test("AI matching input rejects missing and off-domain product sources", () => {
