@@ -51,7 +51,11 @@ function ReportWorkspace({ blocks, marketBrief, primaryDomain, observedAt, repor
   useEffect(() => { const media = window.matchMedia("(max-width: 1023px)"); const sync = () => setCompactNav(media.matches); sync(); media.addEventListener("change", sync); return () => media.removeEventListener("change", sync); }, []);
   useEffect(() => { const frame = window.requestAnimationFrame(scrollToReportHash); window.addEventListener("hashchange", scrollToReportHash); return () => { window.cancelAnimationFrame(frame); window.removeEventListener("hashchange", scrollToReportHash); }; }, [view, blocks]);
   useEffect(() => { if (compactNav) tabs.current[VIEWS.indexOf(view)]?.scrollIntoView({ inline: "nearest", block: "nearest" }); }, [compactNav, view]);
-  const selectView = (next: View, replace = false, hash = "") => { const url = new URL(window.location.href); url.searchParams.set("view", next); url.hash = hash; window.history[replace ? "replaceState" : "pushState"]({}, "", url); setView(next); };
+  const selectView = (next: View, replace = false, hash = "") => {
+    const url = new URL(window.location.href); url.searchParams.set("view", next); url.hash = hash;
+    window.history[replace ? "replaceState" : "pushState"]({}, "", url); setView(next);
+    if (!hash) window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" }));
+  };
   const onTabKey = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     const forwardKey = compactNav ? (ar ? "ArrowLeft" : "ArrowRight") : "ArrowDown"; const backwardKey = compactNav ? (ar ? "ArrowRight" : "ArrowLeft") : "ArrowUp";
     const next = event.key === forwardKey ? (index + 1) % VIEWS.length : event.key === backwardKey ? (index - 1 + VIEWS.length) % VIEWS.length : event.key === "Home" ? 0 : event.key === "End" ? VIEWS.length - 1 : -1;
