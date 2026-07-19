@@ -70,6 +70,12 @@ test("saved reports use a persistent dashboard shell without the old report hero
 });
 
 test("saved product and ad views preserve truth boundaries and source links", () => {
+  assert.match(report, /className="product-comparison-table" role="table"/);
+  assert.match(report, /<thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">/);
+  assert.match(report, /<tbody role="rowgroup">{battles\.map/);
+  assert.match(report, /return <tr id={anchor} key={battle\.key} role="row"/);
+  assert.match(report, /<td role="cell" className="comparison-product-cell your-comparison-cell">/);
+  assert.match(report, /resolvedPriceDelta\(decision\.priceComparison\)/);
   assert.match(report, /Your product source ↗/);
   assert.match(report, /Rival product source ↗/);
   assert.match(report, /not proof of zero ads/);
@@ -92,6 +98,10 @@ test("dark routes fill the viewport and keep responsive width bounded", () => {
   assert.match(css, /\.report-dashboard-sidebar \{ position: relative;[^}]*min-height: 100vh;[^}]*overflow: visible/);
   assert.doesNotMatch(css, /\.report-dashboard-sidebar \{[^}]*height: 100vh[^}]*overflow-y: auto/);
   assert.match(css, /\.workspace-panel \{ width: min\(100%,1140px\)/);
+  assert.match(css, /\.product-comparison-table th \{ position: sticky;[^}]*top: 64px/);
+  assert.match(css, /\.product-comparison-table tbody tr \{ scroll-margin-top: 76px/);
+  assert.match(css, /@media \(min-width: 1181px\) \{[\s\S]*\.product-comparison-table tbody tr \{ scroll-margin-top: 118px/);
+  assert.match(css, /@media \(max-width: 1180px\)[\s\S]*\.product-comparison-table thead \{ position: absolute;[^}]*clip-path: inset\(50%\)/);
   assert.match(css, /@media \(max-width: 1023px\) \{[\s\S]*\.workspace-tabs \{ position: sticky;[\s\S]*overflow-x: auto/);
   assert.match(css, /\.report-dashboard-sidebar,\.report-dashboard-main \{ display: contents; \}/);
 });
