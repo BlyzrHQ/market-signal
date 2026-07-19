@@ -1,5 +1,5 @@
 import { canonicalDomain, normalizeDomain } from "../../lib/domain.ts";
-import { parseCanonicalQuantity } from "../../lib/product-normalization.ts";
+import { bilingualNormalize, parseCanonicalQuantity } from "../../lib/product-normalization.ts";
 import { extractProductsFromHtml, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "../../lib/product-intelligence.ts";
 import { parseRobots } from "../../lib/robots.ts";
 
@@ -98,7 +98,7 @@ function expectedProduct(item: ProductEnrichmentTarget): ProductRecord {
     id: item.productId,
     domain: item.domain,
     name: item.expectedName,
-    normalizedName: item.expectedName.toLowerCase().normalize("NFKC").replace(/\s+/g, " ").trim(),
+    normalizedName: bilingualNormalize(item.expectedName),
     description: "",
     category: "product",
     jsonLdType: "Product",
@@ -135,17 +135,18 @@ export async function POST(request: Request) {
     const entries = await Promise.all(targets.map(async (item) => {
       try {
         const robotsResult = robotsByDomain.get(item.domain);
-        if (!robotsResult?.ok) return { product: null, gap: { url: item.sourceUrl, reason: "robots.txt could not be read, so selected-product enrichment was skipped." } };
+        if (!robotsResult?.ok) return { product: null, gap: { url: item.sourceUrl, productId: item.productId, role: item.role, reason: "robots.txt could not be read, so selected-product enrichment was skipped." } };
         const robots = parseRobots(robotsResult.text);
-        if (!robots.allows(new URL(item.sourceUrl).pathname)) return { product: null, gap: { url: item.sourceUrl, reason: "robots.txt disallows this selected product page." } };
+        if (!robots.allows(new URL(item.sourceUrl).pathname)) return { product: null, gap: { url: item.sourceUrl, productId: item.productId, role: item.role, reason: "robots.txt disallows this selected product page." } };
         const fetched = await fetchSameDomain(item.sourceUrl, item.domain, "text/html,application/xhtml+xml");
-        if (!fetched.ok || !/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { product: null, gap: { url: item.sourceUrl, reason: `Selected product page returned HTTP ${fetched.status} or non-HTML content.` } };
+        if (!fetched.ok || !/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { product: null, gap: { url: item.sourceUrl, productId: item.productId, role: item.role, reason: `Selected product page returned HTTP ${fetched.status} or non-HTML content.` } };
         const extracted = pageExtraction(fetched.text, fetched.url, item.domain);
         const identity = validateProductPageIdentity([expectedProduct(item)], extracted.result.products, extracted.pageTitle);
-        if (!identity.accepted) return { product: null, gap: { url: item.sourceUrl, reason: identity.reason } };
-        return { product: identity.products[0] || null, gap: null };
+        if (!identity.accepted) return { product: null, gap: { url: item.sourceUrl, productId: item.productId, role: item.role, reason: identity.reason } };
+        const accepted = identity.products[0];
+        return { product: accepted ? { ...accepted, id: item.productId } : null, gap: null };
       } catch (error) {
-        return { product: null, gap: { url: item.sourceUrl, reason: error instanceof Error ? `Selected product page could not be fetched: ${error.message}` : "Selected product page could not be fetched." } };
+        return { product: null, gap: { url: item.sourceUrl, productId: item.productId, role: item.role, reason: error instanceof Error ? `Selected product page could not be fetched: ${error.message}` : "Selected product page could not be fetched." } };
       }
     }));
     const products = entries.flatMap((entry) => entry.product ? [entry.product] : []);

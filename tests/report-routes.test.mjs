@@ -76,6 +76,9 @@ test("saved product and ad views preserve truth boundaries and source links", ()
   assert.match(report, /This does not mean the companies do not advertise/);
   assert.match(report, /truth-pill/);
   assert.match(report, /repairEncoding/);
+  assert.match(report, /productEnrichmentGaps/);
+  assert.match(report, /PRODUCT DATA GAP/);
+  assert.match(report, /Open source ↗/);
 });
 
 test("dark routes fill the viewport and keep responsive width bounded", () => {

@@ -37,6 +37,7 @@ test("enriches the exact selected product page with authoritative price and secu
     assert.equal(payload.ok, true);
     assert.equal(payload.coverage.pagesRequested, 1);
     assert.equal(payload.coverage.pagesFetched, 1);
+    assert.equal(payload.products[0].id, "lamb-leg");
     assert.deepEqual(payload.products[0].priceSignals, [{ raw: "GBP 39.05", currency: "GBP", amount: 39.05 }]);
     assert.equal(payload.products[0].imageUrl, "https://cdn.shopify.com/lamb-leg.jpg");
     assert.deepEqual(calls, ["https://myjam.co.uk/robots.txt", "https://myjam.co.uk/products/lamb-leg-halal-apx-2500g"]);
@@ -66,6 +67,8 @@ test("returns a visible source gap when one selected product domain cannot be re
     assert.equal(payload.ok, true);
     assert.equal(payload.coverage.pagesFetched, 0);
     assert.match(payload.coverage.gaps[0].reason, /could not be read/i);
+    assert.equal(payload.coverage.gaps[0].productId, "lemon-tea");
+    assert.equal(payload.coverage.gaps[0].role, "rival");
   } finally {
     globalThis.fetch = originalFetch;
   }
