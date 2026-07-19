@@ -89,7 +89,8 @@ test("dark routes fill the viewport and keep responsive width bounded", () => {
   assert.match(css, /overflow-y: auto/);
   assert.match(css, /\.stored-report-page \{ min-width: 0; min-height: 100vh; overflow-x: clip/);
   assert.match(css, /\.report-dashboard-shell \{ display: grid; grid-template-columns: 248px minmax\(0,1fr\)/);
-  assert.match(css, /\.report-dashboard-sidebar \{ position: sticky; top: 0;[\s\S]*height: 100vh/);
+  assert.match(css, /\.report-dashboard-sidebar \{ position: relative;[^}]*min-height: 100vh;[^}]*overflow: visible/);
+  assert.doesNotMatch(css, /\.report-dashboard-sidebar \{[^}]*height: 100vh[^}]*overflow-y: auto/);
   assert.match(css, /\.workspace-panel \{ width: min\(100%,1140px\)/);
   assert.match(css, /@media \(max-width: 1023px\) \{[\s\S]*\.workspace-tabs \{ position: sticky;[\s\S]*overflow-x: auto/);
   assert.match(css, /\.report-dashboard-sidebar,\.report-dashboard-main \{ display: contents; \}/);
