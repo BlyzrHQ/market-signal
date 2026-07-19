@@ -44,16 +44,29 @@ test("saved reports expose deep-linkable accessible intelligence tabs", () => {
   assert.match(report, /new URLSearchParams\(window\.location\.search\)\.get\("view"\)/);
   assert.match(report, /window\.addEventListener\("popstate", sync\)/);
   assert.match(report, /role="tablist"/);
+  assert.match(report, /aria-orientation=\{compactNav \? "horizontal" : "vertical"\}/);
   assert.match(report, /role="tab"/);
   assert.match(report, /aria-controls=\{`panel-\$\{item\}`\}/);
   assert.match(report, /role="tabpanel"/);
-  assert.match(report, /const forwardKey = ar \? "ArrowLeft" : "ArrowRight"/);
+  assert.match(report, /const forwardKey = compactNav \? \(ar \? "ArrowLeft" : "ArrowRight"\) : "ArrowDown"/);
+  assert.match(report, /const backwardKey = compactNav \? \(ar \? "ArrowRight" : "ArrowLeft"\) : "ArrowUp"/);
   assert.match(report, /scrollToReportHash/);
   assert.match(report, /scrollIntoView\(\{ block: "start" \}\)/);
   assert.match(report, /onClick=\{onWorkspaceClick\}/);
   assert.match(report, /viewHref\("products", productAnchor\(domain\)\)/);
   assert.match(report, /viewHref\("ads", adAnchor\(domain\)\)/);
   assert.match(report, /viewHref\("evidence", evidenceAnchor\(domain\)\)/);
+});
+
+test("saved reports use a persistent dashboard shell without the old report hero", () => {
+  assert.match(report, /className="report-dashboard-sidebar"/);
+  assert.match(report, /className="dashboard-brand"/);
+  assert.match(report, /className="dashboard-report-identity"/);
+  assert.match(report, /className="report-dashboard-main"/);
+  assert.match(report, /item === "evidence" && <b>\{evidence\.length\}<\/b>/);
+  assert.doesNotMatch(report, /stored-report-hero/);
+  assert.doesNotMatch(css, /\.stored-report-hero/);
+  assert.match(css, /\.dashboard-view-title span,\.report-route-meta span \{ display: none; \}[\s\S]*\.report-route-meta time \{ font-size: 7px; \}/);
 });
 
 test("saved product and ad views preserve truth boundaries and source links", () => {
@@ -71,8 +84,12 @@ test("dark routes fill the viewport and keep responsive width bounded", () => {
   assert.match(css, /overflow-x: hidden/);
   assert.match(css, /@media\(max-width:700px\)/);
   assert.match(css, /overflow-y: auto/);
-  assert.match(css, /\.stored-report-page \{ min-width: 0; overflow-x: clip/);
-  assert.match(css, /\.workspace-tabs \{ position: sticky/);
+  assert.match(css, /\.stored-report-page \{ min-width: 0; min-height: 100vh; overflow-x: clip/);
+  assert.match(css, /\.report-dashboard-shell \{ display: grid; grid-template-columns: 248px minmax\(0,1fr\)/);
+  assert.match(css, /\.report-dashboard-sidebar \{ position: sticky; top: 0;[\s\S]*height: 100vh/);
+  assert.match(css, /\.workspace-panel \{ width: min\(100%,1140px\)/);
+  assert.match(css, /@media \(max-width: 1023px\) \{[\s\S]*\.workspace-tabs \{ position: sticky;[\s\S]*overflow-x: auto/);
+  assert.match(css, /\.report-dashboard-sidebar,\.report-dashboard-main \{ display: contents; \}/);
 });
 
 test("new routes preserve Arabic direction and controls", () => {
