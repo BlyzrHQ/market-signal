@@ -24,7 +24,8 @@ function isCloudflareOriginDnsFailure(response: Response, text: string) {
   if (response.status !== 530) return false;
   const contentType = response.headers.get("content-type") || "";
   if (!/text|html/i.test(contentType)) return false;
-  return /\berror\s+1016\b/i.test(text) && /\b(?:cloudflare|origin\s+dns\s+error)\b/i.test(text);
+  return /\berror\s+code\s*[:#-]?\s*1016\b/i.test(text)
+    || (/\berror\s+1016\b/i.test(text) && /\b(?:cloudflare|origin\s+dns\s+error)\b/i.test(text));
 }
 
 export async function fetchPublicText(url: string, accept: string, options: PublicFetchOptions) {

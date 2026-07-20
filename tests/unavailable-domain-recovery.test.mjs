@@ -70,9 +70,9 @@ test("a Cloudflare Worker origin DNS 1016 response is classified as a network fa
     maxDocumentBytes: 10_000,
     userAgent: "test",
     async fetchImpl() {
-      return new Response("<html><title>Error 1016</title><h1>Origin DNS error</h1><p>Cloudflare</p></html>", {
+      return new Response("error code: 1016", {
         status: 530,
-        headers: { "content-type": "text/html" },
+        headers: { "content-type": "text/plain" },
       });
     },
   });
@@ -96,6 +96,23 @@ test("an ordinary 530 response is not treated as a DNS transport failure", async
     },
   });
   assert.equal(result.ok, false);
+  assert.equal(result.failureKind, "");
+  assert.equal(result.status, 530);
+});
+
+test("a 530 page merely mentioning 1016 without the exact Cloudflare error shape remains an HTTP failure", async () => {
+  const result = await fetchPublicText("https://responding.example/", "text/html", {
+    expectedDomain: "responding.example",
+    timeoutMs: 1_000,
+    maxDocumentBytes: 10_000,
+    userAgent: "test",
+    async fetchImpl() {
+      return new Response("<html><p>Read our guide to resolving code 1016.</p></html>", {
+        status: 530,
+        headers: { "content-type": "text/html" },
+      });
+    },
+  });
   assert.equal(result.failureKind, "");
   assert.equal(result.status, 530);
 });
