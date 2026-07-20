@@ -20,6 +20,13 @@ class PublicFetchTransportError extends Error {
   }
 }
 
+function isCloudflareOriginDnsFailure(response: Response, text: string) {
+  if (response.status !== 530) return false;
+  const contentType = response.headers.get("content-type") || "";
+  if (!/text|html/i.test(contentType)) return false;
+  return /\berror\s+1016\b/i.test(text) && /\b(?:cloudflare|origin\s+dns\s+error)\b/i.test(text);
+}
+
 export async function fetchPublicText(url: string, accept: string, options: PublicFetchOptions) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
@@ -47,7 +54,17 @@ export async function fetchPublicText(url: string, accept: string, options: Publ
     if (!response) throw new Error("request failed");
     const buffer = await response.arrayBuffer();
     const truncated = buffer.byteLength > options.maxDocumentBytes;
-    return { ok: response.ok, status: response.status, contentType: response.headers.get("content-type") ?? "", url: response.url || url, text: new TextDecoder().decode(buffer.slice(0, options.maxDocumentBytes)), truncated, failureKind: "" as const };
+    const text = new TextDecoder().decode(buffer.slice(0, options.maxDocumentBytes));
+    const cloudflareOriginDnsFailure = isCloudflareOriginDnsFailure(response, text);
+    return {
+      ok: response.ok,
+      status: response.status,
+      contentType: response.headers.get("content-type") ?? "",
+      url: response.url || url,
+      text,
+      truncated,
+      ...(cloudflareOriginDnsFailure ? { error: "Cloudflare could not resolve the submitted origin hostname.", failureKind: "network" as const } : { failureKind: "" as const }),
+    };
   } catch (error) {
     const failureKind = error instanceof PublicFetchTransportError ? error.failureKind : error instanceof Error && error.name === "AbortError" ? "timeout" as const : "" as const;
     return { ok: false, status: 0, contentType: "", url, text: "", truncated: false, error: failureKind === "timeout" ? "timeout" : "request failed", failureKind };

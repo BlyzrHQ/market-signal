@@ -62,3 +62,40 @@ test("only an actual fetch transport rejection is classified as a network failur
   assert.equal(result.failureKind, "network");
   assert.equal(result.status, 0);
 });
+
+test("a Cloudflare Worker origin DNS 1016 response is classified as a network failure", async () => {
+  const result = await fetchPublicText("https://missing.example/", "text/html", {
+    expectedDomain: "missing.example",
+    timeoutMs: 1_000,
+    maxDocumentBytes: 10_000,
+    userAgent: "test",
+    async fetchImpl() {
+      return new Response("<html><title>Error 1016</title><h1>Origin DNS error</h1><p>Cloudflare</p></html>", {
+        status: 530,
+        headers: { "content-type": "text/html" },
+      });
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.failureKind, "network");
+  assert.equal(result.status, 530);
+  assert.match(result.error, /could not resolve/i);
+});
+
+test("an ordinary 530 response is not treated as a DNS transport failure", async () => {
+  const result = await fetchPublicText("https://responding.example/", "text/html", {
+    expectedDomain: "responding.example",
+    timeoutMs: 1_000,
+    maxDocumentBytes: 10_000,
+    userAgent: "test",
+    async fetchImpl() {
+      return new Response("<html><title>Temporary origin failure</title></html>", {
+        status: 530,
+        headers: { "content-type": "text/html" },
+      });
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.failureKind, "");
+  assert.equal(result.status, 530);
+});
