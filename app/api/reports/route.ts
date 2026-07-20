@@ -1,8 +1,94 @@
 import { dispatchReportJob, ReportDispatchError } from "../../lib/report-dispatch.ts";
-import { createReportRunResult, markReportDispatched, markReportDispatchFailed, reportStorageDiagnosticCode } from "../../lib/report-store.ts";
+import { createReportRunResult, markReportDispatched, markReportDispatchFailed, reportStorageDiagnosticCode, type ReportCreateDiagnostic } from "../../lib/report-store.ts";
+
+type CreatedReport = {
+  id: string;
+  publicId: string;
+  primaryDomain: string;
+  locale: "en" | "ar";
+  status: "queued";
+  currentPhase: "queued";
+  attemptCount: number;
+  createdAt: string;
+  expiresAt: string;
+};
+
+type CreationBoundaryDiagnostic = "create-not-callable" | "create-rejected" | "create-malformed" | "create-access-failed";
+type CreationBoundaryResult =
+  | { kind: "accepted"; report: CreatedReport }
+  | { kind: "rejected"; diagnosticCode: ReportCreateDiagnostic }
+  | { kind: "boundary-failed"; diagnosticCode: CreationBoundaryDiagnostic };
+
+const PUBLIC_REPORT_ID = /^[a-f0-9]{32}$/;
+const REPORT_CREATE_DIAGNOSTIC = /^(?:invalid-domain|storage-unavailable|database-(?:import-failed|binding-missing)|schema-statement-(?:[1-9]|1[0-8])-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api)|run-create-unclassified)$/;
+
+async function consumeReportCreation(create: unknown, input: { primaryDomain: string; locale: "en" | "ar" }): Promise<CreationBoundaryResult> {
+  if (typeof create !== "function") return { kind: "boundary-failed", diagnosticCode: "create-not-callable" };
+
+  let value: unknown;
+  try {
+    value = await create(input);
+  } catch {
+    return { kind: "boundary-failed", diagnosticCode: "create-rejected" };
+  }
+
+  if (!value || typeof value !== "object") return { kind: "boundary-failed", diagnosticCode: "create-malformed" };
+
+  let ok: unknown;
+  try {
+    ok = (value as { ok?: unknown }).ok;
+  } catch {
+    return { kind: "boundary-failed", diagnosticCode: "create-access-failed" };
+  }
+  if (ok !== true && ok !== false) return { kind: "boundary-failed", diagnosticCode: "create-malformed" };
+
+  if (!ok) {
+    try {
+      const candidate = (value as { diagnosticCode?: unknown }).diagnosticCode;
+      const diagnosticCode = typeof candidate === "string" && REPORT_CREATE_DIAGNOSTIC.test(candidate)
+        ? candidate as ReportCreateDiagnostic
+        : "run-create-unclassified";
+      return { kind: "rejected", diagnosticCode };
+    } catch {
+      return { kind: "boundary-failed", diagnosticCode: "create-access-failed" };
+    }
+  }
+
+  try {
+    const report = (value as { report?: Record<string, unknown> }).report;
+    if (!report || typeof report !== "object"
+      || typeof report.id !== "string" || !report.id
+      || typeof report.publicId !== "string" || !PUBLIC_REPORT_ID.test(report.publicId)
+      || typeof report.primaryDomain !== "string" || !report.primaryDomain
+      || (report.locale !== "en" && report.locale !== "ar")
+      || report.status !== "queued"
+      || report.currentPhase !== "queued"
+      || typeof report.attemptCount !== "number" || !Number.isInteger(report.attemptCount) || report.attemptCount < 1
+      || typeof report.createdAt !== "string" || !report.createdAt
+      || typeof report.expiresAt !== "string" || !report.expiresAt) {
+      return { kind: "boundary-failed", diagnosticCode: "create-access-failed" };
+    }
+    return {
+      kind: "accepted",
+      report: {
+        id: report.id,
+        publicId: report.publicId,
+        primaryDomain: report.primaryDomain,
+        locale: report.locale,
+        status: report.status,
+        currentPhase: report.currentPhase,
+        attemptCount: report.attemptCount,
+        createdAt: report.createdAt,
+        expiresAt: report.expiresAt,
+      },
+    };
+  } catch {
+    return { kind: "boundary-failed", diagnosticCode: "create-access-failed" };
+  }
+}
 
 type ReportCreationDependencies = {
-  create: typeof createReportRunResult;
+  create: unknown;
   dispatch: typeof dispatchReportJob;
   markDispatched: typeof markReportDispatched;
   markDispatchFailed: typeof markReportDispatchFailed;
@@ -21,11 +107,15 @@ export async function createPersistentReport(request: Request, services: ReportC
   try {
     const body = await request.json() as { primaryDomain?: unknown; locale?: unknown };
     stage = "storage-create";
-    const creation = await services.create({
+    const creation = await consumeReportCreation(services.create, {
       primaryDomain: typeof body.primaryDomain === "string" ? body.primaryDomain : "",
       locale: body.locale === "ar" ? "ar" : "en",
     });
-    if (!creation.ok) {
+    if (creation.kind !== "accepted") {
+      if (creation.kind === "boundary-failed") {
+        console.error("report creation failed", { stage: "storage-create", diagnosticCode: creation.diagnosticCode });
+        return Response.json({ ok: false, error: "The persistent report could not be created.", errorCode: "storage-create-failed" }, { status: 503, headers: { "Cache-Control": "no-store" } });
+      }
       const status = creation.diagnosticCode === "invalid-domain" ? 400 : 503;
       if (status === 503) console.error("report creation failed", { stage: "storage-create", diagnosticCode: creation.diagnosticCode });
       return Response.json({ ok: false, error: status === 400 ? "A valid public domain is required." : "The persistent report could not be created.", errorCode: status === 400 ? "invalid-domain" : "storage-create-failed" }, { status, headers: { "Cache-Control": "no-store" } });

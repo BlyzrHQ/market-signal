@@ -130,6 +130,55 @@ test("report creation returns 202 only after dispatch and records a sanitized fa
   ]);
 });
 
+test("report creation consumes cross-module results through a closed route boundary", async () => {
+  const created = { id: "internal", publicId: PUBLIC_ID, primaryDomain: "myjam.co.uk", locale: "en", status: "queued", currentPhase: "queued", attemptCount: 1, createdAt: "now", expiresAt: "later" };
+  const originalConsoleError = console.error;
+  const logged = [];
+  let dispatches = 0;
+  console.error = (...args) => logged.push(args);
+  const services = (create) => ({
+    create,
+    dispatch: async () => { dispatches += 1; return { runId: "run_boundary", idempotencyKey: `${PUBLIC_ID}:1:1` }; },
+    markDispatched: async () => {},
+    markDispatchFailed: async () => {},
+  });
+  const run = (create) => createPersistentReport(new Request("https://example.test/api/reports", { method: "POST", body: JSON.stringify({ primaryDomain: "myjam.co.uk" }) }), services(create));
+
+  try {
+    for (const [create, diagnosticCode] of [
+      [undefined, "create-not-callable"],
+      [async () => { throw new Proxy({}, { get() { throw new Error("private trap detail"); }, getPrototypeOf() { throw new Error("private prototype detail"); } }); }, "create-rejected"],
+      [async () => undefined, "create-malformed"],
+      [async () => "wrong", "create-malformed"],
+      [async () => ({ ok: "yes" }), "create-malformed"],
+      [async () => ({ ok: true, report: new Proxy({}, { get() { throw new Error("private report trap"); } }) }), "create-access-failed"],
+      [async () => ({ ok: true, report: { ...created, publicId: "short" } }), "create-access-failed"],
+    ]) {
+      const response = await run(create);
+      assert.equal(response.status, 503);
+      assert.deepEqual(await response.json(), { ok: false, error: "The persistent report could not be created.", errorCode: "storage-create-failed" });
+      assert.deepEqual(logged.at(-1), ["report creation failed", { stage: "storage-create", diagnosticCode }]);
+    }
+
+    const hostileExtra = { ...created };
+    Object.defineProperty(hostileExtra, "privateValue", { get() { throw new Error("must not be read"); } });
+    const accepted = await run(async () => ({ ok: true, report: hostileExtra, ignored: new Proxy({}, { get() { throw new Error("must not be read"); } }) }));
+    assert.equal(accepted.status, 202);
+    assert.deepEqual((await accepted.json()).report, created);
+
+    const known = await run(async () => ({ ok: false, diagnosticCode: "run-create-batch-schema-mismatch" }));
+    assert.equal(known.status, 503);
+    assert.deepEqual(logged.at(-1), ["report creation failed", { stage: "storage-create", diagnosticCode: "run-create-batch-schema-mismatch" }]);
+    const unknown = await run(async () => ({ ok: false, diagnosticCode: "private-database-detail" }));
+    assert.equal(unknown.status, 503);
+    assert.deepEqual(logged.at(-1), ["report creation failed", { stage: "storage-create", diagnosticCode: "run-create-unclassified" }]);
+    assert.doesNotMatch(JSON.stringify(logged), /private trap|private prototype|private report|private-database-detail|must not be read/i);
+  } finally {
+    console.error = originalConsoleError;
+  }
+  assert.equal(dispatches, 1);
+});
+
 test("authenticated recovery increments the attempt, dispatches it, and safely replays", async () => {
   let stored = report({ status: "interrupted", currentPhase: "interrupted", errorCode: "stale-worker", attemptCount: 1 });
   const calls = [];
