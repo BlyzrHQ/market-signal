@@ -57,3 +57,14 @@ Persist a truthful limited report when the primary domain remains network-unavai
 - Sites version 104 and Trigger version `20260720.11` deployed that reviewed commit. Fresh production report `ad3ffe87b6734c20bf0c7238668fae9a` still failed with HTTP 400. Direct production evidence showed that the Sites Cloudflare Worker represents the same unresolvable origin as HTTP `530` with Cloudflare origin-DNS error `1016`, rather than rejecting `fetch` as it does in the local runtime.
 - The production correction recognizes only a `530` text/HTML response containing both Cloudflare/origin-DNS evidence and error `1016` as a network-level origin-resolution failure. Other `530` responses remain ordinary responding HTTP failures. This keeps the original fail-closed boundary while covering the hosting runtime's documented transport representation.
 - Fable 5 returned `TASK 63 PRODUCTION CORRECTION: PASS` on commit `768d03a` with focused tests `7/7`, full tests `309/309`, and lint at zero errors. Sites version 105 and Trigger version `20260720.12` deployed that commit, but fresh report `66d11ada313b4abea16a33d3d8c272ae` exposed a stricter runtime detail: the Worker body is the compact exact phrase `error code: 1016`, without additional provider wording. The follow-up accepts that exact phrase only when paired with HTTP `530` and a text/HTML content type; incidental `1016` mentions and every other `530` remain excluded.
+- Fable 5 returned `TASK 63 COMPACT 1016: PASS` on commit `d241c52` after independently running the focused suite (`8/8`), the full suite (`310/310`, including typecheck and production build), and lint with zero errors. It confirmed that the production signature remains bounded by status, content type, and exact phrase, and required a fresh production result before merge.
+
+## Production acceptance
+
+- Exact commit: `d241c525ebdc3b8ad4a12c4c8592deda52dc50fc`
+- Sites version: `106`
+- Trigger version: `20260720.13`
+- Fresh report: `0de8ef74bb59421d9d68d87aef9d0ee5`
+- Result: `LIMITED`, with only Overview, Evidence, and Methodology available.
+- The persisted report states that no public website response was available, that competitor/product/ad analysis did not run, and that the result is not a zero-result report.
+- Production acceptance: PASS.
