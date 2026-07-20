@@ -40,6 +40,15 @@ export type StoredReportEvent = {
   observedAt: string;
 };
 
+export type ReportCreateDiagnostic =
+  | "invalid-domain"
+  | "storage-unavailable"
+  | "database-import-failed"
+  | "database-binding-missing"
+  | `schema-statement-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18}-failed`
+  | `run-create-batch-${"schema-mismatch" | "constraint" | "binding-count" | "transaction" | "batch-api"}`
+  | "run-create-unclassified";
+
 const REPORT_SCHEMA_VERSION = 1;
 const REPORT_RETENTION_DAYS = 90;
 const STALE_RUN_MS = 10 * 60 * 1000;
@@ -47,6 +56,8 @@ const QUEUED_DISPATCH_TIMEOUT_MS = 60 * 60 * 1000;
 export const MAX_REPORT_DOCUMENT_BYTES = 750_000;
 const MAX_SNAPSHOT_CATALOG_PRODUCTS = 40;
 const MAX_SNAPSHOT_UNMATCHED_PRODUCTS = 20;
+const INVALID_DOMAIN_MESSAGE = "A valid public domain is required.";
+const STORAGE_UNAVAILABLE_MESSAGE = "Persistent report storage is unavailable.";
 const PUBLIC_ID_PATTERN = /^[a-f0-9]{32}$/;
 const PHASES = new Set<ReportPhase>(["queued", "crawl", "competitors", "products", "matching", "enrichment", "ads", "complete", "failed", "interrupted"]);
 const STATUSES = new Set<ReportRunStatus>(["queued", "running", "complete", "limited", "failed", "interrupted"]);
@@ -222,9 +233,9 @@ async function findRun(database: D1DatabaseLike, id: string) {
 
 export async function createReportRun(input: { primaryDomain: string; locale?: string }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
   const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
-  if (!database) throw new Error("Persistent report storage is unavailable.");
+  if (!database) throw new Error(STORAGE_UNAVAILABLE_MESSAGE);
   const primaryDomain = canonicalDomain(input.primaryDomain);
-  if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(primaryDomain)) throw new Error("A valid public domain is required.");
+  if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(primaryDomain)) throw new Error(INVALID_DOMAIN_MESSAGE);
   const locale: "en" | "ar" = input.locale === "ar" ? "ar" : "en";
   const id = internalId();
   const shareId = publicId();
@@ -242,6 +253,21 @@ export async function createReportRun(input: { primaryDomain: string; locale?: s
     throw new ReportStorageError(diagnosticCode);
   }
   return { id, publicId: shareId, primaryDomain, locale, status: "queued" as const, currentPhase: "queued" as const, attemptCount: 1, createdAt: observedAt, expiresAt };
+}
+
+export async function createReportRunResult(input: { primaryDomain: string; locale?: string }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+  try {
+    return { ok: true as const, report: await createReportRun(input, now, databaseOverride) };
+  } catch (error) {
+    let diagnosticCode: ReportCreateDiagnostic = "run-create-unclassified";
+    if (error instanceof Error && error.message === INVALID_DOMAIN_MESSAGE) diagnosticCode = "invalid-domain";
+    else if (error instanceof Error && error.message === STORAGE_UNAVAILABLE_MESSAGE) diagnosticCode = "storage-unavailable";
+    else if (error instanceof ReportStorageError) {
+      const knownCode = reportStorageDiagnosticCode(error);
+      if (knownCode && REPORT_STORAGE_DIAGNOSTIC.test(knownCode)) diagnosticCode = knownCode as ReportCreateDiagnostic;
+    }
+    return { ok: false as const, diagnosticCode };
+  }
 }
 
 export async function appendReportEvent(publicReportId: string, input: { idempotencyKey: string; phase: ReportPhase; status: ReportRunStatus; message: string; metadata?: unknown; errorCode?: string }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { appendReportEvent, compactReportDocument, createReportRun, getStoredReport, markReportDispatched, MAX_REPORT_DOCUMENT_BYTES, recoverInterruptedReport, reportStorageDiagnosticCode, ReportStorageError, saveReportDocument } from "../app/lib/report-store.ts";
+import { appendReportEvent, compactReportDocument, createReportRun, createReportRunResult, getStoredReport, markReportDispatched, MAX_REPORT_DOCUMENT_BYTES, recoverInterruptedReport, reportStorageDiagnosticCode, ReportStorageError, saveReportDocument } from "../app/lib/report-store.ts";
 
 class FakeStatement {
   constructor(database, query) { this.database = database; this.query = query; this.values = []; }
@@ -260,4 +260,19 @@ test("storage diagnostics survive a bundled error boundary but remain closed", (
   assert.equal(reportStorageDiagnosticCode({ name: "ReportStorageError", code: "run-create-batch-schema-mismatch" }), "run-create-batch-schema-mismatch");
   assert.equal(reportStorageDiagnosticCode({ name: "ReportStorageError", code: "raw-private-detail" }), null);
   assert.equal(reportStorageDiagnosticCode(new Error("run-create-batch-constraint")), null);
+});
+
+test("report creation result carries only closed diagnostics across the route boundary", async () => {
+  const database = new FakeDatabase();
+  database.batch = async () => { throw new Error("D1_ERROR: table report_runs has no column named attempt_count"); };
+  const classified = await createReportRunResult({ primaryDomain: "example.com" }, new Date(), database);
+  assert.deepEqual(classified, { ok: false, diagnosticCode: "run-create-batch-schema-mismatch" });
+
+  const foreign = await createReportRunResult({ primaryDomain: "example.com" }, { toISOString() { throw new Error("private detail"); } }, new FakeDatabase());
+  assert.deepEqual(foreign, { ok: false, diagnosticCode: "run-create-unclassified" });
+  assert.doesNotMatch(JSON.stringify(foreign), /private|detail/i);
+
+  const successful = await createReportRunResult({ primaryDomain: "example.com" }, new Date(), new FakeDatabase());
+  assert.equal(successful.ok, true);
+  assert.equal(successful.report.primaryDomain, "example.com");
 });

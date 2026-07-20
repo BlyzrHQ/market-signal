@@ -1,15 +1,15 @@
 import { dispatchReportJob, ReportDispatchError } from "../../lib/report-dispatch.ts";
-import { createReportRun, markReportDispatched, markReportDispatchFailed, reportStorageDiagnosticCode } from "../../lib/report-store.ts";
+import { createReportRunResult, markReportDispatched, markReportDispatchFailed, reportStorageDiagnosticCode } from "../../lib/report-store.ts";
 
 type ReportCreationDependencies = {
-  create: typeof createReportRun;
+  create: typeof createReportRunResult;
   dispatch: typeof dispatchReportJob;
   markDispatched: typeof markReportDispatched;
   markDispatchFailed: typeof markReportDispatchFailed;
 };
 
 const dependencies: ReportCreationDependencies = {
-  create: createReportRun,
+  create: createReportRunResult,
   dispatch: dispatchReportJob,
   markDispatched: markReportDispatched,
   markDispatchFailed: markReportDispatchFailed,
@@ -21,10 +21,16 @@ export async function createPersistentReport(request: Request, services: ReportC
   try {
     const body = await request.json() as { primaryDomain?: unknown; locale?: unknown };
     stage = "storage-create";
-    const report = await services.create({
+    const creation = await services.create({
       primaryDomain: typeof body.primaryDomain === "string" ? body.primaryDomain : "",
       locale: body.locale === "ar" ? "ar" : "en",
     });
+    if (!creation.ok) {
+      const status = creation.diagnosticCode === "invalid-domain" ? 400 : 503;
+      if (status === 503) console.error("report creation failed", { stage: "storage-create", diagnosticCode: creation.diagnosticCode });
+      return Response.json({ ok: false, error: status === 400 ? "A valid public domain is required." : "The persistent report could not be created.", errorCode: status === 400 ? "invalid-domain" : "storage-create-failed" }, { status, headers: { "Cache-Control": "no-store" } });
+    }
+    const report = creation.report;
     publicId = report.publicId;
     let job: Awaited<ReturnType<typeof dispatchReportJob>>;
     try {

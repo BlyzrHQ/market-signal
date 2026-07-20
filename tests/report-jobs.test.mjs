@@ -64,7 +64,7 @@ test("report creation returns 202 only after dispatch and records a sanitized fa
   const created = { id: "internal", publicId: PUBLIC_ID, primaryDomain: "myjam.co.uk", locale: "en", status: "queued", currentPhase: "queued", attemptCount: 1, createdAt: "now", expiresAt: "later" };
   const calls = [];
   const success = await createPersistentReport(new Request("https://example.test/api/reports", { method: "POST", body: JSON.stringify({ primaryDomain: "myjam.co.uk", locale: "en" }) }), {
-    create: async () => created,
+    create: async () => ({ ok: true, report: created }),
     dispatch: async () => ({ runId: "run_started1", idempotencyKey: `${PUBLIC_ID}:1:1` }),
     markDispatched: async (id, runId) => calls.push(["dispatched", id, runId]),
     markDispatchFailed: async () => calls.push(["failed"]),
@@ -74,7 +74,7 @@ test("report creation returns 202 only after dispatch and records a sanitized fa
 
   const telemetryFailureCalls = [];
   const acceptedWithoutTelemetry = await createPersistentReport(new Request("https://example.test/api/reports", { method: "POST", body: JSON.stringify({ primaryDomain: "myjam.co.uk" }) }), {
-    create: async () => created,
+    create: async () => ({ ok: true, report: created }),
     dispatch: async () => ({ runId: "run_started2", idempotencyKey: `${PUBLIC_ID}:1:1` }),
     markDispatched: async () => { throw new Error("temporary D1 write failure"); },
     markDispatchFailed: async () => telemetryFailureCalls.push("failed"),
@@ -84,7 +84,7 @@ test("report creation returns 202 only after dispatch and records a sanitized fa
 
   const failedCalls = [];
   const failure = await createPersistentReport(new Request("https://example.test/api/reports", { method: "POST", body: JSON.stringify({ primaryDomain: "myjam.co.uk" }) }), {
-    create: async () => created,
+    create: async () => ({ ok: true, report: created }),
     dispatch: async () => { throw new Error("upstream body containing a secret"); },
     markDispatched: async () => {},
     markDispatchFailed: async (id) => failedCalls.push(id),
@@ -96,32 +96,38 @@ test("report creation returns 202 only after dispatch and records a sanitized fa
   assert.equal(body.errorCode, "dispatch-failed");
   assert.doesNotMatch(JSON.stringify(body), /upstream|secret/i);
 
-  const storageFailure = await createPersistentReport(new Request("https://example.test/api/reports", { method: "POST", body: JSON.stringify({ primaryDomain: "myjam.co.uk" }) }), {
-    create: async () => { throw new Error("D1 internal diagnostic"); },
-    dispatch: async () => { throw new Error("must not dispatch"); },
-    markDispatched: async () => {},
-    markDispatchFailed: async () => {},
-  });
-  assert.equal(storageFailure.status, 503);
-  const storageBody = await storageFailure.json();
-  assert.equal(storageBody.errorCode, "storage-create-failed");
-  assert.doesNotMatch(JSON.stringify(storageBody), /D1|diagnostic/i);
-
   const originalConsoleError = console.error;
   const logged = [];
   console.error = (...args) => logged.push(args);
   try {
-    const bundledStorageFailure = await createPersistentReport(new Request("https://example.test/api/reports", { method: "POST", body: JSON.stringify({ primaryDomain: "myjam.co.uk" }) }), {
-      create: async () => { throw { name: "ReportStorageError", code: "run-create-batch-schema-mismatch" }; },
+    for (const diagnosticCode of ["storage-unavailable", "run-create-batch-schema-mismatch", "run-create-unclassified"]) {
+      const storageFailure = await createPersistentReport(new Request("https://example.test/api/reports", { method: "POST", body: JSON.stringify({ primaryDomain: "myjam.co.uk" }) }), {
+        create: async () => ({ ok: false, diagnosticCode }),
+        dispatch: async () => { throw new Error("must not dispatch"); },
+        markDispatched: async () => {},
+        markDispatchFailed: async () => {},
+      });
+      assert.equal(storageFailure.status, 503);
+      const storageBody = await storageFailure.json();
+      assert.deepEqual(storageBody, { ok: false, error: "The persistent report could not be created.", errorCode: "storage-create-failed" });
+      assert.doesNotMatch(JSON.stringify(storageBody), /diagnostic|schema|unclassified|unavailable/i);
+    }
+    const invalidDomain = await createPersistentReport(new Request("https://example.test/api/reports", { method: "POST", body: JSON.stringify({ primaryDomain: "invalid" }) }), {
+      create: async () => ({ ok: false, diagnosticCode: "invalid-domain" }),
       dispatch: async () => { throw new Error("must not dispatch"); },
       markDispatched: async () => {},
       markDispatchFailed: async () => {},
     });
-    assert.equal(bundledStorageFailure.status, 503);
+    assert.equal(invalidDomain.status, 400);
+    assert.deepEqual(await invalidDomain.json(), { ok: false, error: "A valid public domain is required.", errorCode: "invalid-domain" });
   } finally {
     console.error = originalConsoleError;
   }
-  assert.deepEqual(logged.at(-1), ["report creation failed", { stage: "storage-create", diagnosticCode: "run-create-batch-schema-mismatch" }]);
+  assert.deepEqual(logged, [
+    ["report creation failed", { stage: "storage-create", diagnosticCode: "storage-unavailable" }],
+    ["report creation failed", { stage: "storage-create", diagnosticCode: "run-create-batch-schema-mismatch" }],
+    ["report creation failed", { stage: "storage-create", diagnosticCode: "run-create-unclassified" }],
+  ]);
 });
 
 test("authenticated recovery increments the attempt, dispatches it, and safely replays", async () => {
