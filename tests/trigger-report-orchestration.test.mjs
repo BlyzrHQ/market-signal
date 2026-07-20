@@ -169,6 +169,146 @@ test("crawl failure becomes terminal only on the final task attempt", async () =
   assert.equal(failure.phase, "failed");
 });
 
+test("a source-linked parked domain persists one terminal limited report without downstream work", async () => {
+  const calls = { brief: 0, ads: 0, match: 0, enrich: 0 };
+  const port = mockPort({
+    async crawl() {
+      return {
+        ok: false,
+        code: "parked-domain",
+        primaryDomain: payload.primaryDomain,
+        error: "shop.example redirects to a domain-for-sale service.",
+        document: {
+          version: "1",
+          blocks: [
+            { type: "domain-status", id: "primary-domain-status", domain: payload.primaryDomain, status: "parked", provider: "GoDaddy/Afternic", evidenceUrl: "https://shop.example/lander", observedAt: "2026-07-20T10:00:00.000Z", alternatives: [] },
+            { type: "gap", id: "gap-parked", domain: payload.primaryDomain, url: "https://shop.example/lander", reason: "Redirects to a domain-for-sale service.", observedAt: "2026-07-20T10:00:00.000Z" },
+          ],
+        },
+      };
+    },
+    async brief() { calls.brief += 1; throw new Error("must not run"); },
+    async ads() { calls.ads += 1; throw new Error("must not run"); },
+    async match() { calls.match += 1; throw new Error("must not run"); },
+    async enrich() { calls.enrich += 1; throw new Error("must not run"); },
+  });
+  const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
+  assert.equal(result.reportStatus, "limited");
+  assert.deepEqual(result.completedPhases, ["persistence"]);
+  assert.deepEqual(result.limitedPhases, ["crawl", "brief", "ads", "matching"]);
+  assert.deepEqual(calls, { brief: 0, ads: 0, match: 0, enrich: 0 });
+  assert.equal(port.saves.length, 1);
+  assert.equal(port.saves[0].status, "limited");
+  for (const phase of result.limitedPhases) {
+    const savedEvent = port.events.find((item) => item.idempotencyKey === `${phase === "crawl" ? "crawl" : phase}-limited`);
+    assert.equal(savedEvent.phase, phase);
+    assert.equal(savedEvent.status, "limited");
+  }
+});
+
+test("a parked-domain retry replays partial event writes without an idempotency conflict", async () => {
+  const storedEvents = new Map();
+  let saveAttempts = 0;
+  const port = mockPort({
+    async loadReport() {
+      return {
+        run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "running", createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:00:00.000Z" },
+        events: [...storedEvents.values()],
+      };
+    },
+    async appendEvent(_publicId, value) {
+      const existing = storedEvents.get(value.idempotencyKey);
+      if (existing && JSON.stringify(existing) !== JSON.stringify(value)) throw new Error(`idempotency conflict: ${value.idempotencyKey}`);
+      storedEvents.set(value.idempotencyKey, structuredClone(value));
+    },
+    async crawl() {
+      return {
+        ok: false,
+        code: "parked-domain",
+        primaryDomain: payload.primaryDomain,
+        error: "shop.example redirects to a domain-for-sale service.",
+        document: { version: "1", blocks: [
+          { type: "domain-status", id: "primary-domain-status", domain: payload.primaryDomain, status: "parked", provider: "GoDaddy/Afternic", evidenceUrl: "https://shop.example/lander", observedAt: "2026-07-20T10:00:00.000Z", alternatives: [] },
+          { type: "gap", id: "gap-parked", domain: payload.primaryDomain, url: "https://shop.example/lander", reason: "Redirects to a domain-for-sale service.", observedAt: "2026-07-20T10:00:00.000Z" },
+        ] },
+      };
+    },
+    async saveDocument(_publicId, value) {
+      saveAttempts += 1;
+      if (saveAttempts === 1) throw new Error("transient save failure");
+      this.saves.push(value);
+    },
+  });
+  await assert.rejects(orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port), /transient save failure/);
+  const result = await orchestrateReport(payload, { attemptNumber: 2, isFinalAttempt: true }, port);
+  assert.equal(result.reportStatus, "limited");
+  assert.equal(saveAttempts, 2);
+  assert.equal(storedEvents.get("crawl-limited").metadata.attempt, undefined);
+  assert.equal([...storedEvents.keys()].filter((key) => key.endsWith("-limited")).length, 4);
+});
+
+test("the HTTP crawl adapter accepts only a bounded source-linked parked-domain 409", async () => {
+  const parked = {
+    ok: false,
+    code: "parked-domain",
+    primaryDomain: payload.primaryDomain,
+    error: "Parked domain.",
+    document: { version: "1", blocks: [
+      { type: "domain-status", id: "primary-domain-status", domain: payload.primaryDomain, status: "parked", provider: "GoDaddy/Afternic", redirectDomain: "forsale.godaddy.com", evidenceUrl: "https://shop.example/lander", observedAt: "2026-07-20T10:00:00.000Z" },
+      { type: "gap", id: "parked-gap", domain: payload.primaryDomain, url: "https://shop.example/lander", reason: "Parked.", observedAt: "2026-07-20T10:00:00.000Z" },
+    ] },
+  };
+  const accepted = createReportOrchestrationHttpPort({
+    appOrigin: "https://market.example",
+    callbackToken: "callback_secret_with_enough_entropy_123456",
+    async fetchImpl() { return Response.json(parked, { status: 409 }); },
+  });
+  assert.deepEqual(await accepted.crawl({ primary: payload.primaryDomain, domains: [payload.primaryDomain] }), parked);
+
+  for (const body of [
+    { ...parked, primaryDomain: "attacker.example" },
+    { ...parked, error: "" },
+    { ...parked, document: { version: "1", blocks: [] } },
+    { ...parked, document: { version: "1", blocks: parked.document.blocks.map((block) => block.type === "domain-status" ? { ...block, redirectDomain: "forsale.godaddy.com.evil.example" } : block) } },
+  ]) {
+    const rejected = createReportOrchestrationHttpPort({
+      appOrigin: "https://market.example",
+      callbackToken: "callback_secret_with_enough_entropy_123456",
+      async fetchImpl() { return Response.json(body, { status: 409 }); },
+    });
+    await assert.rejects(rejected.crawl({ primary: payload.primaryDomain, domains: [payload.primaryDomain] }), /HTTP 409/);
+  }
+
+  const oversized = createReportOrchestrationHttpPort({
+    appOrigin: "https://market.example",
+    callbackToken: "callback_secret_with_enough_entropy_123456",
+    async fetchImpl() { return new Response(JSON.stringify(parked), { status: 409, headers: { "content-type": "application/json", "content-length": "1000001" } }); },
+  });
+  await assert.rejects(oversized.crawl({ primary: payload.primaryDomain, domains: [payload.primaryDomain] }), /HTTP 409/);
+});
+
+test("a replayed parked report preserves the live canonical phase summary", async () => {
+  const port = mockPort({
+    async loadReport() {
+      return {
+        run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "limited", createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:05:00.000Z" },
+        events: [
+          { idempotencyKey: "crawl-limited", phase: "crawl", status: "limited" },
+          { idempotencyKey: "brief-limited", phase: "brief", status: "limited" },
+          { idempotencyKey: "ads-limited", phase: "ads", status: "limited" },
+          { idempotencyKey: "matching-limited", phase: "matching", status: "limited" },
+          { idempotencyKey: "report-saved", phase: "complete", status: "limited" },
+        ],
+      };
+    },
+  });
+  const result = await orchestrateReport(payload, { attemptNumber: 2, isFinalAttempt: true }, port);
+  assert.deepEqual(result.completedPhases, ["persistence"]);
+  assert.deepEqual(result.limitedPhases, ["crawl", "brief", "ads", "matching"]);
+  assert.equal(port.events.length, 0);
+  assert.equal(port.saves.length, 0);
+});
+
 test("terminal success replay derives its summary and issues no mutations", async () => {
   const port = mockPort({
     async loadReport() {

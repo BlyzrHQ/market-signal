@@ -60,7 +60,7 @@ test("saved reports use a persistent dashboard shell without the old report hero
   assert.match(report, /className="dashboard-brand"/);
   assert.match(report, /className="dashboard-report-identity"/);
   assert.match(report, /className="report-dashboard-main"/);
-  assert.match(report, /item === "evidence" && <b>\{evidence\.length\}<\/b>/);
+  assert.match(report, /item === "evidence" && <b>\{evidence\.length \+ gaps\.length\}<\/b>/);
   assert.doesNotMatch(report, /stored-report-hero/);
   assert.doesNotMatch(css, /\.stored-report-hero/);
   assert.match(css, /\.dashboard-view-title span,\.report-route-meta span \{ display: none; \}[\s\S]*\.report-route-meta time \{ font-size: 7px; \}/);
