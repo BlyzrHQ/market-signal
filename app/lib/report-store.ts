@@ -43,6 +43,7 @@ export type StoredReportEvent = {
 const REPORT_SCHEMA_VERSION = 1;
 const REPORT_RETENTION_DAYS = 90;
 const STALE_RUN_MS = 10 * 60 * 1000;
+const QUEUED_DISPATCH_TIMEOUT_MS = 60 * 60 * 1000;
 export const MAX_REPORT_DOCUMENT_BYTES = 750_000;
 const MAX_SNAPSHOT_CATALOG_PRODUCTS = 40;
 const MAX_SNAPSHOT_UNMATCHED_PRODUCTS = 20;
@@ -159,7 +160,7 @@ export async function createReportRun(input: { primaryDomain: string; locale?: s
   if (!database) throw new Error("Persistent report storage is unavailable.");
   const primaryDomain = canonicalDomain(input.primaryDomain);
   if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(primaryDomain)) throw new Error("A valid public domain is required.");
-  const locale = input.locale === "ar" ? "ar" : "en";
+  const locale: "en" | "ar" = input.locale === "ar" ? "ar" : "en";
   const id = internalId();
   const shareId = publicId();
   const observedAt = now.toISOString();
@@ -169,7 +170,7 @@ export async function createReportRun(input: { primaryDomain: string; locale?: s
     database.prepare(`INSERT INTO report_runs (id, public_id, primary_domain, locale, status, current_phase, attempt_count, created_at, updated_at, heartbeat_at, expires_at, error_code, error_message) VALUES (?, ?, ?, ?, 'queued', 'queued', 1, ?, ?, ?, ?, '', '')`).bind(id, shareId, primaryDomain, locale, observedAt, observedAt, observedAt, expiresAt),
     database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) VALUES (?, 1, 'run-created', 'queued', 'queued', 'Report queued for public-source collection.', '{}', ?)`).bind(id, observedAt),
   ]);
-  return { id, publicId: shareId, primaryDomain, locale, status: "queued" as const, currentPhase: "queued" as const, createdAt: observedAt, expiresAt };
+  return { id, publicId: shareId, primaryDomain, locale, status: "queued" as const, currentPhase: "queued" as const, attemptCount: 1, createdAt: observedAt, expiresAt };
 }
 
 export async function appendReportEvent(publicReportId: string, input: { idempotencyKey: string; phase: ReportPhase; status: ReportRunStatus; message: string; metadata?: unknown; errorCode?: string }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
@@ -185,7 +186,7 @@ export async function appendReportEvent(publicReportId: string, input: { idempot
   await ensureSchema(database);
   const run = await findRun(database, publicReportId);
   if (!run) throw new Error("Report not found.");
-  if (["complete", "limited", "failed"].includes(run.status)) throw new Error("A terminal report cannot accept another progress event.");
+  if (["complete", "limited", "failed", "interrupted"].includes(run.status)) throw new Error("A terminal report cannot accept another progress event.");
   await database.batch([
     database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE(MAX(sequence), 0) + 1, ?, ?, ?, ?, ?, ? FROM report_events WHERE run_id = ? ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, key, input.phase, input.status, message, JSON.stringify(metadata), observedAt, run.id),
     database.prepare(`UPDATE report_runs SET status = ?, current_phase = ?, updated_at = ?, heartbeat_at = ?, error_code = ?, error_message = ? WHERE id = ? AND ? = (SELECT idempotency_key FROM report_events WHERE run_id = ? ORDER BY sequence DESC LIMIT 1)`).bind(input.status, input.phase, observedAt, observedAt, cleanText(input.errorCode, 80), input.status === "failed" ? message : "", run.id, key, run.id),
@@ -206,7 +207,7 @@ export async function saveReportDocument(publicReportId: string, document: unkno
   await ensureSchema(database);
   const run = await findRun(database, publicReportId);
   if (!run) throw new Error("Report not found.");
-  if (["complete", "limited", "failed"].includes(run.status)) throw new Error("A terminal report cannot be overwritten.");
+  if (["complete", "limited", "failed", "interrupted"].includes(run.status)) throw new Error("A terminal report cannot be overwritten.");
   await database.batch([
     database.prepare(`INSERT INTO report_documents (run_id, schema_version, document_json, observed_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_id) DO UPDATE SET schema_version = excluded.schema_version, document_json = excluded.document_json, observed_at = excluded.observed_at, updated_at = excluded.updated_at`).bind(run.id, REPORT_SCHEMA_VERSION, documentJson, observedAt, now.toISOString()),
     database.prepare(`UPDATE report_runs SET status = ?, current_phase = 'complete', updated_at = ?, heartbeat_at = ?, error_code = '', error_message = '' WHERE id = ?`).bind(status, now.toISOString(), now.toISOString(), run.id),
@@ -223,13 +224,26 @@ export async function getStoredReport(publicReportId: string, now = new Date(), 
   let run = await findRun(database, publicReportId);
   if (!run) return null;
   const heartbeatTime = Date.parse(run.heartbeatAt);
-  if (["queued", "running"].includes(run.status) && (!Number.isFinite(heartbeatTime) || now.getTime() - heartbeatTime > STALE_RUN_MS)) {
+  if (run.status === "running" && (!Number.isFinite(heartbeatTime) || now.getTime() - heartbeatTime > STALE_RUN_MS)) {
     const observedAt = now.toISOString();
+    const message = "The background worker stopped reporting progress before this phase completed.";
     await database.batch([
-      database.prepare(`UPDATE report_runs SET status = 'interrupted', current_phase = 'interrupted', updated_at = ?, error_code = 'stale-run', error_message = 'The previous browser session stopped before this phase completed.' WHERE id = ?`).bind(observedAt, run.id),
-      database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE(MAX(sequence), 0) + 1, 'stale-run-interrupted', 'interrupted', 'interrupted', 'The previous browser session stopped before this phase completed.', '{}', ? FROM report_events WHERE run_id = ? ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, observedAt, run.id),
+      database.prepare(`UPDATE report_runs SET status = 'interrupted', current_phase = 'interrupted', updated_at = ?, error_code = 'stale-worker', error_message = ? WHERE id = ?`).bind(observedAt, message, run.id),
+      database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE(MAX(sequence), 0) + 1, 'stale-worker-interrupted', 'interrupted', 'interrupted', ?, '{}', ? FROM report_events WHERE run_id = ? ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, message, observedAt, run.id),
     ]);
-    run = { ...run, status: "interrupted", currentPhase: "interrupted", updatedAt: observedAt, errorCode: "stale-run", errorMessage: "The previous browser session stopped before this phase completed." };
+    run = { ...run, status: "interrupted", currentPhase: "interrupted", updatedAt: observedAt, errorCode: "stale-worker", errorMessage: message };
+  } else if (run.status === "queued" && Number.isFinite(heartbeatTime) && now.getTime() - heartbeatTime > QUEUED_DISPATCH_TIMEOUT_MS) {
+    const dispatchKey = `job-dispatched-attempt-${run.attemptCount}`;
+    const dispatchResult = await database.prepare(`SELECT idempotency_key FROM report_events WHERE run_id = ? AND idempotency_key = ? LIMIT 1`).bind(run.id, dispatchKey).all<Record<string, unknown>>();
+    if (dispatchResult.results?.length) {
+      const observedAt = now.toISOString();
+      const message = "The background report job was accepted but did not start within the expected time.";
+      await database.batch([
+        database.prepare(`UPDATE report_runs SET status = 'failed', current_phase = 'failed', updated_at = ?, error_code = 'dispatch-timeout', error_message = ? WHERE id = ? AND status = 'queued'`).bind(observedAt, message, run.id),
+        database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE(MAX(sequence), 0) + 1, 'queued-dispatch-timeout', 'failed', 'failed', ?, '{}', ? FROM report_events WHERE run_id = ? ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, message, observedAt, run.id),
+      ]);
+      run = { ...run, status: "failed", currentPhase: "failed", updatedAt: observedAt, errorCode: "dispatch-timeout", errorMessage: message };
+    }
   }
   const [eventsResult, documentResult] = await Promise.all([
     database.prepare(`SELECT sequence, idempotency_key, phase, status, message, metadata_json, observed_at FROM report_events WHERE run_id = ? ORDER BY sequence ASC LIMIT 100`).bind(run.id).all<Record<string, unknown>>(),
@@ -244,4 +258,48 @@ export async function getStoredReport(publicReportId: string, now = new Date(), 
   let document: unknown = null;
   try { document = documentRow ? JSON.parse(String(documentRow.document_json || "null")) : null; } catch { document = null; }
   return { run, events, document, documentSchemaVersion: Number(documentRow?.schema_version || 0), documentObservedAt: String(documentRow?.observed_at || "") };
+}
+
+export async function markReportDispatched(publicReportId: string, triggerRunId: string, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+  const report = await getStoredReport(publicReportId, now, databaseOverride);
+  if (!report) throw new Error("Report not found.");
+  if (report.run.status === "running") {
+    return { publicId: report.run.publicId, phase: report.run.currentPhase, status: report.run.status, observedAt: report.run.updatedAt, skipped: true as const };
+  }
+  if (report.run.status !== "queued") throw new Error("Only a queued or running report can record dispatch.");
+  return appendReportEvent(publicReportId, {
+    idempotencyKey: `job-dispatched-attempt-${report.run.attemptCount}`,
+    phase: "queued",
+    status: "queued",
+    message: "The background report job was accepted and is waiting to start.",
+    metadata: { triggerRunId: cleanText(triggerRunId, 120), attempt: report.run.attemptCount },
+  }, now, databaseOverride);
+}
+
+export async function markReportDispatchFailed(publicReportId: string, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+  return appendReportEvent(publicReportId, {
+    idempotencyKey: "job-dispatch-failed",
+    phase: "failed",
+    status: "failed",
+    message: "The background report job could not be started.",
+    errorCode: "dispatch-failed",
+  }, now, databaseOverride);
+}
+
+export async function recoverInterruptedReport(publicReportId: string, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error("Persistent report storage is unavailable.");
+  if (!PUBLIC_ID_PATTERN.test(publicReportId)) throw new Error("Invalid report id.");
+  await ensureSchema(database);
+  const run = await findRun(database, publicReportId);
+  if (!run) throw new Error("Report not found.");
+  if (run.status !== "interrupted") throw new Error("Only an interrupted report can be recovered.");
+  const observedAt = now.toISOString();
+  const attemptCount = run.attemptCount + 1;
+  const eventKey = `recovery-attempt-${attemptCount}`;
+  await database.batch([
+    database.prepare(`UPDATE report_runs SET status = 'queued', current_phase = 'queued', attempt_count = ?, updated_at = ?, heartbeat_at = ?, error_code = '', error_message = '' WHERE id = ? AND status = 'interrupted'`).bind(attemptCount, observedAt, observedAt, run.id),
+    database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE(MAX(sequence), 0) + 1, ?, 'queued', 'queued', 'The interrupted background report was authorized for another attempt.', ?, ? FROM report_events WHERE run_id = ? ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, eventKey, JSON.stringify({ attempt: attemptCount }), observedAt, run.id),
+  ]);
+  return { ...run, status: "queued" as const, currentPhase: "queued" as const, attemptCount, updatedAt: observedAt, heartbeatAt: observedAt, errorCode: "", errorMessage: "" };
 }
