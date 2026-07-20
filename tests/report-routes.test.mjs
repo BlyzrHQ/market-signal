@@ -84,6 +84,11 @@ test("saved product and ad views preserve truth boundaries and source links", ()
   assert.match(report, /showDetail=\{false\}/);
   assert.match(report, /`\$\{productAnchor\(domain\)\}-\$\{slug\(battle\.key\)\}`/);
   assert.match(report, /const verdict = display\(assessment\.verdict, ar \? "بديل قريب" : "Close substitute"\)/);
+  assert.doesNotMatch(report, /comparison-pair-heading|comparison-match-tags/);
+  assert.doesNotMatch(css, /\.comparison-pair-heading|\.comparison-match-tags/);
+  assert.match(report, /className="comparison-detail-meta"/);
+  assert.match(report, /display\(assessment\.claimType, "inferred"\)/);
+  assert.match(report, /display\(battle\.match\.confidence/);
   assert.match(report, /window\.addEventListener\("beforeprint", expandPrintEvidence\)/);
   assert.match(report, /window\.addEventListener\("afterprint", restorePrintEvidence\)/);
   assert.match(report, /firstSentence\.length >= 15 \? firstSentence : full/);
