@@ -36,6 +36,14 @@ function slug(value: unknown) { return display(value, "item").toLowerCase().repl
 function viewFromLocation(): View { const value = new URLSearchParams(window.location.search).get("view"); return VIEWS.includes(value as View) ? value as View : "overview"; }
 function viewHref(view: View, anchor = "") { return `?view=${view}${anchor ? `#${anchor}` : ""}`; }
 function productPrice(product: Record<string, unknown>) { return list(product.priceSignals).map((item) => display(object(item).raw)).filter(Boolean)[0] || ""; }
+function conciseAction(value: unknown, fallback: string, limit = 88) {
+  const full = display(value, fallback);
+  const firstSentence = full.match(/^.*?[.!?؟](?:\s|$)/)?.[0]?.trim() || "";
+  const sentence = firstSentence.length >= 15 ? firstSentence : full;
+  if (sentence.length <= limit) return sentence;
+  const clipped = sentence.slice(0, limit - 1).replace(/\s+\S*$/, "").trim();
+  return `${clipped || sentence.slice(0, limit - 1).trim()}…`;
+}
 function statusTone(status: string) { return status === "verified-active" ? "observed" : status === "access-limited" ? "limited" : status === "no-verified-result" ? "unavailable" : "inferred"; }
 function scrollToReportHash() {
   const raw = window.location.hash.slice(1); if (!raw) return;
@@ -51,6 +59,13 @@ function ReportWorkspace({ blocks, marketBrief, primaryDomain, observedAt, repor
   useEffect(() => { const media = window.matchMedia("(max-width: 1023px)"); const sync = () => setCompactNav(media.matches); sync(); media.addEventListener("change", sync); return () => media.removeEventListener("change", sync); }, []);
   useEffect(() => { const frame = window.requestAnimationFrame(scrollToReportHash); window.addEventListener("hashchange", scrollToReportHash); return () => { window.cancelAnimationFrame(frame); window.removeEventListener("hashchange", scrollToReportHash); }; }, [view, blocks]);
   useEffect(() => { if (compactNav) tabs.current[VIEWS.indexOf(view)]?.scrollIntoView({ inline: "nearest", block: "nearest" }); }, [compactNav, view]);
+  useEffect(() => {
+    let printOpened: HTMLDetailsElement[] = [];
+    const expandPrintEvidence = () => { printOpened = Array.from(document.querySelectorAll<HTMLDetailsElement>(".comparison-detail-disclosure:not([open])")); printOpened.forEach((detail) => { detail.open = true; }); };
+    const restorePrintEvidence = () => { printOpened.forEach((detail) => { detail.open = false; }); printOpened = []; };
+    window.addEventListener("beforeprint", expandPrintEvidence); window.addEventListener("afterprint", restorePrintEvidence);
+    return () => { window.removeEventListener("beforeprint", expandPrintEvidence); window.removeEventListener("afterprint", restorePrintEvidence); };
+  }, []);
   const selectView = (next: View, replace = false, hash = "") => {
     const url = new URL(window.location.href); url.searchParams.set("view", next); url.hash = hash;
     window.history[replace ? "replaceState" : "pushState"]({}, "", url); setView(next);
@@ -130,8 +145,8 @@ function ReportWorkspace({ blocks, marketBrief, primaryDomain, observedAt, repor
         {productEnrichmentGaps.length > 0 && <div className="product-evidence-gaps" role="status"><header><span>{ar ? "\u0641\u062c\u0648\u0629 \u0628\u064a\u0627\u0646\u0627\u062a \u0627\u0644\u0645\u0646\u062a\u062c" : "PRODUCT DATA GAP"}</span><strong>{ar ? `\u062a\u0639\u0630\u0631 \u0625\u0643\u0645\u0627\u0644 ${productEnrichmentGaps.length} \u0635\u0641\u062d\u0629 \u0645\u062d\u062f\u062f\u0629` : `${productEnrichmentGaps.length} selected page${productEnrichmentGaps.length === 1 ? "" : "s"} could not be completed`}</strong></header>{productEnrichmentGaps.slice(0, 4).map((gap, index) => <p key={`${display(gap.productId)}-${index}`}><b>{display(gap.role, ar ? "\u0645\u0646\u062a\u062c" : "product")}</b><span>{display(gap.reason, ar ? "\u0644\u0645 \u062a\u062a\u0648\u0641\u0631 \u0623\u062f\u0644\u0629 \u0643\u0627\u0641\u064a\u0629 \u0644\u0644\u0633\u0639\u0631 \u0623\u0648 \u0627\u0644\u0635\u0648\u0631\u0629." : "Price or image evidence was not available from this page.")}</span>{safeUrl(gap.url) && <a href={safeUrl(gap.url)} target="_blank" rel="noreferrer">{ar ? "\u0627\u0641\u062a\u062d \u0627\u0644\u0645\u0635\u062f\u0631 \u2197" : "Open source ↗"}</a>}</p>)}</div>}
         <div className="product-comparison-table-shell">
           <table className="product-comparison-table" role="table">
-            <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">{ar ? "منتجك" : "Your product"}</th><th role="columnheader" scope="col">{ar ? "أقرب منافس" : "Closest rival"}</th><th role="columnheader" scope="col">{ar ? "موقع السعر" : "Price position"}</th><th role="columnheader" scope="col">{ar ? "أدلة المطابقة" : "Match evidence"}</th><th role="columnheader" scope="col">{ar ? "ماذا تفعل" : "Recommended move"}</th></tr></thead>
-            <tbody role="rowgroup">{battles.map((battle) => {
+            <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">{ar ? "مقارنة المنتجين" : "Product pair"}</th><th role="columnheader" scope="col">{ar ? "إشارة السعر" : "Price signal"}</th><th role="columnheader" scope="col">{ar ? "الخطوة التالية" : "Next move"}</th></tr></thead>
+            {battles.map((battle) => {
               const domain = display(battle.match.domain || battle.rival.domain);
               const assessment = object(battle.match.assessment);
               const decision = object(battle.match.decision);
@@ -140,16 +155,35 @@ function ReportWorkspace({ blocks, marketBrief, primaryDomain, observedAt, repor
               const comparablePrice = resolvedPriceDelta(decision.priceComparison);
               const primaryDisplay = comparablePrice?.primaryRaw || primaryPrice;
               const rivalDisplay = comparablePrice?.rivalRaw || rivalPrice;
+              const primarySource = safeUrl(battle.primary.sourceUrl);
+              const rivalSource = safeUrl(battle.rival.sourceUrl);
               const reasons = list(assessment.reasons).map((reason) => display(reason)).filter(Boolean).join(" · ") || list(battle.match.sharedTerms).map((term) => display(term)).filter(Boolean).join(" · ");
-              const anchor = firstBattleByDomain.get(domain) === battle.key ? productAnchor(domain) : `${productAnchor(domain)}-${slug(battle.rival.id || battle.key)}`;
-              return <tr id={anchor} key={battle.key} role="row" data-rival={domain}>
-                <td role="cell" className="comparison-product-cell your-comparison-cell"><span className="comparison-mobile-label">{ar ? "منتجك" : "Your product"}</span><div className="comparison-product-summary">{safeUrl(battle.primary.imageUrl) && <img src={safeUrl(battle.primary.imageUrl)} alt="" />}<div><h3 dir="auto">{display(battle.primary.name, ar ? "منتج مرصود" : "Observed product")}</h3><strong dir="auto">{primaryDisplay || (ar ? "السعر غير مرصود" : "Price not observed")}</strong><a href={safeUrl(battle.primary.sourceUrl)} target="_blank" rel="noreferrer">{ar ? "مصدر منتجك ↗" : "Your product source ↗"}</a></div></div></td>
-                <td role="cell" className="comparison-product-cell rival-comparison-cell"><span className="comparison-mobile-label">{ar ? "أقرب منافس" : "Closest rival"}</span><a className="comparison-rival-domain" href={viewHref("competitors", competitorAnchor(domain))}>{display(domain, ar ? "المنافس" : "Competitor")}</a><div className="comparison-product-summary">{safeUrl(battle.rival.imageUrl) && <img src={safeUrl(battle.rival.imageUrl)} alt="" />}<div><h3 dir="auto">{display(battle.rival.name, ar ? "منتج منافس مرصود" : "Observed rival product")}</h3><strong dir="auto">{rivalDisplay || (ar ? "السعر غير مرصود" : "Price not observed")}</strong><a href={safeUrl(battle.rival.sourceUrl)} target="_blank" rel="noreferrer">{ar ? "مصدر المنافس ↗" : "Rival product source ↗"}</a></div></div></td>
-                <td role="cell" className="comparison-price-cell"><span className="comparison-mobile-label">{ar ? "موقع السعر" : "Price position"}</span><PricePosition comparisonValue={decision.priceComparison} primaryRaw={primaryDisplay} rivalRaw={rivalDisplay} priceVerdict={display(decision.priceVerdict)} locale={ar ? "ar" : "en"} /></td>
-                <td role="cell" className="comparison-match-cell"><span className="comparison-mobile-label">{ar ? "أدلة المطابقة" : "Match evidence"}</span><div className="comparison-match-tags"><span className={`truth-pill ${display(assessment.claimType, "inferred").toLowerCase()}`}>{display(assessment.claimType, ar ? "مستنتج" : "Inferred")}</span><b>{display(battle.match.confidence, ar ? "ثقة محدودة" : "Limited confidence")}</b></div><strong>{display(assessment.verdict || battle.match.confidence, ar ? "بديل قريب" : "Close substitute")}</strong><p title={reasons}>{reasons}</p></td>
-                <td role="cell" className="comparison-action-cell"><span className="comparison-mobile-label">{ar ? "ماذا تفعل" : "Recommended move"}</span><strong>{display(decision.recommendedMove, ar ? "راجع المنتجين قبل اتخاذ قرار." : "Review both products before acting.")}</strong><p>{display(decision.priceVerdict)}</p><a href={viewHref("evidence", evidenceAnchor(domain))}>{ar ? "أدلة المنافس" : "Rival evidence"}</a></td>
-              </tr>;
-            })}</tbody>
+              const verdict = display(assessment.verdict, ar ? "بديل قريب" : "Close substitute");
+              const fullAction = display(decision.recommendedMove, ar ? "راجع المنتجين قبل اتخاذ قرار." : "Review both products before acting.");
+              const shortAction = conciseAction(fullAction, ar ? "راجع المنتجين قبل اتخاذ قرار." : "Review both products before acting.");
+              const anchor = firstBattleByDomain.get(domain) === battle.key ? productAnchor(domain) : `${productAnchor(domain)}-${slug(battle.key)}`;
+              const detailId = `comparison-detail-${slug(domain)}-${slug(battle.key)}`;
+              return <tbody className="comparison-group" role="rowgroup" key={battle.key} data-rival={domain}>
+                <tr id={anchor} className="comparison-main-row" role="row">
+                  <td role="cell" className="comparison-pair-cell">
+                    <span className="comparison-mobile-label">{ar ? "مقارنة المنتجين" : "Product pair"}</span>
+                    <div className="comparison-pair-heading"><div className="comparison-match-tags"><span className={`truth-pill ${display(assessment.claimType, "inferred").toLowerCase()}`}>{display(assessment.claimType, ar ? "مستنتج" : "Inferred")}</span><b>{display(battle.match.confidence, ar ? "ثقة محدودة" : "Limited confidence")}</b></div><strong dir="auto">{verdict.replace(/_/g, " ")}</strong></div>
+                    <div className="comparison-product-pair">
+                      <section className="comparison-paired-product"><div className="comparison-product-kicker"><span>{ar ? "منتجك" : "YOU"}</span></div><div className="comparison-product-summary">{safeUrl(battle.primary.imageUrl) && <img src={safeUrl(battle.primary.imageUrl)} alt="" />}<div><h3 dir="auto">{display(battle.primary.name, ar ? "منتج مرصود" : "Observed product")}</h3>{primarySource ? <a href={primarySource} target="_blank" rel="noreferrer">{ar ? "افتح منتجك ↗" : "Open your product ↗"}</a> : <span className="comparison-source-missing">{ar ? "المصدر غير متاح" : "Source unavailable"}</span>}</div></div></section>
+                      <span className="comparison-pair-connector" aria-hidden="true">{ar ? "مقابل" : "VS"}</span>
+                      <section className="comparison-paired-product"><div className="comparison-product-kicker"><span>{ar ? "المنافس" : "RIVAL"}</span><a className="comparison-rival-domain" href={viewHref("competitors", competitorAnchor(domain))}>{display(domain, ar ? "المنافس" : "Competitor")}</a></div><div className="comparison-product-summary">{safeUrl(battle.rival.imageUrl) && <img src={safeUrl(battle.rival.imageUrl)} alt="" />}<div><h3 dir="auto">{display(battle.rival.name, ar ? "منتج منافس مرصود" : "Observed rival product")}</h3>{rivalSource ? <a href={rivalSource} target="_blank" rel="noreferrer">{ar ? "افتح منتج المنافس ↗" : "Open rival product ↗"}</a> : <span className="comparison-source-missing">{ar ? "المصدر غير متاح" : "Source unavailable"}</span>}</div></div></section>
+                    </div>
+                  </td>
+                  <td role="cell" className="comparison-price-cell"><span className="comparison-mobile-label">{ar ? "إشارة السعر" : "Price signal"}</span><PricePosition comparisonValue={decision.priceComparison} primaryRaw={primaryDisplay} rivalRaw={rivalDisplay} priceVerdict={display(decision.priceVerdict)} locale={ar ? "ar" : "en"} showDetail={false} /></td>
+                  <td role="cell" className="comparison-action-cell"><span className="comparison-mobile-label">{ar ? "الخطوة التالية" : "Next move"}</span><strong dir="auto">{shortAction}</strong></td>
+                </tr>
+                <tr className="comparison-detail-row" role="row"><td role="cell" colSpan={3}><details className="comparison-detail-disclosure"><summary aria-controls={detailId}><span>{ar ? "لماذا طابقنا هذين المنتجين؟" : "Why this match?"}</span><small>{ar ? "الأسباب وأساس السعر والمصادر" : "Reasons, price basis, and sources"}</small></summary><div className="comparison-detail-grid" id={detailId}>
+                  <section><span>{ar ? "أساس المطابقة" : "MATCH BASIS"}</span><strong dir="auto">{verdict.replace(/_/g, " ")}</strong><p dir="auto">{reasons || (ar ? "لم تُحفظ أسباب إضافية لهذه المطابقة." : "No additional match reasons were saved.")}</p></section>
+                  <section><span>{ar ? "أساس السعر" : "PRICE BASIS"}</span><strong>{comparablePrice ? (ar ? "فارق سعر مباشر" : "Direct observed delta") : (ar ? "المقارنة محدودة" : "Comparison limited")}</strong><p dir="auto">{display(decision.priceVerdict, comparablePrice ? (ar ? "تُحسب النسبة مقارنة بالسعر المرصود الأعلى." : "Percentage is relative to the higher observed price.") : (ar ? "لا تتوفر مقارنة سعر مباشرة على الأساس نفسه." : "No direct price comparison is available on the same basis."))}</p></section>
+                  <section><span>{ar ? "المصادر والتوصية" : "SOURCES & ACTION"}</span><strong dir="auto">{fullAction}</strong><div className="comparison-detail-links">{primarySource && <a href={primarySource} target="_blank" rel="noreferrer">{ar ? "مصدر منتجك ↗" : "Your source ↗"}</a>}{rivalSource && <a href={rivalSource} target="_blank" rel="noreferrer">{ar ? "مصدر المنافس ↗" : "Rival source ↗"}</a>}<a href={viewHref("evidence", evidenceAnchor(domain))}>{ar ? "دفتر الأدلة" : "Evidence ledger"}</a></div></section>
+                </div></details></td></tr>
+              </tbody>;
+            })}
           </table>
         </div>
         {!battles.length && <div className="truth-state limited"><strong>{ar ? "لا توجد مطابقة منتجات موثقة" : "No defensible product match was saved"}</strong><p>{ar ? "تم فحص الكتالوج، لكن لا ينبغي عرض زوج ضعيف على أنه مقارنة." : "Catalogs were assessed, but a weak pair should not be presented as a comparison."}</p></div>}

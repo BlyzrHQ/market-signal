@@ -8,6 +8,7 @@ type PricePositionProps = {
   rivalRaw: string;
   priceVerdict: string;
   locale: Locale;
+  showDetail?: boolean;
 };
 
 const TEXT = {
@@ -59,7 +60,7 @@ const TEXT = {
   },
 };
 
-export function PricePosition({ comparisonValue, primaryRaw, rivalRaw, locale }: PricePositionProps) {
+export function PricePosition({ comparisonValue, primaryRaw, rivalRaw, locale, showDetail = true }: PricePositionProps) {
   const copy = TEXT[locale];
   const comparison = resolvedPriceDelta(comparisonValue);
   const primaryDisplay = comparison?.primaryRaw || primaryRaw || copy.notObserved;
@@ -78,7 +79,7 @@ export function PricePosition({ comparisonValue, primaryRaw, rivalRaw, locale }:
         : comparison.percent < 0
           ? copy.rivalCheaper(Math.abs(comparison.percent))
           : copy.youCheaper(comparison.percent);
-    tone = comparison.equal ? "equal" : comparison.percent < 0 ? "rival-leads" : "you-lead";
+    tone = comparison.equal ? "equal" : comparison.percent === 0 ? "near-equal" : comparison.percent < 0 ? "rival-leads" : "you-lead";
     detail = copy.method;
   } else if (approvedPair) {
     headline = copy.approvedUnparsed;
@@ -106,7 +107,7 @@ export function PricePosition({ comparisonValue, primaryRaw, rivalRaw, locale }:
           <strong dir="auto">{rivalDisplay}</strong>
         </div>
       </div>
-      <p dir="auto">{detail}</p>
+      {showDetail && <p dir="auto">{detail}</p>}
     </section>
   );
 }
