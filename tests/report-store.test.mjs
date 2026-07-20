@@ -204,3 +204,20 @@ test("schema initialization identifies a failing DDL statement without exposing 
     (error) => error instanceof ReportStorageError && error.code === "schema-statement-3-failed" && !/D1|SQL/i.test(error.message),
   );
 });
+
+test("atomic report creation classifies D1 batch failures without exposing raw details", async () => {
+  for (const [message, expected] of [
+    ["D1_ERROR: table report_runs has no column named attempt_count", "run-create-batch-schema-mismatch"],
+    ["D1_ERROR: NOT NULL constraint failed", "run-create-batch-constraint"],
+    ["Wrong number of parameter bindings", "run-create-batch-binding-count"],
+    ["D1_ERROR: cannot start a transaction", "run-create-batch-transaction"],
+    ["private backend detail", "run-create-batch-batch-api"],
+  ]) {
+    const database = new FakeDatabase();
+    database.batch = async () => { throw new Error(message); };
+    await assert.rejects(
+      createReportRun({ primaryDomain: "example.com" }, new Date(), database),
+      (error) => error instanceof ReportStorageError && error.code === expected && !/D1|backend|column|constraint/i.test(error.message),
+    );
+  }
+});

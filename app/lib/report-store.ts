@@ -157,6 +157,15 @@ export class ReportStorageError extends Error {
   }
 }
 
+function batchFailureClass(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  if (/no such (?:table|column)|has no column named/i.test(message)) return "schema-mismatch";
+  if (/(?:unique|not null|check|foreign key) constraint/i.test(message)) return "constraint";
+  if (/wrong number of parameter bindings|parameter.{0,20}(?:count|binding)|bind.{0,20}(?:count|parameter)/i.test(message)) return "binding-count";
+  if (/transaction|database is locked/i.test(message)) return "transaction";
+  return "batch-api";
+}
+
 async function initializeSchema(database: D1DatabaseLike) {
   for (let index = 0; index < SCHEMA_STATEMENTS.length; index += 1) {
     try {
@@ -198,10 +207,14 @@ export async function createReportRun(input: { primaryDomain: string; locale?: s
   const observedAt = now.toISOString();
   const expiresAt = addDays(now, REPORT_RETENTION_DAYS);
   await ensureSchema(database);
-  await database.batch([
-    database.prepare(`INSERT INTO report_runs (id, public_id, primary_domain, locale, status, current_phase, attempt_count, created_at, updated_at, heartbeat_at, expires_at, error_code, error_message) VALUES (?, ?, ?, ?, 'queued', 'queued', 1, ?, ?, ?, ?, '', '')`).bind(id, shareId, primaryDomain, locale, observedAt, observedAt, observedAt, expiresAt),
-    database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) VALUES (?, 1, 'run-created', 'queued', 'queued', 'Report queued for public-source collection.', '{}', ?)`).bind(id, observedAt),
-  ]);
+  try {
+    await database.batch([
+      database.prepare(`INSERT INTO report_runs (id, public_id, primary_domain, locale, status, current_phase, attempt_count, created_at, updated_at, heartbeat_at, expires_at, error_code, error_message) VALUES (?, ?, ?, ?, 'queued', 'queued', 1, ?, ?, ?, ?, '', '')`).bind(id, shareId, primaryDomain, locale, observedAt, observedAt, observedAt, expiresAt),
+      database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) VALUES (?, 1, 'run-created', 'queued', 'queued', 'Report queued for public-source collection.', '{}', ?)`).bind(id, observedAt),
+    ]);
+  } catch (error) {
+    throw new ReportStorageError(`run-create-batch-${batchFailureClass(error)}`);
+  }
   return { id, publicId: shareId, primaryDomain, locale, status: "queued" as const, currentPhase: "queued" as const, attemptCount: 1, createdAt: observedAt, expiresAt };
 }
 

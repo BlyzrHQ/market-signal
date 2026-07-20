@@ -90,6 +90,7 @@ Unknown actions are 400; conflicting replays and writes to terminal runs are 409
 - Fable 5 implementation re-review returned `IMPLEMENTATION GATE: PASS` after independently running 257 passing tests and lint with zero errors. Production configuration, live MyJam evidence, and final merge-gate review remain required before merge.
 - Live production validation exposed an HTTP 503 before dispatch. The creation route now emits only a safe stage/diagnostic code to Worker logs and distinguishes a missing Trigger credential from a rejected Trigger request without logging credentials or arbitrary upstream error bodies.
 - Production logs isolated the failure to D1 schema initialization. Runtime schema setup now executes each idempotent DDL statement sequentially, caches successful initialization per D1 binding, retries after failure, and reports only the closed failing-statement code. This avoids relying on a multi-DDL D1 batch during a customer request.
+- The schema initializer completed in production and isolated the next failure to the atomic run/event creation batch. That batch remains atomic; its raw D1 error is reduced to one closed log-only class (`schema-mismatch`, `constraint`, `binding-count`, `transaction`, or `batch-api`) before any migration decision.
 
 ## Local validation record
 
