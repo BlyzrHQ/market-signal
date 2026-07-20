@@ -1,6 +1,6 @@
 export type RegionSignal = {
   countryCode: string;
-  kind: "tld" | "language" | "structured-address" | "currency" | "phone" | "explicit-market" | "global-market";
+  kind: "tld" | "language" | "structured-address" | "currency" | "phone" | "explicit-market" | "fulfillment-location" | "global-market";
   value: string;
   weight: number;
   sourceUrl: string;
@@ -30,6 +30,7 @@ const COUNTRY_NAMES: Record<string, string> = {
   EG: "Egypt",
   FR: "France",
   GB: "United Kingdom",
+  IN: "India",
   SA: "Saudi Arabia",
   US: "United States",
   GLOBAL: "Global market",
@@ -39,6 +40,7 @@ const TLD_COUNTRIES: Array<[RegExp, string]> = [
   [/\.(?:co\.)?uk$/i, "GB"],
   [/\.us$/i, "US"],
   [/\.eg$/i, "EG"],
+  [/\.in$/i, "IN"],
   [/\.sa$/i, "SA"],
   [/\.ae$/i, "AE"],
   [/\.de$/i, "DE"],
@@ -48,6 +50,8 @@ const TLD_COUNTRIES: Array<[RegExp, string]> = [
 const LANGUAGE_COUNTRIES: Record<string, string> = {
   "en-gb": "GB",
   "en-us": "US",
+  "en-in": "IN",
+  "hi-in": "IN",
   "de-de": "DE",
   "fr-fr": "FR",
   "ar-eg": "EG",
@@ -59,11 +63,51 @@ const EXPLICIT_PATTERNS: Array<[RegExp, string]> = [
   [/\b(?:united kingdom|great britain|england|scotland|wales)\b/i, "GB"],
   [/\b(?:united states|usa|u\.s\.a\.)\b/i, "US"],
   [/\begypt\b/i, "EG"],
+  [/\bindia\b/i, "IN"],
   [/\bsaudi arabia\b/i, "SA"],
   [/\b(?:united arab emirates|uae)\b/i, "AE"],
   [/\bgermany\b/i, "DE"],
   [/\bfrance\b/i, "FR"],
 ];
+
+const FULFILLMENT_LOCATIONS: Array<[string, string]> = [
+  ["abu dhabi", "AE"],
+  ["dubai", "AE"],
+  ["sharjah", "AE"],
+  ["berlin", "DE"],
+  ["hamburg", "DE"],
+  ["munich", "DE"],
+  ["cairo", "EG"],
+  ["giza", "EG"],
+  ["lyon", "FR"],
+  ["marseille", "FR"],
+  ["paris", "FR"],
+  ["london", "GB"],
+  ["manchester", "GB"],
+  ["bengaluru", "IN"],
+  ["chennai", "IN"],
+  ["delhi", "IN"],
+  ["hyderabad", "IN"],
+  ["kolkata", "IN"],
+  ["mumbai", "IN"],
+  ["dammam", "SA"],
+  ["jeddah", "SA"],
+  ["riyadh", "SA"],
+  ["california", "US"],
+  ["chicago", "US"],
+  ["dallas", "US"],
+  ["florida", "US"],
+  ["houston", "US"],
+  ["los angeles", "US"],
+  ["miami", "US"],
+  ["new york", "US"],
+  ["texas", "US"],
+];
+
+const FULFILLMENT_LOCATION_PATTERN = new RegExp(
+  `\\b(?:ships?|shipped|shipping|dispatch(?:ed|es|ing)?|deliver(?:ed|s|ing)?)\\b(?:\\s+(?!from\\b)[\\w'-]+){0,4}\\s+from\\s+(?:our\\s+)?(${FULFILLMENT_LOCATIONS.map(([location]) => location.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\b`,
+  "gi",
+);
 
 function addSignal(signals: RegionSignal[], scores: Record<string, number>, signal: RegionSignal) {
   signals.push(signal);
@@ -103,6 +147,7 @@ function structuredCountry(document: string) {
   if (/^(?:GB|UK|United Kingdom)$/i.test(value)) return ["GB", value] as const;
   if (/^(?:US|USA|United States)$/i.test(value)) return ["US", value] as const;
   if (/^(?:EG|Egypt)$/i.test(value)) return ["EG", value] as const;
+  if (/^(?:IN|India)$/i.test(value)) return ["IN", value] as const;
   if (/^(?:SA|Saudi Arabia)$/i.test(value)) return ["SA", value] as const;
   if (/^(?:AE|UAE|United Arab Emirates)$/i.test(value)) return ["AE", value] as const;
   if (/^(?:DE|Germany)$/i.test(value)) return ["DE", value] as const;
@@ -136,6 +181,7 @@ export function inferRegion(input: RegionInput): RegionInference {
   const prices = (input.priceSignals || []).join(" ");
   if (/£|\bGBP\b/i.test(prices)) addSignal(signals, scores, { countryCode: "GB", kind: "currency", value: "GBP", weight: 3, sourceUrl: input.sourceUrl, claimType: "Observed" });
   if (/\bUSD\b|\bUS\$/i.test(prices)) addSignal(signals, scores, { countryCode: "US", kind: "currency", value: "USD", weight: 3, sourceUrl: input.sourceUrl, claimType: "Observed" });
+  if (/\u20B9|\bINR\b/i.test(prices)) addSignal(signals, scores, { countryCode: "IN", kind: "currency", value: "INR", weight: 3, sourceUrl: input.sourceUrl, claimType: "Observed" });
   if (/€|\bEUR\b/i.test(prices)) {
     const localeCountry = languageCountry === "DE" || languageCountry === "FR" ? languageCountry : "";
     if (localeCountry) addSignal(signals, scores, { countryCode: localeCountry, kind: "currency", value: "EUR", weight: 2, sourceUrl: input.sourceUrl, claimType: "Observed" });
@@ -144,11 +190,18 @@ export function inferRegion(input: RegionInput): RegionInference {
   if (/\+44[\s(.-]/.test(text)) addSignal(signals, scores, { countryCode: "GB", kind: "phone", value: "+44", weight: 2, sourceUrl: input.sourceUrl, claimType: "Observed" });
   if (/\+1[\s(.-]\d{3}/.test(text)) addSignal(signals, scores, { countryCode: "US", kind: "phone", value: "+1", weight: 2, sourceUrl: input.sourceUrl, claimType: "Observed" });
   if (/\+20[\s(.-]/.test(text)) addSignal(signals, scores, { countryCode: "EG", kind: "phone", value: "+20", weight: 2, sourceUrl: input.sourceUrl, claimType: "Observed" });
+  if (/\+91[\s(.-]/.test(text)) addSignal(signals, scores, { countryCode: "IN", kind: "phone", value: "+91", weight: 2, sourceUrl: input.sourceUrl, claimType: "Observed" });
   if (/\+966[\s(.-]/.test(text)) addSignal(signals, scores, { countryCode: "SA", kind: "phone", value: "+966", weight: 2, sourceUrl: input.sourceUrl, claimType: "Observed" });
   if (/\+971[\s(.-]/.test(text)) addSignal(signals, scores, { countryCode: "AE", kind: "phone", value: "+971", weight: 2, sourceUrl: input.sourceUrl, claimType: "Observed" });
 
   for (const [pattern, countryCode] of EXPLICIT_PATTERNS) {
     if (pattern.test(text)) addSignal(signals, scores, { countryCode, kind: "explicit-market", value: text.match(pattern)?.[0] || COUNTRY_NAMES[countryCode], weight: 1, sourceUrl: input.sourceUrl, claimType: "Inferred" });
+  }
+
+  for (const match of text.matchAll(FULFILLMENT_LOCATION_PATTERN)) {
+    const location = match[1]?.toLowerCase() || "";
+    const countryCode = FULFILLMENT_LOCATIONS.find(([candidate]) => candidate === location)?.[1];
+    if (countryCode) addSignal(signals, scores, { countryCode, kind: "fulfillment-location", value: match[0], weight: 4, sourceUrl: input.sourceUrl, claimType: "Inferred" });
   }
 
   const globalMarket = text.match(/\b(?:global(?:ly)?|worldwide|around the world|across (?:more than )?\d+ countries)\b/i)?.[0];
@@ -162,12 +215,43 @@ export function regionCode(value: string | RegionInference) {
   if (/united kingdom|\bgb\b|\buk\b/i.test(value)) return "GB";
   if (/united states|\busa\b|\bus\b/i.test(value)) return "US";
   if (/egypt|\beg\b/i.test(value)) return "EG";
+  if (/india/i.test(value) || /^in(?:\s*\(inferred\))?$/i.test(value.trim())) return "IN";
   if (/saudi|\bsa\b/i.test(value)) return "SA";
   if (/emirates|\buae\b|\bae\b/i.test(value)) return "AE";
   if (/germany|\bde\b/i.test(value)) return "DE";
   if (/france|\bfr\b/i.test(value)) return "FR";
   if (/global|worldwide/i.test(value)) return "GLOBAL";
   return "";
+}
+
+const STRICT_REGION_CODES: Record<string, string> = {
+  ae: "AE",
+  de: "DE",
+  eg: "EG",
+  fr: "FR",
+  gb: "GB",
+  global: "GLOBAL",
+  "global market": "GLOBAL",
+  in: "IN",
+  india: "IN",
+  sa: "SA",
+  "saudi arabia": "SA",
+  uae: "AE",
+  uk: "GB",
+  "united arab emirates": "AE",
+  "united kingdom": "GB",
+  "united states": "US",
+  us: "US",
+  usa: "US",
+  worldwide: "GLOBAL",
+  germany: "DE",
+  egypt: "EG",
+  france: "FR",
+};
+
+export function strictRegionCode(value: string) {
+  const normalized = value.trim().replace(/\s*\(inferred\)\s*$/i, "").trim().toLowerCase();
+  return STRICT_REGION_CODES[normalized] || "";
 }
 
 export function displayRegion(inference: RegionInference) {

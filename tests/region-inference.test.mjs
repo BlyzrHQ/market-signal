@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { combineRegionSignals, inferRegion } from "../app/lib/region-inference.ts";
+import { combineRegionSignals, inferRegion, strictRegionCode } from "../app/lib/region-inference.ts";
 
 test("uses a country-code domain as strong market evidence", () => {
   const result = inferRegion({
@@ -81,4 +81,74 @@ test("combines independent page signals without counting repeated footer evidenc
   assert.equal(combined.countryCode, "GB");
   assert.equal(combined.confidence, "Medium");
   assert.equal(combined.signals.filter((signal) => signal.kind === "phone").length, 1);
+});
+
+test("keeps concrete India evidence ahead of worldwide marketing language", () => {
+  const result = inferRegion({
+    domain: "store.in",
+    language: "en-IN",
+    document: '<script type="application/ld+json">{"address":{"addressCountry":"IN"}}</script>',
+    text: "Made in India, available worldwide. Call +91 98765 43210.",
+    priceSignals: ["INR 499", "₹599"],
+    sourceUrl: "https://store.in/",
+  });
+  assert.equal(result.countryCode, "IN");
+  assert.equal(result.country, "India");
+  assert.equal(result.confidence, "High");
+  assert.ok(result.scores.GLOBAL > 0);
+});
+
+test("strict discovery parsing accepts only supported exact market names or codes", () => {
+  assert.equal(strictRegionCode("United States (inferred)"), "US");
+  assert.equal(strictRegionCode("India"), "IN");
+  assert.equal(strictRegionCode("SA"), "SA");
+  assert.equal(strictRegionCode("South Africa"), "");
+  assert.equal(strictRegionCode("US and Canada"), "");
+});
+
+test("uses a bounded fulfillment origin to recover a concrete market from global language", () => {
+  const result = inferRegion({
+    domain: "babanuj.com",
+    language: "en",
+    text: "Gift boxes shipped fresh from Houston and available worldwide.",
+    sourceUrl: "https://babanuj.com/",
+  });
+  assert.equal(result.countryCode, "US");
+  assert.equal(result.confidence, "Medium");
+  assert.equal(result.signals.find((signal) => signal.kind === "fulfillment-location")?.claimType, "Inferred");
+  assert.equal(result.scores.US, 4);
+  assert.equal(result.scores.GLOBAL, 4);
+});
+
+test("does not confuse sourcing, destinations, or casual city mentions with fulfillment origins", () => {
+  for (const text of [
+    "Sweets shipped directly from Saudi Arabia.",
+    "We ship to Houston.",
+    "Delivery to London is available.",
+    "Pistachios imported from Mumbai.",
+    "Read our guide to the best bakeries in Houston.",
+  ]) {
+    const result = inferRegion({ domain: "example.com", language: "en", text, sourceUrl: "https://example.com/" });
+    assert.equal(result.signals.some((signal) => signal.kind === "fulfillment-location"), false, text);
+  }
+});
+
+test("keeps conflicting fulfillment locations unresolved instead of fabricating one market", () => {
+  const result = inferRegion({
+    domain: "example.com",
+    language: "en",
+    text: "Orders shipped from Houston and dispatched from Dubai.",
+    sourceUrl: "https://example.com/",
+  });
+  assert.equal(result.countryCode, "");
+  assert.equal(result.scores.US, 4);
+  assert.equal(result.scores.AE, 4);
+  assert.equal(result.signals.filter((signal) => signal.kind === "fulfillment-location").length, 2);
+});
+
+test("does not create country-storefront evidence for unsupported generic TLDs", () => {
+  for (const domain of ["seller.com", "seller.io"]) {
+    const result = inferRegion({ domain, language: "en", text: "Fresh grocery delivery", sourceUrl: `https://${domain}/` });
+    assert.equal(result.signals.some((signal) => signal.kind === "tld"), false, domain);
+  }
 });

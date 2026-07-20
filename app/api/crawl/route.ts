@@ -3,7 +3,7 @@ import { buildProductComparison, extractFirstPartyOfferings, extractProductsFrom
 import { parseRobots } from "../../lib/robots";
 import { discoverCompetitors, type DiscoveryCandidate, type DiscoveryResult } from "../../lib/competitor-discovery";
 import { attributableFacebookUrl, type AdIntelligenceResult } from "../../lib/ad-intelligence";
-import { compareVerifiedCompetitors, verifyCompetitorEntity, type CompetitorVerification } from "../../lib/competitor-verification";
+import { compareVerifiedCompetitors, resolveVerificationMarket, verifyCompetitorEntity, type CompetitorVerification, type FirstPartyRegionSource, type VerificationMarket } from "../../lib/competitor-verification";
 import { inferBusinessProfile } from "../../lib/business-profile";
 import { seededCrawlPaths } from "../../lib/crawl-planning";
 import { combineRegionSignals, displayRegion, inferRegion as inferRegionEvidence, type RegionSignal } from "../../lib/region-inference";
@@ -87,7 +87,13 @@ const USER_AGENT = "MarketSignalPublicScanner/0.1";
 const PRIORITY_PATHS = ["/pricing", "/plans", "/products", "/features", "/compare", "/integrations", "/about", "/customers", "/blog"];
 const SOCIAL_HOSTS = ["facebook.com", "instagram.com", "linkedin.com", "tiktok.com", "youtube.com", "x.com", "twitter.com"];
 
-function verifyDiscoveredCompetitor(primary: DomainCrawl, candidate: DomainCrawl, discovery: DiscoveryCandidate) {
+function firstPartyRegionSource(page: CrawlPage): FirstPartyRegionSource {
+  return page.regionSignals.some((signal) => signal.countryCode === page.regionCountryCode && signal.claimType === "Observed")
+    ? "first-party-observed"
+    : "first-party-inferred";
+}
+
+function verifyDiscoveredCompetitor(primary: DomainCrawl, candidate: DomainCrawl, discovery: DiscoveryCandidate, targetMarket: VerificationMarket) {
   if (!primary.homepage || !candidate.homepage) return {
     ...candidate,
     discovery: {
@@ -97,16 +103,26 @@ function verifyDiscoveredCompetitor(primary: DomainCrawl, candidate: DomainCrawl
       confidence: "Low" as const,
       categoryAlignment: false,
       regionCompatibility: false,
-      primaryRegionKnown: Boolean(primary.homepage?.region),
+      primaryRegionKnown: Boolean(targetMarket.regionCode),
       candidateRegionKnown: false,
+      targetRegion: targetMarket.region,
+      targetRegionCode: targetMarket.regionCode,
+      targetRegionSource: targetMarket.source,
+      candidateRegion: candidate.homepage?.region || "Not enough public signal",
+      candidateRegionCode: "",
+      candidateCombinedRegionCode: "",
+      candidateRegionSource: "first-party-inferred" as const,
+      candidateRegionBasis: "combined-first-party" as const,
+      regionDecisionReason: `Target market ${targetMarket.regionCode || "unknown"} (${targetMarket.source}); candidate region could not be observed because its public homepage was unavailable.`,
       overlapTerms: [],
       hasProductOverlap: false,
     },
   };
   const verification = verifyCompetitorEntity(
-    { domain: primary.domain, title: primary.homepage.title, description: primary.homepage.description, region: primary.homepage.region, headings: primary.pages.flatMap((page) => page.headings), products: primary.products },
-    { domain: candidate.domain, title: candidate.homepage.title, description: candidate.homepage.description, region: candidate.homepage.region, headings: candidate.pages.flatMap((page) => page.headings), products: candidate.products },
+    { domain: primary.domain, title: primary.homepage.title, description: primary.homepage.description, region: primary.homepage.region, regionEvidenceSource: firstPartyRegionSource(primary.homepage), headings: primary.pages.flatMap((page) => page.headings), products: primary.products },
+    { domain: candidate.domain, title: candidate.homepage.title, description: candidate.homepage.description, region: candidate.homepage.region, regionEvidenceSource: firstPartyRegionSource(candidate.homepage), countryTldRegionCode: candidate.homepage.regionSignals.find((signal) => signal.kind === "tld")?.countryCode || "", headings: candidate.pages.flatMap((page) => page.headings), products: candidate.products },
     discovery,
+    targetMarket,
   );
   return { ...candidate, discovery: { ...discovery, ...verification } };
 }
@@ -489,7 +505,7 @@ function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?
   for (const candidate of investigated) {
     if (!candidate || results.some((result) => result.domain === candidate.domain)) continue;
     const rememberedPrefix = candidate.discovery?.provenance === "remembered-reverified" ? "Remembered lead was re-crawled, not reconfirmed, and removed from memory: " : "Investigated but not confirmed: ";
-    blocks.push({ type: "gap", id: `investigation-gap-${candidate.domain}`, domain: candidate.domain, url: candidate.homepage?.sourceUrl || candidate.discovery?.sourceUrl || "", reason: candidate.homepage ? (!candidate.discovery?.regionCompatibility ? `${rememberedPrefix}first-party evidence placed this company in a different market region.` : !candidate.discovery?.categoryAlignment ? `${rememberedPrefix}the company's own website did not establish the same core market category.` : `${rememberedPrefix}entity verification score ${candidate.discovery?.verificationScore || 0}/100 did not meet the inclusion threshold.`) : `${rememberedPrefix}${candidate.gaps[0]?.reason || "the public site could not be verified."}`, observedAt: candidate.fetchedAt });
+    blocks.push({ type: "gap", id: `investigation-gap-${candidate.domain}`, domain: candidate.domain, url: candidate.homepage?.sourceUrl || candidate.discovery?.sourceUrl || "", reason: candidate.homepage ? (!candidate.discovery?.regionCompatibility ? `${rememberedPrefix}${candidate.discovery?.regionDecisionReason || "first-party evidence placed this company in a different market region."}` : !candidate.discovery?.categoryAlignment ? `${rememberedPrefix}the company's own website did not establish the same core market category.` : `${rememberedPrefix}entity verification score ${candidate.discovery?.verificationScore || 0}/100 did not meet the inclusion threshold.`) : `${rememberedPrefix}${candidate.gaps[0]?.reason || "the public site could not be verified."}`, observedAt: candidate.fetchedAt });
   }
   return { version: "1", generatedAt: new Date().toISOString(), blocks };
 }
@@ -529,7 +545,8 @@ export async function POST(request: Request) {
       candidates: investigationCandidates,
       gaps: memory.gap ? [...discovery.gaps, memory.gap] : discovery.gaps,
     };
-    const investigatedSettled = await settleWithConcurrency(investigationCandidates, COMPETITOR_CRAWL_CONCURRENCY, async (candidate) => verifyDiscoveredCompetitor(primary, await crawlDomain(candidate.domain, "discovered-competitor", candidate.matchedProductUrls?.length ? candidate.matchedProductUrls : [candidate.matchedProductUrl || candidate.websiteUrl]), candidate));
+    const verificationMarket = resolveVerificationMarket(discovery.region, primary.homepage.region, firstPartyRegionSource(primary.homepage));
+    const investigatedSettled = await settleWithConcurrency(investigationCandidates, COMPETITOR_CRAWL_CONCURRENCY, async (candidate) => verifyDiscoveredCompetitor(primary, await crawlDomain(candidate.domain, "discovered-competitor", candidate.matchedProductUrls?.length ? candidate.matchedProductUrls : [candidate.matchedProductUrl || candidate.websiteUrl]), candidate, verificationMarket));
     const discoveredResults = investigatedSettled.map((result) => result.status === "fulfilled" ? result.value : null);
     const confirmed: DomainCrawl[] = discoveredResults.filter((result): result is NonNullable<typeof result> => Boolean(result?.homepage && result.discovery?.accepted)).sort((left, right) => compareVerifiedCompetitors(left.discovery!, right.discovery!));
     const rememberedFailures = investigationCandidates.filter((candidate, index) => candidate.provenance === "remembered-reverified" && !discoveredResults[index]?.discovery?.accepted);
