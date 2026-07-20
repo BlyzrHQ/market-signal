@@ -28,10 +28,11 @@ test("server-renders the Market Signal product shell", async () => {
 });
 
 test("real-data route and product metadata are present", async () => {
-  const [route, crawl, enrichment, ads, report, page, savedReport, productLab, pricePosition, layout, styles, packageJson, domainUtils, adIntelligence] = await Promise.all([
+  const [route, crawl, enrichment, storefrontEnrichment, ads, report, page, savedReport, productLab, pricePosition, layout, styles, packageJson, domainUtils, adIntelligence] = await Promise.all([
     readFile(new URL("../app/api/analyze/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/crawl/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/enrich-products/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/storefront-product-enrichment.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/ads/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/report/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
@@ -66,12 +67,17 @@ test("real-data route and product metadata are present", async () => {
   assert.match(crawl, /adRequest/);
   assert.match(crawl, /MAX_DISCOVERED_HTML_PAGES = 3/);
   assert.match(crawl, /MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES = 6/);
+  assert.match(crawl, /MAX_PRIMARY_PRODUCT_PRICE_PAGES = 6/);
+  assert.match(crawl, /selectPrimaryProductPriceTargets/);
+  assert.match(crawl, /primaryPriceEnrichmentPagesFetched/);
   assert.match(crawl, /selectProductEnrichmentTargets/);
   assert.match(crawl, /enrichMatchedProductPages/);
   assert.match(crawl, /priceEnrichmentPagesFetched/);
   assert.match(enrichment, /MAX_TARGETS = 24/);
-  assert.match(enrichment, /validateProductPageIdentity/);
-  assert.match(enrichment, /robots\.txt/);
+  assert.match(enrichment, /enrichProductTargets/);
+  assert.match(storefrontEnrichment, /validateProductPageIdentity/);
+  assert.match(storefrontEnrichment, /robots\.txt/);
+  assert.match(storefrontEnrichment, /claimablePagePricePatterns/);
   assert.match(crawl, /async function crawlPrimaryDomain/);
   assert.match(crawl, /if \(first\.homepage\)/);
   assert.match(crawl, /coverage: \{ \.\.\.retry\.coverage, attempts: 2 \}/);

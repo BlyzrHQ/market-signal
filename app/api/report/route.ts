@@ -1,5 +1,6 @@
 import { analyzeDomain } from "../analyze/route";
 import { canonicalDomain } from "../../lib/domain";
+import { claimablePagePricePatterns } from "../../lib/storefront-product-enrichment";
 
 type ClaimType = "Observed" | "Inferred" | "Estimated" | "Recommended";
 type Confidence = "High" | "Medium" | "Low";
@@ -64,13 +65,14 @@ function list(value: unknown, limit = 8) {
 function buildClaims(sources: Source[]) {
   const claims: Claim[] = [];
   for (const source of sources) {
+    const claimablePrices = claimablePagePricePatterns(source.prices);
     const add = (suffix: string, claimText: string, claimType: ClaimType = "Observed", confidence: Confidence = "High") => {
       if (!claimText) return;
       claims.push({ id: `${source.domain}-${suffix}`, text: claimText.slice(0, MAX_TEXT), sourceUrl: source.sourceUrl, observedAt: source.fetchedAt, claimType, confidence });
     };
     add("title", `${source.domain} presents itself as “${source.title}”.`);
     if (source.description) add("description", `${source.domain} describes itself as “${source.description}”.`);
-    if (source.prices.length) add("prices", `${source.domain} exposes these public price patterns: ${source.prices.join(", ")}.`);
+    if (claimablePrices.length) add("prices", `${source.domain} exposes these public price patterns: ${claimablePrices.join(", ")}.`);
     if (source.headings.length) add("headings", `${source.domain} uses these public headings: ${source.headings.slice(0, 5).join("; ")}.`);
     add("language", `${source.domain} exposes language ${source.language} and region signal ${source.region}.`, "Inferred", source.language === "unknown" ? "Low" : "Medium");
     add("social", `${source.domain} links to ${source.socialLinks.length} public social profile${source.socialLinks.length === 1 ? "" : "s"}.`);
