@@ -98,9 +98,10 @@ Unknown actions are 400; conflicting replays and writes to terminal runs are 409
 - The API route treats the store result as an untrusted cross-module value. It validates the creator, result discriminator, diagnostic allowlist, and every report field before dispatch or response; failures reduce to four closed boundary codes without logging exception text.
 - Live `create-not-callable` evidence identified the root cause: Next/Sites supplies route context as the handler's second argument, which had been mistaken for test dependencies. The exported `POST` handler now accepts only the request and delegates to the separately injectable helper.
 - A second `create-not-callable` run proved the emitted module can also evaluate imported bindings after a module-level dependency object is initialized. Default services are now built per request and use lazy forwarding functions, so imported store and Trigger functions are resolved only when invoked.
+- Sites version 95 deployed exact commit `1e430274ab4847b4e7b4282c48712f70661dead5` with environment revision 4. A real `myjam.co.uk` submission returned HTTP 202, persisted public report `f7373f1480ed47f0b8d79ccf30c96ca9`, dispatched Trigger run `run_06fo09d93oa38j5m05g5fjsp01`, and reached `complete` with 13 ordered events and a schema-v1 document containing 146 evidence/presentation blocks.
 
 ## Local validation record
 
-- `npm test`: PASS, 259/259 tests.
+- `npm test`: PASS, 265/265 tests.
 - `npm run lint`: PASS with zero errors and one pre-existing `no-img-element` warning in the product design lab.
 - `git diff --check`: PASS apart from platform line-ending notices.
