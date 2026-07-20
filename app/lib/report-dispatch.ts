@@ -20,13 +20,23 @@ export function reportDispatchIdempotencyKey(report: Pick<DispatchableReport, "p
   return `${report.publicId}:${REPORT_ORCHESTRATION_CONTRACT_VERSION}:${report.attemptCount}`;
 }
 
-function publicDispatchError() {
-  return new Error("The background report job could not be started.");
+export class ReportDispatchError extends Error {
+  readonly code: "trigger-secret-unavailable" | "trigger-request-failed";
+
+  constructor(code: ReportDispatchError["code"]) {
+    super("The background report job could not be started.");
+    this.name = "ReportDispatchError";
+    this.code = code;
+  }
+}
+
+function publicDispatchError(code: ReportDispatchError["code"]) {
+  return new ReportDispatchError(code);
 }
 
 export async function dispatchReportJob(report: DispatchableReport, options: { secret?: string; trigger?: TriggerReport } = {}) {
   const secret = await runtimeEnvironmentValue("TRIGGER_SECRET_KEY", options.secret);
-  if (!options.trigger && !/^tr_(?:prod|dev)_[A-Za-z0-9_-]+$/.test(secret)) throw publicDispatchError();
+  if (!options.trigger && !/^tr_(?:prod|dev)_[A-Za-z0-9_-]+$/.test(secret)) throw publicDispatchError("trigger-secret-unavailable");
   const payload: ReportOrchestrationPayload = {
     contractVersion: REPORT_ORCHESTRATION_CONTRACT_VERSION,
     publicId: report.publicId,
@@ -42,9 +52,10 @@ export async function dispatchReportJob(report: DispatchableReport, options: { s
     const handle = options.trigger
       ? await options.trigger(payload, triggerOptions)
       : await auth.withAuth({ accessToken: secret }, () => tasks.trigger<typeof marketSignalReportOrchestration>(REPORT_TASK_ID, payload, triggerOptions));
-    if (!handle || typeof handle.id !== "string" || !/^run_[A-Za-z0-9]+$/.test(handle.id)) throw publicDispatchError();
+    if (!handle || typeof handle.id !== "string" || !/^run_[A-Za-z0-9]+$/.test(handle.id)) throw publicDispatchError("trigger-request-failed");
     return { runId: handle.id, idempotencyKey: triggerOptions.idempotencyKey };
-  } catch {
-    throw publicDispatchError();
+  } catch (error) {
+    if (error instanceof ReportDispatchError) throw error;
+    throw publicDispatchError("trigger-request-failed");
   }
 }

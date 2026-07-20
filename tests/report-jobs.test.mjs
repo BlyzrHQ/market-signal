@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import { createPersistentReport } from "../app/api/reports/route.ts";
 import { createInternalReportHandlers } from "../app/api/internal/reports/[publicId]/route.ts";
 import { hasValidInternalAuthorization } from "../app/lib/internal-auth.ts";
-import { dispatchReportJob, reportDispatchIdempotencyKey } from "../app/lib/report-dispatch.ts";
+import { dispatchReportJob, reportDispatchIdempotencyKey, ReportDispatchError } from "../app/lib/report-dispatch.ts";
 
 const TOKEN = "callback-test-token-with-sufficient-entropy";
 const PUBLIC_ID = "a".repeat(32);
@@ -53,6 +53,13 @@ test("report dispatch deduplicates one attempt and creates a distinct recovery r
   assert.equal(reportDispatchIdempotencyKey({ ...initial, attemptCount: 2 }), `${PUBLIC_ID}:1:2`);
 });
 
+test("report dispatch diagnostics distinguish missing credentials without exposing their value", async () => {
+  await assert.rejects(
+    dispatchReportJob({ publicId: PUBLIC_ID, primaryDomain: "myjam.co.uk", locale: "en", attemptCount: 1 }, { secret: "" }),
+    (error) => error instanceof ReportDispatchError && error.code === "trigger-secret-unavailable" && !/tr_(?:prod|dev)_/i.test(error.message),
+  );
+});
+
 test("report creation returns 202 only after dispatch and records a sanitized failure otherwise", async () => {
   const created = { id: "internal", publicId: PUBLIC_ID, primaryDomain: "myjam.co.uk", locale: "en", status: "queued", currentPhase: "queued", attemptCount: 1, createdAt: "now", expiresAt: "later" };
   const calls = [];
@@ -86,7 +93,19 @@ test("report creation returns 202 only after dispatch and records a sanitized fa
   assert.deepEqual(failedCalls, [PUBLIC_ID]);
   const body = await failure.json();
   assert.equal(body.publicId, PUBLIC_ID);
+  assert.equal(body.errorCode, "dispatch-failed");
   assert.doesNotMatch(JSON.stringify(body), /upstream|secret/i);
+
+  const storageFailure = await createPersistentReport(new Request("https://example.test/api/reports", { method: "POST", body: JSON.stringify({ primaryDomain: "myjam.co.uk" }) }), {
+    create: async () => { throw new Error("D1 internal diagnostic"); },
+    dispatch: async () => { throw new Error("must not dispatch"); },
+    markDispatched: async () => {},
+    markDispatchFailed: async () => {},
+  });
+  assert.equal(storageFailure.status, 503);
+  const storageBody = await storageFailure.json();
+  assert.equal(storageBody.errorCode, "storage-create-failed");
+  assert.doesNotMatch(JSON.stringify(storageBody), /D1|diagnostic/i);
 });
 
 test("authenticated recovery increments the attempt, dispatches it, and safely replays", async () => {
