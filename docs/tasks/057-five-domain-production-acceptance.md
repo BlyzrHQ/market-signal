@@ -86,7 +86,7 @@ Fable 5 returned `TASK 57 ACCEPTANCE DESIGN: PASS`. It approved the domain set a
 
 ### 3. Noor Organic
 
-- Fresh report `0a54c2b196fe450ea8a32dd20191d3d7` (Trigger run `run_06fo1vf7i7o45eitf9hhcvu801`) reached terminal `LIMITED` on attempt 1 after the primary crawl identified `noororganic.com` as a parked HugeDomains property. The parking evidence resolves to `https://noororganic.com/lander`.
+- Fresh report `0a54c2b196fe450ea8a32dd20191d3d7` (Trigger run `run_06fo1vf7i7o45eitf9hhcvu801`) reached terminal `LIMITED` on attempt 1 after the primary crawl identified `noororganic.com` as parked through a redirect to GoDaddy/Afternic's sale service at `forsale.godaddy.com`. The persisted parking evidence resolves to `https://noororganic.com/lander`.
 - The bounded path emitted the canonical sequence `run-created`, `job-dispatched-attempt-1`, `crawl-started`, `crawl-limited`, `brief-limited`, `ads-limited`, `matching-limited`, and `report-saved`. It performed no competitor discovery, catalog extraction, ad lookup, or product matching against an identity that could not be verified.
 - The saved report contains only source-backed domain status, summary, coverage, and investigation-gap blocks. `noororganicfood.com` and `noororganicoil.com` remain explicitly labeled as possible domains with identity not verified; neither is presented as the submitted company or as a competitor.
 - Browser QA on Sites version 101 showed only Overview, Evidence, and Methodology navigation; the page states that the domain is parked, that competitors/products/ads were not checked, and that this is not a zero-result report. The source link and both unverified alternatives render without horizontal overflow.
