@@ -10,11 +10,14 @@
     "build": "vinext build",
     "start": "vinext start",
     "test": "npm run typecheck && npm run build && node --test tests/*.test.mjs",
-    "typecheck": "tsc --noEmit --allowImportingTsExtensions --jsx react-jsx --moduleResolution bundler --module esnext --target es2022 --lib dom,es2022 --skipLibCheck app/cloudflare-workers.d.ts app/page.tsx app/reports/[publicId]/page.tsx app/reports/[publicId]/loading/page.tsx app/api/crawl/route.ts app/api/match/route.ts app/api/enrich-products/route.ts app/api/ads/route.ts app/api/reports/route.ts app/api/reports/[publicId]/route.ts app/lib/report-presentation.ts app/lib/report-store.ts app/lib/ad-intelligence.ts app/lib/ai-product-matching.ts app/lib/business-profile.ts app/lib/competitor-discovery.ts app/lib/competitor-memory.ts app/lib/competitor-verification.ts app/lib/domain-recovery.ts app/lib/product-intelligence.ts app/lib/product-match-lifecycle.ts app/lib/region-inference.ts db/schema.ts",
+    "typecheck": "tsc --noEmit --allowImportingTsExtensions --jsx react-jsx --moduleResolution bundler --module esnext --target es2022 --lib dom,es2022 --skipLibCheck app/cloudflare-workers.d.ts app/page.tsx app/reports/[publicId]/page.tsx app/reports/[publicId]/loading/page.tsx app/api/crawl/route.ts app/api/match/route.ts app/api/enrich-products/route.ts app/api/ads/route.ts app/api/reports/route.ts app/api/reports/[publicId]/route.ts app/lib/report-presentation.ts app/lib/report-store.ts app/lib/ad-intelligence.ts app/lib/ai-product-matching.ts app/lib/business-profile.ts app/lib/competitor-discovery.ts app/lib/competitor-memory.ts app/lib/competitor-verification.ts app/lib/domain-recovery.ts app/lib/product-intelligence.ts app/lib/product-match-lifecycle.ts app/lib/region-inference.ts db/schema.ts trigger.config.ts src/trigger/contracts/healthcheck.ts src/trigger/healthcheck.ts",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "trigger:dev": "npx trigger.dev@4.5.4 dev",
+    "trigger:deploy": "npx trigger.dev@4.5.4 deploy"
   },
   "dependencies": {
+    "@trigger.dev/sdk": "4.5.4",
     "drizzle-orm": "0.45.2",
     "next": "16.2.6",
     "react": "19.2.6",
@@ -23,6 +26,7 @@
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.37.1",
     "@tailwindcss/postcss": "4.2.1",
+    "@trigger.dev/build": "4.5.4",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
