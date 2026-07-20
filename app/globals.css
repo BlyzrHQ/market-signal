@@ -228,11 +228,16 @@ body { background: #07110f; color: #eaf4ef; }
 .comparison-product-summary { display: grid; min-width: 0; grid-template-columns: 62px minmax(0,1fr); gap: 10px; align-items: start; }
 .comparison-product-summary:not(:has(img)) { grid-template-columns: minmax(0,1fr); }.comparison-product-summary > div { min-width: 0; }
 .comparison-product-summary img { width: 62px; height: 68px; border: 1px solid #dbe4df; border-radius: 9px; object-fit: contain; background: #fff; }
-.comparison-product-summary h3 { overflow-wrap: anywhere; margin: 1px 0 8px; color: #20382e; font-size: 12px; line-height: 1.4; }
+.comparison-product-summary h3 { overflow-wrap: anywhere; margin: 1px 0 6px; color: #20382e; font-size: 12px; line-height: 1.4; }
+.comparison-product-price { display: block; overflow-wrap: anywhere; margin: 0 0 7px; color: #176b4b; font-size: 10px; font-weight: 900; line-height: 1.3; }
+.comparison-product-price.unavailable { color: #7a8781; font-size: 8px; }
 .comparison-product-summary a { display: inline-block; overflow-wrap: anywhere; color: #176b4b; font-size: 8px; font-weight: 900; }.comparison-source-missing { color: #7a8781; font-size: 8px; font-weight: 800; }
 .comparison-price-cell { padding: 17px 12px; }.comparison-price-cell .price-position-panel { overflow: hidden; border: 1px solid #d7e2dc; border-radius: 10px; background: #f7faf8; }
 .comparison-price-cell .price-position-grid { grid-template-areas: "you rival" "result result"; grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
 .comparison-price-cell .price-position-grid > div { padding: 9px 10px; }.comparison-price-cell .your-position-value { grid-area: you; }.comparison-price-cell .rival-position-value { grid-area: rival; }.comparison-price-cell .price-position-result { grid-area: result; border-inline-start: 0 !important; border-top: 1px solid #dfe6e2; }
+.comparison-price-cell .price-position-panel.comparison-only { height: 100%; }
+.comparison-price-cell .price-position-panel.comparison-only .price-position-grid { height: 100%; grid-template-areas: "result"; grid-template-columns: minmax(0,1fr); }
+.comparison-price-cell .price-position-panel.comparison-only .price-position-result { border-top: 0; padding: 14px 10px; }
 .comparison-price-cell .price-position-value strong { margin-top: 4px; font-size: 10px; }.comparison-price-cell .price-position-result strong { margin-top: 4px; font-size: 12px; }.comparison-price-cell .price-position-result b { margin-top: 5px; padding: 4px 7px; font-size: 8px; }
 .comparison-action-cell { border-inline-start: 1px solid #edf0ee !important; padding: 17px 19px 21px; background: #fcfdfc !important; }
 .comparison-action-cell > strong { display: block; overflow-wrap: anywhere; color: #293d34; font-size: 13px; line-height: 1.5; }

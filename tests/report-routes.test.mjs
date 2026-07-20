@@ -82,6 +82,7 @@ test("saved product and ad views preserve truth boundaries and source links", ()
   assert.match(report, /Open your product ↗/);
   assert.match(report, /Open rival product ↗/);
   assert.match(report, /showDetail=\{false\}/);
+  assert.match(report, /showValues=\{false\}/);
   assert.match(report, /`\$\{productAnchor\(domain\)\}-\$\{slug\(battle\.key\)\}`/);
   assert.match(report, /const verdict = display\(assessment\.verdict, ar \? "بديل قريب" : "Close substitute"\)/);
   assert.doesNotMatch(report, /comparison-pair-heading|comparison-match-tags/);
