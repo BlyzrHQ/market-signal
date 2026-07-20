@@ -35,7 +35,7 @@ The domains are intentionally concentrated in food and cultural ecommerce becaus
 
 `limited` is acceptable only for an environmental source restriction or genuinely non-public data. Every displayed item must still pass the precision checks and the report must label the gap and reason. If the public site visibly exposes data that Market Signal misses, the run is a FAIL and requires a focused implementation fix.
 
-For `baklali.app`, honest degradation passes when the crawl succeeds, states that no attributable catalog or market evidence was found, shows what was actually verified, and invents nothing.
+For `baklali.app`, honest degradation passes when the crawler cannot obtain a public website response after its bounded attempts, persists that domain-status evidence, explicitly states that competitor/product/ad analysis did not run, and invents nothing.
 
 ## FAIL criteria
 
@@ -106,3 +106,11 @@ Fable 5 returned `TASK 57 ACCEPTANCE DESIGN: PASS`. It approved the domain set a
 - Browser QA verified the Overview, Competitors, and Products dashboard tabs, 11 rendered product rows, secure product imagery, source links, CSV export, and Share control. Selected-page enrichment fetched 14 of 16 pages. Contradictory Babanuj page identities remained visible as two source-linked data gaps instead of being accepted.
 - Same-day source checks confirmed Al Bohsali's `Baklava Pistachio Mix - 34pcs` sale price at USD 41, `Baklava Pistachio Mix - 46pcs` at USD 77, and `Maamoul Pistachio Filled Shortbread Cookies` at USD 20, matching the report. The Al-Hamdani source page displayed the correct 2.25 lb product, secure imagery, and its localized EGP price; the report normalized the independently fetched Shopify offer to USD 35.99. Direct deltas remain withheld when variant alignment is not proven.
 - Corrected result: `PASS`. The report answers the anti-dump questions with Babanuj and Al Bohsali as the top rivals, exposes usable product-price evidence without unsafe deltas, and recommends comparing observed size, ingredients, and included features before testing a price response. Continue to `baklali.app`.
+
+### 5. Baklali
+
+- Direct browser navigation and independent DNS checks confirmed that `baklali.app` and its `www` variant do not currently resolve. The initial report `0ffe83a91420498ea4b182177bb9909b` failed with the opaque message `Public crawl request failed with HTTP 400.`
+- Focused Task 63 added a fail-closed unavailable-domain terminal path. It accepts only two bounded transport failures for the submitted origin or the hosting runtime's tightly matched HTTP `530` origin-DNS signature; timeouts, redirect loops, malformed redirects, ordinary HTTP errors, unrelated `530` pages, and incidental `1016` mentions remain failures.
+- Fable 5 returned strict `PASS` after independently reproducing the focused tests, the full `310/310` suite, production build, and lint with zero errors. It merged PR #63 as `86a1d70` only after exact-commit deployment to Sites version 106 and Trigger version `20260720.13` passed production verification.
+- Fresh report `0de8ef74bb59421d9d68d87aef9d0ee5` persisted as `LIMITED`. Browser QA showed only Overview, Evidence, and Methodology, an attempted-address source, and explicit language that competitors, products, and ads were not checked and that this is not a zero-result report.
+- Result: truthful `LIMITED` acceptance. The workflow now preserves the unavailable-domain evidence without manufacturing market intelligence. Continue to the final `myjam.co.uk` regression run.
