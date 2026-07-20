@@ -45,4 +45,9 @@ Fable 5's strict implementation review found no actionable blockers, independent
 - Lint: PASS with zero errors and one pre-existing product-design-lab image warning.
 - Secret diff scan: PASS.
 - Live E-Grocers adapter check: `Spring Onions` and its HTTPS product image are retained; the false `GBP 0` is removed and replaced by the explicit coverage gap.
-- Exact Sites deployment and fresh MyJam production run: pending.
+- Exact Sites deployment: PASS. Commit `70d726f32bb0e71a10964e934a4dd6c12864978a` was packaged and deployed as Sites version 97.
+- Fresh MyJam production run: PASS for the integrity scope. Report `17f5f5377b404e82b2f0a95e3788e06d` (Trigger run `run_06fo0j9lvde1rn0r4jm7kef901`) persisted 13 events, 4 verified competitors, 600 primary products, 2,060 rival products, 30 verified product pairs, and 24/24 requested enrichment pages.
+- The report finished `LIMITED`, not failed: 24 selected AI match assessments reached the bounded report deadline and were left unaccepted. The limitation is explicit in the persisted matching gaps.
+- Persisted catalog integrity: zero zero-or-negative price signals and no rendered `GBP 0` price. Ads remain visibly source-limited where advertiser attribution is unavailable; the report does not turn missing access into a zero-ads claim.
+- Browser QA on the persisted product table: 30 comparison rows, 60/60 product images loaded, no broken images, no false zero-price labels, and Export CSV/Share controls present.
+- This rerun selected Oasis Market, My Meat Shop, Halal Fine Foods, and Damas Gate; E-Grocers was not rediscovered among the four strongest competitors. Therefore the exact E-Grocers sentinel was revalidated through the live adapter, while the fresh production report was independently checked across all persisted catalogs for any zero-or-negative storefront signal. The result does not claim an E-Grocers row existed in this rerun.
