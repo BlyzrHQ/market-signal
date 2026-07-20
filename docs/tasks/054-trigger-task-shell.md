@@ -1,4 +1,4 @@
-# Task 054 — Trigger.dev task shell
+# Task 054 - Trigger.dev task shell
 
 ## Goal
 
@@ -37,4 +37,13 @@ Establish a narrow, deployable Trigger.dev foundation for Market Signal before r
 ## Review and validation
 
 - Fable 5 architecture review: **PASS**. It approved the narrow platform-foundation boundary and required the explicit duration, retry, queue, typecheck, secret-hygiene, deployment, and live nonce gates implemented here.
-- Implementation review, production deployment/run evidence, PR, merge, and Sites deployment impact remain pending.
+- Fable 5 implementation review: **FINAL REVIEW PASS**. Fable independently reran the full suite and confirmed 234/234 tests.
+- Local validation: `npm test` passed 234/234; `npm run lint` passed with zero errors and one pre-existing `<img>` warning.
+- Secret-pattern scan: clean. No Trigger, OpenAI, Meta, or Metapi credential value is present in the task diff.
+- Pull request: [#54](https://github.com/BlyzrHQ/market-signal/pull/54).
+- Production deployment: Trigger version `20260720.2`, one detected task, deployment `z4ovzit9`, built from source commit `d960ca1`.
+- Production run: `run_06fnunkjuq09e8iduca2lmto01` completed with `isTest: false`; payload nonce matched output, contract version was `1`, and SDK version was `4.5.4`.
+- Production run evidence: https://cloud.trigger.dev/projects/v3/proj_ywbhdpqswzbwqoudftcf/runs/run_06fnunkjuq09e8iduca2lmto01
+- Deployment caveat: Trigger CLI 4.5.4 encoded the original Windows workspace path containing a space as `%20` inside the Linux build image. Deploying the exact same commit from a clean no-space worktree succeeded; no source change or credential workaround was required.
+- Sites deployment impact: none. This task adds an external worker runtime shell but does not change the Sites application behavior or its deployed source.
+- Merge remains gated on a final strict Fable review of this recorded evidence.
