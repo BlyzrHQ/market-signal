@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { boundedExtractionDocument, compactCatalogSnapshots, interruptedReportRecovery, settleWithConcurrency } from "../app/lib/crawl-runtime.ts";
+import { boundedExtractionDocument, compactCatalogSnapshots, interruptedReportRecovery, settleWithConcurrency, unavailableAfterBoundedAttempts } from "../app/lib/crawl-runtime.ts";
 
 test("settles every crawl while keeping large-document work within the concurrency limit", async () => {
   let active = 0;
@@ -72,4 +72,19 @@ test("keeps an interrupted crawl addressable through its durable report URL", ()
     message: "The competitor scan was temporarily interrupted.",
     errorCode: "crawl-service-interrupted",
   });
+});
+
+test("classifies only two same-origin non-timeout network failures as unavailable", () => {
+  const first = { kind: "network", attemptedUrl: "https://missing.example/", reason: "request failed", observedAt: "2026-07-20T10:00:00.000Z" };
+  const second = { ...first, observedAt: "2026-07-20T10:00:01.000Z" };
+  assert.deepEqual(unavailableAfterBoundedAttempts(first, second), {
+    status: "unavailable",
+    attemptedUrl: "https://missing.example/",
+    reason: "The submitted public HTTPS endpoint did not return a network response after two bounded attempts.",
+    observedAt: second.observedAt,
+  });
+  assert.equal(unavailableAfterBoundedAttempts({ ...first, kind: "timeout" }, second), null);
+  assert.equal(unavailableAfterBoundedAttempts(first, { ...second, attemptedUrl: "https://other.example/" }), null);
+  assert.equal(unavailableAfterBoundedAttempts(first, undefined), null);
+  assert.equal(unavailableAfterBoundedAttempts({ ...first, attemptedUrl: "http://missing.example/" }, { ...second, attemptedUrl: "http://missing.example/" }), null);
 });

@@ -121,6 +121,39 @@ async function acceptedParkedDomainResponse(response: Response, expectedPrimaryD
   return value;
 }
 
+async function acceptedUnavailableDomainResponse(response: Response, expectedPrimaryDomain: string) {
+  if (response.status !== 409 || !/application\/json/i.test(response.headers.get("content-type") || "")) return undefined;
+  const text = await readBoundedText(response);
+  if (text === null) return undefined;
+  let value: unknown;
+  try { value = JSON.parse(text); } catch { return undefined; }
+  const payload = record(value);
+  const document = record(payload?.document);
+  const blocks = Array.isArray(document?.blocks) ? document.blocks.map(record).filter((item): item is Record<string, unknown> => Boolean(item)) : [];
+  const domainStatus = blocks.find((item) => item.type === "domain-status" && item.status === "unavailable");
+  const attemptedUrl = typeof domainStatus?.attemptedUrl === "string" ? domainStatus.attemptedUrl : "";
+  const sourceGap = blocks.find((item) => item.type === "gap" && item.domain === expectedPrimaryDomain && item.url === attemptedUrl && typeof item.reason === "string" && item.reason.trim() && item.observedAt === domainStatus?.observedAt && typeof item.observedAt === "string" && Number.isFinite(Date.parse(item.observedAt)));
+  let attemptedDomain = "";
+  try {
+    const parsed = new URL(attemptedUrl);
+    if (parsed.protocol !== "https:" || parsed.pathname !== "/" || parsed.search || parsed.hash || parsed.username || parsed.password) return undefined;
+    attemptedDomain = parsed.hostname.toLowerCase().replace(/^www\./, "");
+  } catch { return undefined; }
+  if (payload?.ok !== false
+    || payload.code !== "unavailable-domain"
+    || payload.primaryDomain !== expectedPrimaryDomain
+    || typeof payload.error !== "string"
+    || !payload.error.trim()
+    || domainStatus?.domain !== expectedPrimaryDomain
+    || attemptedDomain !== expectedPrimaryDomain.toLowerCase().replace(/^www\./, "")
+    || domainStatus?.attempts !== 2
+    || typeof domainStatus.observedAt !== "string"
+    || !Number.isFinite(Date.parse(domainStatus.observedAt))
+    || sourceGap?.observedAt !== domainStatus.observedAt
+    || !sourceGap) return undefined;
+  return value;
+}
+
 async function requestJson(fetchImpl: FetchLike, url: string, token: string, operation: string, timeoutMs: number, body?: unknown, acceptError?: (response: Response) => Promise<unknown | undefined>) {
   const deadline = Date.now() + timeoutMs;
   for (let requestAttempt = 1; requestAttempt <= 2; requestAttempt += 1) {
@@ -181,8 +214,11 @@ export function createReportOrchestrationHttpPort(configuration: { appOrigin: st
       if (payload.ok !== true) throw new OrchestrationHttpError("Report progress callback", 502, true);
     },
     async crawl(input) {
-      const payload = requiredObject<Awaited<ReturnType<ReportOrchestrationPort["crawl"]>>>(await requestJson(fetchImpl, new URL(PATHS.crawl, appOrigin).toString(), token, "Public crawl", OPERATION_BUDGETS_MS.crawl, input, (response) => acceptedParkedDomainResponse(response, input.primary)), "Public crawl");
-      if (payload.ok !== true && payload.code !== "parked-domain") throw new OrchestrationHttpError("Public crawl", 422, false);
+      const payload = requiredObject<Awaited<ReturnType<ReportOrchestrationPort["crawl"]>>>(await requestJson(fetchImpl, new URL(PATHS.crawl, appOrigin).toString(), token, "Public crawl", OPERATION_BUDGETS_MS.crawl, input, async (response) => {
+        const parked = await acceptedParkedDomainResponse(response.clone(), input.primary);
+        return parked === undefined ? acceptedUnavailableDomainResponse(response, input.primary) : parked;
+      }), "Public crawl");
+      if (payload.ok !== true && payload.code !== "parked-domain" && payload.code !== "unavailable-domain") throw new OrchestrationHttpError("Public crawl", 422, false);
       return payload;
     },
     async brief(input) {
