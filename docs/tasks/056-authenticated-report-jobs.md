@@ -96,6 +96,7 @@ Unknown actions are 400; conflicting replays and writes to terminal runs are 409
 - Because Sites retained only the route-level invocation error and not the store-local console event, report creation now crosses the store/route boundary as a discriminated result containing either the created run or one runtime-allowlisted diagnostic code. Raw errors never cross the module boundary; the route remains the authoritative closed log channel and client responses are unchanged.
 - Result classification is total even for exotic runtime-thrown values: sentinel messages and branded codes are read only through throw-safe property access, and hostile proxies or unknown values reduce to `run-create-unclassified` rather than escaping the Result contract.
 - The API route treats the store result as an untrusted cross-module value. It validates the creator, result discriminator, diagnostic allowlist, and every report field before dispatch or response; failures reduce to four closed boundary codes without logging exception text.
+- Live `create-not-callable` evidence identified the root cause: Next/Sites supplies route context as the handler's second argument, which had been mistaken for test dependencies. The exported `POST` handler now accepts only the request and delegates to the separately injectable helper.
 
 ## Local validation record
 

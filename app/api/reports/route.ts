@@ -145,4 +145,6 @@ export async function createPersistentReport(request: Request, services: ReportC
   }
 }
 
-export const POST = createPersistentReport;
+export async function POST(request: Request) {
+  return createPersistentReport(request);
+}

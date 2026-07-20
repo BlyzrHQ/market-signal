@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 
-import { createPersistentReport } from "../app/api/reports/route.ts";
+import { createPersistentReport, POST as createReportRoute } from "../app/api/reports/route.ts";
 import { createInternalReportHandlers } from "../app/api/internal/reports/[publicId]/route.ts";
 import { hasValidInternalAuthorization } from "../app/lib/internal-auth.ts";
 import { dispatchReportJob, reportDispatchIdempotencyKey, ReportDispatchError } from "../app/lib/report-dispatch.ts";
@@ -177,6 +177,24 @@ test("report creation consumes cross-module results through a closed route bound
     console.error = originalConsoleError;
   }
   assert.equal(dispatches, 1);
+});
+
+test("the framework route context cannot replace report creation dependencies", async () => {
+  const originalConsoleError = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
+  try {
+    const response = await createReportRoute(
+      new Request("https://example.test/api/reports", { method: "POST", body: JSON.stringify({ primaryDomain: "myjam.co.uk" }) }),
+      { params: Promise.resolve({}) },
+    );
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { ok: false, error: "The persistent report could not be created.", errorCode: "storage-create-failed" });
+  } finally {
+    console.error = originalConsoleError;
+  }
+  assert.deepEqual(logged.at(-1), ["report creation failed", { stage: "storage-create", diagnosticCode: "storage-unavailable" }]);
+  assert.doesNotMatch(JSON.stringify(logged), /create-not-callable/);
 });
 
 test("authenticated recovery increments the attempt, dispatches it, and safely replays", async () => {
