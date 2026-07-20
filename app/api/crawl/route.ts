@@ -10,6 +10,7 @@ import { combineRegionSignals, displayRegion, inferRegion as inferRegionEvidence
 import { forgetRememberedCompetitors, loadRememberedCompetitors, mergeRememberedCandidates, rememberVerifiedCompetitors, type MemoryCandidate } from "../../lib/competitor-memory";
 import { discoverDomainAlternatives, extractStaticClientRedirect, parkingProvider } from "../../lib/domain-recovery";
 import { boundedExtractionDocument, compactCatalogSnapshots, settleWithConcurrency, unavailableAfterBoundedAttempts, type PublicEndpointFailure } from "../../lib/crawl-runtime";
+import { fetchPublicText } from "../../lib/public-fetch";
 import { claimablePagePricePatterns, enrichProductTargets, selectPrimaryProductPriceTargets } from "../../lib/storefront-product-enrichment";
 
 type ClaimType = "Observed" | "Inferred";
@@ -185,34 +186,7 @@ async function hash(value: string) {
 }
 
 async function fetchText(url: string, accept: string, expectedDomain?: string) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    let currentUrl = url;
-    let response: Response | null = null;
-    for (let redirect = 0; redirect <= 3; redirect += 1) {
-      const checked = normalizeDomain(currentUrl);
-      if (expectedDomain && canonicalDomain(checked.hostname) !== canonicalDomain(expectedDomain)) throw new Error("redirected off the submitted domain");
-      response = await fetch(currentUrl, { redirect: "manual", signal: controller.signal, headers: { Accept: accept, "User-Agent": USER_AGENT } });
-      if (![301, 302, 303, 307, 308].includes(response.status)) break;
-      const location = response.headers.get("location");
-      if (!location || redirect === 3) throw new Error("redirect limit reached");
-      const nextUrl = new URL(location, currentUrl);
-      if (expectedDomain && canonicalDomain(nextUrl.hostname) !== canonicalDomain(expectedDomain)) {
-        return { ok: false, status: response.status, contentType: response.headers.get("content-type") ?? "", url: currentUrl, text: "", truncated: false, error: `redirected off the submitted domain to ${canonicalDomain(nextUrl.hostname)}.`, redirectDomain: canonicalDomain(nextUrl.hostname), failureKind: "" as const };
-      }
-      currentUrl = nextUrl.toString();
-    }
-    if (!response) throw new Error("request failed");
-    const buffer = await response.arrayBuffer();
-    const truncated = buffer.byteLength > MAX_DOCUMENT_BYTES;
-    return { ok: response.ok, status: response.status, contentType: response.headers.get("content-type") ?? "", url: response.url || url, text: new TextDecoder().decode(buffer.slice(0, MAX_DOCUMENT_BYTES)), truncated, failureKind: "" as const };
-  } catch (error) {
-    const failureKind = error instanceof Error && error.name === "AbortError" ? "timeout" as const : "network" as const;
-    return { ok: false, status: 0, contentType: "", url, text: "", truncated: false, error: failureKind === "timeout" ? "timeout" : "request failed", failureKind };
-  } finally {
-    clearTimeout(timeout);
-  }
+  return fetchPublicText(url, accept, { expectedDomain, timeoutMs: REQUEST_TIMEOUT_MS, maxDocumentBytes: MAX_DOCUMENT_BYTES, userAgent: USER_AGENT });
 }
 
 function extractLinks(document: string, baseUrl: URL, domain: string) {
@@ -588,7 +562,9 @@ export async function POST(request: Request) {
           reason: unavailableState.reason,
           observedAt: unavailableState.observedAt,
         },
-        ...document.blocks.filter((block) => !(block.type === "gap" && block.domain === primaryDomain && block.url === unavailableState.attemptedUrl)),
+        ...document.blocks
+          .filter((block) => block.id !== "candidate-gap" && !(block.type === "gap" && block.domain === primaryDomain && block.url === unavailableState.attemptedUrl))
+          .map((block) => block.type === "summary" ? { ...block, title: "The submitted website was unavailable", body: "Competitor discovery did not run because the submitted public HTTPS address returned no network response after two bounded attempts." } : block),
       ];
       return Response.json({ ok: false, live: false, code: "unavailable-domain", primaryDomain, error: `${primaryDomain} did not return a public network response after two bounded attempts. Check the domain and try again later.`, results: submittedResults, document }, { status: 409 });
     }

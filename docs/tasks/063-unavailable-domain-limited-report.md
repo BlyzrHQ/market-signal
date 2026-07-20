@@ -44,6 +44,12 @@ Persist a truthful limited report when the primary domain remains network-unavai
 
 ## Local validation
 
-- `npm test`: `304/304` tests passed, including typecheck and a production build.
+- `npm test`: `307/307` tests passed, including typecheck and a production build.
 - `npm run lint`: zero errors and one pre-existing `<img>` optimization warning in `app/components/product-design-lab.tsx`.
 - Regression coverage proves that timeouts, one-off failures, different origins, malformed 409 bodies, and mismatched evidence are not accepted as an unavailable-domain terminal result.
+
+## Review record
+
+- Fable 5's first strict implementation review returned `BLOCK` on one medium data-truth issue: internal redirect-limit and malformed-Location errors were caught by the same broad catch as genuine fetch transport rejections, so a repeatedly responding redirect could be mislabeled as “no network response.”
+- The transport boundary now tags only actual `fetch` rejections as network or timeout failures. Same-origin redirect loops and malformed redirect locations have route-level regression tests and remain ordinary failed crawls.
+- The unavailable report summary now explicitly says competitor discovery did not run and removes the generic candidate-gap wording that could imply a search occurred.
