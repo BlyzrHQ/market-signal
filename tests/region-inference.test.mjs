@@ -105,3 +105,43 @@ test("strict discovery parsing accepts only supported exact market names or code
   assert.equal(strictRegionCode("South Africa"), "");
   assert.equal(strictRegionCode("US and Canada"), "");
 });
+
+test("uses a bounded fulfillment origin to recover a concrete market from global language", () => {
+  const result = inferRegion({
+    domain: "babanuj.com",
+    language: "en",
+    text: "Gift boxes shipped fresh from Houston and available worldwide.",
+    sourceUrl: "https://babanuj.com/",
+  });
+  assert.equal(result.countryCode, "US");
+  assert.equal(result.confidence, "Medium");
+  assert.equal(result.signals.find((signal) => signal.kind === "fulfillment-location")?.claimType, "Inferred");
+  assert.equal(result.scores.US, 4);
+  assert.equal(result.scores.GLOBAL, 4);
+});
+
+test("does not confuse sourcing, destinations, or casual city mentions with fulfillment origins", () => {
+  for (const text of [
+    "Sweets shipped directly from Saudi Arabia.",
+    "We ship to Houston.",
+    "Delivery to London is available.",
+    "Pistachios imported from Mumbai.",
+    "Read our guide to the best bakeries in Houston.",
+  ]) {
+    const result = inferRegion({ domain: "example.com", language: "en", text, sourceUrl: "https://example.com/" });
+    assert.equal(result.signals.some((signal) => signal.kind === "fulfillment-location"), false, text);
+  }
+});
+
+test("keeps conflicting fulfillment locations unresolved instead of fabricating one market", () => {
+  const result = inferRegion({
+    domain: "example.com",
+    language: "en",
+    text: "Orders shipped from Houston and dispatched from Dubai.",
+    sourceUrl: "https://example.com/",
+  });
+  assert.equal(result.countryCode, "");
+  assert.equal(result.scores.US, 4);
+  assert.equal(result.scores.AE, 4);
+  assert.equal(result.signals.filter((signal) => signal.kind === "fulfillment-location").length, 2);
+});

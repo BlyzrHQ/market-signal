@@ -1,6 +1,6 @@
 export type RegionSignal = {
   countryCode: string;
-  kind: "tld" | "language" | "structured-address" | "currency" | "phone" | "explicit-market" | "global-market";
+  kind: "tld" | "language" | "structured-address" | "currency" | "phone" | "explicit-market" | "fulfillment-location" | "global-market";
   value: string;
   weight: number;
   sourceUrl: string;
@@ -69,6 +69,45 @@ const EXPLICIT_PATTERNS: Array<[RegExp, string]> = [
   [/\bgermany\b/i, "DE"],
   [/\bfrance\b/i, "FR"],
 ];
+
+const FULFILLMENT_LOCATIONS: Array<[string, string]> = [
+  ["abu dhabi", "AE"],
+  ["dubai", "AE"],
+  ["sharjah", "AE"],
+  ["berlin", "DE"],
+  ["hamburg", "DE"],
+  ["munich", "DE"],
+  ["cairo", "EG"],
+  ["giza", "EG"],
+  ["lyon", "FR"],
+  ["marseille", "FR"],
+  ["paris", "FR"],
+  ["london", "GB"],
+  ["manchester", "GB"],
+  ["bengaluru", "IN"],
+  ["chennai", "IN"],
+  ["delhi", "IN"],
+  ["hyderabad", "IN"],
+  ["kolkata", "IN"],
+  ["mumbai", "IN"],
+  ["dammam", "SA"],
+  ["jeddah", "SA"],
+  ["riyadh", "SA"],
+  ["california", "US"],
+  ["chicago", "US"],
+  ["dallas", "US"],
+  ["florida", "US"],
+  ["houston", "US"],
+  ["los angeles", "US"],
+  ["miami", "US"],
+  ["new york", "US"],
+  ["texas", "US"],
+];
+
+const FULFILLMENT_LOCATION_PATTERN = new RegExp(
+  `\\b(?:ships?|shipped|shipping|dispatch(?:ed|es|ing)?|deliver(?:ed|s|ing)?)\\b(?:\\s+(?!from\\b)[\\w'-]+){0,4}\\s+from\\s+(?:our\\s+)?(${FULFILLMENT_LOCATIONS.map(([location]) => location.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\b`,
+  "gi",
+);
 
 function addSignal(signals: RegionSignal[], scores: Record<string, number>, signal: RegionSignal) {
   signals.push(signal);
@@ -157,6 +196,12 @@ export function inferRegion(input: RegionInput): RegionInference {
 
   for (const [pattern, countryCode] of EXPLICIT_PATTERNS) {
     if (pattern.test(text)) addSignal(signals, scores, { countryCode, kind: "explicit-market", value: text.match(pattern)?.[0] || COUNTRY_NAMES[countryCode], weight: 1, sourceUrl: input.sourceUrl, claimType: "Inferred" });
+  }
+
+  for (const match of text.matchAll(FULFILLMENT_LOCATION_PATTERN)) {
+    const location = match[1]?.toLowerCase() || "";
+    const countryCode = FULFILLMENT_LOCATIONS.find(([candidate]) => candidate === location)?.[1];
+    if (countryCode) addSignal(signals, scores, { countryCode, kind: "fulfillment-location", value: match[0], weight: 4, sourceUrl: input.sourceUrl, claimType: "Inferred" });
   }
 
   const globalMarket = text.match(/\b(?:global(?:ly)?|worldwide|around the world|across (?:more than )?\d+ countries)\b/i)?.[0];

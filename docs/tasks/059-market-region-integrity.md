@@ -37,6 +37,8 @@ Use the report's resolved target market when verifying discovered competitors. A
 
 Market compatibility means evidence of serving the report's target market. Product-name overlap alone does not prove that an India- or Saudi-specific storefront competes for US customers. This task does not infer shipping availability from product presence and does not convert unknown regional evidence into a rejection.
 
+A bounded fulfillment-origin phrase is operational evidence of market presence, not an observed market declaration. It remains an `Inferred` signal. Only a curated city/state origin bound to an operational shipping verb is accepted; country sourcing, import language, destinations, and casual place mentions are excluded. Its weight is exactly `4`: the minimum concrete score accepted by the existing region combiner, allowing it to outrank global marketing language without being tuned as stronger evidence than necessary.
+
 ## Status
 
 Fable 5's first design review returned `BLOCK`: India was missing from the region model, candidate-side global language could repeat the bypass, discovery-market parsing was too loosely specified, and rejection provenance lacked a testable output. The revised design adopts all four requirements. Fable 5 then returned `PASS` on the revised design. Implementation and live verification are in progress.
@@ -47,8 +49,14 @@ Fable 5's first design review returned `BLOCK`: India was missing from the regio
 - Implementation: Fable 5 returned `PASS` after inspecting the complete Task 59 diff and independently rerunning the focused and full tests. It confirmed the target-market override, India evidence, strict parser, neutral global/unknown behavior, and investigation-gap provenance.
 - Remaining merge gate: publish the focused PR, deploy the exact implementation commit, and verify a fresh Babanuj production report before asking Fable 5 to merge.
 
+### First live gate
+
+Sites version 98 deployed the reviewed implementation. Fresh report `5c2fd3e098e242b1af72ec2e6e467c65` completed, but the live gate returned `BLOCK`: discovery resolved the market as `global`, while a previous Babanuj run had resolved it as United States. The primary crawl also remained global despite first-party metadata saying products are “shipped fresh from Houston,” so India and Saudi storefronts remained compatible. This nondeterminism proves the primary-crawl fallback must retain bounded operational locality evidence. Fable 5 returned `PASS` on the live-fix design after requiring city/state-only origins, verb-bound matching, inferred weight `4`, sourcing/destination negatives, and a conflicting-origin test.
+
+Fable 5 then returned `PASS` on the live-fix implementation after independently rerunning the focused `24/24` and full `276/276` suites. It confirmed the curated origin table, nearest-`from` binding, negative sourcing/destination cases, concrete-over-global behavior, conflicting-origin neutrality, and documented inferred provenance.
+
 ## Local validation
 
-- `npm test`: `273/273` tests passed, including the production build and typecheck.
+- `npm test`: `276/276` tests passed, including the production build and typecheck.
 - `npm run lint`: no errors; one pre-existing `<img>` optimization warning in `app/components/product-design-lab.tsx`.
-- Focused region and competitor verification tests: `21/21` passed.
+- Focused region and competitor verification tests: `24/24` passed.
