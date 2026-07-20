@@ -114,3 +114,23 @@ Fable 5 returned `TASK 57 ACCEPTANCE DESIGN: PASS`. It approved the domain set a
 - Fable 5 returned strict `PASS` after independently reproducing the focused tests, the full `310/310` suite, production build, and lint with zero errors. It merged PR #63 as `86a1d70` only after exact-commit deployment to Sites version 106 and Trigger version `20260720.13` passed production verification.
 - Fresh report `0de8ef74bb59421d9d68d87aef9d0ee5` persisted as `LIMITED`. Browser QA showed only Overview, Evidence, and Methodology, an attempted-address source, and explicit language that competitors, products, and ads were not checked and that this is not a zero-result report.
 - Result: truthful `LIMITED` acceptance. The workflow now preserves the unavailable-domain evidence without manufacturing market intelligence. Continue to the final `myjam.co.uk` regression run.
+
+### 6. Final MyJam regression
+
+- Fresh report `40ff37046fc447fa960f043271ebc061` (Trigger run `run_06fo33nipib46304k774ma1a01`) reached `COMPLETE` on attempt 1 with the canonical 13-event sequence. It persisted 601 available primary products, 861 synchronized competitor products, five verified competitors, 40 accepted product pairs, and 129 rendered evidence items.
+- The competitor set remained market-credible: Oasis Market (100/100), My Meat Shop (96/100), and Halal Fine Foods (92/100) are high-confidence UK category rivals with product overlap; AfroMarket UK and AFRI-GRUB are medium-confidence marketplace-level substitutes with no accepted product battles.
+- Product QA found 40 accepted AI-hybrid comparisons (four `same_product`, 36 `close_substitute`) across 83 primary families. Thirty-nine have medium retrieval confidence; the one low-retrieval-confidence pair explicitly identifies lamb fillet versus riblet as different cuts and is presented only as a close substitute. All 80 displayed images use HTTPS, 17 primary and nine rival prices are positive public observations, and no zero or negative price signal is present.
+- Only two rows render a direct price delta because only those pairs established the same currency and comparable variant basis. The live source pages confirmed MyJam Beef Sirloin Steak Halal 500G at GBP 12.57, Oasis Market's corresponding 500g product at GBP 16.99, and MyJam Lamb Leg Halal approximately 2500g at GBP 39.05. Other dual-price rows remain labeled `comparison basis unverified` instead of implying a direct advantage.
+- Enrichment completed 23 of 24 selected pages and exposed six product-level gaps, including WooCommerce Store API access failures and one contradictory page identity. Missing rival prices remain labeled `Price not observed`; no unavailable price is converted into a numeric comparison.
+- Ads checked MyJam plus all five competitors. Three exact first-party-linked Meta Page checks returned no verified active signal, while three companies remained access-limited. Every company retains official Meta, Google, and TikTok search links, and the dashboard repeatedly states that no verified result is not proof of zero ads or activity in other regions, periods, or Pages.
+- Browser QA verified persistent left navigation, the Competitors, Products, Ads, Evidence, and Methodology tabs, the table/matchups/opportunities product layouts, CSV export, Share control, source links, and the loading-to-saved-report transition.
+- Anti-dump answers are immediate and source-linked: the top two rivals are Oasis Market and My Meat Shop; MyJam's observed 500g beef sirloin is GBP 4.42 (26%) cheaper than Oasis Market's equivalent pack; and the recommended move is to place that equivalent-pack price advantage prominently in ads and collection pages.
+
+## Overall acceptance decision
+
+- `myjam.co.uk`: PASS after the Task 58 zero-price correction and final regression.
+- `babanuj.com`: PASS after the Task 59 regional-precision correction.
+- `noororganic.com`: truthful LIMITED/PASS after Task 60 parked-domain handling.
+- `al-hamdanisweets.com`: PASS after Tasks 61 and 62 restored first-party prices and competitor recall.
+- `baklali.app`: truthful LIMITED/PASS after Task 63 unavailable-domain handling.
+- Matrix result: PASS. No false zero-price signal, unsupported country-market rival, fabricated unavailable-domain intelligence, unsafe price delta, or unchecked-ads-equals-zero claim remains in the accepted production sample.
