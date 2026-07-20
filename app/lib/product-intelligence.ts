@@ -28,7 +28,7 @@ export type ProductRecord = {
   priceSignals: ProductPriceSignal[];
   attributes: string[];
   ownership: "self-declared-brand" | "path-inferred" | "third-party-referenced";
-  extraction: "json-ld" | "page-signal" | "sitemap";
+  extraction: "json-ld" | "storefront-api" | "page-signal" | "sitemap";
   confidence: "High" | "Medium";
   sourceUrl: string;
   imageUrl: string;
@@ -685,7 +685,7 @@ export function selectPreferredProducts(items: ProductRecord[]) {
     } satisfies ProductIdentifiers;
   };
   const quality = (item: ProductRecord) =>
-    (item.extraction === "json-ld" ? 40 : item.extraction === "page-signal" ? 20 : 10)
+    (item.extraction === "json-ld" || item.extraction === "storefront-api" ? 40 : item.extraction === "page-signal" ? 20 : 10)
     + (item.confidence === "High" ? 20 : 0)
     + (item.priceSignals.length ? 15 : 0)
     + (item.description ? 5 : 0)
@@ -1063,7 +1063,7 @@ export function buildProductComparison(primaryDomain: string, catalogs: Array<{ 
   const rowLimit = 80;
   const minimumCoverageRows = 16;
   const maxUnmatchedProductsPerDomain = 24;
-  const rank = (product: ProductRecord) => Number(product.confidence === "High") * 4 + Number(product.priceSignals.length > 0) * 2 + Number(product.extraction === "json-ld");
+  const rank = (product: ProductRecord) => Number(product.confidence === "High") * 4 + Number(product.priceSignals.length > 0) * 2 + Number(product.extraction === "json-ld" || product.extraction === "storefront-api");
   const selectForComparison = (domain: string, products: ProductRecord[]) => {
     const required = new Set((requiredSourceUrls[canonicalHost(domain)] || []).map((url) => url.split("#")[0]));
     return [...products].sort((left, right) => Number(required.has(right.sourceUrl.split("#")[0])) - Number(required.has(left.sourceUrl.split("#")[0])) || rank(right) - rank(left) || left.id.localeCompare(right.id)).slice(0, maxProductsPerCatalog);
