@@ -131,6 +131,7 @@ test("uses Shopify's fixed hundredths contract for zero- and three-decimal curre
   }).product?.priceSignals[0];
   assert.deepEqual(parse("JPY", 100000), { raw: "JPY 1000", currency: "JPY", amount: 1000 });
   assert.deepEqual(parse("KWD", 900), { raw: "KWD 9", currency: "KWD", amount: 9 });
+  assert.deepEqual(parse("GBP", 0), { raw: "GBP 0", currency: "GBP", amount: 0 });
 });
 
 test("strips storefront HTML from product descriptions", () => {
@@ -196,4 +197,65 @@ test("keeps a WooCommerce variable-product price range non-comparable", () => {
   });
   assert.deepEqual(result.product?.priceSignals.map((signal) => signal.amount), [1, 2.5]);
   assert.equal(result.product?.description, "Choose a box size.");
+});
+
+test("rejects WooCommerce zero and coercible empty prices while retaining product evidence", () => {
+  for (const value of ["0", "", null, false, "not-a-price"]) {
+    const result = parseWooCommerceProduct({
+      payload: [{
+        name: value === "0" ? "Free Range Eggs 6pk" : "Spring Onions",
+        slug: "spring-onions",
+        is_purchasable: true,
+        prices: { price: value, currency_code: "GBP", currency_minor_unit: 2 },
+        images: [{ src: "https://grocer.test/spring-onions.jpg" }],
+      }],
+      requestedKey: "spring-onions",
+      sourceUrl: "https://grocer.test/product/spring-onions/",
+      domain: "grocer.test",
+      observedAt: "2026-07-20T10:00:00.000Z",
+    });
+    assert.equal(result.product?.name, value === "0" ? "Free Range Eggs 6pk" : "Spring Onions");
+    assert.equal(result.product?.imageUrl, "https://grocer.test/spring-onions.jpg");
+    assert.deepEqual(result.product?.priceSignals, []);
+    assert.match(result.gap, /zero, empty, or invalid price/i);
+  }
+});
+
+test("rejects incomplete WooCommerce ranges instead of treating one positive endpoint as fixed", () => {
+  for (const minAmount of ["0", ""]) {
+    const result = parseWooCommerceProduct({
+      payload: [{
+        name: "Date Box",
+        slug: "date-box",
+        prices: {
+          price: "250",
+          currency_code: "GBP",
+          currency_minor_unit: 2,
+          price_range: { min_amount: minAmount, max_amount: "250" },
+        },
+      }],
+      requestedKey: "date-box",
+      sourceUrl: "https://shop.test/product/date-box/",
+      domain: "shop.test",
+      observedAt: "2026-07-20T10:00:00.000Z",
+    });
+    assert.deepEqual(result.product?.priceSignals, []);
+    assert.match(result.gap, /incomplete price range/i);
+  }
+});
+
+test("keeps a complete positive WooCommerce range unavailable when currency is unconfirmed", () => {
+  const result = parseWooCommerceProduct({
+    payload: [{
+      name: "Date Box",
+      slug: "date-box",
+      prices: { price: "100", currency_code: "", currency_minor_unit: 2, price_range: { min_amount: "100", max_amount: "250" } },
+    }],
+    requestedKey: "date-box",
+    sourceUrl: "https://shop.test/product/date-box/",
+    domain: "shop.test",
+    observedAt: "2026-07-20T10:00:00.000Z",
+  });
+  assert.deepEqual(result.product?.priceSignals, []);
+  assert.match(result.gap, /without a confirmed ISO currency/i);
 });
