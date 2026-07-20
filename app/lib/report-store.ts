@@ -190,6 +190,14 @@ export function reportStorageDiagnosticCode(error: unknown) {
   }
 }
 
+function safeErrorMessage(error: unknown) {
+  try {
+    return error && typeof error === "object" && typeof (error as { message?: unknown }).message === "string" ? (error as { message: string }).message : "";
+  } catch {
+    return "";
+  }
+}
+
 function batchFailureClass(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || "");
   if (/no such (?:table|column)|has no column named/i.test(message)) return "schema-mismatch";
@@ -260,9 +268,10 @@ export async function createReportRunResult(input: { primaryDomain: string; loca
     return { ok: true as const, report: await createReportRun(input, now, databaseOverride) };
   } catch (error) {
     let diagnosticCode: ReportCreateDiagnostic = "run-create-unclassified";
-    if (error instanceof Error && error.message === INVALID_DOMAIN_MESSAGE) diagnosticCode = "invalid-domain";
-    else if (error instanceof Error && error.message === STORAGE_UNAVAILABLE_MESSAGE) diagnosticCode = "storage-unavailable";
-    else if (error instanceof ReportStorageError) {
+    const message = safeErrorMessage(error);
+    if (message === INVALID_DOMAIN_MESSAGE) diagnosticCode = "invalid-domain";
+    else if (message === STORAGE_UNAVAILABLE_MESSAGE) diagnosticCode = "storage-unavailable";
+    else {
       const knownCode = reportStorageDiagnosticCode(error);
       if (knownCode && REPORT_STORAGE_DIAGNOSTIC.test(knownCode)) diagnosticCode = knownCode as ReportCreateDiagnostic;
     }

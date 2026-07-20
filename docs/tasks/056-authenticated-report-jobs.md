@@ -94,6 +94,7 @@ Unknown actions are 400; conflicting replays and writes to terminal runs are 409
 - The first classifier deployment showed that the runtime bundle does not preserve `instanceof` identity for the custom storage error at the route boundary. Diagnostics now cross that boundary only through the `ReportStorageError` brand plus a strict allowlist of known schema-statement and atomic-batch codes; arbitrary error properties and raw D1 details remain rejected.
 - A second production run showed that Sites also strips or replaces the branded fields before the route catch. The definitive closed diagnostic is therefore emitted at the store catch point where classification occurs, at most once per code per isolate. Database import and missing-binding failures are separately identified; no caught error, SQL, stack, or credential is logged, and the public response remains generic.
 - Because Sites retained only the route-level invocation error and not the store-local console event, report creation now crosses the store/route boundary as a discriminated result containing either the created run or one runtime-allowlisted diagnostic code. Raw errors never cross the module boundary; the route remains the authoritative closed log channel and client responses are unchanged.
+- Result classification is total even for exotic runtime-thrown values: sentinel messages and branded codes are read only through throw-safe property access, and hostile proxies or unknown values reduce to `run-create-unclassified` rather than escaping the Result contract.
 
 ## Local validation record
 

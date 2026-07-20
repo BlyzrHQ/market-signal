@@ -272,6 +272,10 @@ test("report creation result carries only closed diagnostics across the route bo
   assert.deepEqual(foreign, { ok: false, diagnosticCode: "run-create-unclassified" });
   assert.doesNotMatch(JSON.stringify(foreign), /private|detail/i);
 
+  const hostile = new Proxy({}, { getPrototypeOf() { throw new Error("prototype trap"); }, get() { throw new Error("property trap"); } });
+  const hostileResult = await createReportRunResult({ primaryDomain: "example.com" }, { toISOString() { throw hostile; } }, new FakeDatabase());
+  assert.deepEqual(hostileResult, { ok: false, diagnosticCode: "run-create-unclassified" });
+
   const successful = await createReportRunResult({ primaryDomain: "example.com" }, new Date(), new FakeDatabase());
   assert.equal(successful.ok, true);
   assert.equal(successful.report.primaryDomain, "example.com");
