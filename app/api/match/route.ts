@@ -51,7 +51,7 @@ function product(value: unknown, catalogDomain: string): ProductRecord | null {
   if (!name || !sourceUrl) return null;
   const allowedTypes = new Set<ProductRecord["jsonLdType"]>(["Product", "SoftwareApplication", "Service", "PageSignal"]);
   const allowedOwnership = new Set<ProductRecord["ownership"]>(["self-declared-brand", "path-inferred", "third-party-referenced"]);
-  const allowedExtraction = new Set<ProductRecord["extraction"]>(["json-ld", "page-signal", "sitemap"]);
+  const allowedExtraction = new Set<ProductRecord["extraction"]>(["json-ld", "storefront-api", "page-signal", "sitemap"]);
   const priceSignals = Array.isArray(item.priceSignals) ? item.priceSignals.flatMap((value) => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return [];
     const signal = value as Record<string, unknown>;

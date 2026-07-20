@@ -1,6 +1,7 @@
 import { canonicalDomain, normalizeDomain } from "../../lib/domain.ts";
 import { bilingualNormalize, parseCanonicalQuantity } from "../../lib/product-normalization.ts";
 import { extractProductsFromHtml, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "../../lib/product-intelligence.ts";
+import { confirmedProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "../../lib/product-page-adapters.ts";
 import { parseRobots } from "../../lib/robots.ts";
 
 const MAX_TARGETS = 24;
@@ -115,6 +116,14 @@ function expectedProduct(item: ProductEnrichmentTarget): ProductRecord {
   };
 }
 
+function hasConfirmedPrice(products: ProductRecord[]) {
+  return products.some((product) => product.priceSignals.some((signal) => typeof signal.amount === "number" && Boolean(signal.currency)));
+}
+
+function hasSecureImage(products: ProductRecord[]) {
+  return products.some((product) => /^https:\/\//i.test(product.imageUrl));
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json() as { targets?: unknown };
@@ -141,10 +150,57 @@ export async function POST(request: Request) {
         const fetched = await fetchSameDomain(item.sourceUrl, item.domain, "text/html,application/xhtml+xml");
         if (!fetched.ok || !/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { product: null, gap: { url: item.sourceUrl, productId: item.productId, role: item.role, reason: `Selected product page returned HTTP ${fetched.status} or non-HTML content.` } };
         const extracted = pageExtraction(fetched.text, fetched.url, item.domain);
-        const identity = validateProductPageIdentity([expectedProduct(item)], extracted.result.products, extracted.pageTitle);
+        const expected = expectedProduct(item);
+        const initialIdentity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle);
+        let adapterGap = "";
+        const adapter = storefrontAdapterRequest(item.sourceUrl);
+        if (adapter && (!initialIdentity.accepted || !hasConfirmedPrice(extracted.result.products) || !hasSecureImage(extracted.result.products))) {
+          const adapterLabel = adapter.kind === "shopify" ? "Shopify product" : "WooCommerce Store API";
+          try {
+            const adapterUrl = new URL(adapter.endpointUrl);
+            const adapterPath = `${adapterUrl.pathname}${adapterUrl.search}`;
+            if (!robots.allows(adapterPath)) {
+              adapterGap = `robots.txt disallows the ${adapterLabel} endpoint.`;
+            } else {
+              const adapterResponse = await fetchSameDomain(adapter.endpointUrl, item.domain, "application/json");
+              if (!adapterResponse.ok || !/json|javascript/i.test(adapterResponse.contentType)) {
+                adapterGap = `${adapterLabel} endpoint returned HTTP ${adapterResponse.status} or non-JSON content.`;
+              } else {
+                const payload = JSON.parse(adapterResponse.text);
+                const adapterResult = adapter.kind === "shopify"
+                  ? parseShopifyProduct({
+                    payload,
+                    requestedKey: adapter.requestedKey,
+                    sourceUrl: fetched.url,
+                    domain: item.domain,
+                    observedAt: new Date().toISOString(),
+                    currency: confirmedProductCurrency(fetched.text),
+                    expectedQuantity: expected.quantity,
+                  })
+                  : parseWooCommerceProduct({
+                    payload,
+                    requestedKey: adapter.requestedKey,
+                    sourceUrl: fetched.url,
+                    domain: item.domain,
+                    observedAt: new Date().toISOString(),
+                  });
+                if (adapterResult.product) extracted.result.products.push(adapterResult.product);
+                adapterGap = adapterResult.gap;
+              }
+            }
+          } catch (error) {
+            adapterGap = error instanceof SyntaxError
+              ? `${adapterLabel} endpoint returned invalid JSON.`
+              : `${adapterLabel} endpoint could not be fetched.`;
+          }
+        }
+        const identity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle);
         if (!identity.accepted) return { product: null, gap: { url: item.sourceUrl, productId: item.productId, role: item.role, reason: identity.reason } };
         const accepted = identity.products[0];
-        return { product: accepted ? { ...accepted, id: item.productId } : null, gap: null };
+        return {
+          product: accepted ? { ...accepted, id: item.productId } : null,
+          gap: adapterGap ? { url: item.sourceUrl, productId: item.productId, role: item.role, reason: adapterGap } : null,
+        };
       } catch (error) {
         return { product: null, gap: { url: item.sourceUrl, productId: item.productId, role: item.role, reason: error instanceof Error ? `Selected product page could not be fetched: ${error.message}` : "Selected product page could not be fetched." } };
       }

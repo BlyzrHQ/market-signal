@@ -1,0 +1,269 @@
+import {
+  bilingualNormalize,
+  extractProductIdentifiers,
+  parseCanonicalQuantity,
+  quantitiesEqual,
+  type CanonicalProductQuantity,
+} from "./product-normalization.ts";
+import type { ProductPriceSignal, ProductRecord } from "./product-intelligence.ts";
+
+type JsonRecord = Record<string, unknown>;
+
+export type StorefrontAdapterRequest = {
+  kind: "shopify" | "woocommerce";
+  endpointUrl: string;
+  requestedKey: string;
+};
+
+export type StorefrontAdapterResult = {
+  product: ProductRecord | null;
+  gap: string;
+};
+
+function record(value: unknown): JsonRecord | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : null;
+}
+
+function text(value: unknown, limit = 300) {
+  return typeof value === "string" || typeof value === "number"
+    ? String(value).replace(/\s+/g, " ").trim().slice(0, limit)
+    : "";
+}
+
+function decodedCodePoint(value: string, radix: number) {
+  const code = Number.parseInt(value, radix);
+  return Number.isInteger(code) && code >= 0 && code <= 0x10FFFF ? String.fromCodePoint(code) : " ";
+}
+
+function plainText(value: unknown, limit = 400) {
+  const raw = text(value, Math.max(limit * 8, 3_200));
+  return raw
+    .replace(/<(?:script|style|noscript)\b[^>]*>[\s\S]*?<\/\s*(?:script|style|noscript)\s*>/gi, " ")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;|&#160;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#(\d+);/g, (_, code) => decodedCodePoint(code, 10))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => decodedCodePoint(code, 16))
+    .replace(/\s+/g, " ")
+    .replace(/\s+([.,;:!?])/g, "$1")
+    .trim()
+    .slice(0, limit);
+}
+
+function decodedSegment(value: string) {
+  try { return decodeURIComponent(value).toLowerCase(); } catch { return value.toLowerCase(); }
+}
+
+function publicImageUrl(value: unknown, sourceUrl: string) {
+  try {
+    const raw = text(record(value)?.src || record(value)?.url || value, 1_000);
+    if (!raw) return "";
+    const url = new URL(raw.startsWith("//") ? `https:${raw}` : raw, sourceUrl);
+    if (!/^https?:$/.test(url.protocol) || url.username || url.password) return "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function productRoute(sourceUrl: string) {
+  try {
+    const url = new URL(sourceUrl);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const routeIndex = segments.findIndex((segment) => /^(?:products?|product)$/.test(segment.toLowerCase()));
+    if (routeIndex < 0 || !segments[routeIndex + 1]) return null;
+    return { url, segments, routeIndex, key: decodedSegment(segments[routeIndex + 1]) };
+  } catch {
+    return null;
+  }
+}
+
+export function storefrontAdapterRequest(sourceUrl: string): StorefrontAdapterRequest | null {
+  const route = productRoute(sourceUrl);
+  if (!route) return null;
+  const routeName = route.segments[route.routeIndex].toLowerCase();
+  if (routeName === "products") {
+    const endpoint = new URL(route.url.toString());
+    endpoint.search = "";
+    endpoint.hash = "";
+    endpoint.pathname = `/${route.segments.slice(0, route.routeIndex + 2).join("/")}.js`;
+    return { kind: "shopify", endpointUrl: endpoint.toString(), requestedKey: route.key };
+  }
+  if (routeName === "product") {
+    const endpoint = new URL("/wp-json/wc/store/v1/products", route.url.origin);
+    endpoint.searchParams.set("slug", route.key);
+    return { kind: "woocommerce", endpointUrl: endpoint.toString(), requestedKey: route.key };
+  }
+  return null;
+}
+
+function metaContent(document: string, key: string) {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const identity = `(?:property|name|itemprop)\\s*=\\s*["']${escaped}["']`;
+  const identityFirst = new RegExp(`<meta[^>]+${identity}[^>]+content\\s*=\\s*["']([^"']*)["']`, "i");
+  const contentFirst = new RegExp(`<meta[^>]+content\\s*=\\s*["']([^"']*)["'][^>]+${identity}`, "i");
+  return text(document.match(identityFirst)?.[1] || document.match(contentFirst)?.[1], 20);
+}
+
+function isoCurrency(value: unknown) {
+  const candidate = text(value, 10).toUpperCase();
+  return /^[A-Z]{3}$/.test(candidate) ? candidate : "";
+}
+
+export function confirmedProductCurrency(document: string) {
+  const metadata = metaContent(document, "product:price:currency")
+    || metaContent(document, "og:price:currency")
+    || metaContent(document, "priceCurrency");
+  const shopify = document.match(/Shopify\.currency\s*=\s*\{[^}]*["']active["']\s*:\s*["']([A-Za-z]{3})["']/i)?.[1];
+  const structured = document.match(/["']priceCurrency["']\s*:\s*["']([A-Za-z]{3})["']/i)?.[1];
+  return isoCurrency(metadata || shopify || structured);
+}
+
+function minorUnitPrice(value: unknown, currency: string, explicitDigits: unknown): ProductPriceSignal | null {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0 || !currency) return null;
+  const digits = Number.isInteger(explicitDigits) && Number(explicitDigits) >= 0 && Number(explicitDigits) <= 4
+    ? Number(explicitDigits)
+    : 2;
+  const amount = Number((numeric / (10 ** digits)).toFixed(digits));
+  const rendered = amount.toFixed(digits).replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
+  return { raw: `${currency} ${rendered}`, currency, amount };
+}
+
+function identifierRecord(value: JsonRecord | null) {
+  if (!value) return undefined;
+  const identifiers = extractProductIdentifiers({ sku: value.sku, gtin: value.barcode || value.gtin, brand: value.brand });
+  return identifiers.gtins.length || identifiers.sku || identifiers.mpn || identifiers.brand ? identifiers : undefined;
+}
+
+function makeProduct(input: {
+  domain: string;
+  sourceUrl: string;
+  observedAt: string;
+  name: string;
+  description?: unknown;
+  category?: string;
+  priceSignals: ProductPriceSignal[];
+  imageUrl: string;
+  identifiers?: ProductRecord["identifiers"];
+  quantity?: CanonicalProductQuantity;
+}): ProductRecord {
+  const normalizedName = bilingualNormalize(input.name);
+  const id = `${input.domain}-storefront-${normalizedName.replace(/[^\p{L}\p{N}]+/gu, "-").slice(0, 100)}`;
+  return {
+    id,
+    domain: input.domain,
+    name: input.name.slice(0, 160),
+    normalizedName,
+    description: plainText(input.description, 400),
+    category: text(input.category, 120) || "product",
+    jsonLdType: "Product",
+    priceSignals: input.priceSignals,
+    attributes: [],
+    ownership: "path-inferred",
+    extraction: "storefront-api",
+    confidence: "High",
+    sourceUrl: input.sourceUrl,
+    imageUrl: input.imageUrl,
+    observedAt: input.observedAt,
+    claimIds: [`${id}-observed-${Date.parse(input.observedAt) || 0}`],
+    identifiers: input.identifiers,
+    quantity: input.quantity,
+  };
+}
+
+function shopifyVariantQuantity(productTitle: string, variant: JsonRecord) {
+  const variantTitle = text(variant.title, 160);
+  return parseCanonicalQuantity(`${productTitle} ${/^default title$/i.test(variantTitle) ? "" : variantTitle}`) || undefined;
+}
+
+export function parseShopifyProduct(input: {
+  payload: unknown;
+  requestedKey: string;
+  sourceUrl: string;
+  domain: string;
+  observedAt: string;
+  currency: string;
+  expectedQuantity?: CanonicalProductQuantity;
+}): StorefrontAdapterResult {
+  const payload = record(input.payload);
+  const name = text(payload?.title, 160);
+  const handle = decodedSegment(text(payload?.handle, 200));
+  if (!payload || !name || !handle) return { product: null, gap: "The Shopify product endpoint returned an invalid product payload." };
+  if (handle !== input.requestedKey) return { product: null, gap: "The Shopify product endpoint returned a different product handle." };
+
+  const variants = Array.isArray(payload.variants) ? payload.variants.map(record).filter((value): value is JsonRecord => Boolean(value)) : [];
+  const quantityMatches = input.expectedQuantity
+    ? variants.filter((variant) => quantitiesEqual(input.expectedQuantity, shopifyVariantQuantity(name, variant)))
+    : [];
+  const selectedVariants = quantityMatches.length === 1 ? quantityMatches : variants;
+  const priceSignals = input.currency
+    ? [...new Map(selectedVariants.map((variant) => minorUnitPrice(variant.price, input.currency, 2)).filter((value): value is ProductPriceSignal => Boolean(value)).map((signal) => [`${signal.currency}|${signal.amount}`, signal])).values()]
+    : [];
+  const selectedVariant = selectedVariants.length === 1 ? selectedVariants[0] : null;
+  const featured = selectedVariant ? record(selectedVariant.featured_image) : null;
+  const images = Array.isArray(payload.images) ? payload.images : [];
+  const imageUrl = [featured?.src, payload.featured_image, images[0]].map((value) => publicImageUrl(value, input.sourceUrl)).find((value) => /^https:\/\//i.test(value)) || "";
+  const product = makeProduct({
+    domain: input.domain,
+    sourceUrl: input.sourceUrl,
+    observedAt: input.observedAt,
+    name,
+    description: payload.description,
+    category: text(payload.type, 120),
+    priceSignals,
+    imageUrl,
+    identifiers: identifierRecord(selectedVariant),
+    quantity: parseCanonicalQuantity(`${name} ${selectedVariant ? text(selectedVariant.title, 160) : ""}`) || undefined,
+  });
+  return {
+    product,
+    gap: !input.currency && selectedVariants.some((variant) => Number.isFinite(Number(variant.price)))
+      ? "Shopify exposed a price but no same-page currency, so the price was not treated as comparable."
+      : "",
+  };
+}
+
+export function parseWooCommerceProduct(input: {
+  payload: unknown;
+  requestedKey: string;
+  sourceUrl: string;
+  domain: string;
+  observedAt: string;
+}): StorefrontAdapterResult {
+  const products = Array.isArray(input.payload) ? input.payload.map(record).filter((value): value is JsonRecord => Boolean(value)) : [];
+  const payload = products.find((product) => decodedSegment(text(product.slug, 200)) === input.requestedKey);
+  if (!payload) return { product: null, gap: "The WooCommerce Store API did not return the requested product slug." };
+  const name = text(payload.name, 160);
+  const prices = record(payload.prices);
+  const currency = isoCurrency(prices?.currency_code);
+  if (!name) return { product: null, gap: "The WooCommerce Store API returned a product without a usable name." };
+  const images = Array.isArray(payload.images) ? payload.images.map(record).filter((value): value is JsonRecord => Boolean(value)) : [];
+  const price = minorUnitPrice(prices?.price, currency, prices?.currency_minor_unit);
+  const priceRange = record(prices?.price_range);
+  const rangeSignals = [priceRange?.min_amount, priceRange?.max_amount]
+    .map((value) => minorUnitPrice(value, currency, prices?.currency_minor_unit))
+    .filter((value): value is ProductPriceSignal => Boolean(value));
+  const priceSignals = rangeSignals.length === 2 && rangeSignals[0].amount !== rangeSignals[1].amount
+    ? rangeSignals
+    : price ? [price] : [];
+  return {
+    product: makeProduct({
+      domain: input.domain,
+      sourceUrl: input.sourceUrl,
+      observedAt: input.observedAt,
+      name,
+      description: payload.short_description || payload.description,
+      category: text((Array.isArray(payload.categories) ? record(payload.categories[0])?.name : ""), 120),
+      priceSignals,
+      imageUrl: images.map((image) => publicImageUrl(image, input.sourceUrl)).find((value) => /^https:\/\//i.test(value)) || "",
+      identifiers: identifierRecord(payload),
+      quantity: parseCanonicalQuantity(name) || undefined,
+    }),
+    gap: prices?.price && !currency ? "WooCommerce exposed a price without a confirmed ISO currency." : "",
+  };
+}
