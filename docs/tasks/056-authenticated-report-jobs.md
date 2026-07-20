@@ -89,9 +89,10 @@ Unknown actions are 400; conflicting replays and writes to terminal runs are 409
 - Fable 5 implementation review initially blocked a dispatch-recording race, unreachable recovery code, and a deprecated Trigger SDK import. The implementation now isolates dispatch failure from telemetry failure, treats a fast-starting running job as a safe telemetry no-op, exposes authenticated replay-safe recovery, and imports the root SDK package.
 - Fable 5 implementation re-review returned `IMPLEMENTATION GATE: PASS` after independently running 257 passing tests and lint with zero errors. Production configuration, live MyJam evidence, and final merge-gate review remain required before merge.
 - Live production validation exposed an HTTP 503 before dispatch. The creation route now emits only a safe stage/diagnostic code to Worker logs and distinguishes a missing Trigger credential from a rejected Trigger request without logging credentials or arbitrary upstream error bodies.
+- Production logs isolated the failure to D1 schema initialization. Runtime schema setup now executes each idempotent DDL statement sequentially, caches successful initialization per D1 binding, retries after failure, and reports only the closed failing-statement code. This avoids relying on a multi-DDL D1 batch during a customer request.
 
 ## Local validation record
 
-- `npm test`: PASS, 258/258 tests.
+- `npm test`: PASS, 259/259 tests.
 - `npm run lint`: PASS with zero errors and one pre-existing `no-img-element` warning in the product design lab.
 - `git diff --check`: PASS apart from platform line-ending notices.

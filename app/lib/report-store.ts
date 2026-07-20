@@ -50,6 +50,7 @@ const MAX_SNAPSHOT_UNMATCHED_PRODUCTS = 20;
 const PUBLIC_ID_PATTERN = /^[a-f0-9]{32}$/;
 const PHASES = new Set<ReportPhase>(["queued", "crawl", "competitors", "products", "matching", "enrichment", "ads", "complete", "failed", "interrupted"]);
 const STATUSES = new Set<ReportRunStatus>(["queued", "running", "complete", "limited", "failed", "interrupted"]);
+const schemaInitialization = new WeakMap<object, Promise<void>>();
 
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS report_runs (id text PRIMARY KEY NOT NULL, public_id text NOT NULL, primary_domain text NOT NULL, locale text DEFAULT 'en' NOT NULL, status text NOT NULL, current_phase text NOT NULL, attempt_count integer DEFAULT 1 NOT NULL, created_at text NOT NULL, updated_at text NOT NULL, heartbeat_at text NOT NULL, expires_at text NOT NULL, error_code text DEFAULT '' NOT NULL, error_message text DEFAULT '' NOT NULL)`,
@@ -146,8 +147,39 @@ function rowRun(row: Record<string, unknown>): StoredReportRun {
   };
 }
 
+export class ReportStorageError extends Error {
+  readonly code: string;
+
+  constructor(code: string) {
+    super("Persistent report storage could not be initialized.");
+    this.name = "ReportStorageError";
+    this.code = code;
+  }
+}
+
+async function initializeSchema(database: D1DatabaseLike) {
+  for (let index = 0; index < SCHEMA_STATEMENTS.length; index += 1) {
+    try {
+      await database.prepare(SCHEMA_STATEMENTS[index]).run();
+    } catch {
+      throw new ReportStorageError(`schema-statement-${index + 1}-failed`);
+    }
+  }
+}
+
 async function ensureSchema(database: D1DatabaseLike) {
-  await database.batch(SCHEMA_STATEMENTS.map((query) => database.prepare(query)));
+  const key = database as object;
+  let pending = schemaInitialization.get(key);
+  if (!pending) {
+    pending = initializeSchema(database);
+    schemaInitialization.set(key, pending);
+  }
+  try {
+    await pending;
+  } catch (error) {
+    schemaInitialization.delete(key);
+    throw error;
+  }
 }
 
 async function findRun(database: D1DatabaseLike, id: string) {

@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { appendReportEvent, compactReportDocument, createReportRun, getStoredReport, markReportDispatched, MAX_REPORT_DOCUMENT_BYTES, recoverInterruptedReport, saveReportDocument } from "../app/lib/report-store.ts";
+import { appendReportEvent, compactReportDocument, createReportRun, getStoredReport, markReportDispatched, MAX_REPORT_DOCUMENT_BYTES, recoverInterruptedReport, ReportStorageError, saveReportDocument } from "../app/lib/report-store.ts";
 
 class FakeStatement {
   constructor(database, query) { this.database = database; this.query = query; this.values = []; }
   bind(...values) { this.values = values; return this; }
-  async run() { return {}; }
+  async run() { this.database.queries.push(this.query); return {}; }
   async all() {
     if (this.query.startsWith("SELECT * FROM report_runs")) {
       const key = this.values[0];
@@ -188,4 +188,19 @@ test("runtime schema materializes every declared report artifact table", async (
   await createReportRun({ primaryDomain: "example.com" }, new Date(), database);
   const schema = database.queries.join("\n");
   for (const table of ["report_runs", "report_events", "report_documents", "report_companies", "report_products", "report_matches", "report_ads"]) assert.match(schema, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
+});
+
+test("schema initialization identifies a failing DDL statement without exposing SQL", async () => {
+  let statement = 0;
+  const database = {
+    prepare() {
+      statement += 1;
+      return { bind() { return this; }, async all() { return { results: [] }; }, async run() { if (statement === 3) throw new Error("raw D1 SQL detail"); return {}; } };
+    },
+    async batch() { throw new Error("writes must not begin after schema failure"); },
+  };
+  await assert.rejects(
+    createReportRun({ primaryDomain: "example.com" }, new Date(), database),
+    (error) => error instanceof ReportStorageError && error.code === "schema-statement-3-failed" && !/D1|SQL/i.test(error.message),
+  );
 });

@@ -1,5 +1,5 @@
 import { dispatchReportJob, ReportDispatchError } from "../../lib/report-dispatch.ts";
-import { createReportRun, markReportDispatched, markReportDispatchFailed } from "../../lib/report-store.ts";
+import { createReportRun, markReportDispatched, markReportDispatchFailed, ReportStorageError } from "../../lib/report-store.ts";
 
 type ReportCreationDependencies = {
   create: typeof createReportRun;
@@ -44,7 +44,7 @@ export async function createPersistentReport(request: Request, services: ReportC
     const status = /valid public domain/i.test(message) ? 400 : 503;
     const publicMessage = status === 400 ? message : "The persistent report could not be created.";
     const errorCode = status === 400 ? "invalid-domain" : stage === "storage-create" ? "storage-create-failed" : "report-create-failed";
-    if (status === 503) console.error("report creation failed", { stage, diagnosticCode: /storage is unavailable/i.test(message) ? "storage-unavailable" : "storage-operation-failed" });
+    if (status === 503) console.error("report creation failed", { stage, diagnosticCode: error instanceof ReportStorageError ? error.code : /storage is unavailable/i.test(message) ? "storage-unavailable" : "storage-operation-failed" });
     return Response.json({ ok: false, error: publicMessage, errorCode, ...(publicId ? { publicId } : {}) }, { status, headers: { "Cache-Control": "no-store" } });
   }
 }
