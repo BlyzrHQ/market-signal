@@ -67,4 +67,15 @@ Fable 5 returned `TASK 57 ACCEPTANCE DESIGN: PASS`. It approved the domain set a
 
 ## Results
 
-Pending sequential production validation.
+### 1. MyJam anchor
+
+- Initial report `0b98cfda042b4748869c03cd5ecd2e01` passed the mechanical, competitor, matching-volume, and ad-truthfulness gates but failed price integrity: E-Grocers exposed an unset WooCommerce zero sentinel that was rendered as `GBP 0`.
+- Focused Task 58 fixed the adapter, passed strict Fable 5 review, and was deployed as Sites version 97.
+- Corrected report `17f5f5377b404e82b2f0a95e3788e06d` (Trigger run `run_06fo0j9lvde1rn0r4jm7kef901`) persisted 4 verified competitors, 600 primary products, 2,060 rival products, 30 verified pairs, and zero zero-or-negative catalog price signals. Browser QA found 30 rows, 60/60 loaded images, and no false zero-price labels.
+- The corrected report is truthfully `LIMITED`: 24 selected AI assessments reached the bounded deadline and were left unaccepted. This is retained for the final anchor assessment.
+
+### 2. Babanuj
+
+- Report `fdfd44afa3154b70897092095171ae82` (Trigger run `run_06fo0mk9e0ut9nch684eamdd01`) completed with 13 events, 6 displayed competitors, 71 primary products, 1,363 rival products, 16 verified pairs, and 22 enriched pages.
+- Product evidence was materially useful: same-product Zaitoune maamoul and baklava rows retained current public prices and secure imagery, and cross-currency rows correctly withheld direct price deltas.
+- Result: `FAIL` pending a focused fix. The report inferred the United States but marked `desertcart.in` and `desertcart.com.sa` as region-compatible competitors. Those country storefronts are not same-market US rivals and created cross-market rows plus avoidable enrichment gaps.
