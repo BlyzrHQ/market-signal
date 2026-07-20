@@ -90,6 +90,20 @@ test("report runs persist ordered idempotent events and a reloadable document", 
   assert.equal(reloaded.documentSchemaVersion, 1);
 });
 
+test("limited phase events remain visible without making the run terminal before document persistence", async () => {
+  const database = new FakeDatabase();
+  const created = await createReportRun({ primaryDomain: "parked.example" }, new Date("2026-07-20T10:00:00.000Z"), database);
+  await appendReportEvent(created.publicId, { idempotencyKey: "crawl-limited", phase: "crawl", status: "limited", message: "The submitted domain is parked." }, new Date("2026-07-20T10:01:00.000Z"), database);
+  await appendReportEvent(created.publicId, { idempotencyKey: "ads-limited", phase: "ads", status: "limited", message: "Ads were skipped because the primary crawl was limited." }, new Date("2026-07-20T10:01:01.000Z"), database);
+  const progressing = await getStoredReport(created.publicId, new Date("2026-07-20T10:01:02.000Z"), database);
+  assert.equal(progressing.run.status, "running");
+  assert.equal(progressing.events.find((event) => event.idempotencyKey === "crawl-limited").status, "limited");
+  assert.equal(progressing.events.find((event) => event.idempotencyKey === "ads-limited").status, "limited");
+  await saveReportDocument(created.publicId, { primaryDomain: "parked.example", document: { version: "1", blocks: [] } }, { status: "limited" }, new Date("2026-07-20T10:02:00.000Z"), database);
+  const saved = await getStoredReport(created.publicId, new Date("2026-07-20T10:02:01.000Z"), database);
+  assert.equal(saved.run.status, "limited");
+});
+
 test("stale active report becomes interrupted with a visible event", async () => {
   const database = new FakeDatabase();
   const created = await createReportRun({ primaryDomain: "myjam.co.uk" }, new Date("2026-07-16T00:00:00.000Z"), database);

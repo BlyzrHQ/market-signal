@@ -33,6 +33,7 @@ test("stops a parked primary domain and returns bounded evidence-backed alternat
     const shell = '<!DOCTYPE html><html><head><script>window.onload=function(){window.location.href="/lander"}</script></head></html>';
     assert.equal(extractStaticClientRedirect(shell, "https://noororganic.com/"), "https://noororganic.com/lander");
     assert.equal(parkingProvider("forsale.godaddy.com"), "GoDaddy/Afternic");
+    assert.equal(parkingProvider("forsale.godaddy.com.evil.example"), "");
     const alternatives = await discoverDomainAlternatives("noororganic.com");
     assert.deepEqual(alternatives.map((item) => item.domain), ["noororganicfood.com", "noororganichoney.com"]);
     assert.equal(alternatives[0].sourceUrl, "https://noororganicfood.com/en");
@@ -65,5 +66,17 @@ test("the crawl API returns a parked-domain conflict before competitor discovery
   assert.match(route, /primary\?\.siteState\?\.status === "parked"/);
   assert.match(route, /code: "parked-domain"/);
   assert.match(route, /status: 409/);
+  assert.match(route, /type: "domain-status"/);
+  assert.match(route, /verifiedIdentity: false/);
+  assert.match(route, /primaryDomain, error:/);
   assert.ok(route.indexOf('code: "parked-domain"') < route.indexOf("let discovery: DiscoveryResult"));
+});
+
+test("the saved report derives parked tabs and presents the limitation instead of zero market results", async () => {
+  const report = await readFile(new URL("../app/reports/[publicId]/page.tsx", import.meta.url), "utf8");
+  assert.match(report, /block\.type === "domain-status"/);
+  assert.match(report, /\["overview".*"evidence".*"methodology"\]/s);
+  assert.match(report, /This is not a zero-result report/);
+  assert.match(report, /Competitors, products, and ads were not checked/);
+  assert.match(report, /IDENTITY NOT VERIFIED/);
 });

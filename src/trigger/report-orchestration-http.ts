@@ -1,6 +1,8 @@
 import type { ReportOrchestrationPort } from "./report-orchestration-core.ts";
+import { parkingProvider } from "../../app/lib/domain-recovery.ts";
 
 type FetchLike = typeof fetch;
+const MAX_ACCEPTED_ERROR_BODY_BYTES = 1_000_000;
 
 const PATHS = {
   report: (publicId: string) => `/api/internal/reports/${publicId}`,
@@ -59,7 +61,67 @@ export function isRetryableHttpStatus(status: number) {
   return status === 408 || status === 425 || status === 429 || status >= 500;
 }
 
-async function requestJson(fetchImpl: FetchLike, url: string, token: string, operation: string, timeoutMs: number, body?: unknown) {
+async function readBoundedText(response: Response, maxBytes = MAX_ACCEPTED_ERROR_BODY_BYTES) {
+  const declared = Number(response.headers.get("content-length") || 0);
+  if (declared > maxBytes) return null;
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let total = 0;
+  let text = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        return null;
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    return text + decoder.decode();
+  } catch {
+    return null;
+  }
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+async function acceptedParkedDomainResponse(response: Response, expectedPrimaryDomain: string) {
+  if (response.status !== 409 || !/application\/json/i.test(response.headers.get("content-type") || "")) return undefined;
+  const text = await readBoundedText(response);
+  if (text === null) return undefined;
+  let value: unknown;
+  try { value = JSON.parse(text); } catch { return undefined; }
+  const payload = record(value);
+  const document = record(payload?.document);
+  const blocks = Array.isArray(document?.blocks) ? document.blocks.map(record).filter((item): item is Record<string, unknown> => Boolean(item)) : [];
+  const domainStatus = blocks.find((item) => item.type === "domain-status" && item.status === "parked");
+  const sourceGap = blocks.find((item) => item.type === "gap" && item.domain === expectedPrimaryDomain && typeof item.url === "string" && /^https:\/\//i.test(item.url) && typeof item.reason === "string" && typeof item.observedAt === "string" && Number.isFinite(Date.parse(item.observedAt)));
+  const redirectDomain = typeof domainStatus?.redirectDomain === "string" ? domainStatus.redirectDomain : "";
+  const classifiedProvider = parkingProvider(redirectDomain);
+  if (payload?.ok !== false
+    || payload.code !== "parked-domain"
+    || payload.primaryDomain !== expectedPrimaryDomain
+    || typeof payload.error !== "string"
+    || !payload.error.trim()
+    || domainStatus?.domain !== expectedPrimaryDomain
+    || typeof domainStatus.observedAt !== "string"
+    || !Number.isFinite(Date.parse(domainStatus.observedAt))
+    || typeof domainStatus.provider !== "string"
+    || !classifiedProvider
+    || domainStatus.provider !== classifiedProvider
+    || typeof domainStatus.evidenceUrl !== "string"
+    || !/^https:\/\//i.test(domainStatus.evidenceUrl)
+    || sourceGap?.url !== domainStatus.evidenceUrl
+    || !sourceGap) return undefined;
+  return value;
+}
+
+async function requestJson(fetchImpl: FetchLike, url: string, token: string, operation: string, timeoutMs: number, body?: unknown, acceptError?: (response: Response) => Promise<unknown | undefined>) {
   const deadline = Date.now() + timeoutMs;
   for (let requestAttempt = 1; requestAttempt <= 2; requestAttempt += 1) {
     const remainingMs = deadline - Date.now();
@@ -78,6 +140,8 @@ async function requestJson(fetchImpl: FetchLike, url: string, token: string, ope
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
       if (response.ok) return await response.json() as unknown;
+      const accepted = acceptError ? await acceptError(response) : undefined;
+      if (accepted !== undefined) return accepted;
       const retryable = isRetryableHttpStatus(response.status);
       if (!retryable || requestAttempt === 2) throw new OrchestrationHttpError(operation, response.status, retryable);
     } catch (error) {
@@ -117,8 +181,8 @@ export function createReportOrchestrationHttpPort(configuration: { appOrigin: st
       if (payload.ok !== true) throw new OrchestrationHttpError("Report progress callback", 502, true);
     },
     async crawl(input) {
-      const payload = requiredObject<Awaited<ReturnType<ReportOrchestrationPort["crawl"]>>>(await call(PATHS.crawl, "Public crawl", OPERATION_BUDGETS_MS.crawl, input), "Public crawl");
-      if (payload.ok !== true) throw new OrchestrationHttpError("Public crawl", 422, false);
+      const payload = requiredObject<Awaited<ReturnType<ReportOrchestrationPort["crawl"]>>>(await requestJson(fetchImpl, new URL(PATHS.crawl, appOrigin).toString(), token, "Public crawl", OPERATION_BUDGETS_MS.crawl, input, (response) => acceptedParkedDomainResponse(response, input.primary)), "Public crawl");
+      if (payload.ok !== true && payload.code !== "parked-domain") throw new OrchestrationHttpError("Public crawl", 422, false);
       return payload;
     },
     async brief(input) {

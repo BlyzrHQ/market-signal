@@ -1,7 +1,7 @@
 import { canonicalDomain } from "./domain.ts";
 
 export type ReportRunStatus = "queued" | "running" | "complete" | "limited" | "failed" | "interrupted";
-export type ReportPhase = "queued" | "crawl" | "competitors" | "products" | "matching" | "enrichment" | "ads" | "complete" | "failed" | "interrupted";
+export type ReportPhase = "queued" | "crawl" | "competitors" | "brief" | "products" | "matching" | "enrichment" | "ads" | "persistence" | "complete" | "failed" | "interrupted";
 
 export type D1PreparedStatementLike = {
   bind(...values: unknown[]): D1PreparedStatementLike;
@@ -59,7 +59,7 @@ const MAX_SNAPSHOT_UNMATCHED_PRODUCTS = 20;
 const INVALID_DOMAIN_MESSAGE = "A valid public domain is required.";
 const STORAGE_UNAVAILABLE_MESSAGE = "Persistent report storage is unavailable.";
 const PUBLIC_ID_PATTERN = /^[a-f0-9]{32}$/;
-const PHASES = new Set<ReportPhase>(["queued", "crawl", "competitors", "products", "matching", "enrichment", "ads", "complete", "failed", "interrupted"]);
+const PHASES = new Set<ReportPhase>(["queued", "crawl", "competitors", "brief", "products", "matching", "enrichment", "ads", "persistence", "complete", "failed", "interrupted"]);
 const STATUSES = new Set<ReportRunStatus>(["queued", "running", "complete", "limited", "failed", "interrupted"]);
 const schemaInitialization = new WeakMap<object, Promise<void>>();
 const emittedStorageDiagnostics = new Set<string>();
@@ -286,7 +286,7 @@ export async function appendReportEvent(publicReportId: string, input: { idempot
   const key = cleanText(input.idempotencyKey, 120);
   const message = cleanText(input.message, 280);
   if (!key || !message || !PHASES.has(input.phase) || !STATUSES.has(input.status)) throw new Error("Invalid report event.");
-  if (["complete", "limited"].includes(input.status)) throw new Error("Only a saved report document can complete a report.");
+  if (input.status === "complete") throw new Error("Only a saved report document can complete a report.");
   const metadata = safeMetadata(input.metadata);
   const observedAt = now.toISOString();
   await ensureSchema(database);
@@ -295,7 +295,7 @@ export async function appendReportEvent(publicReportId: string, input: { idempot
   if (["complete", "limited", "failed", "interrupted"].includes(run.status)) throw new Error("A terminal report cannot accept another progress event.");
   await database.batch([
     database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE(MAX(sequence), 0) + 1, ?, ?, ?, ?, ?, ? FROM report_events WHERE run_id = ? ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, key, input.phase, input.status, message, JSON.stringify(metadata), observedAt, run.id),
-    database.prepare(`UPDATE report_runs SET status = ?, current_phase = ?, updated_at = ?, heartbeat_at = ?, error_code = ?, error_message = ? WHERE id = ? AND ? = (SELECT idempotency_key FROM report_events WHERE run_id = ? ORDER BY sequence DESC LIMIT 1)`).bind(input.status, input.phase, observedAt, observedAt, cleanText(input.errorCode, 80), input.status === "failed" ? message : "", run.id, key, run.id),
+    database.prepare(`UPDATE report_runs SET status = ?, current_phase = ?, updated_at = ?, heartbeat_at = ?, error_code = ?, error_message = ? WHERE id = ? AND ? = (SELECT idempotency_key FROM report_events WHERE run_id = ? ORDER BY sequence DESC LIMIT 1)`).bind(input.status === "limited" ? "running" : input.status, input.phase, observedAt, observedAt, cleanText(input.errorCode, 80), input.status === "failed" ? message : "", run.id, key, run.id),
   ]);
   return { publicId: run.publicId, phase: input.phase, status: input.status, observedAt };
 }
