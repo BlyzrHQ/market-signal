@@ -92,3 +92,10 @@ Fable 5 returned `TASK 57 ACCEPTANCE DESIGN: PASS`. It approved the domain set a
 - Browser QA on Sites version 101 showed only Overview, Evidence, and Methodology navigation; the page states that the domain is parked, that competitors/products/ads were not checked, and that this is not a zero-result report. The source link and both unverified alternatives render without horizontal overflow.
 - Task 60 passed strict Fable 5 review after its retry-idempotency blocker was fixed. Fable independently reproduced all `286/286` tests, confirmed the exact reviewed/deployed tree, returned `FINAL PASS`, and merged PR #60 as `bda7c29` after the live Sites and Trigger verification.
 - Result: truthful `LIMITED` acceptance. The prior generic public-crawl failure is fixed; no unsupported market intelligence is produced for a parked primary identity. Continue to `al-hamdanisweets.com`.
+
+### 4. Al-Hamdani Sweets
+
+- Initial report `464c808aa9eb464898301a8e7b4f01e0` (Trigger run `run_06fo22620u4gsmh5s7aq7bvv01`) reached terminal `LIMITED` on attempt 1 with 51 primary products and secure Shopify CDN images, but zero verified competitors, zero synchronized competitor products, zero accepted product pairs, and no structured primary-product prices.
+- Competitor entity and category discovery both exhausted the 24-second search budget, leaving only the submitted company. The report exposed this gap, but the source restriction is not acceptable because the public site and same-market sweet shops expose enough product evidence for a useful comparison.
+- The overview also rendered a raw `$0` page-level pattern alongside valid prices even though Task 58 forbids unset storefront price sentinels. Product rows did not inherit those page-level numbers, so the Products tab showed zero source-linked pairs and no usable price comparison.
+- Initial result: `FAIL`. Fix primary Shopify price recovery and zero-price integrity first, deploy and re-run this same domain, then address competitor-discovery timeout fallback as a separate focused task if the fresh run still has no verified rivals.
