@@ -9,6 +9,7 @@ type PricePositionProps = {
   priceVerdict: string;
   locale: Locale;
   showDetail?: boolean;
+  showValues?: boolean;
 };
 
 const TEXT = {
@@ -60,7 +61,7 @@ const TEXT = {
   },
 };
 
-export function PricePosition({ comparisonValue, primaryRaw, rivalRaw, locale, showDetail = true }: PricePositionProps) {
+export function PricePosition({ comparisonValue, primaryRaw, rivalRaw, locale, showDetail = true, showValues = true }: PricePositionProps) {
   const copy = TEXT[locale];
   const comparison = resolvedPriceDelta(comparisonValue);
   const primaryDisplay = comparison?.primaryRaw || primaryRaw || copy.notObserved;
@@ -91,21 +92,21 @@ export function PricePosition({ comparisonValue, primaryRaw, rivalRaw, locale, s
   const difference = comparison ? Math.abs(comparison.primary.amount - comparison.rival.amount) : 0;
 
   return (
-    <section className={`price-position-panel ${tone}`} aria-label={copy.aria}>
+    <section className={`price-position-panel ${tone}${showValues ? "" : " comparison-only"}`} aria-label={copy.aria}>
       <div className="price-position-grid">
-        <div className="price-position-value your-position-value">
+        {showValues && <div className="price-position-value your-position-value">
           <span>{copy.you}</span>
           <strong dir="auto">{primaryDisplay}</strong>
-        </div>
+        </div>}
         <div className="price-position-result">
           <span>{copy.label}</span>
           <strong dir="auto">{headline}</strong>
           {comparison && !comparison.equal && <b dir="ltr">{copy.gap(comparison.primary.currency, difference.toFixed(2))}</b>}
         </div>
-        <div className="price-position-value rival-position-value">
+        {showValues && <div className="price-position-value rival-position-value">
           <span>{copy.rival}</span>
           <strong dir="auto">{rivalDisplay}</strong>
-        </div>
+        </div>}
       </div>
       {showDetail && <p dir="auto">{detail}</p>}
     </section>

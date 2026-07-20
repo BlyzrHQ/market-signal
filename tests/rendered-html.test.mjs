@@ -205,7 +205,14 @@ test("real-data route and product metadata are present", async () => {
   assert.match(savedReport, /return <tbody className="comparison-group" role="rowgroup"/);
   assert.match(savedReport, /<td role="cell" colSpan=\{3\}><details className="comparison-detail-disclosure">/);
   assert.match(savedReport, /showDetail=\{false\}/);
-  assert.doesNotMatch(savedReport, /comparison-product-summary[^\n]*<strong dir="auto">\{(?:primaryDisplay|rivalDisplay)/);
+  assert.match(savedReport, /comparison-product-price \$\{primaryDisplay \? "observed" : "unavailable"\}/);
+  assert.match(savedReport, /comparison-product-price \$\{rivalDisplay \? "observed" : "unavailable"\}/);
+  assert.match(savedReport, /showValues=\{false\}/);
+  assert.match(pricePosition, /showValues = true/);
+  assert.match(pricePosition, /showValues \? "" : " comparison-only"/);
+  assert.match(pricePosition, /\{showValues && <div className="price-position-value your-position-value">/);
+  assert.match(styles, /\.comparison-product-price \{[^}]*display: block;[^}]*font-weight: 900/);
+  assert.match(styles, /\.price-position-panel\.comparison-only \.price-position-grid \{[^}]*grid-template-areas: "result"/);
   assert.match(styles, /@media \(max-width: 1180px\)[\s\S]*\.comparison-main-row \{[^}]*grid-template-areas: "pair pair" "price action"/);
   assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.comparison-main-row \{[^}]*grid-template-areas: "pair" "price" "action"/);
   assert.match(styles, /\.comparison-price-cell \{ padding: 17px 12px; \}/);
