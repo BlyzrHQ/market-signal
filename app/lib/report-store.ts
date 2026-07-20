@@ -51,6 +51,8 @@ const PUBLIC_ID_PATTERN = /^[a-f0-9]{32}$/;
 const PHASES = new Set<ReportPhase>(["queued", "crawl", "competitors", "products", "matching", "enrichment", "ads", "complete", "failed", "interrupted"]);
 const STATUSES = new Set<ReportRunStatus>(["queued", "running", "complete", "limited", "failed", "interrupted"]);
 const schemaInitialization = new WeakMap<object, Promise<void>>();
+const emittedStorageDiagnostics = new Set<string>();
+const REPORT_STORAGE_DIAGNOSTIC = /^(?:database-(?:import-failed|binding-missing)|schema-statement-(?:[1-9]|1[0-8])-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api))$/;
 
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS report_runs (id text PRIMARY KEY NOT NULL, public_id text NOT NULL, primary_domain text NOT NULL, locale text DEFAULT 'en' NOT NULL, status text NOT NULL, current_phase text NOT NULL, attempt_count integer DEFAULT 1 NOT NULL, created_at text NOT NULL, updated_at text NOT NULL, heartbeat_at text NOT NULL, expires_at text NOT NULL, error_code text DEFAULT '' NOT NULL, error_message text DEFAULT '' NOT NULL)`,
@@ -75,10 +77,19 @@ const SCHEMA_STATEMENTS = [
 async function getDatabase(): Promise<D1DatabaseLike | null> {
   try {
     const workers = await import("cloudflare:workers");
-    return ((workers.env as unknown as { DB?: D1DatabaseLike }).DB || null);
+    const database = (workers.env as unknown as { DB?: D1DatabaseLike }).DB || null;
+    if (!database) logStorageDiagnostic("database-binding-missing");
+    return database;
   } catch {
+    logStorageDiagnostic("database-import-failed");
     return null;
   }
+}
+
+function logStorageDiagnostic(diagnosticCode: string) {
+  if (!REPORT_STORAGE_DIAGNOSTIC.test(diagnosticCode) || emittedStorageDiagnostics.has(diagnosticCode)) return;
+  emittedStorageDiagnostics.add(diagnosticCode);
+  console.error("report storage diagnostic", { diagnosticCode });
 }
 
 function cleanText(value: unknown, limit: number) {
@@ -157,8 +168,6 @@ export class ReportStorageError extends Error {
   }
 }
 
-const REPORT_STORAGE_DIAGNOSTIC = /^(?:schema-statement-(?:[1-9]|1[0-8])-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api))$/;
-
 export function reportStorageDiagnosticCode(error: unknown) {
   try {
     if (!error || typeof error !== "object") return null;
@@ -184,7 +193,9 @@ async function initializeSchema(database: D1DatabaseLike) {
     try {
       await database.prepare(SCHEMA_STATEMENTS[index]).run();
     } catch {
-      throw new ReportStorageError(`schema-statement-${index + 1}-failed`);
+      const diagnosticCode = `schema-statement-${index + 1}-failed`;
+      logStorageDiagnostic(diagnosticCode);
+      throw new ReportStorageError(diagnosticCode);
     }
   }
 }
@@ -226,7 +237,9 @@ export async function createReportRun(input: { primaryDomain: string; locale?: s
       database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) VALUES (?, 1, 'run-created', 'queued', 'queued', 'Report queued for public-source collection.', '{}', ?)`).bind(id, observedAt),
     ]);
   } catch (error) {
-    throw new ReportStorageError(`run-create-batch-${batchFailureClass(error)}`);
+    const diagnosticCode = `run-create-batch-${batchFailureClass(error)}`;
+    logStorageDiagnostic(diagnosticCode);
+    throw new ReportStorageError(diagnosticCode);
   }
   return { id, publicId: shareId, primaryDomain, locale, status: "queued" as const, currentPhase: "queued" as const, attemptCount: 1, createdAt: observedAt, expiresAt };
 }

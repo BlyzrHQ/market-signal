@@ -190,36 +190,69 @@ test("runtime schema materializes every declared report artifact table", async (
   for (const table of ["report_runs", "report_events", "report_documents", "report_companies", "report_products", "report_matches", "report_ads"]) assert.match(schema, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
 });
 
+test("database acquisition diagnostics are closed and deduplicated", async () => {
+  const originalConsoleError = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
+  try {
+    await assert.rejects(() => createReportRun({ primaryDomain: "example.com" }), /unavailable/);
+    await assert.rejects(() => createReportRun({ primaryDomain: "example.com" }), /unavailable/);
+  } finally {
+    console.error = originalConsoleError;
+  }
+  assert.deepEqual(logged, [["report storage diagnostic", { diagnosticCode: "database-import-failed" }]]);
+  assert.doesNotMatch(JSON.stringify(logged), /cloudflare:workers|stack|SQL|D1/i);
+});
+
 test("schema initialization identifies a failing DDL statement without exposing SQL", async () => {
-  let statement = 0;
   const database = {
-    prepare() {
-      statement += 1;
-      return { bind() { return this; }, async all() { return { results: [] }; }, async run() { if (statement === 3) throw new Error("raw D1 SQL detail"); return {}; } };
+    prepare(query) {
+      return { bind() { return this; }, async all() { return { results: [] }; }, async run() { if (query.includes("report_runs_domain_recent_idx")) throw new Error("raw D1 SQL detail"); return {}; } };
     },
     async batch() { throw new Error("writes must not begin after schema failure"); },
   };
-  await assert.rejects(
-    createReportRun({ primaryDomain: "example.com" }, new Date(), database),
-    (error) => error instanceof ReportStorageError && error.code === "schema-statement-3-failed" && !/D1|SQL/i.test(error.message),
-  );
+  const originalConsoleError = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
+  try {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await assert.rejects(
+        createReportRun({ primaryDomain: "example.com" }, new Date(), database),
+        (error) => error instanceof ReportStorageError && error.code === "schema-statement-3-failed" && !/D1|SQL/i.test(error.message),
+      );
+    }
+  } finally {
+    console.error = originalConsoleError;
+  }
+  assert.deepEqual(logged, [["report storage diagnostic", { diagnosticCode: "schema-statement-3-failed" }]]);
+  assert.doesNotMatch(JSON.stringify(logged), /raw|D1|SQL/i);
 });
 
 test("atomic report creation classifies D1 batch failures without exposing raw details", async () => {
-  for (const [message, expected] of [
+  const cases = [
     ["D1_ERROR: table report_runs has no column named attempt_count", "run-create-batch-schema-mismatch"],
     ["D1_ERROR: NOT NULL constraint failed", "run-create-batch-constraint"],
     ["Wrong number of parameter bindings", "run-create-batch-binding-count"],
     ["D1_ERROR: cannot start a transaction", "run-create-batch-transaction"],
     ["private backend detail", "run-create-batch-batch-api"],
-  ]) {
-    const database = new FakeDatabase();
-    database.batch = async () => { throw new Error(message); };
-    await assert.rejects(
-      createReportRun({ primaryDomain: "example.com" }, new Date(), database),
-      (error) => error instanceof ReportStorageError && error.code === expected && !/D1|backend|column|constraint/i.test(error.message),
-    );
+  ];
+  const originalConsoleError = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
+  try {
+    for (const [message, expected] of [...cases, cases[3]]) {
+      const database = new FakeDatabase();
+      database.batch = async () => { throw new Error(message); };
+      await assert.rejects(
+        createReportRun({ primaryDomain: "example.com" }, new Date(), database),
+        (error) => error instanceof ReportStorageError && error.code === expected && !/D1|backend|column|constraint/i.test(error.message),
+      );
+    }
+  } finally {
+    console.error = originalConsoleError;
   }
+  assert.deepEqual(logged.map((entry) => entry[1].diagnosticCode), cases.map((entry) => entry[1]));
+  assert.doesNotMatch(JSON.stringify(logged), /D1_ERROR|private backend|no column named|parameter bindings|database is locked/i);
 });
 
 test("storage diagnostics survive a bundled error boundary but remain closed", () => {
