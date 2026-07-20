@@ -23,6 +23,37 @@ export async function settleWithConcurrency<Input, Output>(
   return results;
 }
 
+export type PublicEndpointFailure = {
+  kind: "network" | "timeout";
+  attemptedUrl: string;
+  reason: string;
+  observedAt: string;
+};
+
+export type UnavailablePrimaryState = {
+  status: "unavailable";
+  attemptedUrl: string;
+  reason: string;
+  observedAt: string;
+};
+
+export function unavailableAfterBoundedAttempts(first?: PublicEndpointFailure, second?: PublicEndpointFailure): UnavailablePrimaryState | null {
+  if (first?.kind !== "network" || second?.kind !== "network") return null;
+  try {
+    const firstUrl = new URL(first.attemptedUrl);
+    const secondUrl = new URL(second.attemptedUrl);
+    if (firstUrl.protocol !== "https:" || secondUrl.protocol !== "https:" || firstUrl.origin !== secondUrl.origin) return null;
+    return {
+      status: "unavailable",
+      attemptedUrl: secondUrl.toString(),
+      reason: "The submitted public HTTPS endpoint did not return a network response after two bounded attempts.",
+      observedAt: second.observedAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function structuredDataFragments(document: string, maxBytes: number) {
   const lower = document.toLowerCase();
   const encoder = new TextEncoder();
