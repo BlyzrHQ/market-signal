@@ -157,6 +157,19 @@ export class ReportStorageError extends Error {
   }
 }
 
+const REPORT_STORAGE_DIAGNOSTIC = /^(?:schema-statement-(?:[1-9]|1[0-8])-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api))$/;
+
+export function reportStorageDiagnosticCode(error: unknown) {
+  try {
+    if (!error || typeof error !== "object") return null;
+    const candidate = error as { name?: unknown; code?: unknown };
+    if (candidate.name !== "ReportStorageError" || typeof candidate.code !== "string") return null;
+    return REPORT_STORAGE_DIAGNOSTIC.test(candidate.code) ? candidate.code : null;
+  } catch {
+    return null;
+  }
+}
+
 function batchFailureClass(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || "");
   if (/no such (?:table|column)|has no column named/i.test(message)) return "schema-mismatch";

@@ -106,6 +106,22 @@ test("report creation returns 202 only after dispatch and records a sanitized fa
   const storageBody = await storageFailure.json();
   assert.equal(storageBody.errorCode, "storage-create-failed");
   assert.doesNotMatch(JSON.stringify(storageBody), /D1|diagnostic/i);
+
+  const originalConsoleError = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
+  try {
+    const bundledStorageFailure = await createPersistentReport(new Request("https://example.test/api/reports", { method: "POST", body: JSON.stringify({ primaryDomain: "myjam.co.uk" }) }), {
+      create: async () => { throw { name: "ReportStorageError", code: "run-create-batch-schema-mismatch" }; },
+      dispatch: async () => { throw new Error("must not dispatch"); },
+      markDispatched: async () => {},
+      markDispatchFailed: async () => {},
+    });
+    assert.equal(bundledStorageFailure.status, 503);
+  } finally {
+    console.error = originalConsoleError;
+  }
+  assert.deepEqual(logged.at(-1), ["report creation failed", { stage: "storage-create", diagnosticCode: "run-create-batch-schema-mismatch" }]);
 });
 
 test("authenticated recovery increments the attempt, dispatches it, and safely replays", async () => {

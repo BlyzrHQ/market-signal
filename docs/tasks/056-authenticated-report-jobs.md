@@ -91,6 +91,7 @@ Unknown actions are 400; conflicting replays and writes to terminal runs are 409
 - Live production validation exposed an HTTP 503 before dispatch. The creation route now emits only a safe stage/diagnostic code to Worker logs and distinguishes a missing Trigger credential from a rejected Trigger request without logging credentials or arbitrary upstream error bodies.
 - Production logs isolated the failure to D1 schema initialization. Runtime schema setup now executes each idempotent DDL statement sequentially, caches successful initialization per D1 binding, retries after failure, and reports only the closed failing-statement code. This avoids relying on a multi-DDL D1 batch during a customer request.
 - The schema initializer completed in production and isolated the next failure to the atomic run/event creation batch. That batch remains atomic; its raw D1 error is reduced to one closed log-only class (`schema-mismatch`, `constraint`, `binding-count`, `transaction`, or `batch-api`) before any migration decision.
+- The first classifier deployment showed that the runtime bundle does not preserve `instanceof` identity for the custom storage error at the route boundary. Diagnostics now cross that boundary only through the `ReportStorageError` brand plus a strict allowlist of known schema-statement and atomic-batch codes; arbitrary error properties and raw D1 details remain rejected.
 
 ## Local validation record
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { appendReportEvent, compactReportDocument, createReportRun, getStoredReport, markReportDispatched, MAX_REPORT_DOCUMENT_BYTES, recoverInterruptedReport, ReportStorageError, saveReportDocument } from "../app/lib/report-store.ts";
+import { appendReportEvent, compactReportDocument, createReportRun, getStoredReport, markReportDispatched, MAX_REPORT_DOCUMENT_BYTES, recoverInterruptedReport, reportStorageDiagnosticCode, ReportStorageError, saveReportDocument } from "../app/lib/report-store.ts";
 
 class FakeStatement {
   constructor(database, query) { this.database = database; this.query = query; this.values = []; }
@@ -220,4 +220,11 @@ test("atomic report creation classifies D1 batch failures without exposing raw d
       (error) => error instanceof ReportStorageError && error.code === expected && !/D1|backend|column|constraint/i.test(error.message),
     );
   }
+});
+
+test("storage diagnostics survive a bundled error boundary but remain closed", () => {
+  assert.equal(reportStorageDiagnosticCode(new ReportStorageError("run-create-batch-transaction")), "run-create-batch-transaction");
+  assert.equal(reportStorageDiagnosticCode({ name: "ReportStorageError", code: "run-create-batch-schema-mismatch" }), "run-create-batch-schema-mismatch");
+  assert.equal(reportStorageDiagnosticCode({ name: "ReportStorageError", code: "raw-private-detail" }), null);
+  assert.equal(reportStorageDiagnosticCode(new Error("run-create-batch-constraint")), null);
 });
