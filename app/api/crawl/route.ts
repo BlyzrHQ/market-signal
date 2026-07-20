@@ -110,7 +110,9 @@ function verifyDiscoveredCompetitor(primary: DomainCrawl, candidate: DomainCrawl
       targetRegionSource: targetMarket.source,
       candidateRegion: candidate.homepage?.region || "Not enough public signal",
       candidateRegionCode: "",
+      candidateCombinedRegionCode: "",
       candidateRegionSource: "first-party-inferred" as const,
+      candidateRegionBasis: "combined-first-party" as const,
       regionDecisionReason: `Target market ${targetMarket.regionCode || "unknown"} (${targetMarket.source}); candidate region could not be observed because its public homepage was unavailable.`,
       overlapTerms: [],
       hasProductOverlap: false,
@@ -118,7 +120,7 @@ function verifyDiscoveredCompetitor(primary: DomainCrawl, candidate: DomainCrawl
   };
   const verification = verifyCompetitorEntity(
     { domain: primary.domain, title: primary.homepage.title, description: primary.homepage.description, region: primary.homepage.region, regionEvidenceSource: firstPartyRegionSource(primary.homepage), headings: primary.pages.flatMap((page) => page.headings), products: primary.products },
-    { domain: candidate.domain, title: candidate.homepage.title, description: candidate.homepage.description, region: candidate.homepage.region, regionEvidenceSource: firstPartyRegionSource(candidate.homepage), headings: candidate.pages.flatMap((page) => page.headings), products: candidate.products },
+    { domain: candidate.domain, title: candidate.homepage.title, description: candidate.homepage.description, region: candidate.homepage.region, regionEvidenceSource: firstPartyRegionSource(candidate.homepage), countryTldRegionCode: candidate.homepage.regionSignals.find((signal) => signal.kind === "tld")?.countryCode || "", headings: candidate.pages.flatMap((page) => page.headings), products: candidate.products },
     discovery,
     targetMarket,
   );

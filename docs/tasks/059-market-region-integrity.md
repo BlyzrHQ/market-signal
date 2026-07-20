@@ -55,8 +55,16 @@ Sites version 98 deployed the reviewed implementation. Fresh report `5c2fd3e098e
 
 Fable 5 then returned `PASS` on the live-fix implementation after independently rerunning the focused `24/24` and full `276/276` suites. It confirmed the curated origin table, nearest-`from` binding, negative sourcing/destination cases, concrete-over-global behavior, conflicting-origin neutrality, and documented inferred provenance.
 
+### Second live gate
+
+Sites version 99 deployed the fulfillment-origin fix. Fresh report `b77820f3cf4b480292673f8ceeda23ba` resolved the target market to United States and improved the useful output to six competitors and 26 product battles. The gate still returned `BLOCK`: `desertcart.com.sa` and `desertcart.com.eg` remained verified competitors. Their observed country-code TLD signals were diluted by mixed locale/currency/location page signals, the combined candidate region became unknown, and unknown neutrality bypassed the country mismatch.
+
+Fable 5 returned `PASS` on a second live-fix design: candidate storefront market uses an observed supported country-code TLD signal when present, otherwise the combined first-party region. This evidence is derived from the existing crawler signal rather than reparsing domains in verification. A foreign ccTLD storefront genuinely serving the target market will move to a visible investigation gap; this intentionally favors precision over recall and is recoverable from the explicit gap. Vanity use of a supported ccTLD carries the same visible-gap risk. Unsupported generic TLDs remain neutral when no concrete combined region exists.
+
+Fable 5 then returned `PASS` on the country-code storefront implementation after independently rerunning the focused `28/28` and full `280/280` suites. It confirmed that verification consumes the crawler's existing observed `tld` signal, the ccTLD takes precedence over unknown or conflicting combined page signals, same-market and generic-domain behavior remains unchanged, and investigation-gap reasons expose the storefront domain, first-party-observed country code, and combined-signal outcome. The remaining gate is a third Babanuj production run from the exact deployed commit.
+
 ## Local validation
 
-- `npm test`: `276/276` tests passed, including the production build and typecheck.
+- `npm test`: `280/280` tests passed, including the production build and typecheck.
 - `npm run lint`: no errors; one pre-existing `<img>` optimization warning in `app/components/product-design-lab.tsx`.
-- Focused region and competitor verification tests: `24/24` passed.
+- Focused region and competitor verification tests: `28/28` passed.

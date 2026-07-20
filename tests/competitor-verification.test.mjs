@@ -208,3 +208,50 @@ test("falls back to primary first-party region when discovery is global or unsup
     { region: "United Kingdom (inferred)", regionCode: "GB", source: "primary-first-party-observed" },
   );
 });
+
+test("keeps observed multi-label country storefronts decisive when combined page signals are unknown", () => {
+  const target = resolveVerificationMarket("United States", "United States (inferred)");
+  const primary = site("babanuj.com", "Middle Eastern sweets online", "Baklava, maamoul, and Turkish delight delivery", "United States (inferred)");
+  for (const [domain, code] of [["desertcart.com.sa", "SA"], ["desertcart.com.eg", "EG"]]) {
+    const result = verifyCompetitorEntity(
+      primary,
+      { ...site(domain, "Middle Eastern sweets marketplace", "Baklava, maamoul, and Turkish delight delivery", "Not enough public signal"), countryTldRegionCode: code },
+      discovery({ domain, websiteUrl: `https://${domain}/` }),
+      target,
+    );
+    assert.equal(result.regionCompatibility, false, domain);
+    assert.equal(result.accepted, false, domain);
+    assert.equal(result.candidateRegionCode, code, domain);
+    assert.equal(result.candidateCombinedRegionCode, "", domain);
+    assert.equal(result.candidateRegionBasis, "country-code-storefront", domain);
+    assert.match(result.regionDecisionReason, new RegExp(`country-code storefront ${domain.replaceAll(".", "\\.")} resolves to ${code} \\(first-party-observed\\); combined page signals resolved unknown`));
+  }
+});
+
+test("country storefront evidence overrides a conflicting concrete combined region", () => {
+  const target = resolveVerificationMarket("US", "United States (inferred)");
+  const result = verifyCompetitorEntity(
+    site("primary.example", "Halal grocery delivery", "Fresh halal grocery delivery", "United States (inferred)"),
+    { ...site("seller.in", "Halal grocery delivery", "Fresh halal grocery delivery", "United States (inferred)"), countryTldRegionCode: "IN" },
+    discovery({ domain: "seller.in", websiteUrl: "https://seller.in/" }),
+    target,
+  );
+  assert.equal(result.regionCompatibility, false);
+  assert.equal(result.candidateRegionCode, "IN");
+  assert.equal(result.candidateCombinedRegionCode, "US");
+  assert.match(result.regionDecisionReason, /country-code storefront seller\.in resolves to IN .*combined page signals resolved US/);
+});
+
+test("same-market storefront and combined-region candidates remain compatible", () => {
+  const target = resolveVerificationMarket("US", "United States (inferred)");
+  const primary = site("primary.example", "Halal grocery delivery", "Fresh halal grocery delivery", "United States (inferred)");
+  const storefront = verifyCompetitorEntity(primary, { ...site("seller.us", "Halal grocery delivery", "Fresh halal grocery delivery", "Not enough public signal"), countryTldRegionCode: "US" }, discovery(), target);
+  const combined = verifyCompetitorEntity(primary, site("seller.com", "Halal grocery delivery", "Fresh halal grocery delivery", "United States (inferred)"), discovery(), target);
+  const unknown = verifyCompetitorEntity(primary, site("seller.io", "Halal grocery delivery", "Fresh halal grocery delivery", "Not enough public signal"), discovery(), target);
+  assert.equal(storefront.regionCompatibility, true);
+  assert.equal(storefront.candidateRegionBasis, "country-code-storefront");
+  assert.equal(combined.regionCompatibility, true);
+  assert.equal(combined.candidateRegionBasis, "combined-first-party");
+  assert.equal(unknown.regionCompatibility, true);
+  assert.equal(unknown.candidateRegionCode, "");
+});

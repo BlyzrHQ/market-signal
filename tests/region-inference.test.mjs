@@ -145,3 +145,10 @@ test("keeps conflicting fulfillment locations unresolved instead of fabricating 
   assert.equal(result.scores.AE, 4);
   assert.equal(result.signals.filter((signal) => signal.kind === "fulfillment-location").length, 2);
 });
+
+test("does not create country-storefront evidence for unsupported generic TLDs", () => {
+  for (const domain of ["seller.com", "seller.io"]) {
+    const result = inferRegion({ domain, language: "en", text: "Fresh grocery delivery", sourceUrl: `https://${domain}/` });
+    assert.equal(result.signals.some((signal) => signal.kind === "tld"), false, domain);
+  }
+});
