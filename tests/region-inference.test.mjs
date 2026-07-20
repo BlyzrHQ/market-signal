@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { combineRegionSignals, inferRegion, strictRegionCode } from "../app/lib/region-inference.ts";
+import { claimablePagePricePatterns } from "../app/lib/storefront-product-enrichment.ts";
 
 test("uses a country-code domain as strong market evidence", () => {
   const result = inferRegion({
@@ -49,6 +50,19 @@ test("uses an observed page locale and GBP evidence for a UK dot-com store", () 
   });
   assert.equal(result.countryCode, "GB");
   assert.equal(result.confidence, "High");
+});
+
+test("zero filtering removes the brief claim without changing currency-region evidence", () => {
+  const observedPrices = ["USD 0"];
+  const result = inferRegion({
+    domain: "shop.example",
+    language: "en",
+    text: "Fresh sweets shipped nationwide",
+    priceSignals: observedPrices,
+    sourceUrl: "https://shop.example/",
+  });
+  assert.deepEqual(claimablePagePricePatterns(observedPrices), []);
+  assert.equal(result.signals.some((signal) => signal.kind === "currency" && signal.countryCode === "US"), true);
 });
 
 test("labels an explicitly worldwide served market as global without inventing a country", () => {
