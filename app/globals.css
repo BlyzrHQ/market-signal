@@ -237,7 +237,7 @@ body { background: #07110f; color: #eaf4ef; }
 .comparison-price-cell .price-position-grid { grid-template-areas: "you rival" "result result"; grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
 .comparison-price-cell .price-position-grid > div { padding: 9px 10px; }.comparison-price-cell .your-position-value { grid-area: you; }.comparison-price-cell .rival-position-value { grid-area: rival; }.comparison-price-cell .price-position-result { grid-area: result; border-inline-start: 0 !important; border-top: 1px solid #dfe6e2; }
 .comparison-price-cell .price-position-value strong { margin-top: 4px; font-size: 10px; }.comparison-price-cell .price-position-result strong { margin-top: 4px; font-size: 12px; }.comparison-price-cell .price-position-result b { margin-top: 5px; padding: 4px 7px; font-size: 8px; }
-.comparison-action-cell { border-inline-start: 1px solid #edf0ee !important; padding: 21px 19px; background: #fcfdfc !important; }
+.comparison-action-cell { border-inline-start: 1px solid #edf0ee !important; padding: 17px 19px 21px; background: #fcfdfc !important; }
 .comparison-action-cell > strong { display: block; overflow-wrap: anywhere; color: #293d34; font-size: 13px; line-height: 1.5; }
 .comparison-detail-row > td { border-bottom: 1px solid #dfe7e2; padding: 0; background: #f6f9f7; }
 .comparison-detail-disclosure > summary { position: relative; display: flex; min-width: 0; cursor: pointer; align-items: center; justify-content: space-between; gap: 14px; padding-block: 10px; padding-inline: 18px 44px; color: #176b4b; font-size: 9px; font-weight: 900; }
