@@ -97,6 +97,7 @@ Unknown actions are 400; conflicting replays and writes to terminal runs are 409
 - Result classification is total even for exotic runtime-thrown values: sentinel messages and branded codes are read only through throw-safe property access, and hostile proxies or unknown values reduce to `run-create-unclassified` rather than escaping the Result contract.
 - The API route treats the store result as an untrusted cross-module value. It validates the creator, result discriminator, diagnostic allowlist, and every report field before dispatch or response; failures reduce to four closed boundary codes without logging exception text.
 - Live `create-not-callable` evidence identified the root cause: Next/Sites supplies route context as the handler's second argument, which had been mistaken for test dependencies. The exported `POST` handler now accepts only the request and delegates to the separately injectable helper.
+- A second `create-not-callable` run proved the emitted module can also evaluate imported bindings after a module-level dependency object is initialized. Default services are now built per request and use lazy forwarding functions, so imported store and Trigger functions are resolved only when invoked.
 
 ## Local validation record
 

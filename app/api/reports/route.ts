@@ -94,14 +94,16 @@ type ReportCreationDependencies = {
   markDispatchFailed: typeof markReportDispatchFailed;
 };
 
-const dependencies: ReportCreationDependencies = {
-  create: createReportRunResult,
-  dispatch: dispatchReportJob,
-  markDispatched: markReportDispatched,
-  markDispatchFailed: markReportDispatchFailed,
-};
+function defaultDependencies(): ReportCreationDependencies {
+  return {
+    create: (input: { primaryDomain: string; locale?: "en" | "ar" }) => createReportRunResult(input),
+    dispatch: (report) => dispatchReportJob(report),
+    markDispatched: (publicId, runId) => markReportDispatched(publicId, runId),
+    markDispatchFailed: (publicId) => markReportDispatchFailed(publicId),
+  };
+}
 
-export async function createPersistentReport(request: Request, services: ReportCreationDependencies = dependencies) {
+export async function createPersistentReport(request: Request, services: ReportCreationDependencies = defaultDependencies()) {
   let publicId = "";
   let stage: "request" | "storage-create" | "dispatch" | "dispatch-telemetry" = "request";
   try {

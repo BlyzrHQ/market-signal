@@ -296,4 +296,5 @@ test("the browser only creates and observes a durable job; public report URLs ar
   assert.doesNotMatch(publicRoute, /export const (?:POST|PATCH)|export async function (?:POST|PATCH)/);
   assert.match(internalRoute, /hasValidInternalAuthorization/);
   assert.match(internalRoute, /replayed: true/);
+  assert.match(await readFile(new URL("../app/api/reports/route.ts", import.meta.url), "utf8"), /create:\s*\(input:[^)]+\)\s*=>\s*createReportRunResult\(input\)/);
 });
