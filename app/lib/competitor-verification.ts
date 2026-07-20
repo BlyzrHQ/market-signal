@@ -1,13 +1,23 @@
 import { profileTerms } from "./business-profile.ts";
 import type { DiscoveryCandidate } from "./competitor-discovery.ts";
 import { buildProductPairCandidateIndex, retrieveProductPairCandidates, scoreProductPair, type ProductRecord } from "./product-intelligence.ts";
-import { regionCode } from "./region-inference.ts";
+import { regionCode, strictRegionCode } from "./region-inference.ts";
+
+export type FirstPartyRegionSource = "first-party-observed" | "first-party-inferred";
+export type VerificationRegionSource = "discovery-inferred" | "primary-first-party-observed" | "primary-first-party-inferred";
+
+export type VerificationMarket = {
+  region: string;
+  regionCode: string;
+  source: VerificationRegionSource;
+};
 
 export type VerificationSite = {
   domain: string;
   title: string;
   description: string;
   region: string;
+  regionEvidenceSource?: FirstPartyRegionSource;
   headings?: string[];
   products: ProductRecord[];
 };
@@ -20,11 +30,34 @@ export type CompetitorVerification = {
   regionCompatibility: boolean;
   primaryRegionKnown: boolean;
   candidateRegionKnown: boolean;
+  targetRegion: string;
+  targetRegionCode: string;
+  targetRegionSource: VerificationRegionSource;
+  candidateRegion: string;
+  candidateRegionCode: string;
+  candidateRegionSource: FirstPartyRegionSource;
+  regionDecisionReason: string;
   overlapTerms: string[];
   hasProductOverlap: boolean;
   provenPrimaryProduct?: ProductRecord;
   provenRivalProduct?: ProductRecord;
 };
+
+export function resolveVerificationMarket(
+  discoveryRegion: string,
+  primaryRegion: string,
+  primaryRegionSource: FirstPartyRegionSource = "first-party-inferred",
+): VerificationMarket {
+  const discoveryCode = strictRegionCode(discoveryRegion);
+  if (discoveryCode && discoveryCode !== "GLOBAL") {
+    return { region: discoveryRegion, regionCode: discoveryCode, source: "discovery-inferred" };
+  }
+  return {
+    region: primaryRegion,
+    regionCode: regionCode(primaryRegion),
+    source: primaryRegionSource === "first-party-observed" ? "primary-first-party-observed" : "primary-first-party-inferred",
+  };
+}
 
 const GENERIC = new Set([
   "business", "company", "delivery", "digital", "market", "marketplace", "online", "platform", "service", "services", "shop", "software", "store", "solutions",
@@ -47,7 +80,12 @@ function strongestProductPair(primary: ProductRecord[], candidate: ProductRecord
     .sort((left, right) => right.score - left.score || left.left.name.localeCompare(right.left.name))[0];
 }
 
-export function verifyCompetitorEntity(primary: VerificationSite, candidate: VerificationSite, discovery: DiscoveryCandidate): CompetitorVerification {
+export function verifyCompetitorEntity(
+  primary: VerificationSite,
+  candidate: VerificationSite,
+  discovery: DiscoveryCandidate,
+  targetMarket: VerificationMarket = resolveVerificationMarket("", primary.region, primary.regionEvidenceSource),
+): CompetitorVerification {
   const primaryTerms = siteTerms(primary);
   const candidateTerms = siteTerms(candidate);
   const overlapTerms = [...primaryTerms].filter((term) => candidateTerms.has(term)).sort().slice(0, 16);
@@ -62,9 +100,17 @@ export function verifyCompetitorEntity(primary: VerificationSite, candidate: Ver
   const accessoryOnly = ACCESSORY.test(`${candidate.title} ${candidate.description}`) && coreOverlap.length < 2;
   const categoryAlignment = !accessoryOnly && coreOverlap.length >= 2;
 
-  const primaryRegion = regionCode(primary.region);
+  const primaryRegion = targetMarket.regionCode;
   const candidateRegion = regionCode(candidate.region);
   const regionCompatibility = !primaryRegion || !candidateRegion || primaryRegion === candidateRegion || primaryRegion === "GLOBAL" || candidateRegion === "GLOBAL";
+  const candidateRegionSource = candidate.regionEvidenceSource || "first-party-inferred";
+  const regionDecisionReason = !primaryRegion
+    ? `Target market is unknown (${targetMarket.source}); candidate region ${candidateRegion || "unknown"} remains neutral (${candidateRegionSource}).`
+    : !candidateRegion
+      ? `Target market ${primaryRegion} (${targetMarket.source}); candidate region is unknown and remains neutral (${candidateRegionSource}).`
+      : regionCompatibility
+        ? `Target market ${primaryRegion} (${targetMarket.source}) is compatible with candidate region ${candidateRegion} (${candidateRegionSource}).`
+        : `Target market ${primaryRegion} (${targetMarket.source}) conflicts with candidate region ${candidateRegion} (${candidateRegionSource}).`;
 
   const categoryScore = categoryAlignment ? Math.min(45, 30 + (coreOverlap.length * 4)) : 0;
   const productScore = pair ? Math.min(25, 14 + Math.round(pair.score * 20)) : Math.min(10, ownSiteDiscoveryOverlap.length * 3);
@@ -83,6 +129,13 @@ export function verifyCompetitorEntity(primary: VerificationSite, candidate: Ver
     regionCompatibility,
     primaryRegionKnown: Boolean(primaryRegion),
     candidateRegionKnown: Boolean(candidateRegion),
+    targetRegion: targetMarket.region,
+    targetRegionCode: primaryRegion,
+    targetRegionSource: targetMarket.source,
+    candidateRegion: candidate.region,
+    candidateRegionCode: candidateRegion,
+    candidateRegionSource,
+    regionDecisionReason,
     overlapTerms,
     hasProductOverlap,
     provenPrimaryProduct: pair?.left,

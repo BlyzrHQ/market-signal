@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { compareVerifiedCompetitors, verifyCompetitorEntity } from "../app/lib/competitor-verification.ts";
+import { compareVerifiedCompetitors, resolveVerificationMarket, verifyCompetitorEntity } from "../app/lib/competitor-verification.ts";
 
 function product(domain, name, category, type = "Product") {
   return {
@@ -158,4 +158,53 @@ test("ranks a verified product-backed rival ahead only after entity acceptance",
   const rejectedProductLead = { ...productBacked, accepted: false, verificationScore: 99 };
   assert.ok(compareVerifiedCompetitors(base, productBacked) > 0);
   assert.ok(compareVerifiedCompetitors(base, rejectedProductLead) < 0);
+});
+
+test("uses a concrete discovery market instead of a broad primary-site global label", () => {
+  const target = resolveVerificationMarket("United States (inferred)", "Global market (inferred)", "first-party-inferred");
+  assert.deepEqual(target, { region: "United States (inferred)", regionCode: "US", source: "discovery-inferred" });
+
+  const primary = site("babanuj.com", "Mediterranean grocery and sweets", "Shop Mediterranean pantry products online", "Global market (inferred)");
+  const india = verifyCompetitorEntity(
+    primary,
+    { ...site("desertcart.in", "Mediterranean grocery and sweets India", "Shop Mediterranean pantry products online in India", "India (inferred)"), regionEvidenceSource: "first-party-observed" },
+    discovery({ domain: "desertcart.in", websiteUrl: "https://desertcart.in/" }),
+    target,
+  );
+  const saudi = verifyCompetitorEntity(
+    primary,
+    { ...site("desertcart.com.sa", "Mediterranean grocery and sweets Saudi", "Shop Mediterranean pantry products online in Saudi Arabia", "Saudi Arabia (inferred)"), regionEvidenceSource: "first-party-observed" },
+    discovery({ domain: "desertcart.com.sa", websiteUrl: "https://desertcart.com.sa/" }),
+    target,
+  );
+
+  assert.equal(india.regionCompatibility, false);
+  assert.equal(india.accepted, false);
+  assert.equal(india.targetRegionCode, "US");
+  assert.equal(india.candidateRegionCode, "IN");
+  assert.match(india.regionDecisionReason, /Target market US \(discovery-inferred\) conflicts with candidate region IN \(first-party-observed\)/);
+  assert.equal(saudi.regionCompatibility, false);
+  assert.equal(saudi.candidateRegionCode, "SA");
+});
+
+test("preserves global and unknown candidate neutrality for a concrete target", () => {
+  const target = resolveVerificationMarket("US", "Global market (inferred)");
+  const primary = site("primary.example", "Halal grocery delivery", "Fresh halal meat and grocery delivery", "Global market (inferred)");
+  const global = verifyCompetitorEntity(primary, site("global.example", "Global halal grocery", "Fresh halal meat and grocery delivery worldwide", "Global market (inferred)"), discovery(), target);
+  const unknown = verifyCompetitorEntity(primary, site("unknown.example", "Halal grocery", "Fresh halal meat and grocery delivery", "Not enough public signal"), discovery(), target);
+  assert.equal(global.regionCompatibility, true);
+  assert.equal(global.candidateRegionCode, "GLOBAL");
+  assert.equal(unknown.regionCompatibility, true);
+  assert.equal(unknown.candidateRegionCode, "");
+});
+
+test("falls back to primary first-party region when discovery is global or unsupported", () => {
+  assert.deepEqual(
+    resolveVerificationMarket("Global market (inferred)", "United Kingdom (inferred)", "first-party-observed"),
+    { region: "United Kingdom (inferred)", regionCode: "GB", source: "primary-first-party-observed" },
+  );
+  assert.deepEqual(
+    resolveVerificationMarket("South Africa", "United Kingdom (inferred)", "first-party-observed"),
+    { region: "United Kingdom (inferred)", regionCode: "GB", source: "primary-first-party-observed" },
+  );
 });

@@ -1,0 +1,54 @@
+# Task 059 - Market region integrity
+
+## Problem
+
+The Babanuj production report inferred a United States market but accepted `desertcart.in` and `desertcart.com.sa` as region-compatible competitors. Entity verification compared candidates only with the crawler's primary-site region. Babanuj's first-party text produced a broad/global crawl classification, while the market discovery phase had already resolved the actual target market to the United States. The global crawl label therefore bypassed the proven country mismatch.
+
+## Outcome
+
+Use the report's resolved target market when verifying discovered competitors. A country storefront in a different proven region must not be displayed as a same-market competitor merely because the primary site also exposes worldwide/global language.
+
+## Proposed rule
+
+- Resolve a verification market from the discovery result when it names a concrete country.
+- Fall back to the primary crawl region when discovery is unknown or global.
+- Keep genuinely global candidate companies compatible with a concrete target market.
+- Reject a candidate whose first-party region is a different concrete country.
+- Preserve unknown-region neutrality; missing evidence is not fabricated into a mismatch.
+- Extend first-party region inference for India with `.in`, `en-IN`/`hi-IN`, structured `IN`/India addresses, INR/rupee, `+91`, explicit India text, and exact region-code parsing.
+- Concrete country evidence outranks global marketing language. A `.in` storefront that says “worldwide” resolves to India; a `.com` company with no concrete country signal and genuine global language may remain global.
+- Parse the model-produced discovery market through a strict exact country-name/ISO table after removing only the known `(inferred)` display suffix. Do not use substring guesses such as interpreting “South Africa” as Saudi Arabia.
+- Record rejected candidates as investigation gaps with an explicit region decision that distinguishes the inferred target-market source from the observed/inferred first-party candidate region.
+
+## Acceptance criteria
+
+- A US target market rejects `.in`/India and `.com.sa`/Saudi candidate storefronts when their first-party crawl resolves those concrete regions.
+- A US target market accepts a same-category US candidate.
+- A US target market may accept a genuinely global candidate only when it has no concrete country evidence.
+- A `.in` candidate with worldwide language resolves to India and is rejected for a US target; a `.com` candidate with only corroborating global language remains compatible.
+- Unknown candidate regions retain the existing neutral behavior.
+- A global or unknown discovery market falls back to the primary first-party crawl region.
+- “South Africa” and other unsupported free text do not resolve through the strict discovery-market parser.
+- The rejected India/Saudi candidates appear as investigation gaps containing the target-region and candidate-region provenance, not as verified competitors and not as a silent omission.
+- Existing UK, SaaS-global, category, and product-overlap verification tests stay green.
+- The exact implementation is reviewed by Fable 5, fully tested, deployed, and rerun against Babanuj before Task 57 continues.
+
+## Data truth boundary
+
+Market compatibility means evidence of serving the report's target market. Product-name overlap alone does not prove that an India- or Saudi-specific storefront competes for US customers. This task does not infer shipping availability from product presence and does not convert unknown regional evidence into a rejection.
+
+## Status
+
+Fable 5's first design review returned `BLOCK`: India was missing from the region model, candidate-side global language could repeat the bypass, discovery-market parsing was too loosely specified, and rejection provenance lacked a testable output. The revised design adopts all four requirements. Fable 5 then returned `PASS` on the revised design. Implementation and live verification are in progress.
+
+## Review record
+
+- Design: Fable 5 first returned `BLOCK`; the design was revised to add complete India evidence, concrete-over-global precedence, strict market parsing, and rejection provenance. Fable 5 then returned `PASS`.
+- Implementation: Fable 5 returned `PASS` after inspecting the complete Task 59 diff and independently rerunning the focused and full tests. It confirmed the target-market override, India evidence, strict parser, neutral global/unknown behavior, and investigation-gap provenance.
+- Remaining merge gate: publish the focused PR, deploy the exact implementation commit, and verify a fresh Babanuj production report before asking Fable 5 to merge.
+
+## Local validation
+
+- `npm test`: `273/273` tests passed, including the production build and typecheck.
+- `npm run lint`: no errors; one pre-existing `<img>` optimization warning in `app/components/product-design-lab.tsx`.
+- Focused region and competitor verification tests: `21/21` passed.

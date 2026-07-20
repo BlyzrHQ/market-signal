@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { combineRegionSignals, inferRegion } from "../app/lib/region-inference.ts";
+import { combineRegionSignals, inferRegion, strictRegionCode } from "../app/lib/region-inference.ts";
 
 test("uses a country-code domain as strong market evidence", () => {
   const result = inferRegion({
@@ -81,4 +81,27 @@ test("combines independent page signals without counting repeated footer evidenc
   assert.equal(combined.countryCode, "GB");
   assert.equal(combined.confidence, "Medium");
   assert.equal(combined.signals.filter((signal) => signal.kind === "phone").length, 1);
+});
+
+test("keeps concrete India evidence ahead of worldwide marketing language", () => {
+  const result = inferRegion({
+    domain: "store.in",
+    language: "en-IN",
+    document: '<script type="application/ld+json">{"address":{"addressCountry":"IN"}}</script>',
+    text: "Made in India, available worldwide. Call +91 98765 43210.",
+    priceSignals: ["INR 499", "₹599"],
+    sourceUrl: "https://store.in/",
+  });
+  assert.equal(result.countryCode, "IN");
+  assert.equal(result.country, "India");
+  assert.equal(result.confidence, "High");
+  assert.ok(result.scores.GLOBAL > 0);
+});
+
+test("strict discovery parsing accepts only supported exact market names or codes", () => {
+  assert.equal(strictRegionCode("United States (inferred)"), "US");
+  assert.equal(strictRegionCode("India"), "IN");
+  assert.equal(strictRegionCode("SA"), "SA");
+  assert.equal(strictRegionCode("South Africa"), "");
+  assert.equal(strictRegionCode("US and Canada"), "");
 });
