@@ -246,10 +246,75 @@ test("selects a bounded product-search set across distinct name families", () =>
   ];
   assert.deepEqual(productSearchAnchors(products, 4).map((item) => item.name), [
     "Lamb Leg Halal 2500g",
-    "Beef Sirloin Steak Halal 500g",
     "Minced Beef Halal 500g",
     "Chicken Shawarma Halal 500g",
+    "Lamb Shoulder Halal 1500g",
   ]);
+});
+
+test("prefers concise recurring sweets families before niche variants", () => {
+  const products = [
+    product("Ballourie Orange Pistachio Baklava", "https://sweets.example/products/ballourie-orange-pistachio-baklava"),
+    product("Pistachio Baklava", "https://sweets.example/products/pistachio-baklava"),
+    product("Walnut Baklava", "https://sweets.example/products/walnut-baklava"),
+    product("Bird Nest Baklava with Pistachio", "https://sweets.example/products/bird-nest-baklava-pistachio"),
+    product("Maamoul Pistachio", "https://sweets.example/products/maamoul-pistachio"),
+    product("Maamoul Walnut", "https://sweets.example/products/maamoul-walnut"),
+  ];
+  const names = productSearchAnchors(products, 4, "Sweets Example").map((item) => item.name);
+  assert.ok(names.includes("Pistachio Baklava"));
+  assert.ok(names.includes("Maamoul Pistachio"));
+  assert.equal(names.includes("Ballourie Orange Pistachio Baklava"), false);
+});
+
+test("removes repeated brand words before family grouping", () => {
+  const products = [
+    product("Al Hamdani Pistachio Baklava", "https://sweets.example/products/pistachio-baklava"),
+    product("Al Hamdani Walnut Baklava", "https://sweets.example/products/walnut-baklava"),
+    product("Al Hamdani Maamoul Pistachio", "https://sweets.example/products/maamoul-pistachio"),
+    product("Al Hamdani Maamoul Walnut", "https://sweets.example/products/maamoul-walnut"),
+  ];
+  assert.deepEqual(productSearchAnchors(products, 3, "Al Hamdani").map((item) => item.name), [
+    "Al Hamdani Pistachio Baklava",
+    "Al Hamdani Walnut Baklava",
+    "Al Hamdani Maamoul Pistachio",
+  ]);
+});
+
+test("keeps deterministic source order when a small catalog has no recurring family terms", () => {
+  const products = [
+    product("Apricot Preserve", "https://grocer.example/products/apricot-preserve"),
+    product("Sesame Crackers", "https://grocer.example/products/sesame-crackers"),
+    product("Mint Tea", "https://grocer.example/products/mint-tea"),
+  ];
+  assert.deepEqual(productSearchAnchors(products, 3).map((item) => item.name), products.map((item) => item.name));
+});
+
+test("retains product-backed candidates when company lanes time out", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  const searchProfile = { ...profile, products: [
+    product("Pistachio Baklava", "https://myjam.co.uk/products/pistachio-baklava"),
+    product("Walnut Baklava", "https://myjam.co.uk/products/walnut-baklava"),
+  ] };
+  globalThis.fetch = async (_url, init) => {
+    const request = JSON.parse(init.body);
+    const input = JSON.parse(request.input[1].content);
+    if (input.lane !== "product") throw new DOMException("Timed out", "AbortError");
+    return Response.json({ output: [
+      { type: "web_search_call", action: { query: "Pistachio Baklava UK product", sources: [{ title: "Pistachio Baklava | Rival", url: "https://rival.example/products/pistachio-baklava" }] } },
+      { type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Baklava", region: "United Kingdom", queries: ["Pistachio Baklava UK product"], candidates: [] }) }] },
+    ] });
+  };
+  try {
+    const result = await discoverCompetitors(searchProfile);
+    assert.deepEqual(result.candidates.map((candidate) => candidate.domain), ["rival.example"]);
+    assert.equal(result.gaps.filter((gap) => /timed out/i.test(gap)).length, 2);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
 });
 
 test("runs one bounded search request per selected ecommerce product", async () => {
