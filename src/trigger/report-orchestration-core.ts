@@ -31,7 +31,8 @@ type JsonDocument = { blocks: JsonBlock[] } & Record<string, unknown>;
 type CrawlResult = { domain: string; homepage?: unknown; products: ProductRecord[]; role?: string; discovery?: { verificationScore?: number } };
 type CrawlSuccess = { ok: true; primaryDomain: string; results: CrawlResult[]; adRequest: unknown; document: JsonDocument };
 type ParkedDomainOutcome = { ok: false; code: "parked-domain"; primaryDomain: string; error: string; document: JsonDocument };
-type CrawlOutcome = CrawlSuccess | ParkedDomainOutcome;
+type UnavailableDomainOutcome = { ok: false; code: "unavailable-domain"; primaryDomain: string; error: string; document: JsonDocument };
+type CrawlOutcome = CrawlSuccess | ParkedDomainOutcome | UnavailableDomainOutcome;
 
 export type ReportAttemptContext = { attemptNumber: number; isFinalAttempt: boolean };
 
@@ -116,7 +117,7 @@ export async function orchestrateReport(
   let crawl: CrawlOutcome;
   try {
     crawl = await port.crawl({ primary: payload.primaryDomain, domains: [payload.primaryDomain] });
-    if (!crawl || (crawl.ok !== true && crawl.code !== "parked-domain")) throw new Error("The public crawl could not be completed.");
+    if (!crawl || (crawl.ok !== true && crawl.code !== "parked-domain" && crawl.code !== "unavailable-domain")) throw new Error("The public crawl could not be completed.");
   } catch (error) {
     const detail = message(error, "The public crawl could not be completed.");
     await port.appendEvent(payload.publicId, attempt.isFinalAttempt
@@ -128,10 +129,11 @@ export async function orchestrateReport(
 
   if (crawl.ok === false) {
     const document = ensureDocument(crawl.document);
-    const domainStatus = document.blocks.find((block) => block.type === "domain-status" && block.status === "parked");
-    const evidenceUrl = typeof domainStatus?.evidenceUrl === "string" ? domainStatus.evidenceUrl : "";
-    const reason = crawl.error || `${payload.primaryDomain} is parked, so market analysis could not run.`;
-    await port.appendEvent(payload.publicId, limitedEvent("crawl-limited", "crawl", "The submitted domain is parked, so the company crawl ended with a source-linked limitation.", { reason, evidenceUrl }));
+    const unavailable = crawl.code === "unavailable-domain";
+    const domainStatus = document.blocks.find((block) => block.type === "domain-status" && block.status === (unavailable ? "unavailable" : "parked"));
+    const targetUrl = typeof domainStatus?.attemptedUrl === "string" ? domainStatus.attemptedUrl : typeof domainStatus?.evidenceUrl === "string" ? domainStatus.evidenceUrl : "";
+    const reason = crawl.error || (unavailable ? `${payload.primaryDomain} did not return a public network response.` : `${payload.primaryDomain} is parked, so market analysis could not run.`);
+    await port.appendEvent(payload.publicId, limitedEvent("crawl-limited", "crawl", unavailable ? "The submitted domain did not return a public network response after bounded attempts, so the company crawl ended with a visible limitation." : "The submitted domain is parked, so the company crawl ended with a source-linked limitation.", unavailable ? { reason, targetUrl, attemptedUrl: targetUrl } : { reason, targetUrl, evidenceUrl: targetUrl }));
     await port.appendEvent(payload.publicId, limitedEvent("brief-limited", "brief", "The market brief did not run because the primary crawl was terminally limited.", { upstream: "crawl", reason }));
     await port.appendEvent(payload.publicId, limitedEvent("ads-limited", "ads", "Ad-library checks did not run because the primary crawl was terminally limited.", { upstream: "crawl", reason }));
     await port.appendEvent(payload.publicId, limitedEvent("matching-limited", "matching", "Product matching did not run because the primary crawl was terminally limited.", { upstream: "crawl", reason }));

@@ -9,7 +9,7 @@ import { seededCrawlPaths } from "../../lib/crawl-planning";
 import { combineRegionSignals, displayRegion, inferRegion as inferRegionEvidence, type RegionSignal } from "../../lib/region-inference";
 import { forgetRememberedCompetitors, loadRememberedCompetitors, mergeRememberedCandidates, rememberVerifiedCompetitors, type MemoryCandidate } from "../../lib/competitor-memory";
 import { discoverDomainAlternatives, extractStaticClientRedirect, parkingProvider } from "../../lib/domain-recovery";
-import { boundedExtractionDocument, compactCatalogSnapshots, settleWithConcurrency } from "../../lib/crawl-runtime";
+import { boundedExtractionDocument, compactCatalogSnapshots, settleWithConcurrency, unavailableAfterBoundedAttempts, type PublicEndpointFailure } from "../../lib/crawl-runtime";
 import { claimablePagePricePatterns, enrichProductTargets, selectPrimaryProductPriceTargets } from "../../lib/storefront-product-enrichment";
 
 type ClaimType = "Observed" | "Inferred";
@@ -70,7 +70,8 @@ type DomainCrawl = {
   enrichmentPages?: CrawlPage[];
   priceEnrichment?: { pagesRequested: number; pagesFetched: number; maxPages: number };
   primaryPriceEnrichment?: { pagesRequested: number; pagesFetched: number; maxPages: number };
-  siteState?: { status: "parked"; provider: string; evidenceUrl: string; redirectDomain: string };
+  siteState?: { status: "parked"; provider: string; evidenceUrl: string; redirectDomain: string } | { status: "unavailable"; attemptedUrl: string; reason: string; observedAt: string };
+  homepageFailure?: PublicEndpointFailure;
 };
 
 type ReportBlock = Record<string, unknown> & { type: string; id: string };
@@ -198,16 +199,17 @@ async function fetchText(url: string, accept: string, expectedDomain?: string) {
       if (!location || redirect === 3) throw new Error("redirect limit reached");
       const nextUrl = new URL(location, currentUrl);
       if (expectedDomain && canonicalDomain(nextUrl.hostname) !== canonicalDomain(expectedDomain)) {
-        return { ok: false, status: response.status, contentType: response.headers.get("content-type") ?? "", url: currentUrl, text: "", truncated: false, error: `redirected off the submitted domain to ${canonicalDomain(nextUrl.hostname)}.`, redirectDomain: canonicalDomain(nextUrl.hostname) };
+        return { ok: false, status: response.status, contentType: response.headers.get("content-type") ?? "", url: currentUrl, text: "", truncated: false, error: `redirected off the submitted domain to ${canonicalDomain(nextUrl.hostname)}.`, redirectDomain: canonicalDomain(nextUrl.hostname), failureKind: "" as const };
       }
       currentUrl = nextUrl.toString();
     }
     if (!response) throw new Error("request failed");
     const buffer = await response.arrayBuffer();
     const truncated = buffer.byteLength > MAX_DOCUMENT_BYTES;
-    return { ok: response.ok, status: response.status, contentType: response.headers.get("content-type") ?? "", url: response.url || url, text: new TextDecoder().decode(buffer.slice(0, MAX_DOCUMENT_BYTES)), truncated };
+    return { ok: response.ok, status: response.status, contentType: response.headers.get("content-type") ?? "", url: response.url || url, text: new TextDecoder().decode(buffer.slice(0, MAX_DOCUMENT_BYTES)), truncated, failureKind: "" as const };
   } catch (error) {
-    return { ok: false, status: 0, contentType: "", url, text: "", truncated: false, error: error instanceof Error && error.name === "AbortError" ? "timeout" : "request failed" };
+    const failureKind = error instanceof Error && error.name === "AbortError" ? "timeout" as const : "network" as const;
+    return { ok: false, status: 0, contentType: "", url, text: "", truncated: false, error: failureKind === "timeout" ? "timeout" : "request failed", failureKind };
   } finally {
     clearTimeout(timeout);
   }
@@ -315,7 +317,7 @@ async function crawlDomain(input: string, role: DomainCrawl["role"], seededProdu
   const homepageResult = await fetchText(base.toString(), "text/html,application/xhtml+xml", domain);
   if (!homepageResult.ok || !/text\/html|application\/xhtml\+xml/i.test(homepageResult.contentType)) {
     gaps.push({ url: base.toString(), reason: homepageResult.error || `homepage returned HTTP ${homepageResult.status}.`, observedAt: startedAt });
-    return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: 1, pagesFetched: 0, maxPages: maxHtmlPages, robotsChecked: robotsResult.ok }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt };
+    return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: 1, pagesFetched: 0, maxPages: maxHtmlPages, robotsChecked: robotsResult.ok }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt, ...(homepageResult.failureKind ? { homepageFailure: { kind: homepageResult.failureKind, attemptedUrl: base.toString(), reason: homepageResult.error || "request failed", observedAt: startedAt } } : {}) };
   }
   const homepageHost = new URL(homepageResult.url).hostname.toLowerCase().replace(/^www\./, "");
   if (homepageHost !== domain.replace(/^www\./, "")) {
@@ -473,10 +475,12 @@ async function crawlPrimaryDomain(domain: string) {
   if (first.siteState?.status === "parked") return { ...first, coverage: { ...first.coverage, attempts: 1 } };
 
   const retry = await crawlDomain(domain, "primary");
+  const unavailable = unavailableAfterBoundedAttempts(first.homepageFailure, retry.homepageFailure);
   return {
     ...retry,
     gaps: retry.homepage ? retry.gaps : [...first.gaps, ...retry.gaps],
     coverage: { ...retry.coverage, attempts: 2 },
+    ...(unavailable ? { siteState: unavailable } : {}),
   };
 }
 
@@ -561,6 +565,32 @@ export async function POST(request: Request) {
         alternatives: alternatives.map((item) => ({ ...item, verifiedIdentity: false })),
       });
       return Response.json({ ok: false, live: false, code: "parked-domain", primaryDomain, error: `${primaryDomain} appears to be parked or offered for sale through ${primary.siteState.provider}. Select another domain only if it belongs to your company.`, alternatives, results: submittedResults, document }, { status: 409 });
+    }
+    if (primary?.siteState?.status === "unavailable") {
+      const unavailableState = primary.siteState;
+      const document = buildDocument(submittedResults, primaryDomain);
+      document.blocks = [
+        {
+          type: "domain-status",
+          id: "primary-domain-status",
+          domain: primaryDomain,
+          status: "unavailable",
+          attemptedUrl: unavailableState.attemptedUrl,
+          attempts: primary.coverage.attempts || 2,
+          observedAt: unavailableState.observedAt,
+          explanation: "The submitted public HTTPS endpoint did not return a network response after two bounded attempts. Competitor, product, advertising, and matching analysis did not run.",
+        },
+        {
+          type: "gap",
+          id: "primary-domain-unavailable-gap",
+          domain: primaryDomain,
+          url: unavailableState.attemptedUrl,
+          reason: unavailableState.reason,
+          observedAt: unavailableState.observedAt,
+        },
+        ...document.blocks.filter((block) => !(block.type === "gap" && block.domain === primaryDomain && block.url === unavailableState.attemptedUrl)),
+      ];
+      return Response.json({ ok: false, live: false, code: "unavailable-domain", primaryDomain, error: `${primaryDomain} did not return a public network response after two bounded attempts. Check the domain and try again later.`, results: submittedResults, document }, { status: 409 });
     }
     if (!primary?.homepage) {
       const reason = primary?.gaps[0]?.reason;

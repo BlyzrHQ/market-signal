@@ -206,6 +206,37 @@ test("a source-linked parked domain persists one terminal limited report without
   }
 });
 
+test("a bounded unavailable domain persists one terminal limited report without downstream work", async () => {
+  const calls = { brief: 0, ads: 0, match: 0, enrich: 0 };
+  const observedAt = "2026-07-20T10:00:00.000Z";
+  const port = mockPort({
+    async crawl() {
+      return {
+        ok: false,
+        code: "unavailable-domain",
+        primaryDomain: payload.primaryDomain,
+        error: "shop.example did not return a public network response after two bounded attempts.",
+        document: { version: "1", blocks: [
+          { type: "domain-status", id: "primary-domain-status", domain: payload.primaryDomain, status: "unavailable", attemptedUrl: "https://shop.example/", attempts: 2, observedAt },
+          { type: "gap", id: "gap-unavailable", domain: payload.primaryDomain, url: "https://shop.example/", reason: "request failed", observedAt },
+        ] },
+      };
+    },
+    async brief() { calls.brief += 1; throw new Error("must not run"); },
+    async ads() { calls.ads += 1; throw new Error("must not run"); },
+    async match() { calls.match += 1; throw new Error("must not run"); },
+    async enrich() { calls.enrich += 1; throw new Error("must not run"); },
+  });
+  const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
+  assert.equal(result.reportStatus, "limited");
+  assert.deepEqual(result.completedPhases, ["persistence"]);
+  assert.deepEqual(result.limitedPhases, ["crawl", "brief", "ads", "matching"]);
+  assert.deepEqual(calls, { brief: 0, ads: 0, match: 0, enrich: 0 });
+  assert.equal(port.saves.length, 1);
+  assert.equal(port.saves[0].status, "limited");
+  assert.match(port.events.find((item) => item.idempotencyKey === "crawl-limited").message, /did not return a public network response/i);
+});
+
 test("a parked-domain retry replays partial event writes without an idempotency conflict", async () => {
   const storedEvents = new Map();
   let saveAttempts = 0;
@@ -285,6 +316,42 @@ test("the HTTP crawl adapter accepts only a bounded source-linked parked-domain 
     async fetchImpl() { return new Response(JSON.stringify(parked), { status: 409, headers: { "content-type": "application/json", "content-length": "1000001" } }); },
   });
   await assert.rejects(oversized.crawl({ primary: payload.primaryDomain, domains: [payload.primaryDomain] }), /HTTP 409/);
+});
+
+test("the HTTP crawl adapter accepts only a bounded same-domain unavailable-domain 409", async () => {
+  const observedAt = "2026-07-20T10:00:00.000Z";
+  const unavailable = {
+    ok: false,
+    code: "unavailable-domain",
+    primaryDomain: payload.primaryDomain,
+    error: "No public network response.",
+    document: { version: "1", blocks: [
+      { type: "domain-status", id: "primary-domain-status", domain: payload.primaryDomain, status: "unavailable", attemptedUrl: "https://shop.example/", attempts: 2, observedAt },
+      { type: "gap", id: "unavailable-gap", domain: payload.primaryDomain, url: "https://shop.example/", reason: "request failed", observedAt },
+    ] },
+  };
+  const accepted = createReportOrchestrationHttpPort({
+    appOrigin: "https://market.example",
+    callbackToken: "callback_secret_with_enough_entropy_123456",
+    async fetchImpl() { return Response.json(unavailable, { status: 409 }); },
+  });
+  assert.deepEqual(await accepted.crawl({ primary: payload.primaryDomain, domains: [payload.primaryDomain] }), unavailable);
+
+  for (const body of [
+    { ...unavailable, primaryDomain: "attacker.example" },
+    { ...unavailable, error: "" },
+    { ...unavailable, document: { version: "1", blocks: [] } },
+    { ...unavailable, document: { version: "1", blocks: unavailable.document.blocks.map((block) => block.type === "domain-status" ? { ...block, attempts: 1 } : block) } },
+    { ...unavailable, document: { version: "1", blocks: unavailable.document.blocks.map((block) => block.type === "domain-status" ? { ...block, attemptedUrl: "https://attacker.example/" } : block) } },
+    { ...unavailable, document: { version: "1", blocks: unavailable.document.blocks.map((block) => block.type === "gap" ? { ...block, observedAt: "2026-07-20T10:00:02.000Z" } : block) } },
+  ]) {
+    const rejected = createReportOrchestrationHttpPort({
+      appOrigin: "https://market.example",
+      callbackToken: "callback_secret_with_enough_entropy_123456",
+      async fetchImpl() { return Response.json(body, { status: 409 }); },
+    });
+    await assert.rejects(rejected.crawl({ primary: payload.primaryDomain, domains: [payload.primaryDomain] }), /HTTP 409/);
+  }
 });
 
 test("a replayed parked report preserves the live canonical phase summary", async () => {
