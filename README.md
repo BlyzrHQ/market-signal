@@ -10,23 +10,32 @@ The Cobra CLI is the first language-neutral client of the versioned report
 contracts:
 
 ```bash
-go -C cli run ./cmd/marketsignal report company name.com --base-url http://localhost:3000
-go -C cli run ./cmd/marketsignal crawl company name.com --output json
-go -C cli run ./cmd/marketsignal ads company name.com --competitor rivals --region "United Kingdom"
+go -C cli run ./cmd/marketsignal report example.com --base-url http://localhost:3000
+go -C cli run ./cmd/marketsignal crawl example.com --output json
+go -C cli run ./cmd/marketsignal ads example.com --competitor rival.example --region "United Kingdom"
+go -C cli run ./cmd/marketsignal version
 ```
+
+The domain is an argument, not a MyJam-specific value: replace `example.com`
+and `rival.example` with any valid public company domains.
 
 The default output is a compact decision summary. `--output json` returns the
 validated source response. Exit code `2` means the report is valid but declares
 coverage gaps; `3` means contract drift; `4` means transport, authentication, or
 API failure. For ads, `no-verified-result` and `access-limited` both return `2`
-because neither state establishes absence of advertising. The private Sites
-deployment does not yet expose a headless CLI
-authentication flow, so use `--base-url` with a reachable service deployment.
+because neither state establishes absence of advertising. The current Sites API
+does not yet enforce a headless token or per-customer quota. Do not distribute
+the CLI against it as a production API. Use `--base-url` with a controlled local
+or service deployment until a scoped, rate-limited API gateway exists.
 
 The live scraper is currently a custom robots-aware TypeScript crawler using
 native fetch, sitemap XML, public HTML, and JSON-LD. It is not Apify, Scrapy,
 Playwright, or Puppeteer. The crawler will move into Go only after real-domain
 parity tests protect the existing production behavior.
+
+For the complete implemented architecture, data methods, hosted configuration,
+deployment sequence, and public-launch gate, see [the launch and operations
+runbook](docs/LAUNCH.md).
 
 ## Web application
 
