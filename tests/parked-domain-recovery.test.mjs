@@ -49,19 +49,15 @@ test("does not classify an operational HTML storefront as parked", async () => {
   assert.equal(parkingProvider("checkout.active-shop.example"), "");
 });
 
-test("renders parked-domain alternatives as explicit user-selected reruns", async () => {
-  const [page, styles] = await Promise.all([
+test("parked-domain handling remains server-owned after durable job submission", async () => {
+  const [page, loading] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/reports/[publicId]/loading/page.tsx", import.meta.url), "utf8"),
   ]);
-  assert.match(page, /type DomainAlternative/);
-  assert.match(page, /domainAlternatives\.map/);
-  assert.match(page, /analyze\(alternative\.domain\)/);
-  assert.match(page, /sourceUrl/);
-  assert.match(page, /const parked = "code" in payload && payload\.code === "parked-domain"/);
-  assert.match(page, /if \(!parked && payload\.document\) setCrawlDocument/);
-  assert.match(page, /if \(!parked\) window\.setTimeout/);
-  assert.match(styles, /\.domain-alternatives/);
+  assert.match(page, /postJson<CreateReportResponse>\("\/api\/reports"/);
+  assert.doesNotMatch(page, /DomainAlternative|domainAlternatives|\/api\/crawl/);
+  assert.match(loading, /run\?\.errorMessage \|\| latest/);
+  assert.match(loading, /Start a fresh report/);
 });
 
 test("the crawl API returns a parked-domain conflict before competitor discovery", async () => {

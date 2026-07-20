@@ -1,0 +1,166 @@
+import {
+  appendReportEvent,
+  compactReportDocument,
+  getStoredReport,
+  markReportDispatched,
+  markReportDispatchFailed,
+  recoverInterruptedReport,
+  saveReportDocument,
+  type ReportPhase,
+  type ReportRunStatus,
+  type StoredReportEvent,
+} from "../../../../lib/report-store.ts";
+import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../../../lib/internal-auth.ts";
+import { dispatchReportJob } from "../../../../lib/report-dispatch.ts";
+
+type RouteContext = { params: Promise<{ publicId: string }> | { publicId: string } };
+type StoredReport = NonNullable<Awaited<ReturnType<typeof getStoredReport>>>;
+type InternalReportStore = {
+  get(publicId: string): Promise<StoredReport | null>;
+  append(publicId: string, input: Parameters<typeof appendReportEvent>[1]): Promise<unknown>;
+  save(publicId: string, document: unknown, options: Parameters<typeof saveReportDocument>[2]): Promise<unknown>;
+};
+type InternalRecoveryServices = {
+  recover: typeof recoverInterruptedReport;
+  dispatch: typeof dispatchReportJob;
+  markDispatched: typeof markReportDispatched;
+  markDispatchFailed: typeof markReportDispatchFailed;
+};
+
+const liveStore: InternalReportStore = {
+  get: (id) => getStoredReport(id),
+  append: (id, input) => appendReportEvent(id, input),
+  save: (id, document, options) => saveReportDocument(id, document, options),
+};
+const liveRecovery: InternalRecoveryServices = {
+  recover: recoverInterruptedReport,
+  dispatch: dispatchReportJob,
+  markDispatched: markReportDispatched,
+  markDispatchFailed: markReportDispatchFailed,
+};
+
+async function publicId(context: RouteContext) {
+  return (await context.params).publicId;
+}
+
+function clean(value: unknown, limit: number) {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
+}
+
+function stable(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stable);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, stable(item)]));
+}
+
+function sameJson(left: unknown, right: unknown) {
+  return JSON.stringify(stable(left)) === JSON.stringify(stable(right));
+}
+
+function eventReplayMatches(existing: StoredReportEvent, body: Record<string, unknown>) {
+  return existing.phase === body.phase
+    && existing.status === body.status
+    && existing.message === clean(body.message, 280)
+    && sameJson(existing.metadata, body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata) ? body.metadata : {});
+}
+
+function reportDocumentDomain(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value) && typeof (value as Record<string, unknown>).primaryDomain === "string"
+    ? String((value as Record<string, unknown>).primaryDomain)
+    : "";
+}
+
+function documentReplayMatches(report: StoredReport, body: Record<string, unknown>) {
+  const requestedStatus = body.status === "limited" ? "limited" : "complete";
+  if (!report.document || report.run.status !== requestedStatus) return false;
+  if (reportDocumentDomain(report.document) !== report.run.primaryDomain || reportDocumentDomain(body.document) !== report.run.primaryDomain) return false;
+  return sameJson(compactReportDocument(report.document), compactReportDocument(body.document));
+}
+
+function routeError(error: unknown, fallback: string) {
+  const message = error instanceof Error ? error.message : fallback;
+  const status = /not found/i.test(message) ? 404 : /invalid|too large|terminal report|saved report document|only an?/i.test(message) ? 400 : 503;
+  return Response.json({ ok: false, error: message }, { status, headers: { "Cache-Control": "no-store" } });
+}
+
+export function createInternalReportHandlers(store: InternalReportStore, expectedToken?: string, recovery: InternalRecoveryServices = liveRecovery) {
+  return {
+    async get(request: Request, context: RouteContext) {
+      if (!await hasValidInternalAuthorization(request.headers.get("authorization"), expectedToken)) return unauthorizedInternalResponse();
+      try {
+        const report = await store.get(await publicId(context));
+        if (!report) return Response.json({ ok: false, error: "Report not found." }, { status: 404 });
+        return Response.json({ ok: true, report }, { headers: { "Cache-Control": "no-store" } });
+      } catch (error) {
+        return routeError(error, "The persistent report could not be read.");
+      }
+    },
+    async post(request: Request, context: RouteContext) {
+      if (!await hasValidInternalAuthorization(request.headers.get("authorization"), expectedToken)) return unauthorizedInternalResponse();
+      try {
+        const body = await request.json() as Record<string, unknown>;
+        const id = await publicId(context);
+        const report = await store.get(id);
+        if (!report) return Response.json({ ok: false, error: "Report not found." }, { status: 404 });
+        if (body.action === "recover") {
+          const replayableRecovery = report.run.status === "queued"
+            && report.events.some((item) => item.idempotencyKey === `recovery-attempt-${report.run.attemptCount}`);
+          if (report.run.status !== "interrupted" && !replayableRecovery) {
+            return Response.json({ ok: false, error: "Only an interrupted report can be recovered." }, { status: 409 });
+          }
+          const recovered = replayableRecovery ? report.run : await recovery.recover(id);
+          let job: Awaited<ReturnType<typeof dispatchReportJob>>;
+          try {
+            job = await recovery.dispatch(recovered);
+          } catch {
+            try { await recovery.markDispatchFailed(id); } catch { /* the recovery response still fails closed */ }
+            return Response.json({ ok: false, error: "The recovered background report job could not be started." }, { status: 503 });
+          }
+          try { await recovery.markDispatched(id, job.runId); } catch { /* the accepted worker may already have moved the report to running */ }
+          return Response.json({ ok: true, report: recovered, job: { dispatched: true, runId: job.runId }, replayed: replayableRecovery }, { status: 202 });
+        }
+        if (body.action === "event") {
+          const key = clean(body.idempotencyKey, 120);
+          const existing = report.events.find((item) => item.idempotencyKey === key);
+          if (existing) {
+            if (!eventReplayMatches(existing, body)) return Response.json({ ok: false, error: "The callback idempotency key conflicts with a different event." }, { status: 409 });
+            return Response.json({ ok: true, event: existing, replayed: true });
+          }
+          if (["complete", "limited", "failed", "interrupted"].includes(report.run.status)) {
+            return Response.json({ ok: false, error: "A terminal report cannot accept a new event." }, { status: 409 });
+          }
+          const event = await store.append(id, {
+            idempotencyKey: key,
+            phase: body.phase as ReportPhase,
+            status: body.status as ReportRunStatus,
+            message: clean(body.message, 280),
+            metadata: body.metadata,
+            errorCode: clean(body.errorCode, 80),
+          });
+          return Response.json({ ok: true, event, replayed: false });
+        }
+        if (body.action === "document") {
+          if (["complete", "limited"].includes(report.run.status)) {
+            if (!documentReplayMatches(report, body)) return Response.json({ ok: false, error: "The completed report callback conflicts with the saved document." }, { status: 409 });
+            return Response.json({ ok: true, saved: { publicId: id, status: report.run.status }, replayed: true });
+          }
+          if (["failed", "interrupted"].includes(report.run.status)) {
+            return Response.json({ ok: false, error: "A failed or interrupted report cannot accept a document." }, { status: 409 });
+          }
+          const saved = await store.save(id, body.document, {
+            status: body.status === "limited" ? "limited" : "complete",
+            observedAt: typeof body.observedAt === "string" ? body.observedAt : undefined,
+          });
+          return Response.json({ ok: true, saved, replayed: false });
+        }
+        return Response.json({ ok: false, error: "Unknown report persistence action." }, { status: 400 });
+      } catch (error) {
+        return routeError(error, "The persistent report could not be updated.");
+      }
+    },
+  };
+}
+
+const handlers = createInternalReportHandlers(liveStore);
+export const GET = handlers.get;
+export const POST = handlers.post;

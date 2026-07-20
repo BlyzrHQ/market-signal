@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { appendReportEvent, compactReportDocument, createReportRun, getStoredReport, MAX_REPORT_DOCUMENT_BYTES, saveReportDocument } from "../app/lib/report-store.ts";
-import { mutateReport, PATCH, POST } from "../app/api/reports/[publicId]/route.ts";
+import { appendReportEvent, compactReportDocument, createReportRun, createReportRunResult, getStoredReport, markReportDispatched, MAX_REPORT_DOCUMENT_BYTES, recoverInterruptedReport, reportStorageDiagnosticCode, ReportStorageError, saveReportDocument } from "../app/lib/report-store.ts";
 
 class FakeStatement {
   constructor(database, query) { this.database = database; this.query = query; this.values = []; }
   bind(...values) { this.values = values; return this; }
-  async run() { return {}; }
+  async run() { this.database.queries.push(this.query); return {}; }
   async all() {
     if (this.query.startsWith("SELECT * FROM report_runs")) {
       const key = this.values[0];
@@ -18,6 +17,9 @@ class FakeStatement {
     }
     if (this.query.startsWith("SELECT schema_version")) {
       return { results: this.database.documents.filter((document) => document.run_id === this.values[0]).slice(0, 1) };
+    }
+    if (this.query.startsWith("SELECT idempotency_key FROM report_events")) {
+      return { results: this.database.events.filter((event) => event.run_id === this.values[0] && event.idempotency_key === this.values[1]).slice(0, 1) };
     }
     return { results: [] };
   }
@@ -36,7 +38,13 @@ class FakeDatabase {
         this.runs.push({ id: v[0], public_id: v[1], primary_domain: v[2], locale: v[3], status: "queued", current_phase: "queued", attempt_count: 1, created_at: v[4], updated_at: v[5], heartbeat_at: v[6], expires_at: v[7], error_code: "", error_message: "" });
       } else if (q.includes("'run-created'")) {
         this.events.push({ run_id: v[0], sequence: 1, idempotency_key: "run-created", phase: "queued", status: "queued", message: "Report queued for public-source collection.", metadata_json: "{}", observed_at: v[1] });
-      } else if (q.startsWith("INSERT INTO report_events") && q.includes("COALESCE") && !q.includes("'report-saved'") && !q.includes("'stale-run-interrupted'")) {
+      } else if (q.includes("'stale-worker-interrupted'")) {
+        if (!this.events.some((event) => event.run_id === v[0] && event.idempotency_key === "stale-worker-interrupted")) this.events.push({ run_id: v[0], sequence: Math.max(...this.events.map((event) => event.sequence)) + 1, idempotency_key: "stale-worker-interrupted", phase: "interrupted", status: "interrupted", message: v[1], metadata_json: "{}", observed_at: v[2] });
+      } else if (q.includes("'queued-dispatch-timeout'")) {
+        if (!this.events.some((event) => event.run_id === v[0] && event.idempotency_key === "queued-dispatch-timeout")) this.events.push({ run_id: v[0], sequence: Math.max(...this.events.map((event) => event.sequence)) + 1, idempotency_key: "queued-dispatch-timeout", phase: "failed", status: "failed", message: v[1], metadata_json: "{}", observed_at: v[2] });
+      } else if (q.includes("'The interrupted background report was authorized")) {
+        if (!this.events.some((event) => event.run_id === v[0] && event.idempotency_key === v[1])) this.events.push({ run_id: v[0], sequence: Math.max(...this.events.map((event) => event.sequence)) + 1, idempotency_key: v[1], phase: "queued", status: "queued", message: "The interrupted background report was authorized for another attempt.", metadata_json: v[2], observed_at: v[3] });
+      } else if (q.startsWith("INSERT INTO report_events") && q.includes("COALESCE") && !q.includes("'report-saved'")) {
         if (!this.events.some((event) => event.run_id === v[0] && event.idempotency_key === v[1])) {
           this.events.push({ run_id: v[0], sequence: Math.max(0, ...this.events.filter((event) => event.run_id === v[0]).map((event) => event.sequence)) + 1, idempotency_key: v[1], phase: v[2], status: v[3], message: v[4], metadata_json: v[5], observed_at: v[6] });
         }
@@ -52,9 +60,11 @@ class FakeDatabase {
       } else if (q.includes("'report-saved'")) {
         if (!this.events.some((event) => event.run_id === v[0] && event.idempotency_key === "report-saved")) this.events.push({ run_id: v[0], sequence: Math.max(...this.events.map((event) => event.sequence)) + 1, idempotency_key: "report-saved", phase: "complete", status: v[1], message: "Report saved from the completed public-source phases.", metadata_json: "{}", observed_at: v[2] });
       } else if (q.startsWith("UPDATE report_runs SET status = 'interrupted'")) {
-        Object.assign(this.runs.find((run) => run.id === v[1]), { status: "interrupted", current_phase: "interrupted", updated_at: v[0], error_code: "stale-run", error_message: "The previous browser session stopped before this phase completed." });
-      } else if (q.includes("'stale-run-interrupted'")) {
-        if (!this.events.some((event) => event.run_id === v[0] && event.idempotency_key === "stale-run-interrupted")) this.events.push({ run_id: v[0], sequence: Math.max(...this.events.map((event) => event.sequence)) + 1, idempotency_key: "stale-run-interrupted", phase: "interrupted", status: "interrupted", message: "The previous browser session stopped before this phase completed.", metadata_json: "{}", observed_at: v[1] });
+        Object.assign(this.runs.find((run) => run.id === v[2]), { status: "interrupted", current_phase: "interrupted", updated_at: v[0], error_code: "stale-worker", error_message: v[1] });
+      } else if (q.startsWith("UPDATE report_runs SET status = 'failed'")) {
+        Object.assign(this.runs.find((run) => run.id === v[2]), { status: "failed", current_phase: "failed", updated_at: v[0], error_code: "dispatch-timeout", error_message: v[1] });
+      } else if (q.startsWith("UPDATE report_runs SET status = 'queued'")) {
+        Object.assign(this.runs.find((run) => run.id === v[3]), { status: "queued", current_phase: "queued", attempt_count: v[0], updated_at: v[1], heartbeat_at: v[2], error_code: "", error_message: "" });
       }
     }
     return statements.map(() => ({}));
@@ -86,7 +96,47 @@ test("stale active report becomes interrupted with a visible event", async () =>
   await appendReportEvent(created.publicId, { idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Collecting public pages." }, new Date("2026-07-16T00:01:00.000Z"), database);
   const report = await getStoredReport(created.publicId, new Date("2026-07-16T00:20:00.000Z"), database);
   assert.equal(report.run.status, "interrupted");
-  assert.equal(report.events.at(-1).idempotencyKey, "stale-run-interrupted");
+  assert.equal(report.events.at(-1).idempotencyKey, "stale-worker-interrupted");
+  assert.match(report.run.errorMessage, /background worker/i);
+});
+
+test("queued jobs use a separate dispatch timeout only after confirmed dispatch", async () => {
+  const database = new FakeDatabase();
+  const created = await createReportRun({ primaryDomain: "myjam.co.uk" }, new Date("2026-07-16T00:00:00.000Z"), database);
+  const unconfirmed = await getStoredReport(created.publicId, new Date("2026-07-16T02:00:00.000Z"), database);
+  assert.equal(unconfirmed.run.status, "queued");
+  await markReportDispatched(created.publicId, "run_confirmed123", new Date("2026-07-16T02:01:00.000Z"), database);
+  const waiting = await getStoredReport(created.publicId, new Date("2026-07-16T02:45:00.000Z"), database);
+  assert.equal(waiting.run.status, "queued");
+  const timedOut = await getStoredReport(created.publicId, new Date("2026-07-16T03:02:00.000Z"), database);
+  assert.equal(timedOut.run.status, "failed");
+  assert.equal(timedOut.run.errorCode, "dispatch-timeout");
+  assert.equal(timedOut.events.at(-1).idempotencyKey, "queued-dispatch-timeout");
+});
+
+test("dispatch telemetry cannot regress a report whose worker already started", async () => {
+  const database = new FakeDatabase();
+  const created = await createReportRun({ primaryDomain: "myjam.co.uk" }, new Date("2026-07-16T00:00:00.000Z"), database);
+  await appendReportEvent(created.publicId, { idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Collecting public pages." }, new Date("2026-07-16T00:00:01.000Z"), database);
+  const result = await markReportDispatched(created.publicId, "run_faststart1", new Date("2026-07-16T00:00:02.000Z"), database);
+  const stored = await getStoredReport(created.publicId, new Date("2026-07-16T00:00:03.000Z"), database);
+  assert.equal(result.skipped, true);
+  assert.equal(stored.run.status, "running");
+  assert.equal(stored.run.currentPhase, "crawl");
+  assert.deepEqual(stored.events.map((event) => event.idempotencyKey), ["run-created", "crawl-started"]);
+});
+
+test("interrupted jobs require an explicit recovery that increments the dispatch attempt", async () => {
+  const database = new FakeDatabase();
+  const created = await createReportRun({ primaryDomain: "myjam.co.uk" }, new Date("2026-07-16T00:00:00.000Z"), database);
+  await appendReportEvent(created.publicId, { idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Collecting public pages." }, new Date("2026-07-16T00:01:00.000Z"), database);
+  await getStoredReport(created.publicId, new Date("2026-07-16T00:20:00.000Z"), database);
+  const recovered = await recoverInterruptedReport(created.publicId, new Date("2026-07-16T00:21:00.000Z"), database);
+  assert.equal(recovered.status, "queued");
+  assert.equal(recovered.attemptCount, 2);
+  const report = await getStoredReport(created.publicId, new Date("2026-07-16T00:22:00.000Z"), database);
+  assert.equal(report.events.at(-1).idempotencyKey, "recovery-attempt-2");
+  await assert.rejects(() => recoverInterruptedReport(created.publicId, new Date(), database), /Only an interrupted report/);
 });
 
 test("report persistence rejects missing databases, invalid ids, and oversized documents", async () => {
@@ -133,14 +183,100 @@ test("persistence preserves original counts on an already compacted transport sn
   assert.equal(catalog.productsTruncated, true);
 });
 
-test("the deployed mutation route accepts the POST method used by postJson", () => {
-  assert.equal(POST, mutateReport);
-  assert.equal(PATCH, mutateReport);
-});
-
 test("runtime schema materializes every declared report artifact table", async () => {
   const database = new FakeDatabase();
   await createReportRun({ primaryDomain: "example.com" }, new Date(), database);
   const schema = database.queries.join("\n");
   for (const table of ["report_runs", "report_events", "report_documents", "report_companies", "report_products", "report_matches", "report_ads"]) assert.match(schema, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
+});
+
+test("database acquisition diagnostics are closed and deduplicated", async () => {
+  const originalConsoleError = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
+  try {
+    await assert.rejects(() => createReportRun({ primaryDomain: "example.com" }), /unavailable/);
+    await assert.rejects(() => createReportRun({ primaryDomain: "example.com" }), /unavailable/);
+  } finally {
+    console.error = originalConsoleError;
+  }
+  assert.deepEqual(logged, [["report storage diagnostic", { diagnosticCode: "database-import-failed" }]]);
+  assert.doesNotMatch(JSON.stringify(logged), /cloudflare:workers|stack|SQL|D1/i);
+});
+
+test("schema initialization identifies a failing DDL statement without exposing SQL", async () => {
+  const database = {
+    prepare(query) {
+      return { bind() { return this; }, async all() { return { results: [] }; }, async run() { if (query.includes("report_runs_domain_recent_idx")) throw new Error("raw D1 SQL detail"); return {}; } };
+    },
+    async batch() { throw new Error("writes must not begin after schema failure"); },
+  };
+  const originalConsoleError = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
+  try {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await assert.rejects(
+        createReportRun({ primaryDomain: "example.com" }, new Date(), database),
+        (error) => error instanceof ReportStorageError && error.code === "schema-statement-3-failed" && !/D1|SQL/i.test(error.message),
+      );
+    }
+  } finally {
+    console.error = originalConsoleError;
+  }
+  assert.deepEqual(logged, [["report storage diagnostic", { diagnosticCode: "schema-statement-3-failed" }]]);
+  assert.doesNotMatch(JSON.stringify(logged), /raw|D1|SQL/i);
+});
+
+test("atomic report creation classifies D1 batch failures without exposing raw details", async () => {
+  const cases = [
+    ["D1_ERROR: table report_runs has no column named attempt_count", "run-create-batch-schema-mismatch"],
+    ["D1_ERROR: NOT NULL constraint failed", "run-create-batch-constraint"],
+    ["Wrong number of parameter bindings", "run-create-batch-binding-count"],
+    ["D1_ERROR: cannot start a transaction", "run-create-batch-transaction"],
+    ["private backend detail", "run-create-batch-batch-api"],
+  ];
+  const originalConsoleError = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
+  try {
+    for (const [message, expected] of [...cases, cases[3]]) {
+      const database = new FakeDatabase();
+      database.batch = async () => { throw new Error(message); };
+      await assert.rejects(
+        createReportRun({ primaryDomain: "example.com" }, new Date(), database),
+        (error) => error instanceof ReportStorageError && error.code === expected && !/D1|backend|column|constraint/i.test(error.message),
+      );
+    }
+  } finally {
+    console.error = originalConsoleError;
+  }
+  assert.deepEqual(logged.map((entry) => entry[1].diagnosticCode), cases.map((entry) => entry[1]));
+  assert.doesNotMatch(JSON.stringify(logged), /D1_ERROR|private backend|no column named|parameter bindings|database is locked/i);
+});
+
+test("storage diagnostics survive a bundled error boundary but remain closed", () => {
+  assert.equal(reportStorageDiagnosticCode(new ReportStorageError("run-create-batch-transaction")), "run-create-batch-transaction");
+  assert.equal(reportStorageDiagnosticCode({ name: "ReportStorageError", code: "run-create-batch-schema-mismatch" }), "run-create-batch-schema-mismatch");
+  assert.equal(reportStorageDiagnosticCode({ name: "ReportStorageError", code: "raw-private-detail" }), null);
+  assert.equal(reportStorageDiagnosticCode(new Error("run-create-batch-constraint")), null);
+});
+
+test("report creation result carries only closed diagnostics across the route boundary", async () => {
+  const database = new FakeDatabase();
+  database.batch = async () => { throw new Error("D1_ERROR: table report_runs has no column named attempt_count"); };
+  const classified = await createReportRunResult({ primaryDomain: "example.com" }, new Date(), database);
+  assert.deepEqual(classified, { ok: false, diagnosticCode: "run-create-batch-schema-mismatch" });
+
+  const foreign = await createReportRunResult({ primaryDomain: "example.com" }, { toISOString() { throw new Error("private detail"); } }, new FakeDatabase());
+  assert.deepEqual(foreign, { ok: false, diagnosticCode: "run-create-unclassified" });
+  assert.doesNotMatch(JSON.stringify(foreign), /private|detail/i);
+
+  const hostile = new Proxy({}, { getPrototypeOf() { throw new Error("prototype trap"); }, get() { throw new Error("property trap"); } });
+  const hostileResult = await createReportRunResult({ primaryDomain: "example.com" }, { toISOString() { throw hostile; } }, new FakeDatabase());
+  assert.deepEqual(hostileResult, { ok: false, diagnosticCode: "run-create-unclassified" });
+
+  const successful = await createReportRunResult({ primaryDomain: "example.com" }, new Date(), new FakeDatabase());
+  assert.equal(successful.ok, true);
+  assert.equal(successful.report.primaryDomain, "example.com");
 });

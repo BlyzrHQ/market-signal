@@ -8,21 +8,16 @@ const report = await readFile(new URL("../app/reports/[publicId]/page.tsx", impo
 const productLab = await readFile(new URL("../app/components/product-design-lab.tsx", import.meta.url), "utf8");
 const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 
-test("submission exposes a dedicated loading URL and navigates only after document persistence", () => {
-  assert.match(home, /history\.pushState\(\{\}, "", `\/reports\/\$\{publicReportId\}\/loading`\)/);
-  const save = home.indexOf('action: "document"');
-  const navigate = home.indexOf('window.location.pathname === `/reports/${publicReportId}/loading`');
-  assert.ok(save >= 0 && navigate > save);
-  assert.match(home, /setLoadingMessage\(translatedProgress\(idempotencyKey, message\)\)/);
-  assert.match(home, /analysisRunRef\.current \+= 1/);
-  assert.match(home, /loading-cancel/);
+test("submission hands the durable job to its dedicated loading route", () => {
+  assert.match(home, /postJson<CreateReportResponse>\("\/api\/reports"/);
+  assert.match(home, /window\.location\.assign\(`\/reports\/\$\{created\.report\.publicId\}\/loading`\)/);
+  assert.doesNotMatch(home, /action: "document"|action: "event"/);
+  assert.doesNotMatch(home, /["'`]\/api\/(?:crawl|report|ads|match|enrich-products)["'`]/);
   assert.doesNotMatch(home, /loadingPercent|progressPercent/);
 });
 
-test("an interrupted crawl is persisted and remains addressable by its report URL", () => {
-  assert.match(home, /interruptedReportRecovery\(publicReportId, message\)/);
-  assert.match(home, /postJson\(`\/api\/reports\/\$\{publicReportId\}`,[\s\S]*recovery\.event/);
-  assert.match(home, /window\.location\.assign\(recovery\.path\)/);
+test("the browser no longer owns interruption recovery or report mutation", () => {
+  assert.doesNotMatch(home, /interruptedReportRecovery|\/api\/reports\/\$\{publicReportId\}/);
 });
 
 test("reopened loading routes poll persisted events and redirect only with a document", () => {
