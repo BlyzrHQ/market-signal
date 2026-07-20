@@ -48,3 +48,17 @@ Fable 5 returned `TASK 62 DESIGN: PASS`. It approved recurrence-ranked, family-d
 Fable 5 returned `TASK 62 IMPLEMENTATION: PASS`. It verified brand stripping, the two-pass family collision path, deterministic recurrence/conciseness/quality/source-order ranking, full-catalog recurrence, the unchanged four-product-search cap, and the unchanged source and verification gates. It independently reran the full 299-test suite plus typecheck, production build, and lint (zero errors and one pre-existing warning).
 
 The persisted Al-Hamdani catalog now selects `Pistachio Baklava`, `Ballourie Pistachio`, `Maamoul Walnut`, and `Sesame Cookie with Dates` as its four bounded anchors. This includes broad baklava and maamoul families and replaces the prior price-biased niche set without adding a request.
+
+## Production validation
+
+- Reviewed code commit: `05e3e14f270bdd6995f3bd636c23e336b6e8cc12`.
+- Sites version: `103`; deployment `appgdep_6a5e89d821b08191984a295152eb3584` succeeded.
+- Trigger.dev version: `20260720.8`; run `run_06fo2jc3hg6cadumms7h3i0e01` completed.
+- Fresh public report: `8486ffc0979347b6a8c9f48d4e387ef0` for `al-hamdanisweets.com`.
+- Result status: `complete`, not limited. The crawl persisted 51 primary products and four independently verified competitors, compared with zero competitors on the pre-change report for the same domain.
+- Verified rivals: `babanuj.com` and `bohsali1870.com` at high confidence, plus `muhannasweetsusa.com` and `albaghdadybakery.com` at medium confidence. The dashboard links every company to its public site and relevant evidence, product, and ad sections.
+- AI-hybrid matching assessed all 51 primary products against 82 competitor products and accepted 11 source-linked pairs after 8,364 retrieval scores, 180 candidate assessments, and 10 `gpt-5.4-mini` judge calls. Both competitors with observed catalogs produced product battles: five for Babanuj and six for Al Bohsali.
+- Examples inspected in the deployed dashboard include `Baklava Assortment Mix with Pistachio` against Al Bohsali's `Baklava Pistachio Mix - 34pcs`, `Maamoul Pistachio` against `Maamoul Pistachio Filled Shortbread Cookies`, and `Petit Four Chocolate Round` against Babanuj's `Zaitoune Petit Four Chocolate - 350g`.
+- Selected-page enrichment fetched 14 of 16 requested product pages. The rendered table exposes public prices such as USD 35.99 versus USD 41 and USD 17.99 versus USD 77.00, while explicitly showing `Only one public price found`, `No public prices found`, or `comparison basis unverified` when a direct delta would be unsafe.
+- Two Babanuj pages returned a product identity that contradicted the requested record; those are visible as source-linked product data gaps rather than silently accepted enrichment.
+- Browser checks verified the deployed Overview, Competitors, and Products tabs, the four competitor cards, 11 accepted product rows, source links, CSV export, Share control, and the persistent truth labels for missing ad and price coverage.
