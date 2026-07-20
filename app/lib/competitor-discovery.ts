@@ -149,27 +149,43 @@ function isProductDetailSource(url: string, product: ProductRecord) {
   }
 }
 
-export function productSearchAnchors(products: ProductRecord[], maxSearches = MAX_PRODUCT_SEARCHES) {
+export function productSearchAnchors(products: ProductRecord[], maxSearches = MAX_PRODUCT_SEARCHES, brandName = "") {
   const limit = Math.max(0, Math.min(6, Math.floor(maxSearches)));
-  const eligible = products.map((product, index) => ({ product, index })).filter(({ product }) => {
-    const meaningful = normalizedTokens(product.name).filter((token) => !GENERIC_ANCHOR_TOKENS.has(token));
-    return product.jsonLdType === "Product" && meaningful.length >= 2 && !ACCESSORY_ANCHOR.test(product.name);
-  }).sort((left, right) => {
-    const quality = (product: ProductRecord) => Number(product.ownership === "self-declared-brand") * 4 + Number(product.priceSignals.length > 0) * 2 + Number(product.extraction === "json-ld");
-    return quality(right.product) - quality(left.product) || left.index - right.index;
-  }).map(({ product }) => product);
-  const selected: ProductRecord[] = [];
-  const seenGroups = new Set<string>();
-  for (const product of eligible) {
-    const nameFamily = normalizedTokens(product.name).filter((token) => !GENERIC_ANCHOR_TOKENS.has(token))[0];
-    const category = normalizedTokens(product.category).filter((token) => !GENERIC_ANCHOR_TOKENS.has(token)).slice(0, 2).join("-") || "uncategorized";
-    const group = `${category}:${nameFamily}`;
-    if (!nameFamily || seenGroups.has(group)) continue;
-    seenGroups.add(group);
-    selected.push(product);
-    if (selected.length === limit) return selected;
+  if (!limit) return [];
+  const compactBrand = brandName.normalize("NFKD").replace(/[^\p{L}\p{N}]+/gu, "").toLowerCase();
+  const brandTokens = new Set([...normalizedTokens(brandName), ...(compactBrand.length >= 3 ? [compactBrand] : [])]);
+  const meaningfulTokens = (product: ProductRecord) => normalizedTokens(product.name).filter((token) => !GENERIC_ANCHOR_TOKENS.has(token) && !brandTokens.has(token));
+  const recurrence = new Map<string, number>();
+  for (const product of products) {
+    for (const token of new Set(meaningfulTokens(product))) recurrence.set(token, (recurrence.get(token) || 0) + 1);
   }
-  return selected;
+  const quality = (product: ProductRecord) => Number(product.ownership === "self-declared-brand") * 4 + Number(product.priceSignals.length > 0) * 2 + Number(product.extraction === "json-ld");
+  const ranked = products.map((product, index) => {
+    const tokens = meaningfulTokens(product);
+    const recurringScore = tokens.reduce((sum, token) => sum + ((recurrence.get(token) || 0) >= 2 ? recurrence.get(token) || 0 : 0), 0) / Math.max(1, tokens.length);
+    const family = [...tokens].sort((left, right) => (recurrence.get(right) || 0) - (recurrence.get(left) || 0) || tokens.indexOf(left) - tokens.indexOf(right))[0] || "uncategorized";
+    return { product, index, tokens, recurringScore, family };
+  }).filter(({ product, tokens }) => product.jsonLdType === "Product" && tokens.length >= 2 && !ACCESSORY_ANCHOR.test(product.name)).sort((left, right) =>
+    right.recurringScore - left.recurringScore
+      || left.tokens.length - right.tokens.length
+      || quality(right.product) - quality(left.product)
+      || left.index - right.index,
+  );
+  const selected: typeof ranked = [];
+  const residue: typeof ranked = [];
+  const seenFamilies = new Set<string>();
+  for (const candidate of ranked) {
+    if (seenFamilies.has(candidate.family)) residue.push(candidate);
+    else {
+      seenFamilies.add(candidate.family);
+      selected.push(candidate);
+    }
+  }
+  for (const candidate of residue) {
+    if (selected.length === limit) break;
+    selected.push(candidate);
+  }
+  return selected.slice(0, limit).map(({ product }) => product);
 }
 
 function searchSources(payload: Record<string, unknown>): SearchSource[] {
@@ -460,7 +476,7 @@ export async function discoverCompetitors(profile: DiscoveryProfile): Promise<Di
 
   const endpoint = `${(process.env.OPENAI_RESPONSES_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "")}/responses`;
   const baseLanes: SearchLane[] = ["entity", "category"];
-  const anchors = business.businessType === "ecommerce" ? productSearchAnchors(business.offerings) : [];
+  const anchors = business.businessType === "ecommerce" ? productSearchAnchors(business.offerings, MAX_PRODUCT_SEARCHES, business.brandName) : [];
   const settled = await Promise.all([
     ...baseLanes.map((lane) => runLane(endpoint, apiKey, model, lane, business, profile)),
     ...anchors.map((anchor) => runLane(endpoint, apiKey, model, "product", { ...business, offerings: [anchor] }, { ...profile, products: [anchor] })),
