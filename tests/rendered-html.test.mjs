@@ -208,6 +208,8 @@ test("real-data route and product metadata are present", async () => {
   assert.doesNotMatch(savedReport, /comparison-product-summary[^\n]*<strong dir="auto">\{(?:primaryDisplay|rivalDisplay)/);
   assert.match(styles, /@media \(max-width: 1180px\)[\s\S]*\.comparison-main-row \{[^}]*grid-template-areas: "pair pair" "price action"/);
   assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.comparison-main-row \{[^}]*grid-template-areas: "pair" "price" "action"/);
+  assert.match(styles, /\.comparison-price-cell \{ padding: 17px 12px; \}/);
+  assert.match(styles, /\.comparison-action-cell \{[^}]*padding: 17px 19px 21px;/);
   assert.match(styles, /\.price-position-grid \{[^}]*grid-template-columns: minmax\(0,1fr\) minmax\(220px,1\.15fr\) minmax\(0,1fr\)/);
   assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.price-position-grid, \.decision-path, \.dossier-ad-row \{ grid-template-columns: 1fr; \}/);
   assert.doesNotMatch(styles, /\.price-axis|\.price-line|\.price-dot|\.close-prices|\.price-picture|\.price-fallback/);
