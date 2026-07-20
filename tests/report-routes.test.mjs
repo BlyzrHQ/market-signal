@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 const home = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 const loading = await readFile(new URL("../app/reports/[publicId]/loading/page.tsx", import.meta.url), "utf8");
 const report = await readFile(new URL("../app/reports/[publicId]/page.tsx", import.meta.url), "utf8");
+const productLab = await readFile(new URL("../app/components/product-design-lab.tsx", import.meta.url), "utf8");
 const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 
 test("submission exposes a dedicated loading URL and navigates only after document persistence", () => {
@@ -71,37 +72,31 @@ test("saved reports use a persistent dashboard shell without the old report hero
 });
 
 test("saved product and ad views preserve truth boundaries and source links", () => {
-  assert.match(report, /className="product-comparison-table" role="table"/);
-  assert.match(report, /<thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">/);
-  assert.match(report, /\{battles\.map\(\(battle\) => \{/);
-  assert.match(report, /return <tbody className="comparison-group" role="rowgroup" key=\{battle\.key\}/);
-  assert.match(report, /<tr id=\{anchor\} className="comparison-main-row" role="row">/);
-  assert.match(report, /<td role="cell" className="comparison-pair-cell">/);
-  assert.match(report, /<tr className="comparison-detail-row" role="row"><td role="cell" colSpan=\{3\}>/);
-  assert.match(report, /resolvedPriceDelta\(decision\.priceComparison\)/);
-  assert.match(report, /Open your product ↗/);
-  assert.match(report, /Open rival product ↗/);
-  assert.match(report, /showDetail=\{false\}/);
-  assert.match(report, /showValues=\{false\}/);
-  assert.match(report, /`\$\{productAnchor\(domain\)\}-\$\{slug\(battle\.key\)\}`/);
-  assert.match(report, /const verdict = display\(assessment\.verdict, ar \? "بديل قريب" : "Close substitute"\)/);
-  assert.doesNotMatch(report, /comparison-pair-heading|comparison-match-tags/);
-  assert.doesNotMatch(css, /\.comparison-pair-heading|\.comparison-match-tags/);
-  assert.match(report, /className="comparison-detail-meta"/);
-  assert.match(report, /display\(assessment\.claimType, "inferred"\)/);
-  assert.match(report, /display\(battle\.match\.confidence/);
+  assert.match(report, /<ProductDesignLab comparison=\{comparison\} battles=\{battles\}/);
+  assert.match(productLab, /className="product-compact-table"/);
+  assert.match(productLab, /rows\.map\(\(row, index\) => <tbody/);
+  assert.match(productLab, /rows\.map\(\(row, index\) => <li/);
+  assert.match(productLab, /filter\(\(\{ row \}\) => row\.lane === lane\.id\)/);
+  assert.match(productLab, /resolvedPriceDelta\(decision\.priceComparison\)/);
+  assert.match(productLab, /Open product ↗/);
+  assert.match(productLab, /showDetail=\{false\}/);
+  assert.match(productLab, /showValues=\{false\}/);
+  assert.match(productLab, /className="product-match-details"/);
+  assert.match(productLab, /const claimType = display\(assessment\.claimType, "inferred"\)/);
+  assert.match(productLab, /const confidence = display\(battle\.match\.confidence/);
   assert.match(report, /window\.addEventListener\("beforeprint", expandPrintEvidence\)/);
   assert.match(report, /window\.addEventListener\("afterprint", restorePrintEvidence\)/);
-  assert.match(report, /firstSentence\.length >= 15 \? firstSentence : full/);
-  assert.match(report, /primarySource \? <a href=\{primarySource\}/);
-  assert.match(report, /rivalSource \? <a href=\{rivalSource\}/);
+  assert.match(report, /\.product-match-details:not\(\[open\]\)/);
+  assert.match(productLab, /firstSentence\.length >= 15 \? firstSentence : full/);
+  assert.match(productLab, /row\.primarySource && <a href=\{row\.primarySource\}/);
+  assert.match(productLab, /row\.rivalSource && <a href=\{row\.rivalSource\}/);
+  assert.match(productLab, /enrichmentGaps/);
+  assert.match(productLab, /PRODUCT DATA GAP/);
+  assert.match(productLab, /Open source ↗/);
   assert.match(report, /not proof of zero ads/);
   assert.match(report, /This does not mean the companies do not advertise/);
   assert.match(report, /truth-pill/);
   assert.match(report, /repairEncoding/);
-  assert.match(report, /productEnrichmentGaps/);
-  assert.match(report, /PRODUCT DATA GAP/);
-  assert.match(report, /Open source ↗/);
 });
 
 test("dark routes fill the viewport and keep responsive width bounded", () => {
