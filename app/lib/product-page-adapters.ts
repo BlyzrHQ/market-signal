@@ -134,6 +134,13 @@ function minorUnitPrice(value: unknown, currency: string, explicitDigits: unknow
   return { raw: `${currency} ${rendered}`, currency, amount };
 }
 
+function positiveMinorUnitInput(value: unknown) {
+  if (typeof value === "number") return Number.isFinite(value) && value > 0;
+  if (typeof value !== "string" || !value.trim()) return false;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0;
+}
+
 function identifierRecord(value: JsonRecord | null) {
   if (!value) return undefined;
   const identifiers = extractProductIdentifiers({ sku: value.sku, gtin: value.barcode || value.gtin, brand: value.brand });
@@ -243,14 +250,33 @@ export function parseWooCommerceProduct(input: {
   const currency = isoCurrency(prices?.currency_code);
   if (!name) return { product: null, gap: "The WooCommerce Store API returned a product without a usable name." };
   const images = Array.isArray(payload.images) ? payload.images.map(record).filter((value): value is JsonRecord => Boolean(value)) : [];
-  const price = minorUnitPrice(prices?.price, currency, prices?.currency_minor_unit);
+  const fixedPriceProvided = Boolean(prices) && Object.prototype.hasOwnProperty.call(prices, "price");
+  const fixedPricePositive = positiveMinorUnitInput(prices?.price);
+  const price = fixedPricePositive ? minorUnitPrice(prices?.price, currency, prices?.currency_minor_unit) : null;
   const priceRange = record(prices?.price_range);
-  const rangeSignals = [priceRange?.min_amount, priceRange?.max_amount]
-    .map((value) => minorUnitPrice(value, currency, prices?.currency_minor_unit))
-    .filter((value): value is ProductPriceSignal => Boolean(value));
-  const priceSignals = rangeSignals.length === 2 && rangeSignals[0].amount !== rangeSignals[1].amount
-    ? rangeSignals
+  const rangeValues = [priceRange?.min_amount, priceRange?.max_amount];
+  const rangeProvided = Boolean(priceRange) && rangeValues.some((value) => value !== undefined);
+  const rangeInputsValid = rangeProvided && rangeValues.every(positiveMinorUnitInput);
+  const rangeSignals = rangeInputsValid
+    ? rangeValues.map((value) => minorUnitPrice(value, currency, prices?.currency_minor_unit)).filter((value): value is ProductPriceSignal => Boolean(value))
+    : [];
+  const completeRange = rangeInputsValid && rangeSignals.length === 2;
+  const priceSignals = rangeProvided
+    ? completeRange
+      ? rangeSignals[0].amount !== rangeSignals[1].amount ? rangeSignals : [rangeSignals[0]]
+      : []
     : price ? [price] : [];
+  const gap = rangeProvided
+    ? !rangeInputsValid || (currency && !completeRange)
+      ? "WooCommerce exposed an incomplete price range, so no price was treated as comparable."
+      : !currency
+        ? "WooCommerce exposed a price without a confirmed ISO currency."
+        : ""
+    : fixedPriceProvided && !fixedPricePositive
+      ? "WooCommerce exposed a zero, empty, or invalid price without evidence of a public free offer."
+      : fixedPricePositive && !currency
+        ? "WooCommerce exposed a price without a confirmed ISO currency."
+        : "";
   return {
     product: makeProduct({
       domain: input.domain,
@@ -264,6 +290,6 @@ export function parseWooCommerceProduct(input: {
       identifiers: identifierRecord(payload),
       quantity: parseCanonicalQuantity(name) || undefined,
     }),
-    gap: prices?.price && !currency ? "WooCommerce exposed a price without a confirmed ISO currency." : "",
+    gap,
   };
 }
