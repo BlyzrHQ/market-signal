@@ -63,6 +63,12 @@ Fable 5 returned `PASS` on a second live-fix design: candidate storefront market
 
 Fable 5 then returned `PASS` on the country-code storefront implementation after independently rerunning the focused `28/28` and full `280/280` suites. It confirmed that verification consumes the crawler's existing observed `tld` signal, the ccTLD takes precedence over unknown or conflicting combined page signals, same-market and generic-domain behavior remains unchanged, and investigation-gap reasons expose the storefront domain, first-party-observed country code, and combined-signal outcome. The remaining gate is a third Babanuj production run from the exact deployed commit.
 
+### Third live gate
+
+Sites version 100 deployed exact commit `0077b9fc22489bd19bfc9e92fe8c733c582dc621`. Fresh report `c697d2c98adb47ed9c56c9d78c214105` completed with a United States market, five verified competitors, four competitors with product overlap, and 17 accepted product battles across 62 assessed primary products. No India, Saudi Arabia, or Egypt Desertcart storefront appeared as a verified competitor. The foreign storefront discovered in this run, `desertcart.com.eg`, was retained as a visible investigation gap with the complete reason: target market `US` from discovery conflicts with the `EG` country-code storefront observed from first-party evidence, while its combined page signals resolved `GLOBAL`.
+
+The product table rendered all 17 saved battle rows with 27/27 product images loaded and no broken image. Seven battles exposed both public prices, seven exposed one public price, and three exposed neither; the interface labels those gaps rather than fabricating a comparison. Advertising checked all six companies, reported zero verified active signals and three access-limited checks, and preserved the explicit warning that this is not proof of zero ads. This live gate is `PASS`; Fable 5's final merge-gate review remains required.
+
 ## Local validation
 
 - `npm test`: `280/280` tests passed, including the production build and typecheck.
