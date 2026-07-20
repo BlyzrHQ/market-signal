@@ -521,7 +521,21 @@ export async function POST(request: Request) {
     const primary = submittedResults.find((result) => result.domain === primaryDomain);
     if (primary?.siteState?.status === "parked") {
       const alternatives = await discoverDomainAlternatives(primaryDomain, 3);
-      return Response.json({ ok: false, live: false, code: "parked-domain", error: `${primaryDomain} appears to be parked or offered for sale through ${primary.siteState.provider}. Select another domain only if it belongs to your company.`, alternatives, results: submittedResults, document: buildDocument(submittedResults, primaryDomain) }, { status: 409 });
+      const observedAt = primary.fetchedAt;
+      const document = buildDocument(submittedResults, primaryDomain);
+      document.blocks.unshift({
+        type: "domain-status",
+        id: "primary-domain-status",
+        domain: primaryDomain,
+        status: "parked",
+        provider: primary.siteState.provider,
+        evidenceUrl: primary.siteState.evidenceUrl,
+        redirectDomain: primary.siteState.redirectDomain,
+        observedAt,
+        explanation: `${primaryDomain} redirects to a public domain-for-sale service, so competitor, product, and advertising analysis did not run.`,
+        alternatives: alternatives.map((item) => ({ ...item, verifiedIdentity: false })),
+      });
+      return Response.json({ ok: false, live: false, code: "parked-domain", primaryDomain, error: `${primaryDomain} appears to be parked or offered for sale through ${primary.siteState.provider}. Select another domain only if it belongs to your company.`, alternatives, results: submittedResults, document }, { status: 409 });
     }
     if (!primary?.homepage) {
       const reason = primary?.gaps[0]?.reason;

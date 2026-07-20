@@ -30,13 +30,15 @@ type JsonBlock = { type: string; id: string } & Record<string, unknown>;
 type JsonDocument = { blocks: JsonBlock[] } & Record<string, unknown>;
 type CrawlResult = { domain: string; homepage?: unknown; products: ProductRecord[]; role?: string; discovery?: { verificationScore?: number } };
 type CrawlSuccess = { ok: true; primaryDomain: string; results: CrawlResult[]; adRequest: unknown; document: JsonDocument };
+type ParkedDomainOutcome = { ok: false; code: "parked-domain"; primaryDomain: string; error: string; document: JsonDocument };
+type CrawlOutcome = CrawlSuccess | ParkedDomainOutcome;
 
 export type ReportAttemptContext = { attemptNumber: number; isFinalAttempt: boolean };
 
 export interface ReportOrchestrationPort {
   loadReport(publicId: string): Promise<StoredReport | null>;
   appendEvent(publicId: string, event: ReportEvent): Promise<void>;
-  crawl(input: { primary: string; domains: string[] }): Promise<CrawlSuccess>;
+  crawl(input: { primary: string; domains: string[] }): Promise<CrawlOutcome>;
   brief(input: { primary: string; domains: string[] }): Promise<unknown>;
   ads(input: unknown): Promise<{ ok: true; block: JsonBlock }>;
   match(input: { primaryDomain: string; catalogs: Array<{ domain: string; products: ProductRecord[] }> }): Promise<{ ok: true; comparison: ProductComparison }>;
@@ -48,8 +50,12 @@ function event(idempotencyKey: string, phase: string, message: string, metadata?
   return { idempotencyKey, phase, status: "running", message, ...(metadata ? { metadata } : {}) };
 }
 
+function limitedEvent(idempotencyKey: string, phase: string, message: string, metadata?: Record<string, unknown>): ReportEvent {
+  return { idempotencyKey, phase, status: "limited", message, ...(metadata ? { metadata } : {}) };
+}
+
 function phasesFromStored(report: StoredReport) {
-  return [...new Set(report.events.filter((item) => /-complete$/.test(item.idempotencyKey || "")).map((item) => item.phase).filter(Boolean))];
+  return [...new Set(report.events.flatMap((item) => item.idempotencyKey === "report-saved" ? ["persistence"] : /-complete$/.test(item.idempotencyKey || "") ? [item.phase] : []).filter(Boolean))];
 }
 
 function limitedPhasesFromStored(report: StoredReport) {
@@ -107,10 +113,10 @@ export async function orchestrateReport(
   const limitedPhases: string[] = [];
   await port.appendEvent(payload.publicId, event("crawl-started", "crawl", "Crawling the submitted website and collecting public product pages."));
 
-  let crawl: CrawlSuccess;
+  let crawl: CrawlOutcome;
   try {
     crawl = await port.crawl({ primary: payload.primaryDomain, domains: [payload.primaryDomain] });
-    if (!crawl?.ok) throw new Error("The public crawl could not be completed.");
+    if (!crawl || (crawl.ok !== true && crawl.code !== "parked-domain")) throw new Error("The public crawl could not be completed.");
   } catch (error) {
     const detail = message(error, "The public crawl could not be completed.");
     await port.appendEvent(payload.publicId, attempt.isFinalAttempt
@@ -118,6 +124,33 @@ export async function orchestrateReport(
       : event(`crawl-attempt-${attempt.attemptNumber}-failed`, "crawl", "The crawl attempt failed and is eligible for one bounded retry.", { attempt: attempt.attemptNumber }));
     terminalFailureRecorded = attempt.isFinalAttempt;
     throw error;
+  }
+
+  if (crawl.ok === false) {
+    const document = ensureDocument(crawl.document);
+    const domainStatus = document.blocks.find((block) => block.type === "domain-status" && block.status === "parked");
+    const evidenceUrl = typeof domainStatus?.evidenceUrl === "string" ? domainStatus.evidenceUrl : "";
+    const reason = crawl.error || `${payload.primaryDomain} is parked, so market analysis could not run.`;
+    await port.appendEvent(payload.publicId, limitedEvent("crawl-limited", "crawl", "The submitted domain is parked, so the company crawl ended with a source-linked limitation.", { reason, evidenceUrl }));
+    await port.appendEvent(payload.publicId, limitedEvent("brief-limited", "brief", "The market brief did not run because the primary crawl was terminally limited.", { upstream: "crawl", reason }));
+    await port.appendEvent(payload.publicId, limitedEvent("ads-limited", "ads", "Ad-library checks did not run because the primary crawl was terminally limited.", { upstream: "crawl", reason }));
+    await port.appendEvent(payload.publicId, limitedEvent("matching-limited", "matching", "Product matching did not run because the primary crawl was terminally limited.", { upstream: "crawl", reason }));
+    const finishedAt = now().toISOString();
+    await port.saveDocument(payload.publicId, {
+      status: "limited",
+      observedAt: finishedAt,
+      document: { primaryDomain: crawl.primaryDomain, document, marketBrief: null },
+    });
+    return {
+      ok: true,
+      contractVersion: REPORT_ORCHESTRATION_CONTRACT_VERSION,
+      publicId: payload.publicId,
+      reportStatus: "limited",
+      completedPhases: ["persistence"],
+      limitedPhases: ["crawl", "brief", "ads", "matching"],
+      startedAt,
+      finishedAt,
+    };
   }
 
   const primary = crawl.results.find((result) => result.domain === crawl.primaryDomain && result.homepage);

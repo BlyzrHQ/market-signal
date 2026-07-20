@@ -32,7 +32,7 @@ function display(value: unknown, fallback = "") {
 }
 function safeUrl(value: unknown) { const url = display(value); return /^https?:\/\/[^\s]+$/i.test(url) ? url : ""; }
 function slug(value: unknown) { return display(value, "item").toLowerCase().replace(/[^a-z0-9.-]+/g, "-").replace(/^-+|-+$/g, "") || "item"; }
-function viewFromLocation(): View { const value = new URLSearchParams(window.location.search).get("view"); return VIEWS.includes(value as View) ? value as View : "overview"; }
+function viewFromLocation(views: View[] = VIEWS): View { const value = new URLSearchParams(window.location.search).get("view"); return views.includes(value as View) ? value as View : "overview"; }
 function viewHref(view: View, anchor = "") { return `?view=${view}${anchor ? `#${anchor}` : ""}`; }
 function statusTone(status: string) { return status === "verified-active" ? "observed" : status === "access-limited" ? "limited" : status === "no-verified-result" ? "unavailable" : "inferred"; }
 function scrollToReportHash() {
@@ -42,13 +42,18 @@ function scrollToReportHash() {
 }
 
 function ReportWorkspace({ blocks, marketBrief, primaryDomain, observedAt, reportStatus, ar, onToggleLocale }: { blocks: Block[]; marketBrief: Record<string, unknown>; primaryDomain: string; observedAt: string; reportStatus: string; ar: boolean; onToggleLocale: () => void }) {
+  const domainStatus = blocks.find((block) => block.type === "domain-status" && display(block.status).toLowerCase() === "parked");
+  const parked = Boolean(domainStatus);
+  const activeViews = useMemo<View[]>(() => parked
+    ? (["overview", ...(blocks.some((block) => block.type === "evidence" || block.type === "gap") ? ["evidence" as View] : []), "methodology"])
+    : VIEWS, [blocks, parked]);
   const [view, setView] = useState<View>("overview");
   const [compactNav, setCompactNav] = useState(false);
   const tabs = useRef<Array<HTMLButtonElement | null>>([]);
-  useEffect(() => { const sync = () => setView(viewFromLocation()); sync(); window.addEventListener("popstate", sync); return () => window.removeEventListener("popstate", sync); }, []);
+  useEffect(() => { const sync = () => { const next = viewFromLocation(activeViews); setView(next); if (!activeViews.includes(new URLSearchParams(window.location.search).get("view") as View)) { const url = new URL(window.location.href); url.searchParams.set("view", next); window.history.replaceState({}, "", url); } }; sync(); window.addEventListener("popstate", sync); return () => window.removeEventListener("popstate", sync); }, [activeViews]);
   useEffect(() => { const media = window.matchMedia("(max-width: 1023px)"); const sync = () => setCompactNav(media.matches); sync(); media.addEventListener("change", sync); return () => media.removeEventListener("change", sync); }, []);
   useEffect(() => { const frame = window.requestAnimationFrame(scrollToReportHash); window.addEventListener("hashchange", scrollToReportHash); return () => { window.cancelAnimationFrame(frame); window.removeEventListener("hashchange", scrollToReportHash); }; }, [view, blocks]);
-  useEffect(() => { if (compactNav) tabs.current[VIEWS.indexOf(view)]?.scrollIntoView({ inline: "nearest", block: "nearest" }); }, [compactNav, view]);
+  useEffect(() => { if (compactNav) tabs.current[activeViews.indexOf(view)]?.scrollIntoView({ inline: "nearest", block: "nearest" }); }, [activeViews, compactNav, view]);
   useEffect(() => {
     let printOpened: HTMLDetailsElement[] = [];
     const expandPrintEvidence = () => { printOpened = Array.from(document.querySelectorAll<HTMLDetailsElement>(".comparison-detail-disclosure:not([open]), .product-match-details:not([open])")); printOpened.forEach((detail) => { detail.open = true; }); };
@@ -63,12 +68,12 @@ function ReportWorkspace({ blocks, marketBrief, primaryDomain, observedAt, repor
   };
   const onTabKey = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     const forwardKey = compactNav ? (ar ? "ArrowLeft" : "ArrowRight") : "ArrowDown"; const backwardKey = compactNav ? (ar ? "ArrowRight" : "ArrowLeft") : "ArrowUp";
-    const next = event.key === forwardKey ? (index + 1) % VIEWS.length : event.key === backwardKey ? (index - 1 + VIEWS.length) % VIEWS.length : event.key === "Home" ? 0 : event.key === "End" ? VIEWS.length - 1 : -1;
-    if (next < 0) return; event.preventDefault(); tabs.current[next]?.focus(); selectView(VIEWS[next]);
+    const next = event.key === forwardKey ? (index + 1) % activeViews.length : event.key === backwardKey ? (index - 1 + activeViews.length) % activeViews.length : event.key === "Home" ? 0 : event.key === "End" ? activeViews.length - 1 : -1;
+    if (next < 0) return; event.preventDefault(); tabs.current[next]?.focus(); selectView(activeViews[next]);
   };
   const onWorkspaceClick = (event: MouseEvent<HTMLDivElement>) => {
     const anchor = (event.target as Element).closest<HTMLAnchorElement>('a[href^="?view="]'); if (!anchor) return;
-    const url = new URL(anchor.href); const next = url.searchParams.get("view") as View; if (!VIEWS.includes(next)) return;
+    const url = new URL(anchor.href); const next = url.searchParams.get("view") as View; if (!activeViews.includes(next)) return;
     event.preventDefault(); selectView(next, false, url.hash);
   };
 
@@ -82,6 +87,7 @@ function ReportWorkspace({ blocks, marketBrief, primaryDomain, observedAt, repor
   const adCompanies = list(adBlock?.companies).map(object);
   const evidence = blocks.filter((block) => block.type === "evidence");
   const gaps = blocks.filter((block) => block.type === "gap");
+  const domainAlternatives = list(domainStatus?.alternatives).map(object);
   const coverage = blocks.filter((block) => block.type === "coverage");
   const profile = blocks.find((block) => block.type === "market-profile");
   const strongest = competitors[0];
@@ -98,14 +104,16 @@ function ReportWorkspace({ blocks, marketBrief, primaryDomain, observedAt, repor
       <Link className="dashboard-brand" href="/">Market Signal</Link>
       <div className="dashboard-report-identity"><span>{reportStatus.toUpperCase()}</span><strong dir="auto">{primaryDomain}</strong><small>{ar ? "آخر تحديث" : "Updated"} {new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</small></div>
       <nav className="workspace-tabs" role="tablist" aria-orientation={compactNav ? "horizontal" : "vertical"} aria-label={ar ? "أقسام التقرير" : "Report sections"}>
-        {VIEWS.map((item, index) => <button key={item} ref={(node) => { tabs.current[index] = node; }} id={`tab-${item}`} type="button" role="tab" aria-selected={view === item} aria-controls={`panel-${item}`} tabIndex={view === item ? 0 : -1} onClick={() => selectView(item)} onKeyDown={(event) => onTabKey(event, index)}>{VIEW_LABELS[item][ar ? "ar" : "en"]}{item === "competitors" && <b>{competitors.length}</b>}{item === "products" && <b>{battles.length}</b>}{item === "evidence" && <b>{evidence.length}</b>}</button>)}
+        {activeViews.map((item, index) => <button key={item} ref={(node) => { tabs.current[index] = node; }} id={`tab-${item}`} type="button" role="tab" aria-selected={view === item} aria-controls={`panel-${item}`} tabIndex={view === item ? 0 : -1} onClick={() => selectView(item)} onKeyDown={(event) => onTabKey(event, index)}>{VIEW_LABELS[item][ar ? "ar" : "en"]}{item === "competitors" && <b>{competitors.length}</b>}{item === "products" && <b>{battles.length}</b>}{item === "evidence" && <b>{evidence.length + gaps.length}</b>}</button>)}
       </nav>
     </aside>
     <div className="report-dashboard-main">
       <header className="report-route-header"><div className="dashboard-view-title"><span>{ar ? "معلومات السوق" : "MARKET INTELLIGENCE"}</span><b>{VIEW_LABELS[view][ar ? "ar" : "en"]}</b></div><div className="report-route-meta"><span>{reportStatus.toUpperCase()}</span><time>{ar ? "لوحظ" : "Observed"} {new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</time></div><div className="report-route-actions"><button type="button" onClick={onToggleLocale} aria-label={ar ? "Switch to English" : "التبديل إلى العربية"}>{ar ? "EN" : "ع"}</button><Link href="/">{ar ? "تقرير جديد" : "New report"}</Link></div></header>
       <section className="workspace-panel" id={`panel-${view}`} role="tabpanel" aria-labelledby={`tab-${view}`} tabIndex={0}>
       {view === "overview" && <>
-        <header className="panel-intro"><div><span>{ar ? "القرار أولاً" : "DECISION FIRST"}</span><h2>{display(marketBrief.headline, ar ? `${primaryDomain} في مواجهة السوق` : `${primaryDomain} against the market`)}</h2><p>{display(marketBrief.summary, ar ? "تستند هذه الخلاصة إلى الأدلة العامة المحفوظة في هذا التقرير." : "This verdict uses only the public evidence saved with this report.")}</p></div><time>{ar ? "لوحظ" : "Observed"}<b>{new Date(observedAt).toLocaleString(ar ? "ar" : "en")}</b></time></header>
+        <header className="panel-intro"><div><span>{parked ? (ar ? "حالة النطاق" : "DOMAIN STATUS") : (ar ? "القرار أولاً" : "DECISION FIRST")}</span><h2>{parked ? (ar ? "هذا النطاق معروض للبيع" : "This domain is parked, not an active company site") : display(marketBrief.headline, ar ? `${primaryDomain} في مواجهة السوق` : `${primaryDomain} against the market`)}</h2><p>{parked ? display(domainStatus?.explanation, ar ? "يتجه النطاق إلى خدمة عامة لبيع النطاقات، لذلك لم تُشغّل مراحل المنافسين والمنتجات والإعلانات." : "The submitted domain redirects to a public domain-for-sale service. Competitor, product, and advertising analysis did not run.") : display(marketBrief.summary, ar ? "تستند هذه الخلاصة إلى الأدلة العامة المحفوظة في هذا التقرير." : "This verdict uses only the public evidence saved with this report.")}</p></div><time>{ar ? "لوحظ" : "Observed"}<b>{new Date(observedAt).toLocaleString(ar ? "ar" : "en")}</b></time></header>
+        {parked && <div className="parked-domain-state"><div><span className="truth-pill limited">{ar ? "تقرير محدود" : "LIMITED REPORT"}</span><strong>{ar ? "لم نفحص المنافسين أو المنتجات أو الإعلانات" : "Competitors, products, and ads were not checked"}</strong><p>{ar ? "هذه ليست نتيجة صفرية. تم تخطي تلك المراحل عمداً لعدم وجود متجر شركة موثوق به على النطاق المُدخل." : "This is not a zero-result report. Those phases were intentionally skipped because there is no attributable company storefront at the submitted domain."}</p><div className="entity-links">{safeUrl(domainStatus?.evidenceUrl) && <a href={safeUrl(domainStatus?.evidenceUrl)} target="_blank" rel="noreferrer">{ar ? "افتح دليل النطاق ↗" : "Open parking evidence ↗"}</a>}<Link href="/">{ar ? "جرّب نطاق الشركة الصحيح" : "Try the correct company domain"}</Link></div></div>{domainAlternatives.length > 0 && <section><span>{ar ? "نطاقات محتملة — الهوية غير متحققة" : "POSSIBLE DOMAINS — IDENTITY NOT VERIFIED"}</span><p>{ar ? "استخدم أحدها فقط إذا أكدت أنه يخص شركتك." : "Use one only if you confirm it belongs to your company."}</p>{domainAlternatives.map((alternative) => <a href={safeUrl(alternative.sourceUrl)} target="_blank" rel="noreferrer" key={display(alternative.domain)}><strong>{display(alternative.domain)}</strong><small>{display(alternative.reason, "Unverified name-related search result")}</small></a>)}</section>}</div>}
+        {!parked && <>
         <div className="decision-signals">
           <a href={strongest ? viewHref("competitors", competitorAnchor(strongest.domain)) : viewHref("competitors")}><span>{ar ? "أقوى منافس" : "STRONGEST RIVAL"}</span><strong>{display(strongest?.companyName || strongest?.domain, ar ? "لم يتم التحقق" : "Not verified")}</strong><small>{strongest ? `${numeric(strongest.verificationScore)}/100` : ar ? "تغطية محدودة" : "Limited coverage"}</small></a>
           <a href={viewHref("products")}><span>{ar ? "مقارنات موثقة" : "PRODUCT BATTLES"}</span><strong>{battles.length}</strong><small>{ar ? "أزواج منتجات مرتبطة بالمصدر" : "source-linked pairs"}</small></a>
@@ -113,6 +121,7 @@ function ReportWorkspace({ blocks, marketBrief, primaryDomain, observedAt, repor
         </div>
         {signals.length > 0 && <div className="insight-grid">{signals.map((signal, index) => <article key={`${display(signal.label)}-${index}`}><span>{ar ? "إشارة" : "SIGNAL"} {String(index + 1).padStart(2, "0")}</span><h3>{display(signal.label, ar ? "إشارة السوق" : "Market signal")}</h3><p>{display(signal.text)}</p><strong>{display(signal.implication)}</strong></article>)}</div>}
         {nextChecks.length > 0 && <div className="next-actions"><span>{ar ? "الخطوات التالية" : "NEXT ACTIONS"}</span>{nextChecks.map((check, index) => <p key={`${check}-${index}`}><b>{index + 1}</b>{check}</p>)}</div>}
+        </>}
       </>}
 
       {view === "competitors" && <>
@@ -135,6 +144,7 @@ function ReportWorkspace({ blocks, marketBrief, primaryDomain, observedAt, repor
         <header className="panel-intro compact"><div><span>{ar ? "سجل الأدلة" : "EVIDENCE LEDGER"}</span><h2>{ar ? "المصادر العامة خلف التقرير" : "The public sources behind this report"}</h2><p>{ar ? "المرصود والمستنتج يظلان منفصلين. افتح أي رابط للتحقق من المصدر الأولي." : "Observed and inferred claims stay separate. Open any link to verify the first-party source."}</p></div></header>
         <div className="panel-metrics"><div><strong>{evidence.length}</strong><span>{ar ? "ادعاءات مرتبطة بالمصدر" : "source-linked claims"}</span></div><div><strong>{evidence.filter((item) => display(item.claimType).toLowerCase() === "observed").length}</strong><span>{ar ? "مرصودة" : "observed"}</span></div><div><strong>{evidence.filter((item) => display(item.claimType).toLowerCase() === "inferred").length}</strong><span>{ar ? "مستنتجة" : "inferred"}</span></div></div>
         <div className="evidence-groups">{[primaryDomain, ...competitors.map((item) => display(item.domain))].filter((domain, index, all) => domain && all.indexOf(domain) === index).map((domain) => { const claims = evidence.filter((claim) => { try { return new URL(safeUrl(claim.sourceUrl)).hostname.replace(/^www\./, "") === domain.replace(/^www\./, ""); } catch { return false; } }); return <section id={evidenceAnchor(domain)} key={domain}><header><div><span>{domain === primaryDomain ? (ar ? "شركتك" : "YOUR COMPANY") : (ar ? "منافس" : "COMPETITOR")}</span><h3>{domain}</h3></div><b>{claims.length}</b></header>{claims.length ? <div>{claims.map((claim) => <article key={claim.id}><span className={`truth-pill ${display(claim.claimType, "observed").toLowerCase()}`}>{display(claim.claimType, ar ? "مرصود" : "Observed")}</span><p dir="auto">{display(claim.text)}</p><footer><b>{display(claim.confidence, ar ? "ثقة محدودة" : "Limited confidence")}</b><a href={safeUrl(claim.sourceUrl)} target="_blank" rel="noreferrer">{ar ? "افتح المصدر ↗" : "Open source ↗"}</a></footer></article>)}</div> : <p className="group-empty">{ar ? "لا توجد ادعاءات محفوظة لهذا النطاق." : "No saved claims for this domain."}</p>}</section>; })}</div>
+        {parked && <div className="coverage-list gaps"><h3>{ar ? "دليل حالة النطاق" : "Domain-status evidence"}</h3>{gaps.map((gap) => <article key={gap.id}><strong>{display(gap.domain, primaryDomain)}</strong><span>{display(gap.observedAt) && new Date(display(gap.observedAt)).toLocaleDateString(ar ? "ar" : "en")}</span><p>{display(gap.reason)}</p>{safeUrl(gap.url) && <a href={safeUrl(gap.url)} target="_blank" rel="noreferrer">{ar ? "افتح المصدر ↗" : "Open source ↗"}</a>}</article>)}</div>}
       </>}
 
       {view === "methodology" && <>
