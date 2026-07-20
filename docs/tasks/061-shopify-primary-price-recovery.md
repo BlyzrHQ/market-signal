@@ -42,3 +42,14 @@ Fable 5 returned `TASK 61 DESIGN: PASS`. It confirmed that this reuses the exist
 Fable 5's first strict implementation review returned `TASK 61 IMPLEMENTATION: BLOCK` because the shared API parser had accidentally narrowed existing HTML-only `/shop/` and `/store/` enrichment targets to adapter-capable URLs. The existing same-domain product-path boundary was restored for `/api/enrich-products`, while the new primary selector remains deliberately adapter-only. A regression test now proves a same-domain `/shop/` target is counted, fetched, identity-gated, and enriched from public HTML.
 
 Fable 5's strict re-review returned `TASK 61 IMPLEMENTATION: PASS`. It verified that the existing API boundary is restored, the primary selector remains adapter-only, the new `/shop/` regression test covers the previously silent loss, and the full 295-test suite plus typecheck, production build, and lint remain green (one pre-existing lint warning, no errors).
+
+## Production validation
+
+- Exact source commit: `bbacdd18afb8c3dbb2c5f63bee00599750dbe4a5`.
+- Sites version 102 deployed successfully at `https://market-signal.abdulla617931.chatgpt.site`.
+- Trigger production version `20260720.7` deployed successfully with both background tasks registered.
+- Fresh public report: `e708dc4399854a6b87faace9b913e0e0` for `al-hamdanisweets.com`.
+- The report requested and fetched all six bounded primary price-enrichment pages (`6/6`), with no primary-enrichment coverage gaps.
+- The persisted compact catalog contains five products with attributable structured USD prices and secure images. Multi-variant products retain every observed amount; for example, the Ballourie pistachio baklava variants remain `USD 3.99`, `USD 10.99`, and `USD 23.99` instead of being collapsed into a direct competitor delta.
+- The overview exposes positive public pricing signals and no longer displays the unattributed `$0` page pattern.
+- The run completed as `LIMITED` because competitor discovery returned no verified competitors. That is a separate discovery-lane issue and remains explicitly outside this task's scope; this validation proves primary price and image recovery even when no competitor pair exists.
