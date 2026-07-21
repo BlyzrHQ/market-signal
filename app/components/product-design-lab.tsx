@@ -98,12 +98,12 @@ function prepareRow(battle: ProductBattle, ar: boolean) {
   return { battle, domain, assessment, decision, primaryDisplay, rivalDisplay, primarySource, rivalSource, reasons, verdict, fullAction, shortAction, comparablePrice, priceStatus, priceSignal, lane, claimType, confidence };
 }
 
-function ProductIdentity({ role, product, price, source, domain, ar, compact = false }: { role: "you" | "rival"; product: Record<string, unknown>; price: string; source: string; domain?: string; ar: boolean; compact?: boolean }) {
+function ProductIdentity({ role, product, price, source, domain, ar, compact = false, showPrice = true }: { role: "you" | "rival"; product: Record<string, unknown>; price: string; source: string; domain?: string; ar: boolean; compact?: boolean; showPrice?: boolean }) {
   const name = display(product.name, role === "you" ? (ar ? "منتج مرصود" : "Observed product") : (ar ? "منتج منافس مرصود" : "Observed rival product"));
   const image = safeUrl(product.imageUrl);
   return <div className={`lab-product ${compact ? "compact" : ""}`}>
     {image && <img src={image} alt="" />}
-    <div><span>{role === "you" ? (ar ? "منتجك" : "YOU") : domain || (ar ? "المنافس" : "RIVAL")}</span><strong dir="auto">{name}</strong><b className={price ? "observed" : "unavailable"} dir="auto">{price || (ar ? "السعر غير مرصود" : "Price not observed")}</b>{source && <a href={source} target="_blank" rel="noreferrer">{ar ? "افتح المنتج ↗" : "Open product ↗"}</a>}</div>
+    <div><span>{role === "you" ? (ar ? "منتجك" : "YOU") : domain || (ar ? "المنافس" : "RIVAL")}</span><strong dir="auto">{name}</strong>{showPrice && <b className={price ? "observed" : "unavailable"} dir="auto">{price || (ar ? "السعر غير مرصود" : "Price not observed")}</b>}{source && <a href={source} target="_blank" rel="noreferrer">{ar ? "افتح المنتج ↗" : "Open product ↗"}</a>}</div>
   </div>;
 }
 
@@ -113,6 +113,29 @@ function MatchDetails({ row, observedAt, ar }: { row: ProductRow; observedAt: st
     <section><span>{ar ? "حالة الدليل" : "EVIDENCE STATE"}</span><strong>{row.claimType} · {row.confidence}</strong><p>{ar ? "لوحظ" : "Observed"} {new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</p></section>
     <section><span>{ar ? "المصادر" : "SOURCES"}</span><div className="product-detail-links">{row.primarySource && <a href={row.primarySource} target="_blank" rel="noreferrer">{ar ? "مصدر منتجك ↗" : "Your source ↗"}</a>}{row.rivalSource && <a href={row.rivalSource} target="_blank" rel="noreferrer">{ar ? "مصدر المنافس ↗" : "Rival source ↗"}</a>}<a href={viewHref("evidence", `evidence-${slug(row.domain)}`)}>{ar ? "دفتر الأدلة" : "Evidence ledger"}</a></div></section>
   </div></details>;
+}
+
+function ProductTablePrice({ value, ar }: { value: string; ar: boolean }) {
+  return <strong className={`product-table-price ${value ? "observed" : "unavailable"}`} dir="auto">{value || (ar ? "غير مرصود" : "Not observed")}</strong>;
+}
+
+function productPriceGap(row: ProductRow, ar: boolean) {
+  if (!row.comparablePrice || row.comparablePrice.equal) return "";
+  const amount = Math.abs(row.comparablePrice.primary.amount - row.comparablePrice.rival.amount);
+  const formatted = new Intl.NumberFormat(ar ? "ar" : "en", { maximumFractionDigits: 2 }).format(amount);
+  return ar ? `فارق ${row.comparablePrice.primary.currency} ${formatted}` : `${row.comparablePrice.primary.currency} ${formatted} gap`;
+}
+
+function ProductTableDetails({ row, observedAt, ar }: { row: ProductRow; observedAt: string; ar: boolean }) {
+  return <details className="product-row-details">
+    <summary>{ar ? "لماذا هذه المطابقة؟" : "Why this match?"}</summary>
+    <div>
+      <p><b>{ar ? "السبب" : "Match reason"}</b><span>{row.reasons || (ar ? "لم تُحفظ أسباب إضافية." : "No additional match reasons were saved.")}</span></p>
+      <p><b>{ar ? "حالة الدليل" : "Evidence state"}</b><span>{row.verdict.replace(/_/g, " ")} · {row.claimType} · {row.confidence}</span></p>
+      <p><b>{ar ? "لوحظ" : "Observed"}</b><time dateTime={observedAt}>{new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</time></p>
+      <a href={viewHref("evidence", `evidence-${slug(row.domain)}`)}>{ar ? "افتح دفتر الأدلة" : "Open evidence ledger"}</a>
+    </div>
+  </details>;
 }
 
 export function ProductDesignLab({ comparison, battles, primaryDomain, observedAt, ar }: ProductDesignLabProps) {
@@ -178,7 +201,29 @@ export function ProductDesignLab({ comparison, battles, primaryDomain, observedA
     {enrichmentGaps.length > 0 && <div className="product-evidence-gaps" role="status"><header><span>{ar ? "فجوة بيانات المنتج" : "PRODUCT DATA GAP"}</span><strong>{ar ? `تعذر إكمال ${enrichmentGaps.length} صفحة محددة` : `${enrichmentGaps.length} selected page${enrichmentGaps.length === 1 ? "" : "s"} could not be completed`}</strong></header>{enrichmentGaps.slice(0, 4).map((gap, index) => <p key={`${display(gap.productId)}-${index}`}><b>{display(gap.role, ar ? "منتج" : "product")}</b><span>{display(gap.reason, ar ? "لم تتوفر أدلة كافية للسعر أو الصورة." : "Price or image evidence was not available from this page.")}</span>{safeUrl(gap.url) && <a href={safeUrl(gap.url)} target="_blank" rel="noreferrer">{ar ? "افتح المصدر ↗" : "Open source ↗"}</a>}</p>)}</div>}
 
     {layout === "table" && <section id="product-layout-table" role="tabpanel" aria-labelledby="product-layout-tab-table" className="product-layout-panel product-table-layout">
-      <div className="product-compact-table-shell"><table className="product-compact-table"><thead><tr><th>{ar ? "منتجك" : "Your product"}</th><th>{ar ? "المنافس" : "Closest rival"}</th><th>{ar ? "إشارة السعر" : "Price signal"}</th><th>{ar ? "الخطوة التالية" : "Next move"}</th></tr></thead>{rows.map((row, index) => <tbody key={row.battle.key}><tr id={rowAnchor(row, index)}><td><ProductIdentity role="you" product={row.battle.primary} price={row.primaryDisplay} source={row.primarySource} ar={ar} compact /></td><td><ProductIdentity role="rival" product={row.battle.rival} price={row.rivalDisplay} source={row.rivalSource} domain={row.domain} ar={ar} compact /></td><td><span className={`product-signal ${row.lane}`}>{row.priceSignal}</span></td><td><strong className="product-next-move">{row.shortAction}</strong></td></tr><tr className="product-table-detail"><td colSpan={4}><MatchDetails row={row} observedAt={observedAt} ar={ar} /></td></tr></tbody>)}</table></div>
+      <div className="product-compact-table-shell">
+        <table className="product-compact-table" role="table">
+          <thead role="rowgroup"><tr role="row">
+            <th role="columnheader">{ar ? "منتجك" : "Your product"}</th>
+            <th role="columnheader">{ar ? "سعرك" : "Your price"}</th>
+            <th role="columnheader">{ar ? "أقرب منافس" : "Closest rival"}</th>
+            <th role="columnheader">{ar ? "سعر المنافس" : "Rival price"}</th>
+            <th role="columnheader">{ar ? "الفرق" : "Difference"}</th>
+            <th role="columnheader">{ar ? "الخطوة التالية" : "Next move"}</th>
+          </tr></thead>
+          <tbody role="rowgroup">{rows.map((row, index) => {
+            const priceGap = productPriceGap(row, ar);
+            return <tr role="row" className="product-table-row" id={rowAnchor(row, index)} data-lane={row.lane} key={row.battle.key}>
+              <td role="cell" className="product-table-product-cell product-table-your-product"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "منتجك" : "Your product"}</span><ProductIdentity role="you" product={row.battle.primary} price={row.primaryDisplay} source={row.primarySource} ar={ar} compact showPrice={false} /></td>
+              <td role="cell" className="product-table-price-cell product-table-your-price"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "سعرك" : "Your price"}</span><ProductTablePrice value={row.primaryDisplay} ar={ar} /></td>
+              <td role="cell" className="product-table-product-cell product-table-rival-product"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "أقرب منافس" : "Closest rival"}</span><ProductIdentity role="rival" product={row.battle.rival} price={row.rivalDisplay} source={row.rivalSource} domain={row.domain} ar={ar} compact showPrice={false} /></td>
+              <td role="cell" className="product-table-price-cell product-table-rival-price"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "سعر المنافس" : "Rival price"}</span><ProductTablePrice value={row.rivalDisplay} ar={ar} /></td>
+              <td role="cell" className="product-table-difference-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "الفرق" : "Difference"}</span><strong className={`product-signal ${row.lane}`}>{row.priceSignal}</strong>{priceGap && <small dir="auto">{priceGap}</small>}</td>
+              <td role="cell" className="product-table-action-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "الخطوة التالية" : "Next move"}</span><strong className="product-next-move">{row.shortAction}</strong><ProductTableDetails row={row} observedAt={observedAt} ar={ar} /></td>
+            </tr>;
+          })}</tbody>
+        </table>
+      </div>
     </section>}
 
     {layout === "matchups" && <section id="product-layout-matchups" role="tabpanel" aria-labelledby="product-layout-tab-matchups" className="product-layout-panel matchup-layout"><ul>{rows.map((row, index) => <li key={row.battle.key} id={rowAnchor(row, index)}><div className="matchup-products"><ProductIdentity role="you" product={row.battle.primary} price={row.primaryDisplay} source={row.primarySource} ar={ar} /><span aria-hidden="true">VS</span><ProductIdentity role="rival" product={row.battle.rival} price={row.rivalDisplay} source={row.rivalSource} domain={row.domain} ar={ar} /></div><div className="matchup-decision"><PricePosition comparisonValue={row.decision.priceComparison} primaryRaw={row.primaryDisplay} rivalRaw={row.rivalDisplay} priceVerdict={display(row.decision.priceVerdict)} locale={ar ? "ar" : "en"} showDetail={false} showValues={false} /><section><span>{ar ? "الخطوة التالية" : "NEXT MOVE"}</span><strong>{row.shortAction}</strong></section></div><MatchDetails row={row} observedAt={observedAt} ar={ar} /></li>)}</ul></section>}

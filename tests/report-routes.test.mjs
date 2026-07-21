@@ -73,7 +73,21 @@ test("saved reports use a persistent dashboard shell without the old report hero
 test("saved product and ad views preserve truth boundaries and source links", () => {
   assert.match(report, /<ProductDesignLab comparison=\{comparison\} battles=\{battles\}/);
   assert.match(productLab, /className="product-compact-table"/);
-  assert.match(productLab, /rows\.map\(\(row, index\) => <tbody/);
+  assert.match(productLab, /<table className="product-compact-table" role="table">/);
+  assert.match(productLab, /<thead role="rowgroup"><tr role="row">/);
+  assert.match(productLab, /<th role="columnheader">/);
+  assert.match(productLab, /<tbody role="rowgroup">\{rows\.map\(\(row, index\) => \{/);
+  assert.match(productLab, /return <tr role="row" className="product-table-row"/);
+  assert.match(productLab, /<td role="cell" className="product-table-product-cell/);
+  assert.match(productLab, /<th role="columnheader">\{ar \? "سعرك" : "Your price"\}<\/th>/);
+  assert.match(productLab, /<th role="columnheader">\{ar \? "سعر المنافس" : "Rival price"\}<\/th>/);
+  assert.match(productLab, /<th role="columnheader">\{ar \? "الفرق" : "Difference"\}<\/th>/);
+  assert.doesNotMatch(productLab, /<tbody key=|product-table-detail|colSpan=\{4\}/);
+  assert.match(productLab, /resolvedPriceDelta\(decision\.priceComparison\)/);
+  assert.match(productLab, /productPriceGap\(row, ar\)/);
+  assert.match(productLab, /const priceGap = productPriceGap\(row, ar\)/);
+  assert.doesNotMatch(productLab, /productPriceGap\(row, ar\) &&/);
+  assert.match(productLab, /className="product-row-details"/);
   assert.match(productLab, /rows\.map\(\(row, index\) => <li/);
   assert.match(productLab, /filter\(\(\{ row \}\) => row\.lane === lane\.id\)/);
   assert.match(productLab, /resolvedPriceDelta\(decision\.priceComparison\)/);
