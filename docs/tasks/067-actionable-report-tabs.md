@@ -55,4 +55,7 @@ The verified Fable 5 session first identified that `creativeConcepts` are produc
 - `npm.cmd run lint`: no errors; two existing/raw-media `no-img-element` warnings because public product/ad media cannot use a fixed Next image host allowlist.
 - `npm.cmd test`: PASS — typecheck, production build, and 317 tests.
 - Fable 5 strict review round 1: BLOCK. Resolved all three blockers by restoring direct record links for verified Google/TikTok activity, requiring HTTPS for Meta creative media, and opening collapsed evidence for deep links and print/export. Also hardened ad destinations against additional private-network ranges and added meaningful creative image alt text.
-- Deployment and live verification: pending PR review.
+- Fable 5 strict review round 2: PASS at `f525c047311f2740f61fb527d8b90cef33c9c23d`; the reviewer independently reran all 317 tests, the production build, and lint.
+- Sites v108 deployed the reviewed code commit successfully. Live MyJam Ads verification found five tabs, seven company review rows, 21 official searches, no false zero-ad claim, and no desktop or 390 px mobile horizontal overflow.
+- Live Evidence & Method verification found seven collapsed company groups representing all 133 saved claims, three explicit investigation gaps, a closed technical record, working source-group deep links, and a working legacy `?view=methodology` redirect to `?view=evidence#method`.
+- Verified-active rendering remains covered by automated normalization/rendering tests and the real Nike control recorded in Task 023 (18 exact-Page records grouped into nine concepts). No currently saved verified-active customer report was available for a second live route check; this limitation is explicit and no fixture was presented as customer data.
