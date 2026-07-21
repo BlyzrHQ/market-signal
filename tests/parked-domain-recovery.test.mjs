@@ -75,7 +75,8 @@ test("the crawl API returns a parked-domain conflict before competitor discovery
 test("the saved report derives parked tabs and presents the limitation instead of zero market results", async () => {
   const report = await readFile(new URL("../app/reports/[publicId]/page.tsx", import.meta.url), "utf8");
   assert.match(report, /block\.type === "domain-status"/);
-  assert.match(report, /\["overview".*"evidence".*"methodology"\]/s);
+  assert.match(report, /\["overview".*"evidence"/s);
+  assert.doesNotMatch(report, /\["overview".*"methodology"\]/s);
   assert.match(report, /This is not a zero-result report/);
   assert.match(report, /Competitors, products, and ads were not checked/);
   assert.match(report, /IDENTITY NOT VERIFIED/);
