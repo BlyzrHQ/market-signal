@@ -5,7 +5,8 @@ import { confirmedProductCurrency, parseShopifyProduct, parseWooCommerceProduct,
 import { parseRobots } from "./robots.ts";
 
 const MAX_DOCUMENT_BYTES = 1_500_000;
-const MAX_ENRICHMENT_TARGETS = 24;
+export const MAX_ENRICHMENT_TARGETS = 64;
+const MAX_PER_DOMAIN_CONCURRENCY = 2;
 const REQUEST_TIMEOUT_MS = 8_000;
 const USER_AGENT = "MarketSignalPublicScanner/0.1";
 
@@ -59,6 +60,110 @@ function decode(value: string) {
 
 function clean(value: string) {
   return decode(value.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
+}
+
+function decodeEvidence(value: string) {
+  return value
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&pound;|&#163;/gi, "\u00A3")
+    .replace(/&euro;|&#8364;/gi, "\u20AC")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&amp;/gi, "&")
+    .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 10)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 16)));
+}
+
+function currencyFromMarkup(value: string) {
+  const decoded = decodeEvidence(value);
+  if (/\u00A3/.test(decoded)) return "GBP";
+  if (/\u20AC/.test(decoded)) return "EUR";
+  if (/\$/.test(decoded)) return "USD";
+  return decoded.match(/\b(?:GBP|USD|EUR|AED|SAR|KWD|QAR|CAD|AUD)\b/i)?.[0]?.toUpperCase() || "";
+}
+
+function publicImageFromScope(scope: string, sourceUrl: string) {
+  const tags = [...scope.matchAll(/<img\b[^>]*>/gi)].map((match) => match[0]);
+  for (const tag of tags) {
+    if (!/(?:wp-post-image|woocommerce-product-gallery|product-image|product__media)/i.test(tag)) continue;
+    const raw = tag.match(/(?:data-large_image|data-lazy-src|data-src|src)\s*=\s*["']([^"']+)["']/i)?.[1] || "";
+    try {
+      const url = new URL(decodeEvidence(raw).replace(/^\/\//, "https://"), sourceUrl);
+      if (/^https:$/.test(url.protocol)) return url.toString();
+    } catch { /* Ignore malformed public markup. */ }
+  }
+  return "";
+}
+
+function productScope(document: string) {
+  const title = document.match(/<h1\b[^>]*>[\s\S]*?<\/h1>/i);
+  const summaryIndex = document.search(/class\s*=\s*["'][^"']*(?:summary|product-summary)[^"']*["']/i);
+  const start = Math.max(0, title?.index ?? summaryIndex);
+  const bounded = document.slice(start, Math.min(document.length, start + 160_000));
+  const relatedAt = bounded.search(/<(?:section|div)\b[^>]*class\s*=\s*["'][^"']*(?:related|upsells|cross-sells)[^"']*["']/i);
+  return relatedAt >= 0 ? bounded.slice(0, relatedAt) : bounded;
+}
+
+function scopedPriceSignals(currency: string, values: number[]) {
+  if (!currency) return [];
+  return [...new Set(values.filter((amount) => Number.isFinite(amount) && amount > 0))]
+    .sort((left, right) => left - right)
+    .map((amount) => ({ raw: `${currency} ${amount}`, currency, amount }));
+}
+
+function markedAmounts(markup: string, currency: string) {
+  const decoded = decodeEvidence(markup.replace(/<[^>]*>/g, " "));
+  const patterns: Record<string, RegExp> = {
+    GBP: /(?:\u00A3|GBP\s*)\s*([0-9]{1,6}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?)/gi,
+    EUR: /(?:\u20AC|EUR\s*)\s*([0-9]{1,6}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?)/gi,
+    USD: /(?:\$|USD\s*)\s*([0-9]{1,6}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?)/gi,
+  };
+  const expression = patterns[currency] || new RegExp(`${currency}\\s*([0-9]{1,6}(?:,[0-9]{3})*(?:\\.[0-9]{1,2})?)`, "gi");
+  return [...decoded.matchAll(expression)].map((match) => Number(match[1].replace(/,/g, "")));
+}
+
+export function extractScopedProductPageEvidence(document: string, sourceUrl = "https://product.invalid/") {
+  const scope = productScope(document);
+  const currency = confirmedProductCurrency(document) || currencyFromMarkup(scope);
+  const variationAttribute = scope.match(/data-product_variations\s*=\s*(["'])([\s\S]*?)\1/i)?.[2] || "";
+  if (variationAttribute && currency) {
+    try {
+      const variations = JSON.parse(decodeEvidence(variationAttribute));
+      const amounts = Array.isArray(variations)
+        ? variations.map((variation) => Number(variation?.display_price)).filter((amount) => Number.isFinite(amount) && amount > 0)
+        : [];
+      const signals = scopedPriceSignals(currency, amounts);
+      if (signals.length) return { priceSignals: signals, basis: signals.length > 1 ? "range" as const : "point" as const, imageUrl: publicImageFromScope(scope, sourceUrl) };
+    } catch { /* Fall through to the visible product-summary price. */ }
+  }
+
+  const priceMarkup = scope.match(/<p\b[^>]*class\s*=\s*["'][^"']*\bprice\b[^"']*["'][^>]*>[\s\S]*?<\/p>/i)?.[0]
+    || scope.match(/<(?:div|span)\b[^>]*class\s*=\s*["'][^"']*(?:product[-_ ]price|single_product_price)[^"']*["'][^>]*>[\s\S]*?<\/(?:div|span)>/i)?.[0]
+    || "";
+  const currentMarkup = priceMarkup.match(/<ins\b[^>]*>([\s\S]*?)<\/ins>/i)?.[1]
+    || priceMarkup.replace(/<del\b[^>]*>[\s\S]*?<\/del>/gi, " ");
+  const signals = scopedPriceSignals(currency, markedAmounts(currentMarkup, currency));
+  return {
+    priceSignals: signals,
+    basis: signals.length > 1 ? "range" as const : signals.length === 1 ? (/<ins\b/i.test(priceMarkup) ? "sale" as const : "point" as const) : "unavailable" as const,
+    imageUrl: publicImageFromScope(scope, sourceUrl),
+  };
+}
+
+function addScopedProductPageEvidence(document: string, sourceUrl: string, expected: ProductRecord, products: ProductRecord[], pageTitle: string) {
+  const evidence = extractScopedProductPageEvidence(document, sourceUrl);
+  if (!evidence.priceSignals.length && !evidence.imageUrl) return;
+  const identity = validateProductPageIdentity([expected], products, pageTitle, { allowScopedPageSignal: true });
+  if (!identity.accepted) return;
+  const selected = identity.products[0];
+  products.push({
+    ...selected,
+    priceSignals: selected.priceSignals.length ? selected.priceSignals : evidence.priceSignals,
+    imageUrl: selected.imageUrl || evidence.imageUrl,
+    attributes: [...new Set([...selected.attributes, ...(evidence.priceSignals.length ? [`Price evidence: ${evidence.basis}`] : [])])],
+    extraction: selected.extraction === "json-ld" ? selected.extraction : "page-signal",
+  });
 }
 
 function pageExtraction(document: string, sourceUrl: string, domain: string) {
@@ -119,7 +224,7 @@ function safeProductUrl(product: ProductRecord, domain: string) {
 }
 
 export function selectPrimaryProductPriceTargets(products: ProductRecord[], domain: string, maxPages = 6): ProductEnrichmentTarget[] {
-  const limit = Math.max(0, Math.min(6, Math.floor(maxPages)));
+  const limit = Math.max(0, Math.min(MAX_ENRICHMENT_TARGETS, Math.floor(maxPages)));
   const seen = new Set<string>();
   return products
     .filter((product) => product.jsonLdType === "Product" && !comparablePrice(product))
@@ -162,7 +267,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
     }
   }));
 
-  const entries = await Promise.all(selected.map(async (item) => {
+  const enrichOne = async (item: ProductEnrichmentTarget) => {
     const gap = (reason: string): EnrichmentGap => ({ url: item.sourceUrl, productId: item.productId, role: item.role, reason });
     try {
       const robotsResult = robotsByDomain.get(item.domain);
@@ -173,6 +278,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       if (!fetched.ok || !/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`) };
       const extracted = pageExtraction(fetched.text, fetched.url, item.domain);
       const expected = expectedProduct(item);
+      addScopedProductPageEvidence(fetched.text, fetched.url, expected, extracted.result.products, extracted.pageTitle);
       const initialIdentity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle);
       let adapterGap = "";
       const adapter = storefrontAdapterRequest(item.sourceUrl);
@@ -199,13 +305,28 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
           adapterGap = error instanceof SyntaxError ? `${adapterLabel} endpoint returned invalid JSON.` : `${adapterLabel} endpoint could not be fetched.`;
         }
       }
-      const identity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle);
+      const identity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle, { allowScopedPageSignal: true });
       if (!identity.accepted) return { product: null, gap: gap(identity.reason) };
       const accepted = identity.products[0];
-      return { product: accepted ? { ...accepted, id: item.productId } : null, gap: adapterGap ? gap(adapterGap) : null };
+      const unresolvedAdapterGap = adapterGap && accepted && !hasConfirmedPrice([accepted]) ? adapterGap : "";
+      return { product: accepted ? { ...accepted, id: item.productId } : null, gap: unresolvedAdapterGap ? gap(unresolvedAdapterGap) : null };
     } catch (error) {
       return { product: null, gap: gap(error instanceof Error ? `Selected product page could not be fetched: ${error.message}` : "Selected product page could not be fetched.") };
     }
+  };
+
+  const entries = new Array<Awaited<ReturnType<typeof enrichOne>>>(selected.length);
+  const targetIndexesByDomain = new Map<string, number[]>();
+  selected.forEach((item, index) => targetIndexesByDomain.set(item.domain, [...(targetIndexesByDomain.get(item.domain) || []), index]));
+  await Promise.all([...targetIndexesByDomain.values()].map(async (indexes) => {
+    let cursor = 0;
+    await Promise.all(Array.from({ length: Math.min(MAX_PER_DOMAIN_CONCURRENCY, indexes.length) }, async () => {
+      while (cursor < indexes.length) {
+        const index = indexes[cursor];
+        cursor += 1;
+        entries[index] = await enrichOne(selected[index]);
+      }
+    }));
   }));
 
   const products = entries.flatMap((entry) => entry.product ? [entry.product] : []);

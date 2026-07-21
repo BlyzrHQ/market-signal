@@ -73,7 +73,7 @@ test("real-data route and product metadata are present", async () => {
   assert.match(crawl, /selectProductEnrichmentTargets/);
   assert.match(crawl, /enrichMatchedProductPages/);
   assert.match(crawl, /priceEnrichmentPagesFetched/);
-  assert.match(enrichment, /MAX_TARGETS = 24/);
+  assert.match(enrichment, /MAX_TARGETS = 64/);
   assert.match(enrichment, /enrichProductTargets/);
   assert.match(storefrontEnrichment, /validateProductPageIdentity/);
   assert.match(storefrontEnrichment, /robots\.txt/);

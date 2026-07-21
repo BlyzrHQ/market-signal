@@ -884,6 +884,34 @@ test("final match enrichment fetches the exact AI-selected pair when secure imag
   ]);
 });
 
+test("accepts exact-page title qualifiers when both expected and fetched identity are anchored to the requested slug", () => {
+  const sourceUrl = "https://grocer.test/product/halal-ribs/";
+  const expected = { ...product("expected-ribs", "grocer.test", "halal ribs"), jsonLdType: "Product", sourceUrl };
+  const fetched = { ...product("fetched-ribs", "grocer.test", "Halal Beef Ribs — Pack of 5"), jsonLdType: "PageSignal", sourceUrl };
+  assert.equal(validateProductPageIdentity([expected], [fetched], fetched.name, { allowScopedPageSignal: true }).accepted, true);
+
+  const unrelated = { ...fetched, name: "Chocolate Celebration Cake", normalizedName: "chocolate celebration cake" };
+  assert.equal(validateProductPageIdentity([expected], [unrelated], unrelated.name).accepted, false);
+
+  const liverUrl = "https://grocer.test/product/lamb-liver/";
+  const liverExpected = { ...product("expected-liver", "grocer.test", "lamb liver"), jsonLdType: "Product", sourceUrl: liverUrl };
+  const liverFetched = { ...product("fetched-liver", "grocer.test", "Halal Lamb Liver (Pre Order)"), jsonLdType: "PageSignal", sourceUrl: liverUrl };
+  assert.equal(validateProductPageIdentity([liverExpected], [liverFetched], liverFetched.name, { allowScopedPageSignal: true }).accepted, true);
+});
+
+test("final match enrichment can cover both sides of twenty-nine selected rows", () => {
+  const rows = Array.from({ length: 29 }, (_, index) => {
+    const primary = { ...product(`primary-${index}`, "shop.test", `Product ${index} 500g`), jsonLdType: "Product", sourceUrl: `https://shop.test/products/product-${index}` };
+    const rival = { ...product(`rival-${index}`, "rival.test", `Product ${index} 500g`), jsonLdType: "Product", sourceUrl: `https://rival.test/products/product-${index}` };
+    return { primary, matches: [{ domain: "rival.test", product: rival, score: 0.9, confidence: "Medium", sharedTerms: ["product"], claimIds: [], decision: null, assessment: { method: "ai-hybrid", claimType: "Inferred", verdict: "same_product", confidence: 0.95, model: "gpt-5.4-mini", promptVersion: "test", reasons: ["same item"], contradictions: [], normalizedCategory: "grocery", normalizedVariant: "", normalizedSize: "500g", primarySourceUrl: primary.sourceUrl, rivalSourceUrl: rival.sourceUrl } }] };
+  });
+  const comparison = { primaryDomain: "shop.test", comparisonDomains: ["rival.test"], rows, unmatched: [], coverage: { primaryProductsAvailable: 29, primaryProductsScanned: 29, primaryProductFamiliesCompared: 29, competitorProductsAvailable: 29, competitorProductsScanned: 29, assignedPairCount: 29, verifiedPairCount: 29, rowsReturned: 29, rowLimit: 40, truncated: false } };
+  const targets = selectFinalProductEnrichmentTargets(comparison, 64);
+  assert.equal(targets.length, 58);
+  assert.equal(targets.filter((target) => target.role === "primary").length, 29);
+  assert.equal(targets.filter((target) => target.role === "rival").length, 29);
+});
+
 test("final enrichment updates the selected pair and recomputes its price decision", () => {
   const primary = { ...product("tea", "shop.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/lemon-ginger-tea", extraction: "sitemap", confidence: "Medium" };
   const rival = { ...product("rival-tea", "tea.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://tea.test/products/lemon-ginger-tea", extraction: "sitemap", confidence: "Medium" };

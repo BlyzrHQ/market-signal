@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { productDecision } from "../app/lib/product-intelligence.ts";
-import { claimablePagePricePatterns, enrichProductTargets, publicProductTarget, selectPrimaryProductPriceTargets } from "../app/lib/storefront-product-enrichment.ts";
+import { claimablePagePricePatterns, enrichProductTargets, extractScopedProductPageEvidence, publicProductTarget, selectPrimaryProductPriceTargets } from "../app/lib/storefront-product-enrichment.ts";
 
 function product(index, overrides = {}) {
   return {
@@ -39,7 +39,7 @@ function target(overrides = {}) {
   };
 }
 
-test("selects at most six same-domain first-party product targets without a comparable price", () => {
+test("selects every requested same-domain first-party target up to the report ceiling", () => {
   const products = [
     ...Array.from({ length: 8 }, (_, index) => product(index)),
     product(20, { sourceUrl: "https://other.test/products/wrong-domain" }),
@@ -47,9 +47,50 @@ test("selects at most six same-domain first-party product targets without a comp
     product(22, { priceSignals: [{ raw: "USD 9", currency: "USD", amount: 9 }] }),
   ];
   const targets = selectPrimaryProductPriceTargets(products, "shop.test", 20);
-  assert.equal(targets.length, 6);
+  assert.equal(targets.length, 8);
   assert.ok(targets.every((item) => item.domain === "shop.test" && item.role === "primary"));
   assert.equal(targets.some((item) => item.productId === "p-20" || item.productId === "p-21" || item.productId === "p-22"), false);
+});
+
+test("extracts only the requested product summary price and ignores related products", () => {
+  const evidence = extractScopedProductPageEvidence(`
+    <main><h1 class="product_title">White Onion</h1>
+      <div class="summary entry-summary"><p class="price"><span class="amount">&pound;1.14</span></p></div>
+    </main>
+    <section class="related products"><h2>Related products</h2><p class="price">&pound;99.00</p></section>
+  `);
+  assert.deepEqual(evidence.priceSignals, [{ raw: "GBP 1.14", currency: "GBP", amount: 1.14 }]);
+  assert.equal(evidence.basis, "point");
+});
+
+test("uses the current ins price instead of the crossed-out WooCommerce price", () => {
+  const evidence = extractScopedProductPageEvidence(`
+    <h1 class="product_title">Halloumi Cheese 250g</h1>
+    <div class="summary entry-summary"><p class="price"><del><span>&pound;5.25</span></del><ins><span>&pound;4.35</span></ins></p></div>
+  `);
+  assert.deepEqual(evidence.priceSignals.map((signal) => signal.amount), [4.35]);
+  assert.equal(evidence.basis, "sale");
+});
+
+test("extracts a truthful WooCommerce variant range from the product form", () => {
+  const variations = JSON.stringify([
+    { display_price: 18.5, display_regular_price: 20, attributes: { attribute_weight: "500g" } },
+    { display_price: 52, display_regular_price: 52, attributes: { attribute_weight: "1.5kg" } },
+  ]).replaceAll('"', "&quot;");
+  const evidence = extractScopedProductPageEvidence(`
+    <h1 class="product_title">Halal Beef Fillet Whole</h1>
+    <div class="summary entry-summary"><p class="price">&pound;18.50 &ndash; &pound;52.00</p>
+      <form class="variations_form" data-product_variations="${variations}"></form>
+    </div>
+  `);
+  assert.deepEqual(evidence.priceSignals.map((signal) => signal.amount), [18.5, 52]);
+  assert.equal(evidence.basis, "range");
+});
+
+test("does not claim a scoped amount without a confirmed same-page currency", () => {
+  const evidence = extractScopedProductPageEvidence('<h1>Maamoul Box</h1><div class="summary"><p class="price">12.50</p></div>');
+  assert.deepEqual(evidence.priceSignals, []);
+  assert.equal(evidence.basis, "unavailable");
 });
 
 test("removes only exact-zero unstructured price patterns", () => {

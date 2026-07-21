@@ -944,7 +944,31 @@ function enrichmentIdentityAlignment(product: ProductRecord, candidate: ProductR
   };
 }
 
-export function validateProductPageIdentity(expected: ProductRecord[], fetched: ProductRecord[], pageTitle = "") {
+function slugAnchoredIdentityAlignment(product: ProductRecord, candidate: ProductRecord) {
+  let slugName = "";
+  try {
+    const segments = new URL(product.sourceUrl).pathname.split("/").filter(Boolean);
+    slugName = decodeURIComponent(segments.at(-1) || "").replace(/[-_]+/g, " ");
+  } catch { return null; }
+  if (!slugName) return null;
+  const slugRecord = { ...product, name: slugName, normalizedName: bilingualNormalize(slugName), description: "", attributes: [] };
+  const expectedToSlug = enrichmentIdentityAlignment(product, slugRecord);
+  const slugToCandidate = enrichmentIdentityAlignment(slugRecord, candidate);
+  const rawSlugTokens = bilingualTokens(slugName).filter((token) => token.length >= 2);
+  const rawExpectedTokens = new Set(bilingualTokens(product.name));
+  const rawCandidateTokens = new Set(bilingualTokens(candidate.name));
+  const fullSlugContained = rawSlugTokens.length >= 2
+    && rawSlugTokens.every((token) => rawExpectedTokens.has(token))
+    && rawSlugTokens.every((token) => rawCandidateTokens.has(token));
+  const expectedIsSlugAnchored = expectedToSlug.aligned >= 2 && expectedToSlug.leftCoverage >= 0.75 && expectedToSlug.rightCoverage >= 0.75;
+  const candidateExplainsSlug = slugToCandidate.aligned >= 2
+    && slugToCandidate.leftCoverage >= 0.4
+    && slugToCandidate.rightCoverage >= 0.5
+    && !(slugToCandidate.leftHasConflict && slugToCandidate.rightHasConflict);
+  return (expectedIsSlugAnchored && candidateExplainsSlug) || fullSlugContained ? slugToCandidate : null;
+}
+
+export function validateProductPageIdentity(expected: ProductRecord[], fetched: ProductRecord[], pageTitle = "", options: { allowScopedPageSignal?: boolean } = {}) {
   if (!expected.length) return { accepted: false, products: [] as ProductRecord[], reason: "No expected product identity was available for this enrichment page." };
   const accepted = fetched.flatMap((candidate) => {
     let strength = -1;
@@ -960,10 +984,13 @@ export function validateProductPageIdentity(expected: ProductRecord[], fetched: 
         continue;
       }
       const sameFinalProductPage = canonicalProductPageUrl(product.sourceUrl) === canonicalProductPageUrl(candidate.sourceUrl);
-      if (!sameFinalProductPage || product.jsonLdType !== "Product" || candidate.jsonLdType !== "Product") continue;
+      if (!sameFinalProductPage || product.jsonLdType !== "Product" || (candidate.jsonLdType !== "Product" && !(options.allowScopedPageSignal && candidate.jsonLdType === "PageSignal"))) continue;
       const alignment = enrichmentIdentityAlignment(product, candidate);
-      if (alignment.aligned < 2 || alignment.leftCoverage < 0.5 || alignment.rightCoverage < 0.5 || (alignment.leftHasConflict && alignment.rightHasConflict)) continue;
-      strength = Math.max(strength, (alignment.aligned * 1_000) + (Math.min(alignment.leftCoverage, alignment.rightCoverage) * 100));
+      const directAlignment = alignment.aligned >= 2 && alignment.leftCoverage >= 0.5 && alignment.rightCoverage >= 0.5 && !(alignment.leftHasConflict && alignment.rightHasConflict);
+      const slugAlignment = directAlignment ? null : slugAnchoredIdentityAlignment(product, candidate);
+      if (!directAlignment && !slugAlignment) continue;
+      const acceptedAlignment = slugAlignment || alignment;
+      strength = Math.max(strength, (acceptedAlignment.aligned * 1_000) + (Math.min(acceptedAlignment.leftCoverage, acceptedAlignment.rightCoverage) * 100));
     }
     return strength >= 0 ? [{ candidate, strength: strength + (candidate.priceSignals.length ? 10 : 0) + (candidate.imageUrl ? 1 : 0) }] : [];
   }).sort((left, right) => right.strength - left.strength || left.candidate.name.localeCompare(right.candidate.name));
@@ -1186,7 +1213,7 @@ export function selectProductEnrichmentTargets(comparison: ProductComparison, ma
 }
 
 export function selectFinalProductEnrichmentTargets(comparison: ProductComparison, maxPages = 24): ProductEnrichmentTarget[] {
-  const boundedMax = Math.max(0, Math.min(24, Math.floor(maxPages)));
+  const boundedMax = Math.max(0, Math.min(64, Math.floor(maxPages)));
   if (!boundedMax) return [];
   const selected: ProductEnrichmentTarget[] = [];
   const seenUrls = new Set<string>();

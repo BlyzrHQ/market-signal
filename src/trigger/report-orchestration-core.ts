@@ -231,7 +231,7 @@ export async function orchestrateReport(
     }
     comparison = composeProductMatchAttempts(baseline, attempts, requestCount);
     if (comparison) {
-      const targets = selectFinalProductEnrichmentTargets(comparison, 24);
+      const targets = selectFinalProductEnrichmentTargets(comparison, 64);
       if (targets.length) {
         await port.appendEvent(payload.publicId, event("enrichment-started", "enrichment", "Re-reading selected product pages for attributable prices and images."));
         try {
@@ -241,7 +241,7 @@ export async function orchestrateReport(
           await port.appendEvent(payload.publicId, event("enrichment-complete", "enrichment", "Selected product enrichment finished with explicit source coverage."));
         } catch (error) {
           limitedPhases.push("enrichment");
-          comparison = applyFinalProductEnrichment(comparison, [], { pagesRequested: targets.length, pagesFetched: 0, maxPages: 24, gaps: [{ url: "", reason: message(error, "Selected product enrichment was unavailable.") }] });
+          comparison = applyFinalProductEnrichment(comparison, [], { pagesRequested: targets.length, pagesFetched: 0, maxPages: 64, gaps: [{ url: "", reason: message(error, "Selected product enrichment was unavailable.") }] });
           await port.appendEvent(payload.publicId, event("enrichment-limited", "enrichment", "Selected product enrichment ended with a visible coverage gap."));
         }
       }

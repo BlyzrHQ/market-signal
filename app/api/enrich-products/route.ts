@@ -1,6 +1,6 @@
 import { enrichProductTargets, publicProductTarget } from "../../lib/storefront-product-enrichment.ts";
 
-const MAX_TARGETS = 24;
+const MAX_TARGETS = 64;
 
 export async function POST(request: Request) {
   try {
