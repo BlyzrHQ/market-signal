@@ -41,7 +41,14 @@ function display(value: unknown, fallback = "") { return repairEncoding(typeof v
 function safeUrl(value: unknown) { const url = display(value); return /^https?:\/\/[^\s]+$/i.test(url) ? url : ""; }
 function slug(value: unknown) { return display(value, "item").toLowerCase().replace(/[^a-z0-9.-]+/g, "-").replace(/^-+|-+$/g, "") || "item"; }
 function viewHref(view: string, anchor = "") { return `?view=${view}${anchor ? `#${anchor}` : ""}`; }
-function productPrice(product: Record<string, unknown>) { return list(product.priceSignals).map((item) => display(object(item).raw)).filter(Boolean)[0] || ""; }
+function productPrice(product: Record<string, unknown>) {
+  const signals = list(product.priceSignals).map(object);
+  const priced = signals.flatMap((signal) => typeof signal.amount === "number" && display(signal.currency) ? [{ amount: signal.amount, currency: display(signal.currency) }] : []);
+  const currencies = [...new Set(priced.map((item) => item.currency))];
+  const amounts = [...new Set(priced.map((item) => item.amount))].sort((left, right) => left - right);
+  if (currencies.length === 1 && amounts.length > 1) return `${currencies[0]} ${amounts[0]}–${amounts.at(-1)}`;
+  return signals.map((item) => display(item.raw)).filter(Boolean)[0] || "";
+}
 function conciseAction(value: unknown, fallback: string, limit = 96) {
   const full = display(value, fallback);
   const firstSentence = full.match(/^.*?[.!?؟](?:\s|$)/)?.[0]?.trim() || "";
