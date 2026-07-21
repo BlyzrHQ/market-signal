@@ -54,4 +54,5 @@ The verified Fable 5 session first identified that `creativeConcepts` are produc
 - Real saved MyJam baseline (`2f17bfc19dd64415bb6f12a10155f8df`): 7 companies, 21 official platform searches, 0 verified-active signals, 133 evidence claims, 3 gaps, and 7 coverage records.
 - `npm.cmd run lint`: no errors; two existing/raw-media `no-img-element` warnings because public product/ad media cannot use a fixed Next image host allowlist.
 - `npm.cmd test`: PASS — typecheck, production build, and 317 tests.
+- Fable 5 strict review round 1: BLOCK. Resolved all three blockers by restoring direct record links for verified Google/TikTok activity, requiring HTTPS for Meta creative media, and opening collapsed evidence for deep links and print/export. Also hardened ad destinations against additional private-network ranges and added meaningful creative image alt text.
 - Deployment and live verification: pending PR review.
