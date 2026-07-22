@@ -63,7 +63,7 @@ Pending. `claude-fable-5` was requested for the product decision review on 2026-
 - TypeScript check: passed.
 - Production build: passed.
 - ESLint: passed with the two pre-existing `no-img-element` warnings and no errors.
-- Automated suite: 321/321 tests passed.
+- Automated suite on the combined PR #69 + #70 stack: 340/340 tests passed.
 - Fresh public MyJam crawl after the final product-page crawl priority: 602 public products; 459 ms median crawl-response proxy; image readiness 79; product-information completeness 67; product access 100; public purchase-path score 75 with an observed minimum two-step estimate; trust readiness 20; mobile/accessibility basics 85. The five sampled pages included the homepage and four public product pages.
 - A fresh Al Hamdani Sweets check demonstrated materially different evidence rather than fixed output: 51 products; 519 ms response proxy; image readiness 100; information 70; product access 100; purchase-path score 75 with a two-step public estimate; trust 40; mobile/accessibility 100. Its five sampled pages included the homepage and four public product pages.
 - Babanuj produced one successful preliminary measurement, then a later request returned HTTP 403. The final validation records the latter as a crawl availability change rather than reusing stale metrics.
