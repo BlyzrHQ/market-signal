@@ -43,7 +43,7 @@ export type AIActionPlannerOptions = {
 };
 
 const PROMPT_VERSION = "ai-product-action-v2-exact-tokens";
-const DEFAULT_MODEL = "gpt-5.4-mini";
+const DEFAULT_MODEL = "gpt-5.6-luna";
 const DEFAULT_PAIRS_PER_CALL = 4;
 const DEFAULT_MAX_CALLS = 20;
 const DEFAULT_CONCURRENCY = 4;
@@ -252,6 +252,10 @@ export function deterministicProductActionResult(inputs: ProductActionInput[], m
   };
 }
 
+export function resolveAIActionModel(explicitModel?: string) {
+  return explicitModel || process.env.MARKET_SIGNAL_ACTION_MODEL || process.env.MARKET_SIGNAL_MATCH_MODEL || DEFAULT_MODEL;
+}
+
 function normalizedNumbers(value: string) {
   const normalized = value
     .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)))
@@ -388,7 +392,7 @@ export async function buildAIProductActions(inputs: ProductActionInput[], option
   const bounded = inputs;
   const aiEligible = bounded.slice(0, MAX_AI_ACTIONS);
   const apiKey = options.apiKey ?? process.env.OPENAI_API_KEY ?? "";
-  const model = options.model || process.env.MARKET_SIGNAL_ACTION_MODEL || process.env.MARKET_SIGNAL_MATCH_MODEL || DEFAULT_MODEL;
+  const model = resolveAIActionModel(options.model);
   if (!bounded.length) return deterministicProductActionResult([], model, [], Date.now() - startedAt);
   if (!apiKey) return deterministicProductActionResult(bounded, model, ["AI action planning is not configured; deterministic recommendations were retained."], Date.now() - startedAt);
   const maxPairsPerCall = Math.max(1, Math.min(DEFAULT_PAIRS_PER_CALL, options.maxPairsPerCall || DEFAULT_PAIRS_PER_CALL));
