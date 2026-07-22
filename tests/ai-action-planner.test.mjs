@@ -2,11 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  AI_ACTION_PLANNER_LIMITS,
   applyProductActionPlans,
   buildAIProductActions,
   collectProductActionInputs,
   deterministicProductActionResult,
 } from "../app/lib/ai-action-planner.ts";
+
+test("the default batch ceiling can cover every AI-eligible pair", () => {
+  assert.ok(AI_ACTION_PLANNER_LIMITS.maxCalls * AI_ACTION_PLANNER_LIMITS.pairsPerCall >= AI_ACTION_PLANNER_LIMITS.maxAiActions);
+  assert.ok(AI_ACTION_PLANNER_LIMITS.totalBudgetMs + 5_000 <= 35_000);
+});
 
 function product(domain, id, name, price) {
   return {
@@ -156,4 +162,62 @@ test("pairs beyond the AI drafting cap retain deterministic plans and a visible 
   assert.equal(result.plans[80].plan.source, "deterministic");
   assert.equal(result.plans[80].plan.model, "");
   assert.match(result.metadata.gaps.join(" "), /beyond the AI drafting cap/i);
+});
+
+test("production batching keeps 31 accepted pairs in bounded four-pair calls", async () => {
+  const base = collectProductActionInputs(comparison())[0];
+  const inputs = Array.from({ length: 31 }, (_, index) => ({ ...base, pairKey: `${base.pairKey}-${index}` }));
+  const batchSizes = [];
+  const schemaLimits = [];
+  const outputLimits = [];
+  const result = await buildAIProductActions(inputs, {
+    apiKey: "test",
+    fetch: async (_url, init) => {
+      const request = JSON.parse(init.body);
+      const batch = JSON.parse(request.input[1].content).pairs;
+      batchSizes.push(batch.length);
+      schemaLimits.push(request.text.format.schema.properties.actions.maxItems);
+      outputLimits.push(request.max_output_tokens);
+      return Response.json({ output_text: JSON.stringify({ actions: batch.map((input) => validAction(input.pairKey)) }) });
+    },
+  });
+  assert.equal(result.metadata.calls, 8);
+  assert.deepEqual(batchSizes.sort((a, b) => b - a), [4, 4, 4, 4, 4, 4, 4, 3]);
+  assert.equal(schemaLimits.every((value) => value === AI_ACTION_PLANNER_LIMITS.pairsPerCall), true);
+  assert.equal(outputLimits.every((value) => value === AI_ACTION_PLANNER_LIMITS.maxOutputTokens), true);
+  assert.equal(result.metadata.aiActionsAccepted, 31);
+});
+
+test("one failed batch degrades only its four pairs while successful AI actions survive", async () => {
+  const base = collectProductActionInputs(comparison())[0];
+  const inputs = Array.from({ length: 31 }, (_, index) => ({ ...base, pairKey: `${base.pairKey}-${index}` }));
+  let calls = 0;
+  const result = await buildAIProductActions(inputs, {
+    apiKey: "test",
+    fetch: async (_url, init) => {
+      calls += 1;
+      const batch = JSON.parse(JSON.parse(init.body).input[1].content).pairs;
+      if (calls === 1) throw new DOMException("The operation was aborted", "AbortError");
+      return Response.json({ output_text: JSON.stringify({ actions: batch.map((input) => validAction(input.pairKey)) }) });
+    },
+  });
+  assert.equal(result.metadata.method, "ai-grounded");
+  assert.equal(result.metadata.calls, 8);
+  assert.equal(result.metadata.aiActionsAccepted, 27);
+  assert.equal(result.metadata.fallbackActions, 4);
+  assert.match(result.metadata.gaps.join(" "), /aborted/i);
+});
+
+test("a call is not started when less than the minimum completion window remains", async () => {
+  const inputs = collectProductActionInputs(comparison());
+  let calls = 0;
+  const result = await buildAIProductActions(inputs, {
+    apiKey: "test",
+    totalBudgetMs: 1_000,
+    fetch: async () => { calls += 1; return Response.json({}); },
+  });
+  assert.equal(calls, 0);
+  assert.equal(result.metadata.calls, 0);
+  assert.equal(result.plans[0].plan.source, "deterministic");
+  assert.match(result.metadata.gaps.join(" "), /budget was exhausted/i);
 });

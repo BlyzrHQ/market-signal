@@ -15,7 +15,7 @@ import {
   createReportOrchestrationHttpPort,
   isRetryableHttpStatus,
 } from "../src/trigger/report-orchestration-http.ts";
-import { deterministicProductActionResult } from "../app/lib/ai-action-planner.ts";
+import { AI_ACTION_PLANNER_LIMITS, deterministicProductActionResult } from "../app/lib/ai-action-planner.ts";
 
 const payload = {
   contractVersion: "1",
@@ -575,6 +575,7 @@ test("the HTTP action adapter uses the internal route, bounded budget, and beare
   assert.equal(calls[0].url, "https://market.example/api/actions");
   assert.equal(calls[0].init.headers.Authorization, "Bearer callback_secret_with_enough_entropy_123456");
   assert.equal(OPERATION_BUDGETS_MS.actions, 35_000);
+  assert.ok(OPERATION_BUDGETS_MS.actions >= AI_ACTION_PLANNER_LIMITS.totalBudgetMs + 5_000, "action transport must preserve serialization headroom above the planner budget");
 });
 
 test("the internal report port maps a missing stored report to null without retrying", async () => {
