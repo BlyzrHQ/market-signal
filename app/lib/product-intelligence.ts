@@ -144,6 +144,7 @@ export type ProductComparison = {
     calls: number;
     durationMs: number;
     gaps: string[];
+    rejectionReasons?: Record<string, number>;
   };
 };
 

@@ -295,34 +295,37 @@ function containsArabic(value: string) {
   return /[\u0600-\u06ff]/.test(value);
 }
 
-export function validateProductActionDraft(value: unknown, input: ProductActionInput, model: string): ProductActionPlan | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+type ProductActionRejectionReason = "invalid-object" | "pair-key-mismatch" | "text-fields" | "arabic-missing" | "lever" | "evidence-keys" | "evidence-specificity" | "unsupported-number" | "unsupported-domain" | "proper-noun" | "price-direction" | "grounding-overlap-en" | "grounding-overlap-ar";
+
+function assessProductActionDraft(value: unknown, input: ProductActionInput, model: string): { plan: ProductActionPlan | null; reason?: ProductActionRejectionReason } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { plan: null, reason: "invalid-object" };
   const item = value as Record<string, unknown>;
-  if (clean(item.pairKey, 620) !== input.pairKey) return null;
+  if (clean(item.pairKey, 620) !== input.pairKey) return { plan: null, reason: "pair-key-mismatch" };
   const actionEn = clean(item.actionEn, 161);
   const actionAr = clean(item.actionAr, 161);
   const rationaleEn = clean(item.rationaleEn, 201);
   const rationaleAr = clean(item.rationaleAr, 201);
-  if (!actionEn || !actionAr || !rationaleEn || !rationaleAr || actionEn.length > 160 || actionAr.length > 160 || rationaleEn.length > 200 || rationaleAr.length > 200) return null;
-  if (!containsArabic(actionAr) || !containsArabic(rationaleAr)) return null;
-  if (!LEVERS.includes(item.leverType as ProductActionLever)) return null;
+  if (!actionEn || !actionAr || !rationaleEn || !rationaleAr || actionEn.length > 160 || actionAr.length > 160 || rationaleEn.length > 200 || rationaleAr.length > 200) return { plan: null, reason: "text-fields" };
+  if (!containsArabic(actionAr) || !containsArabic(rationaleAr)) return { plan: null, reason: "arabic-missing" };
+  if (!LEVERS.includes(item.leverType as ProductActionLever)) return { plan: null, reason: "lever" };
   const evidenceKeys = Array.isArray(item.evidenceKeys) ? [...new Set(item.evidenceKeys.map((key) => clean(key, 100)).filter(Boolean))].slice(0, 8) : [];
   const allowedKeys = new Set(input.facts.map((entry) => entry.key));
-  if (evidenceKeys.length < 2 || evidenceKeys.some((key) => !allowedKeys.has(key))) return null;
-  if (!evidenceKeys.some((key) => !/^(?:primary|rival)\.(?:name|domain|source)$/.test(key))) return null;
+  if (evidenceKeys.length < 2 || evidenceKeys.some((key) => !allowedKeys.has(key))) return { plan: null, reason: "evidence-keys" };
+  if (!evidenceKeys.some((key) => !/^(?:primary|rival)\.(?:name|domain|source)$/.test(key))) return { plan: null, reason: "evidence-specificity" };
   const citedFacts = input.facts.filter((entry) => evidenceKeys.includes(entry.key));
   const factText = input.facts.map((entry) => entry.text).join(" ");
   const combined = `${actionEn} ${actionAr} ${rationaleEn} ${rationaleAr}`;
   const allowedNumbers = new Set(normalizedNumbers(factText));
-  if (normalizedNumbers(combined).some((number) => !allowedNumbers.has(number))) return null;
+  if (normalizedNumbers(combined).some((number) => !allowedNumbers.has(number))) return { plan: null, reason: "unsupported-number" };
   const allowedDomains = new Set(domainTokens(factText));
-  if (domainTokens(combined).some((domain) => !allowedDomains.has(domain))) return null;
-  if (unsupportedProperNouns(`${actionEn} ${rationaleEn} ${actionAr} ${rationaleAr}`, factText)) return null;
+  if (domainTokens(combined).some((domain) => !allowedDomains.has(domain))) return { plan: null, reason: "unsupported-domain" };
+  if (unsupportedProperNouns(`${actionEn} ${rationaleEn} ${actionAr} ${rationaleAr}`, factText)) return { plan: null, reason: "proper-noun" };
   const unsupportedPriceDirection = /\b(?:cheaper|costlier|more expensive|less expensive|lower price|higher price|price gap)\b/i.test(`${actionEn} ${rationaleEn}`)
     || /(?:أرخص|أغلى|سعر\s+أقل|سعر\s+أعلى|السعر\s+الأقل|السعر\s+الأعلى|أقل\s+سعر(?:اً|ا)?|أعلى\s+سعر(?:اً|ا)?|فارق\s+السعر)/.test(`${actionAr} ${rationaleAr}`);
-  if (!input.hasComparablePrice && unsupportedPriceDirection) return null;
-  if (!hasGroundedOverlap(`${actionEn} ${rationaleEn}`, citedFacts) || !hasGroundedOverlap(`${actionAr} ${rationaleAr}`, citedFacts)) return null;
-  return {
+  if (!input.hasComparablePrice && unsupportedPriceDirection) return { plan: null, reason: "price-direction" };
+  if (!hasGroundedOverlap(`${actionEn} ${rationaleEn}`, citedFacts)) return { plan: null, reason: "grounding-overlap-en" };
+  if (!hasGroundedOverlap(`${actionAr} ${rationaleAr}`, citedFacts)) return { plan: null, reason: "grounding-overlap-ar" };
+  return { plan: {
     source: "ai",
     claimType: "Recommendation",
     actionEn,
@@ -333,7 +336,11 @@ export function validateProductActionDraft(value: unknown, input: ProductActionI
     evidenceKeys,
     model,
     promptVersion: PROMPT_VERSION,
-  };
+  } };
+}
+
+export function validateProductActionDraft(value: unknown, input: ProductActionInput, model: string): ProductActionPlan | null {
+  return assessProductActionDraft(value, input, model).plan;
 }
 
 async function requestJSON(fetcher: FetchLike, url: string, init: RequestInit, timeoutMs: number, deadlineAt: number, onAttempt: () => void) {
@@ -410,16 +417,27 @@ export async function buildAIProductActions(inputs: ProductActionInput[], option
     const key = clean((draft as Record<string, unknown>).pairKey, 620);
     draftMap.set(key, [...(draftMap.get(key) || []), draft]);
   }
+  const rejectionReasons: Record<string, number> = {};
+  const reject = (reason: string) => { rejectionReasons[reason] = (rejectionReasons[reason] || 0) + 1; };
   const plans = bounded.map((input) => {
     const candidates = draftMap.get(input.pairKey) || [];
-    const plan = includedKeys.has(input.pairKey) && candidates.length === 1
-      ? validateProductActionDraft(candidates[0], input, model) || deterministicPlan(input)
-      : deterministicPlan(input);
+    let plan = deterministicPlan(input);
+    if (includedKeys.has(input.pairKey)) {
+      if (!candidates.length) reject("missing-draft");
+      else if (candidates.length > 1) reject("duplicate-draft");
+      else {
+        const assessed = assessProductActionDraft(candidates[0], input, model);
+        if (assessed.plan) plan = assessed.plan;
+        else reject(assessed.reason || "invalid-draft");
+      }
+    }
     return { pairKey: input.pairKey, plan };
   });
   const aiActionsAccepted = plans.filter((entry) => entry.plan.source === "ai").length;
   const invalidCount = includedKeys.size - aiActionsAccepted;
   if (invalidCount > 0) gaps.push(`${invalidCount} AI action draft${invalidCount === 1 ? " was" : "s were"} rejected or unavailable; deterministic recommendations were retained.`);
+  const rejectionSummary = Object.entries(rejectionReasons).sort(([left], [right]) => left.localeCompare(right)).map(([reason, count]) => `${reason} ${count}`).join(", ");
+  if (rejectionSummary) gaps.push(`AI action rejection reasons: ${rejectionSummary}.`);
   return {
     plans,
     metadata: {
@@ -433,6 +451,7 @@ export async function buildAIProductActions(inputs: ProductActionInput[], option
       calls: attemptedCalls,
       durationMs: Date.now() - startedAt,
       gaps: [...new Set(gaps)].slice(0, 12),
+      rejectionReasons,
     },
   };
 }

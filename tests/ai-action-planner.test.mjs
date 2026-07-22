@@ -104,19 +104,20 @@ test("a grounded structured action is accepted and attached by pair key without 
 });
 
 test("invented numbers, unknown evidence keys, and unsupported entities are rejected per pair", async () => {
-  for (const mutate of [
-    (action) => ({ ...action, actionEn: "Cut the price by 17% for this jar." }),
-    (action) => ({ ...action, evidenceKeys: ["primary.name", "invented.fact"] }),
-    (action) => ({ ...action, actionEn: "Feature the 500g jar beside Acme's offer." }),
-    (action) => ({ ...action, actionEn: "Amazon should lead the matched 500g raw honey jar." }),
-    (action) => ({ ...action, actionAr: "أبرز Amazon لعبوة العسل الخام المطابقة بحجم 500 غرام." }),
-    (action) => ({ ...action, actionAr: "Highlight the matched 500g raw honey jar." }),
-    (action) => ({ ...action, actionAr: "اتخذ خطوة تسويقية مناسبة لهذا المنتج.", rationaleAr: "راجع العرض العام قبل اتخاذ القرار." }),
+  for (const [reason, mutate] of [
+    ["unsupported-number", (action) => ({ ...action, actionEn: "Cut the price by 17% for this jar." })],
+    ["evidence-keys", (action) => ({ ...action, evidenceKeys: ["primary.name", "invented.fact"] })],
+    ["proper-noun", (action) => ({ ...action, actionEn: "Feature the 500g jar beside Acme's offer." })],
+    ["proper-noun", (action) => ({ ...action, actionEn: "Amazon should lead the matched 500g raw honey jar." })],
+    ["proper-noun", (action) => ({ ...action, actionAr: "أبرز Amazon لعبوة العسل الخام المطابقة بحجم 500 غرام." })],
+    ["arabic-missing", (action) => ({ ...action, actionAr: "Highlight the matched 500g raw honey jar." })],
+    ["grounding-overlap-ar", (action) => ({ ...action, actionAr: "اتخذ خطوة تسويقية مناسبة لهذا المنتج.", rationaleAr: "راجع العرض العام قبل اتخاذ القرار." })],
   ]) {
     const inputs = collectProductActionInputs(comparison());
     const result = await buildAIProductActions(inputs, { apiKey: "test", fetch: responseFor([mutate(validAction(inputs[0].pairKey))]) });
     assert.equal(result.plans[0].plan.source, "deterministic");
     assert.equal(result.metadata.aiActionsAccepted, 0);
+    assert.equal(result.metadata.rejectionReasons[reason], 1);
   }
 });
 
@@ -140,6 +141,7 @@ test("missing or duplicate model output falls back without dropping product pair
   assert.equal(result.plans.length, 2);
   assert.equal(result.plans.every((entry) => entry.plan.source === "deterministic"), true);
   assert.equal(result.metadata.fallbackActions, 2);
+  assert.deepEqual(result.metadata.rejectionReasons, { "duplicate-draft": 1, "missing-draft": 1 });
 });
 
 test("deterministic result entries retain stable pair identifiers", () => {
