@@ -80,11 +80,12 @@ test("report runs persist ordered idempotent events and a reloadable document", 
   await appendReportEvent(created.publicId, { idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Collecting public pages.", metadata: { pages: 5 } }, new Date("2026-07-16T00:01:00.000Z"), database);
   await appendReportEvent(created.publicId, { idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Duplicate transport retry.", metadata: { pages: 5 } }, new Date("2026-07-16T00:01:01.000Z"), database);
   await appendReportEvent(created.publicId, { idempotencyKey: "ads-started", phase: "ads", status: "running", message: "Checking attributable ads." }, new Date("2026-07-16T00:01:02.000Z"), database);
+  await appendReportEvent(created.publicId, { idempotencyKey: "actions-started", phase: "actions", status: "running", message: "Drafting evidence-grounded next moves." }, new Date("2026-07-16T00:01:02.500Z"), database);
   await appendReportEvent(created.publicId, { idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Late duplicate transport retry." }, new Date("2026-07-16T00:01:03.000Z"), database);
   await saveReportDocument(created.publicId, { blocks: [{ type: "market-profile", id: "profile" }] }, { status: "complete" }, new Date("2026-07-16T00:02:00.000Z"), database);
   const reloaded = await getStoredReport(created.publicId, new Date("2026-07-16T00:03:00.000Z"), database);
   assert.equal(reloaded.run.status, "complete");
-  assert.deepEqual(reloaded.events.map((event) => event.idempotencyKey), ["run-created", "crawl-started", "ads-started", "report-saved"]);
+  assert.deepEqual(reloaded.events.map((event) => event.idempotencyKey), ["run-created", "crawl-started", "ads-started", "actions-started", "report-saved"]);
   assert.deepEqual(reloaded.events[1].metadata, { pages: 5 });
   assert.deepEqual(reloaded.document, { blocks: [{ type: "market-profile", id: "profile" }] });
   assert.equal(reloaded.documentSchemaVersion, 1);
