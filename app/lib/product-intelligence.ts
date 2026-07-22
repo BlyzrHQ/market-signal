@@ -44,6 +44,21 @@ export type ProductExtractionResult = {
   gaps: string[];
 };
 
+export type ProductActionLever = "price_response" | "merchandising" | "positioning" | "price_transparency" | "evidence_gap" | "packaging";
+
+export type ProductActionPlan = {
+  source: "ai" | "deterministic";
+  claimType: "Recommendation";
+  actionEn: string;
+  actionAr: string;
+  rationaleEn: string;
+  rationaleAr: string;
+  leverType: ProductActionLever;
+  evidenceKeys: string[];
+  model: string;
+  promptVersion: string;
+};
+
 export type ProductMatch = {
   domain: string;
   product: ProductRecord | null;
@@ -56,6 +71,7 @@ export type ProductMatch = {
     whyTheyMayWin: string;
     recommendedMove: string;
     priceComparison: { primaryRaw: string; rivalRaw: string } | null;
+    actionPlan?: ProductActionPlan;
   } | null;
   assessment?: {
     method: "ai-hybrid";
@@ -116,6 +132,18 @@ export type ProductComparison = {
     pagesFetched: number;
     maxPages: number;
     gaps: Array<{ url: string; reason: string; productId?: string; role?: "primary" | "rival" }>;
+  };
+  actionPlanning?: {
+    method: "ai-grounded" | "deterministic-fallback";
+    available: boolean;
+    model: string;
+    promptVersion: string;
+    actionsRequested: number;
+    aiActionsAccepted: number;
+    fallbackActions: number;
+    calls: number;
+    durationMs: number;
+    gaps: string[];
   };
 };
 
