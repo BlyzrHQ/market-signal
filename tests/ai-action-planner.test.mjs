@@ -12,6 +12,8 @@ import {
 test("the default batch ceiling can cover every AI-eligible pair", () => {
   assert.ok(AI_ACTION_PLANNER_LIMITS.maxCalls * AI_ACTION_PLANNER_LIMITS.pairsPerCall >= AI_ACTION_PLANNER_LIMITS.maxAiActions);
   assert.ok(AI_ACTION_PLANNER_LIMITS.totalBudgetMs + 5_000 <= 35_000);
+  assert.equal(AI_ACTION_PLANNER_LIMITS.concurrency, 4);
+  assert.equal(AI_ACTION_PLANNER_LIMITS.timeoutMs, 12_000);
 });
 
 function product(domain, id, name, price) {
@@ -172,6 +174,8 @@ test("production batching keeps 31 accepted pairs in bounded four-pair calls", a
   const batchSizes = [];
   const schemaLimits = [];
   const outputLimits = [];
+  const systemMessages = [];
+  const promptVersions = [];
   const result = await buildAIProductActions(inputs, {
     apiKey: "test",
     fetch: async (_url, init) => {
@@ -180,6 +184,8 @@ test("production batching keeps 31 accepted pairs in bounded four-pair calls", a
       batchSizes.push(batch.length);
       schemaLimits.push(request.text.format.schema.properties.actions.maxItems);
       outputLimits.push(request.max_output_tokens);
+      systemMessages.push(request.input[0].content);
+      promptVersions.push(JSON.parse(request.input[1].content).promptVersion);
       return Response.json({ output_text: JSON.stringify({ actions: batch.map((input) => validAction(input.pairKey)) }) });
     },
   });
@@ -187,10 +193,13 @@ test("production batching keeps 31 accepted pairs in bounded four-pair calls", a
   assert.deepEqual(batchSizes.sort((a, b) => b - a), [4, 4, 4, 4, 4, 4, 4, 3]);
   assert.equal(schemaLimits.every((value) => value === AI_ACTION_PLANNER_LIMITS.pairsPerCall), true);
   assert.equal(outputLimits.every((value) => value === AI_ACTION_PLANNER_LIMITS.maxOutputTokens), true);
+  assert.equal(systemMessages.every((value) => value.includes("character-for-character")), true);
+  assert.equal(promptVersions.every((value) => value === "ai-product-action-v2-exact-tokens"), true);
+  assert.equal(result.metadata.promptVersion, "ai-product-action-v2-exact-tokens");
   assert.equal(result.metadata.aiActionsAccepted, 31);
 });
 
-test("one failed batch degrades only its four pairs while successful AI actions survive", async () => {
+test("one failed four-pair batch is retried as two smaller batches", async () => {
   const base = collectProductActionInputs(comparison())[0];
   const inputs = Array.from({ length: 31 }, (_, index) => ({ ...base, pairKey: `${base.pairKey}-${index}` }));
   let calls = 0;
@@ -204,10 +213,47 @@ test("one failed batch degrades only its four pairs while successful AI actions 
     },
   });
   assert.equal(result.metadata.method, "ai-grounded");
-  assert.equal(result.metadata.calls, 8);
-  assert.equal(result.metadata.aiActionsAccepted, 27);
-  assert.equal(result.metadata.fallbackActions, 4);
+  assert.equal(result.metadata.calls, 10);
+  assert.equal(result.metadata.aiActionsAccepted, 31);
+  assert.equal(result.metadata.fallbackActions, 0);
+  assert.deepEqual(result.metadata.rejectionReasons, {});
   assert.match(result.metadata.gaps.join(" "), /aborted/i);
+});
+
+test("one rejected request is retried once and preserves the AI plan", async () => {
+  const inputs = collectProductActionInputs(comparison());
+  let calls = 0;
+  const result = await buildAIProductActions(inputs, {
+    apiKey: "test",
+    fetch: async () => {
+      calls += 1;
+      if (calls === 1) throw new DOMException("The operation was aborted", "AbortError");
+      return Response.json({ output_text: JSON.stringify({ actions: [validAction(inputs[0].pairKey)] }) });
+    },
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.metadata.calls, 2);
+  assert.equal(result.plans[0].plan.source, "ai");
+  assert.equal(result.metadata.rejectionReasons["missing-draft"], undefined);
+});
+
+test("a failed request is not retried after the minimum completion window is spent", async () => {
+  const inputs = collectProductActionInputs(comparison());
+  let calls = 0;
+  const result = await buildAIProductActions(inputs, {
+    apiKey: "test",
+    totalBudgetMs: 8_100,
+    fetch: async () => {
+      calls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      throw new DOMException("The operation was aborted", "AbortError");
+    },
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.metadata.calls, 1);
+  assert.equal(result.plans[0].plan.source, "deterministic");
+  assert.equal(result.metadata.rejectionReasons["missing-draft"], 1);
+  assert.match(result.metadata.gaps.join(" "), /budget was exhausted/i);
 });
 
 test("a call is not started when less than the minimum completion window remains", async () => {
