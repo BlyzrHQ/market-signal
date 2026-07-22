@@ -501,17 +501,25 @@ test("action planning runs after final enrichment and persists source-labelled p
 });
 
 test("AI action transport failure retains deterministic moves without limiting the report", async () => {
+  const previousActionModel = process.env.MARKET_SIGNAL_ACTION_MODEL;
+  process.env.MARKET_SIGNAL_ACTION_MODEL = "configured-action-model";
   const port = mockPort({
     async match() { return { ok: true, comparison: comparison({ withPair: true }) }; },
     async enrich({ targets }) { return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: 64, gaps: [] } }; },
     async actions() { throw new Error("action provider timeout"); },
   });
-  const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
-  assert.equal(result.reportStatus, "complete");
-  assert.equal(result.limitedPhases.includes("actions"), false);
-  const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
-  assert.equal(block.rows[0].matches[0].decision.actionPlan.source, "deterministic");
-  assert.match(block.actionPlanning.gaps.join(" "), /provider timeout/i);
+  try {
+    const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
+    assert.equal(result.reportStatus, "complete");
+    assert.equal(result.limitedPhases.includes("actions"), false);
+    const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
+    assert.equal(block.rows[0].matches[0].decision.actionPlan.source, "deterministic");
+    assert.equal(block.actionPlanning.model, "configured-action-model");
+    assert.match(block.actionPlanning.gaps.join(" "), /provider timeout/i);
+  } finally {
+    if (previousActionModel === undefined) delete process.env.MARKET_SIGNAL_ACTION_MODEL;
+    else process.env.MARKET_SIGNAL_ACTION_MODEL = previousActionModel;
+  }
 });
 
 test("a final non-crawl failure records one terminal orchestration event", async () => {

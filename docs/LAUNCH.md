@@ -221,6 +221,10 @@ Recommended explicit model/runtime values:
 - `MARKET_SIGNAL_MATCH_MODEL=gpt-5.4-mini`
 - `MARKET_SIGNAL_MATCH_EMBEDDING_MODEL=text-embedding-3-small`
 - `MARKET_SIGNAL_AD_MODEL=gpt-5.4-mini`
+- `MARKET_SIGNAL_ACTION_MODEL=gpt-5.6-luna` for the evidence-grounded product
+  action planner. Set this explicitly because the planner otherwise inherits an
+  explicitly configured `MARKET_SIGNAL_MATCH_MODEL` before using its Luna
+  default.
 - `OPENAI_RESPONSES_BASE_URL=https://api.openai.com/v1`
 
 Optional adapters:

@@ -18,7 +18,10 @@ CSV exports remain stable and auditable.
 ## Accepted design
 
 - Run one bounded batched action-drafting pass after final product enrichment.
-- Use `gpt-5.4-mini` by default through strict JSON-schema output.
+- Use `gpt-5.6-luna` by default through strict JSON-schema output. Task 071
+  migrated only this advisory action layer; matching, discovery, ads, domain
+  recovery, and the legacy market brief retain their separately validated
+  defaults.
 - Send only bounded product, match, price-verdict, and source facts. Treat all
   crawled text as untrusted data, never instructions.
 - Require every AI action to cite at least two enumerated fact keys, including

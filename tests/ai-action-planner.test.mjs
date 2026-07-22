@@ -7,6 +7,7 @@ import {
   buildAIProductActions,
   collectProductActionInputs,
   deterministicProductActionResult,
+  resolveAIActionModel,
 } from "../app/lib/ai-action-planner.ts";
 
 test("the default batch ceiling can cover every AI-eligible pair", () => {
@@ -93,6 +94,28 @@ test("missing AI configuration preserves deterministic English and Arabic action
   assert.equal(result.metadata.fallbackActions, 1);
 });
 
+test("the action model keeps explicit and environment overrides ahead of the Luna default", async () => {
+  const previousAction = process.env.MARKET_SIGNAL_ACTION_MODEL;
+  const previousMatch = process.env.MARKET_SIGNAL_MATCH_MODEL;
+  try {
+    delete process.env.MARKET_SIGNAL_ACTION_MODEL;
+    delete process.env.MARKET_SIGNAL_MATCH_MODEL;
+    assert.equal(resolveAIActionModel(), "gpt-5.6-luna");
+
+    process.env.MARKET_SIGNAL_MATCH_MODEL = "match-model";
+    assert.equal(resolveAIActionModel(), "match-model");
+
+    process.env.MARKET_SIGNAL_ACTION_MODEL = "action-model";
+    assert.equal(resolveAIActionModel(), "action-model");
+    assert.equal(resolveAIActionModel("explicit-model"), "explicit-model");
+  } finally {
+    if (previousAction === undefined) delete process.env.MARKET_SIGNAL_ACTION_MODEL;
+    else process.env.MARKET_SIGNAL_ACTION_MODEL = previousAction;
+    if (previousMatch === undefined) delete process.env.MARKET_SIGNAL_MATCH_MODEL;
+    else process.env.MARKET_SIGNAL_MATCH_MODEL = previousMatch;
+  }
+});
+
 test("a grounded structured action is accepted and attached by pair key without changing price truth", async () => {
   const original = comparison();
   const inputs = collectProductActionInputs(original);
@@ -174,16 +197,23 @@ test("production batching keeps 31 accepted pairs in bounded four-pair calls", a
   const batchSizes = [];
   const schemaLimits = [];
   const outputLimits = [];
+  const models = [];
+  const reasoningEfforts = [];
+  const responseFormats = [];
   const systemMessages = [];
   const promptVersions = [];
   const result = await buildAIProductActions(inputs, {
     apiKey: "test",
+    model: "gpt-5.6-luna",
     fetch: async (_url, init) => {
       const request = JSON.parse(init.body);
       const batch = JSON.parse(request.input[1].content).pairs;
       batchSizes.push(batch.length);
       schemaLimits.push(request.text.format.schema.properties.actions.maxItems);
       outputLimits.push(request.max_output_tokens);
+      models.push(request.model);
+      reasoningEfforts.push(request.reasoning.effort);
+      responseFormats.push({ type: request.text.format.type, strict: request.text.format.strict });
       systemMessages.push(request.input[0].content);
       promptVersions.push(JSON.parse(request.input[1].content).promptVersion);
       return Response.json({ output_text: JSON.stringify({ actions: batch.map((input) => validAction(input.pairKey)) }) });
@@ -193,6 +223,9 @@ test("production batching keeps 31 accepted pairs in bounded four-pair calls", a
   assert.deepEqual(batchSizes.sort((a, b) => b - a), [4, 4, 4, 4, 4, 4, 4, 3]);
   assert.equal(schemaLimits.every((value) => value === AI_ACTION_PLANNER_LIMITS.pairsPerCall), true);
   assert.equal(outputLimits.every((value) => value === AI_ACTION_PLANNER_LIMITS.maxOutputTokens), true);
+  assert.equal(models.every((value) => value === "gpt-5.6-luna"), true);
+  assert.equal(reasoningEfforts.every((value) => value === "low"), true);
+  assert.deepEqual([...new Set(responseFormats.map((value) => JSON.stringify(value)))], ['{"type":"json_schema","strict":true}']);
   assert.equal(systemMessages.every((value) => value.includes("character-for-character")), true);
   assert.equal(promptVersions.every((value) => value === "ai-product-action-v2-exact-tokens"), true);
   assert.equal(result.metadata.promptVersion, "ai-product-action-v2-exact-tokens");

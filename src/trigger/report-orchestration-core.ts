@@ -14,6 +14,7 @@ import {
   applyProductActionPlans,
   collectProductActionInputs,
   deterministicProductActionResult,
+  resolveAIActionModel,
   type ProductActionInput,
   type ProductActionPlanningResult,
 } from "../../app/lib/ai-action-planner.ts";
@@ -266,7 +267,7 @@ export async function orchestrateReport(
             deterministicFallbacks: planned.result.metadata.fallbackActions,
           }));
         } catch (error) {
-          const fallback = deterministicProductActionResult(actionInputs, undefined, [message(error, "AI action planning was unavailable; deterministic recommendations were retained.")]);
+          const fallback = deterministicProductActionResult(actionInputs, resolveAIActionModel(), [message(error, "AI action planning was unavailable; deterministic recommendations were retained.")]);
           comparison = applyProductActionPlans(comparison, fallback);
           completedPhases.push("actions");
           await port.appendEvent(payload.publicId, event("actions-complete", "actions", "AI action drafting was unavailable, so the report retained its deterministic next moves.", {
