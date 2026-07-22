@@ -29,12 +29,14 @@ function isCloudflareOriginDnsFailure(response: Response, text: string) {
 }
 
 export async function fetchPublicText(url: string, accept: string, options: PublicFetchOptions) {
+  const startedAt = Date.now();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
   const fetchImpl = options.fetchImpl || fetch;
   try {
     let currentUrl = url;
     let response: Response | null = null;
+    let redirectCount = 0;
     for (let redirect = 0; redirect <= 3; redirect += 1) {
       const checked = normalizeDomain(currentUrl);
       if (options.expectedDomain && canonicalDomain(checked.hostname) !== canonicalDomain(options.expectedDomain)) throw new Error("redirected off the submitted domain");
@@ -44,11 +46,12 @@ export async function fetchPublicText(url: string, accept: string, options: Publ
         throw new PublicFetchTransportError(error instanceof Error && error.name === "AbortError" ? "timeout" : "network");
       }
       if (![301, 302, 303, 307, 308].includes(response.status)) break;
+      redirectCount += 1;
       const location = response.headers.get("location");
       if (!location || redirect === 3) throw new Error("redirect limit reached");
       const nextUrl = new URL(location, currentUrl);
       if (options.expectedDomain && canonicalDomain(nextUrl.hostname) !== canonicalDomain(options.expectedDomain)) {
-        return { ok: false, status: response.status, contentType: response.headers.get("content-type") ?? "", url: currentUrl, text: "", truncated: false, error: `redirected off the submitted domain to ${canonicalDomain(nextUrl.hostname)}.`, redirectDomain: canonicalDomain(nextUrl.hostname), failureKind: "" as const };
+        return { ok: false, status: response.status, contentType: response.headers.get("content-type") ?? "", url: currentUrl, text: "", truncated: false, responseTimeMs: Date.now() - startedAt, responseBytes: 0, redirectCount, error: `redirected off the submitted domain to ${canonicalDomain(nextUrl.hostname)}.`, redirectDomain: canonicalDomain(nextUrl.hostname), failureKind: "" as const };
       }
       currentUrl = nextUrl.toString();
     }
@@ -64,11 +67,14 @@ export async function fetchPublicText(url: string, accept: string, options: Publ
       url: response.url || url,
       text,
       truncated,
+      responseTimeMs: Date.now() - startedAt,
+      responseBytes: buffer.byteLength,
+      redirectCount,
       ...(cloudflareOriginDnsFailure ? { error: "Cloudflare could not resolve the submitted origin hostname.", failureKind: "network" as const } : { failureKind: "" as const }),
     };
   } catch (error) {
     const failureKind = error instanceof PublicFetchTransportError ? error.failureKind : error instanceof Error && error.name === "AbortError" ? "timeout" as const : "" as const;
-    return { ok: false, status: 0, contentType: "", url, text: "", truncated: false, error: failureKind === "timeout" ? "timeout" : "request failed", failureKind };
+    return { ok: false, status: 0, contentType: "", url, text: "", truncated: false, responseTimeMs: Date.now() - startedAt, responseBytes: 0, redirectCount: 0, error: failureKind === "timeout" ? "timeout" : "request failed", failureKind };
   } finally {
     clearTimeout(timeout);
   }
