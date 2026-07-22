@@ -150,7 +150,8 @@ test("real-data route and product metadata are present", async () => {
   assert.doesNotMatch(styles, /\.product-compact-table \{[^}]*min-width: 900px/);
   assert.match(styles, /@media \(max-width: 900px\)[\s\S]*\.product-table-row \{ display: grid/);
   assert.match(styles, /@media \(min-width: 901px\) and \(max-width: 1023px\)[\s\S]*\.product-table-row \{ scroll-margin-top: 200px/);
-  assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.product-table-row \{ scroll-margin-top: 210px/);
+  assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.product-table-row \{ scroll-margin-top: 238px/);
+  assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.product-layout-toolbar \{ top: 120px/);
   assert.match(styles, /@media \(max-width: 520px\)[\s\S]*grid-template-areas: "your-product" "your-price" "rival-product" "rival-price" "difference" "action"/);
   assert.match(styles, /@media print \{[\s\S]*\.product-row-details > summary \{ display: none; \}[\s\S]*\.product-row-details > div \{ display: grid !important; \}/);
   assert.match(styles, /\.matchup-products \{[^}]*grid-template-columns: minmax\(0,1fr\) 34px minmax\(0,1fr\)/);

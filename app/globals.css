@@ -304,7 +304,7 @@ body { background: #07110f; color: #eaf4ef; }
 }
 
 @media (max-width: 700px) {
-  .product-table-row { scroll-margin-top: 210px; }
+  .product-table-row { scroll-margin-top: 238px; }
   .product-table-row { grid-template-areas: "your-product your-price" "rival-product rival-price" "difference action"; grid-template-columns: minmax(0,1fr) minmax(105px,.42fr); }
   .product-table-rival-product,.product-table-rival-price { border-top: 1px solid #e1e8e4 !important; }
 }
@@ -356,7 +356,7 @@ body { background: #07110f; color: #eaf4ef; }
   .product-layout-toolbar { top: 108px; }
 }
 @media (max-width: 700px) {
-  .product-layout-toolbar { top: 106px; align-items: stretch; flex-direction: column; }
+  .product-layout-toolbar { top: 120px; align-items: stretch; flex-direction: column; }
   .product-layout-tabs { overflow-x: auto; }
   .product-layout-tabs button { flex: 1 0 auto; justify-content: center; }
   .product-lab-actions button { flex: 1; }

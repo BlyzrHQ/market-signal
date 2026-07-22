@@ -61,3 +61,9 @@ The verified Fable 5 CLI session reviewed the implementation strictly and return
 Fable also recommended tabular end-aligned prices, one price-gap computation per row, and bidirectional isolation for mixed Arabic/currency output; those low-cost improvements are included.
 
 The strict re-review returned **PASS** after Fable inspected the updated diff and independently reran the two focused suites: 12/12 tests passed. The repository-wide validation passed 317/317 tests. Deployment and real-report visual validation remain merge prerequisites rather than code-review blockers.
+
+The first real-data phone preview then exposed a 14px overlap between the persistent report tabs and the product-layout toolbar while scrolling. The phone toolbar now begins below the measured 120px header-and-tab stack, and row anchors use a 238px offset to clear both sticky layers. Fable inspected the follow-up diff, independently reran the focused suites (12/12), and returned a second strict **PASS**.
+
+Local browser QA used the saved production MyJam document rather than fixtures. It rendered 29 single-row product comparisons in one `thead` and one `tbody`, six cells per row, 57/57 loaded product images, 58 source links, and no document overflow at desktop or 390px. The corrected phone stack measured report navigation at 62–120px and the product toolbar at 120–226px with zero overlap. Arabic rendered with `dir="rtl"`, the six Arabic mobile labels, and no horizontal overflow.
+
+The exact-commit Sites deployment and post-deploy confirmation remain pending because the Sites publishing connector is unavailable in this session. PR #68 must remain draft and unmerged until that gate is completed.
