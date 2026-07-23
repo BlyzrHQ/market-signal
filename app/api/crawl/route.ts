@@ -568,7 +568,7 @@ export async function POST(request: Request) {
         evidenceUrl: primary.siteState.evidenceUrl,
         redirectDomain: primary.siteState.redirectDomain,
         observedAt,
-        explanation: `${primaryDomain} redirects to a public domain-for-sale service, so competitor, product, and advertising analysis did not run.`,
+        explanation: `${primaryDomain} redirects to a public domain-for-sale service, so competitor and product analysis did not run.`,
         alternatives: alternatives.map((item) => ({ ...item, verifiedIdentity: false })),
       });
       return Response.json({ ok: false, live: false, code: "parked-domain", primaryDomain, error: `${primaryDomain} appears to be parked or offered for sale through ${primary.siteState.provider}. Select another domain only if it belongs to your company.`, alternatives, results: submittedResults, document }, { status: 409 });

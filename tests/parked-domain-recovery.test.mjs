@@ -78,6 +78,6 @@ test("the saved report derives parked tabs and presents the limitation instead o
   assert.match(report, /\["overview".*"evidence"/s);
   assert.doesNotMatch(report, /\["overview".*"methodology"\]/s);
   assert.match(report, /This is not a zero-result report/);
-  assert.match(report, /Competitors, products, and ads were not checked/);
+  assert.match(report, /Competitors and products were not checked/);
   assert.match(report, /IDENTITY NOT VERIFIED/);
 });

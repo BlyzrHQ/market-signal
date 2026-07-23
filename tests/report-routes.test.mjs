@@ -36,11 +36,15 @@ test("completed report route reconstructs the evidence renderer from D1", () => 
 });
 
 test("saved reports expose deep-linkable accessible intelligence tabs", () => {
-  assert.match(report, /type View = "overview" \| "competitors" \| "products" \| "ads" \| "evidence"/);
-  assert.match(report, /const VIEWS: View\[\] = \["overview", "competitors", "products", "ads", "evidence"\]/);
+  assert.match(report, /type View = "overview" \| "competitors" \| "products" \| "evidence"/);
+  assert.match(report, /const VIEWS: View\[\] = \["overview", "competitors", "products", "evidence"\]/);
+  assert.doesNotMatch(report, /type View = [^\n]*"ads"/);
+  assert.doesNotMatch(report, /const VIEWS: View\[\] = [^\n]*"ads"/);
   assert.match(report, /value === "methodology" && views\.includes\("evidence"\)/);
-  assert.match(report, /if \(legacyMethod\) url\.hash = "method"/);
-  assert.match(report, /evidence: \{ en: "Evidence & Method", ar: "الأدلة والمنهجية" \}/);
+  assert.match(report, /const legacyAds = requested === "ads"/);
+  assert.match(report, /if \(legacyMethod \|\| legacyAds\) url\.hash = ""/);
+  assert.doesNotMatch(report, /url\.hash = "method"/);
+  assert.match(report, /evidence: \{ en: "Evidence", ar: "الأدلة" \}/);
   assert.match(report, /new URLSearchParams\(window\.location\.search\)\.get\("view"\)/);
   assert.match(report, /window\.addEventListener\("popstate", sync\)/);
   assert.match(report, /role="tablist"/);
@@ -55,8 +59,22 @@ test("saved reports expose deep-linkable accessible intelligence tabs", () => {
   assert.match(report, /if \(!hash\) window\.requestAnimationFrame\(\(\) => window\.scrollTo\(\{ top: 0, behavior: "auto" \}\)\)/);
   assert.match(report, /onClick=\{onWorkspaceClick\}/);
   assert.match(report, /viewHref\("products", productAnchor\(domain\)\)/);
-  assert.match(report, /viewHref\("ads", adAnchor\(domain\)\)/);
+  assert.doesNotMatch(report, /viewHref\("ads"/);
   assert.match(report, /viewHref\("evidence", evidenceAnchor\(domain\)\)/);
+});
+
+test("ads is a disabled coming-soon roadmap item outside active tab navigation", () => {
+  assert.match(report, /className="coming-soon-tab"/);
+  assert.match(report, /role="tab" aria-selected="false" aria-disabled="true" tabIndex=\{-1\} disabled/);
+  assert.match(report, /\{ar \? "الإعلانات" : "Ads"\}/);
+  assert.match(report, /\{ar \? "قريباً" : "Coming soon"\}/);
+  assert.doesNotMatch(report, /view === "ads"/);
+  assert.doesNotMatch(report, /AdCreativeCard|safeAdDestination|safeMetaMedia|safeMetaRecord|adCompanies|activeAds/);
+  assert.match(css, /\.workspace-tabs \.coming-soon-tab \{/);
+  assert.match(css, /\.workspace-tabs \.coming-soon-tab small \{/);
+  assert.match(home, /Ads — Coming soon/);
+  assert.match(home, /الإعلانات — قريباً/);
+  assert.doesNotMatch(home, /inspect advertising signals|ونفحص إشارات الإعلانات/);
 });
 
 test("saved reports use a persistent dashboard shell without the old report hero", () => {
@@ -70,7 +88,7 @@ test("saved reports use a persistent dashboard shell without the old report hero
   assert.match(css, /\.dashboard-view-title span,\.report-route-meta span \{ display: none; \}[\s\S]*\.report-route-meta time \{ font-size: 7px; \}/);
 });
 
-test("saved product and ad views preserve truth boundaries and source links", () => {
+test("saved product views preserve truth boundaries and source links", () => {
   assert.match(report, /<ProductDesignLab comparison=\{comparison\} battles=\{battles\}/);
   assert.match(productLab, /className="product-compact-table"/);
   assert.match(productLab, /<table className="product-compact-table" role="table">/);
@@ -106,39 +124,23 @@ test("saved product and ad views preserve truth boundaries and source links", ()
   assert.match(productLab, /enrichmentGaps/);
   assert.match(productLab, /PRODUCT DATA GAP/);
   assert.match(productLab, /Open source ↗/);
-  assert.match(report, /not proof of zero ads/);
-  assert.match(report, /This does not mean the companies do not advertise/);
-  assert.match(report, /Who is verifiably advertising, and what are their ads saying\?/);
-  assert.match(report, /className="verified-creative-section"/);
-  assert.match(report, /<AdCreativeCard concept=\{concept\} ar=\{ar\}/);
-  assert.match(report, /Media unavailable — verified ad copy is shown below/);
-  assert.match(report, /active records grouped into/);
-  assert.match(report, /cross-Page records discarded/);
-  assert.match(report, /className="ad-verification-queue"/);
-  assert.match(report, /This is a coverage result, not proof that these companies are not advertising/);
-  assert.match(report, /Open \$\{display\(platform\.platform\)\} search ↗/);
-  assert.match(report, /list\(platform\.evidenceUrls\).*Ad record \$\{index \+ 1\} ↗/);
-  assert.match(report, /url\.protocol === "https:" && \["fbcdn\.net", "fbsbx\.com", "facebook\.com"\]/);
-  assert.match(report, /alt=\{headline\}/);
-  assert.match(report, /item === "ads" && activeAds > 0/);
   assert.match(report, /truth-pill/);
   assert.match(report, /repairEncoding/);
 });
 
-test("evidence and methodology become one customer-readable verification view", () => {
+test("evidence remains a customer-readable verification view without methodology", () => {
   assert.match(report, /What supports this report's decisions—and what does it not prove\?/);
   assert.match(report, /className="evidence-source-group"/);
   assert.match(report, /target\?\.closest\("details"\)/);
   assert.match(report, /\.evidence-source-group:not\(\[open\]\)/);
-  assert.match(report, /className="plain-method" id="method"/);
   assert.match(report, /Anything not observed here is a coverage limit, never evidence of absence/);
-  assert.match(report, /Technical record/);
+  assert.match(report, /أي شيء لم يُرصد هنا هو حد للتغطية، وليس دليلاً على الغياب/);
   assert.doesNotMatch(report, /view === "methodology"/);
-  assert.doesNotMatch(report, /<h3>\{display\(adBlock\?\.provider/);
-  assert.match(css, /\.ad-verification-queue/);
-  assert.match(css, /\.verified-creative-section/);
+  assert.doesNotMatch(report, /className="plain-method"|Technical record|HOW THIS REPORT WAS ASSEMBLED/);
   assert.match(css, /\.evidence-source-group/);
-  assert.match(css, /\.plain-method/);
+  assert.doesNotMatch(css, /\.plain-method/);
+  assert.match(report, /Competitor and product analysis did not run/);
+  assert.match(report, /Competitors and products were not checked/);
 });
 
 test("dark routes fill the viewport and keep responsive width bounded", () => {
