@@ -65,7 +65,7 @@ export default function Home() {
         <div className="hero-copy">
           <div className="eyebrow"><span className="pulse-dot" /> {ar ? "معلومات تنافسية مبنية على أدلة عامة" : "Competitive intelligence built from public evidence"}</div>
           <h1>{ar ? <>اعرف إلى أين يتحرك سوقك <em>قبل أن يسبقك.</em></> : <>Know where your market is moving <em>before it moves you.</em></>}</h1>
-          <p className="hero-lede">{ar ? "أدخل نطاقاً واحداً. سنجد المنافسين، ونزامن المنتجات والأسعار والصور العامة، ونفحص إشارات الإعلانات، ثم نحفظ كل نتيجة في تقرير يمكنك الرجوع إليه." : "Enter one domain. We find the rivals, synchronize public products, prices, and images, inspect advertising signals, and save every result in a report you can revisit."}</p>
+          <p className="hero-lede">{ar ? "أدخل نطاقاً واحداً. سنجد المنافسين، ونزامن المنتجات والأسعار والصور العامة، ثم نحفظ كل نتيجة في تقرير يمكنك الرجوع إليه." : "Enter one domain. We find the rivals, synchronize public products, prices, and images, and save every result in a report you can revisit."}</p>
           <form className="domain-form" onSubmit={analyze}>
             <label htmlFor="domain">{ar ? "نطاق شركتك أو رابط الموقع" : "Your company domain or URL"}</label>
             <div className="input-row">
@@ -102,13 +102,13 @@ export default function Home() {
         <div className="method-steps">
           <div><span>01</span><strong>{ar ? "المنافسون" : "Competitors"}</strong><p>{ar ? "اكتشاف السوق والتحقق من المنافسين مع روابط الأدلة." : "Market discovery and verified rivals with evidence links."}</p></div>
           <div><span>02</span><strong>{ar ? "المنتجات" : "Products"}</strong><p>{ar ? "مطابقة دلالية للمنتجات مع السعر والصورة والمقارنة." : "Semantic product matching with price, image, and comparison context."}</p></div>
-          <div><span>03</span><strong>{ar ? "الإعلانات" : "Ads"}</strong><p>{ar ? "تغطية صريحة لما يمكن إثباته وما بقي محدوداً." : "Explicit coverage of what is verified and what remains limited."}</p></div>
+          <div><span>03</span><strong>{ar ? "الإعلانات — قريباً" : "Ads — Coming soon"}</strong><p>{ar ? "مراقبة ظهور المنافسين الإعلاني قيد الإعداد." : "Competitor advertising monitoring is in development."}</p></div>
         </div>
       </section>
 
       <section className="method-section shell" id="method">
         <div className="method-copy"><div className="eyebrow">{ar ? "الإشارة، لا الضوضاء" : "The signal, not the spectacle"}</div><h2>{ar ? <>شاهد ما نعرفه. <em>وشاهد كيف عرفناه.</em></> : <>See what we know. <em>See how we know it.</em></>}</h2><p>{ar ? "يفصل Market Signal بين الرصد العام واستنتاجات الذكاء الاصطناعي والتقديرات والتوصيات." : "Market Signal separates public observations from AI inferences, estimates, and recommendations."}</p></div>
-        <div className="method-steps"><div><span>01</span><strong>{ar ? "نجمع" : "Collect"}</strong><p>{ar ? "صفحات وكتالوجات وأسعار وصور وإشارات إعلانية عامة." : "Public pages, catalogs, prices, images, and advertising signals."}</p></div><div><span>02</span><strong>{ar ? "نربط" : "Connect"}</strong><p>{ar ? "نوحد المنتجات والشركات والمصادر عبر السوق." : "Normalize products, companies, and sources across the market."}</p></div><div><span>03</span><strong>{ar ? "نشرح" : "Explain"}</strong><p>{ar ? "نحوّل الأدلة إلى مقارنة وقرار قابل للتنفيذ." : "Turn evidence into a comparison and an actionable decision."}</p></div></div>
+        <div className="method-steps"><div><span>01</span><strong>{ar ? "نجمع" : "Collect"}</strong><p>{ar ? "صفحات وكتالوجات وأسعار وصور عامة مرتبطة بمصادرها." : "Public pages, catalogs, prices, and images linked to their sources."}</p></div><div><span>02</span><strong>{ar ? "نربط" : "Connect"}</strong><p>{ar ? "نوحد المنتجات والشركات والمصادر عبر السوق." : "Normalize products, companies, and sources across the market."}</p></div><div><span>03</span><strong>{ar ? "نشرح" : "Explain"}</strong><p>{ar ? "نحوّل الأدلة إلى مقارنة وقرار قابل للتنفيذ." : "Turn evidence into a comparison and an actionable decision."}</p></div></div>
       </section>
 
       <footer className="site-footer shell"><a className="brand" href="#top"><span className="brand-mark"><i /><i /><i /></span><span>Market Signal</span></a><span>{ar ? "معلومات عامة تتحول إلى قرار مفيد." : "Public intelligence, made useful."}</span><span>© 2026 Market Signal</span></footer>
