@@ -141,6 +141,9 @@ test("real-data route and product metadata are present", async () => {
   assert.match(productLab, /new Blob\(\[csv\], \{ type: "text\/csv;charset=utf-8" \}\)/);
   assert.match(productLab, /your_price_amount/);
   assert.match(productLab, /rival_currency/);
+  assert.match(productLab, /suggested_action_source/);
+  assert.match(productLab, /Evidence-grounded AI/);
+  assert.match(productLab, /Action rationale/);
   assert.match(productLab, /showDetail=\{false\}/);
   assert.match(productLab, /showValues=\{false\}/);
   assert.match(pricePosition, /showValues = true/);

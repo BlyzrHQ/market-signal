@@ -69,6 +69,7 @@ function prepareRow(battle: ProductBattle, ar: boolean) {
   const domain = display(battle.match.domain || battle.rival.domain);
   const assessment = object(battle.match.assessment);
   const decision = object(battle.match.decision);
+  const actionPlan = object(decision.actionPlan);
   const primaryPrice = productPrice(battle.primary);
   const rivalPrice = productPrice(battle.rival);
   const comparablePrice = resolvedPriceDelta(decision.priceComparison);
@@ -78,8 +79,15 @@ function prepareRow(battle: ProductBattle, ar: boolean) {
   const rivalSource = safeUrl(battle.rival.sourceUrl);
   const reasons = list(assessment.reasons).map((value) => display(value)).filter(Boolean).join(" · ") || list(battle.match.sharedTerms).map((value) => display(value)).filter(Boolean).join(" · ");
   const verdict = display(assessment.verdict, ar ? "بديل قريب" : "Close substitute");
-  const fullAction = display(decision.recommendedMove, ar ? "راجع المنتجين قبل اتخاذ قرار." : "Review both products before acting.");
+  const actionEn = display(actionPlan.actionEn, display(decision.recommendedMove));
+  const actionAr = display(actionPlan.actionAr, actionEn);
+  const fullAction = display(ar ? actionAr : actionEn, ar ? "راجع المنتجين قبل اتخاذ قرار." : "Review both products before acting.");
   const shortAction = conciseAction(fullAction, ar ? "راجع المنتجين قبل اتخاذ قرار." : "Review both products before acting.");
+  const actionRationale = display(ar ? actionPlan.rationaleAr : actionPlan.rationaleEn, display(decision.whyTheyMayWin));
+  const actionSource = actionPlan.source === "ai" ? "ai" : "deterministic";
+  const actionModel = display(actionPlan.model);
+  const actionPromptVersion = display(actionPlan.promptVersion);
+  const actionEvidenceKeys = list(actionPlan.evidenceKeys).map((value) => display(value)).filter(Boolean);
   const priceStatus = comparablePrice ? "comparable" : primaryDisplay && rivalDisplay ? "basis-unverified" : primaryDisplay || rivalDisplay ? "one-price" : "no-prices";
   const priceSignal = comparablePrice
     ? comparablePrice.equal
@@ -95,7 +103,7 @@ function prepareRow(battle: ProductBattle, ar: boolean) {
   const lane = comparablePrice ? comparablePrice.percent < 0 ? "pressure" : "advantage" : "evidence";
   const claimType = display(assessment.claimType, "inferred").toLowerCase();
   const confidence = display(battle.match.confidence, ar ? "ثقة محدودة" : "Limited confidence");
-  return { battle, domain, assessment, decision, primaryDisplay, rivalDisplay, primarySource, rivalSource, reasons, verdict, fullAction, shortAction, comparablePrice, priceStatus, priceSignal, lane, claimType, confidence };
+  return { battle, domain, assessment, decision, primaryDisplay, rivalDisplay, primarySource, rivalSource, reasons, verdict, fullAction, shortAction, actionRationale, actionSource, actionModel, actionPromptVersion, actionEvidenceKeys, comparablePrice, priceStatus, priceSignal, lane, claimType, confidence };
 }
 
 function ProductIdentity({ role, product, price, source, domain, ar, compact = false, showPrice = true }: { role: "you" | "rival"; product: Record<string, unknown>; price: string; source: string; domain?: string; ar: boolean; compact?: boolean; showPrice?: boolean }) {
@@ -110,6 +118,7 @@ function ProductIdentity({ role, product, price, source, domain, ar, compact = f
 function MatchDetails({ row, observedAt, ar }: { row: ProductRow; observedAt: string; ar: boolean }) {
   return <details className="product-match-details"><summary>{ar ? "لماذا هذه المطابقة؟" : "Why this match?"}</summary><div>
     <section><span>{ar ? "أساس المطابقة" : "MATCH BASIS"}</span><strong>{row.verdict.replace(/_/g, " ")}</strong><p>{row.reasons || (ar ? "لم تُحفظ أسباب إضافية." : "No additional match reasons were saved.")}</p></section>
+    <section><span>{ar ? "سبب الخطوة" : "ACTION RATIONALE"}</span><strong>{row.actionSource === "ai" ? (ar ? "توصية صاغها الذكاء الاصطناعي" : "AI-drafted recommendation") : (ar ? "توصية قائمة على القواعد" : "Rule-based recommendation")}</strong><p>{row.actionRationale || row.fullAction}</p>{row.actionSource === "ai" && <small>{[row.actionModel, row.actionPromptVersion].filter(Boolean).join(" · ")}</small>}</section>
     <section><span>{ar ? "حالة الدليل" : "EVIDENCE STATE"}</span><strong>{row.claimType} · {row.confidence}</strong><p>{ar ? "لوحظ" : "Observed"} {new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</p></section>
     <section><span>{ar ? "المصادر" : "SOURCES"}</span><div className="product-detail-links">{row.primarySource && <a href={row.primarySource} target="_blank" rel="noreferrer">{ar ? "مصدر منتجك ↗" : "Your source ↗"}</a>}{row.rivalSource && <a href={row.rivalSource} target="_blank" rel="noreferrer">{ar ? "مصدر المنافس ↗" : "Rival source ↗"}</a>}<a href={viewHref("evidence", `evidence-${slug(row.domain)}`)}>{ar ? "دفتر الأدلة" : "Evidence ledger"}</a></div></section>
   </div></details>;
@@ -131,6 +140,9 @@ function ProductTableDetails({ row, observedAt, ar }: { row: ProductRow; observe
     <summary>{ar ? "لماذا هذه المطابقة؟" : "Why this match?"}</summary>
     <div>
       <p><b>{ar ? "السبب" : "Match reason"}</b><span>{row.reasons || (ar ? "لم تُحفظ أسباب إضافية." : "No additional match reasons were saved.")}</span></p>
+      <p><b>{ar ? "سبب الخطوة" : "Action rationale"}</b><span>{row.actionRationale || row.fullAction}</span></p>
+      <p><b>{ar ? "مصدر التوصية" : "Recommendation source"}</b><span>{row.actionSource === "ai" ? `${ar ? "ذكاء اصطناعي مقيّد بالأدلة" : "Evidence-grounded AI"}${row.actionModel ? ` · ${row.actionModel}` : ""}${row.actionPromptVersion ? ` · ${row.actionPromptVersion}` : ""}` : (ar ? "قواعد حتمية" : "Deterministic rules")}</span></p>
+      {row.actionEvidenceKeys.length > 0 && <p><b>{ar ? "الأدلة المستخدمة" : "Evidence used"}</b><span>{row.actionEvidenceKeys.join(" · ")}</span></p>}
       <p><b>{ar ? "حالة الدليل" : "Evidence state"}</b><span>{row.verdict.replace(/_/g, " ")} · {row.claimType} · {row.confidence}</span></p>
       <p><b>{ar ? "لوحظ" : "Observed"}</b><time dateTime={observedAt}>{new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</time></p>
       <a href={viewHref("evidence", `evidence-${slug(row.domain)}`)}>{ar ? "افتح دفتر الأدلة" : "Open evidence ledger"}</a>
@@ -178,8 +190,8 @@ export function ProductDesignLab({ comparison, battles, primaryDomain, observedA
     if (await copyText(url)) setShareStatus(ar ? "تم نسخ الرابط" : "Link copied"); else { setShareStatus(ar ? "انسخ الرابط أدناه" : "Copy the link below"); setShareFallback(url); }
   };
   const exportCsv = () => {
-    const headers = ["your_product", "your_price_raw", "your_price_amount", "your_currency", "rival_domain", "rival_product", "rival_price_raw", "rival_price_amount", "rival_currency", "price_status", "price_signal", "suggested_action", "match_status", "confidence", "observed_at", "your_source", "rival_source"];
-    const data = rows.map((row) => [display(row.battle.primary.name), row.primaryDisplay, row.comparablePrice?.primary.amount ?? "", row.comparablePrice?.primary.currency ?? "", row.domain, display(row.battle.rival.name), row.rivalDisplay, row.comparablePrice?.rival.amount ?? "", row.comparablePrice?.rival.currency ?? "", row.priceStatus, row.comparablePrice ? row.priceSignal : "", row.fullAction, `${row.verdict ? "accepted" : "unverified"}-${row.claimType}`, row.confidence, observedAt, row.primarySource, row.rivalSource]);
+    const headers = ["your_product", "your_price_raw", "your_price_amount", "your_currency", "rival_domain", "rival_product", "rival_price_raw", "rival_price_amount", "rival_currency", "price_status", "price_signal", "suggested_action", "suggested_action_source", "match_status", "confidence", "observed_at", "your_source", "rival_source"];
+    const data = rows.map((row) => [display(row.battle.primary.name), row.primaryDisplay, row.comparablePrice?.primary.amount ?? "", row.comparablePrice?.primary.currency ?? "", row.domain, display(row.battle.rival.name), row.rivalDisplay, row.comparablePrice?.rival.amount ?? "", row.comparablePrice?.rival.currency ?? "", row.priceStatus, row.comparablePrice ? row.priceSignal : "", row.fullAction, row.actionSource, `${row.verdict ? "accepted" : "unverified"}-${row.claimType}`, row.confidence, observedAt, row.primarySource, row.rivalSource]);
     const csv = `\uFEFF${[headers, ...data].map((line) => line.map(csvCell).join(",")).join("\r\n")}`;
     const href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })); const anchor = document.createElement("a"); anchor.href = href; anchor.download = `${slug(primaryDomain)}-product-comparison.csv`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(href), 0);
   };

@@ -1,7 +1,7 @@
 import { canonicalDomain } from "./domain.ts";
 
 export type ReportRunStatus = "queued" | "running" | "complete" | "limited" | "failed" | "interrupted";
-export type ReportPhase = "queued" | "crawl" | "competitors" | "brief" | "products" | "matching" | "enrichment" | "ads" | "persistence" | "complete" | "failed" | "interrupted";
+export type ReportPhase = "queued" | "crawl" | "competitors" | "brief" | "products" | "matching" | "enrichment" | "actions" | "ads" | "persistence" | "complete" | "failed" | "interrupted";
 
 export type D1PreparedStatementLike = {
   bind(...values: unknown[]): D1PreparedStatementLike;
@@ -59,7 +59,7 @@ const MAX_SNAPSHOT_UNMATCHED_PRODUCTS = 20;
 const INVALID_DOMAIN_MESSAGE = "A valid public domain is required.";
 const STORAGE_UNAVAILABLE_MESSAGE = "Persistent report storage is unavailable.";
 const PUBLIC_ID_PATTERN = /^[a-f0-9]{32}$/;
-const PHASES = new Set<ReportPhase>(["queued", "crawl", "competitors", "brief", "products", "matching", "enrichment", "ads", "persistence", "complete", "failed", "interrupted"]);
+const PHASES = new Set<ReportPhase>(["queued", "crawl", "competitors", "brief", "products", "matching", "enrichment", "actions", "ads", "persistence", "complete", "failed", "interrupted"]);
 const STATUSES = new Set<ReportRunStatus>(["queued", "running", "complete", "limited", "failed", "interrupted"]);
 const schemaInitialization = new WeakMap<object, Promise<void>>();
 const emittedStorageDiagnostics = new Set<string>();

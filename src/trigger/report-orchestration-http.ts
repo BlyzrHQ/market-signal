@@ -11,6 +11,7 @@ const PATHS = {
   ads: "/api/ads",
   match: "/api/match",
   enrich: "/api/enrich-products",
+  actions: "/api/actions",
 } as const;
 
 export const OPERATION_BUDGETS_MS = {
@@ -20,15 +21,18 @@ export const OPERATION_BUDGETS_MS = {
   ads: 90_000,
   match: 90_000,
   enrich: 120_000,
+  actions: 35_000,
 } as const;
 
 // read + crawl-start + crawl + crawl-complete + longest parallel lane
 // (matching-start + two match calls + enrichment-start + enrichment +
-// enrichment-complete + matching-complete) + final save.
-export const WORST_CASE_CRITICAL_PATH_MS = (OPERATION_BUDGETS_MS.report * 8)
+// enrichment-complete + actions-start + actions + actions-complete +
+// matching-complete) + final save.
+export const WORST_CASE_CRITICAL_PATH_MS = (OPERATION_BUDGETS_MS.report * 10)
   + OPERATION_BUDGETS_MS.crawl
   + (OPERATION_BUDGETS_MS.match * 2)
-  + OPERATION_BUDGETS_MS.enrich;
+  + OPERATION_BUDGETS_MS.enrich
+  + OPERATION_BUDGETS_MS.actions;
 
 export class OrchestrationHttpError extends Error {
   readonly status: number;
@@ -237,6 +241,11 @@ export function createReportOrchestrationHttpPort(configuration: { appOrigin: st
     async enrich(input) {
       const payload = requiredObject<Awaited<ReturnType<ReportOrchestrationPort["enrich"]>>>(await call(PATHS.enrich, "Product enrichment", OPERATION_BUDGETS_MS.enrich, input), "Product enrichment");
       if (payload.ok !== true) throw new OrchestrationHttpError("Product enrichment", 422, false);
+      return payload;
+    },
+    async actions(input) {
+      const payload = requiredObject<Awaited<ReturnType<ReportOrchestrationPort["actions"]>>>(await call(PATHS.actions, "Product action planning", OPERATION_BUDGETS_MS.actions, input), "Product action planning");
+      if (payload.ok !== true) throw new OrchestrationHttpError("Product action planning", 422, false);
       return payload;
     },
     async saveDocument(publicId, input) {

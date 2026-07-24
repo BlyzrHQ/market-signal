@@ -15,6 +15,7 @@ import {
   createReportOrchestrationHttpPort,
   isRetryableHttpStatus,
 } from "../src/trigger/report-orchestration-http.ts";
+import { AI_ACTION_PLANNER_LIMITS, deterministicProductActionResult } from "../app/lib/ai-action-planner.ts";
 
 const payload = {
   contractVersion: "1",
@@ -50,7 +51,21 @@ function comparison({ withPair = false } = {}) {
   return {
     primaryDomain: "shop.example",
     comparisonDomains: ["rival.example"],
-    rows: withPair ? [{ primary, matches: [{ domain: rival.domain, product: rival, score: 0.9, confidence: "Medium", sharedTerms: ["honey"], claimIds: rival.claimIds, decision: { verdict: "same_product", priceComparable: false, reasons: ["Observed product identity aligns."], action: "Compare the attributable offer." } }] }] : [],
+    rows: withPair ? [{ primary, matches: [{
+      domain: rival.domain,
+      product: rival,
+      score: 0.9,
+      confidence: "Medium",
+      sharedTerms: ["honey"],
+      claimIds: rival.claimIds,
+      assessment: { verdict: "same_product", priceComparable: false, reasons: ["Observed product identity aligns."], contradictions: [], claimType: "Inferred" },
+      decision: {
+        priceVerdict: "No direct price comparison is available.",
+        whyTheyMayWin: "The observed product identity aligns.",
+        recommendedMove: "Compare the attributable offer before acting.",
+        priceComparison: null,
+      },
+    }] }] : [],
     unmatched: [],
     coverage: {
       primaryProductsAvailable: 1,
@@ -110,6 +125,7 @@ function mockPort(overrides = {}) {
     async ads() { return { ok: true, block: { type: "ad-intelligence", id: "ad-intelligence" } }; },
     async match() { return { ok: true, comparison: comparison() }; },
     async enrich() { throw new Error("not expected"); },
+    async actions({ inputs }) { return { ok: true, result: deterministicProductActionResult(inputs) }; },
     async saveDocument(_publicId, value) { saves.push(value); },
     ...overrides,
   };
@@ -454,6 +470,50 @@ test("selected enrichment is applied and an enrichment failure remains visibly l
   assert.ok(failure.events.some((item) => item.idempotencyKey === "enrichment-limited"));
 });
 
+test("action planning runs after final enrichment and persists source-labelled plans", async () => {
+  let sawEnrichedPrice = false;
+  const port = mockPort({
+    async match() { return { ok: true, comparison: comparison({ withPair: true }) }; },
+    async enrich({ targets }) {
+      return {
+        ok: true,
+        products: [
+          { ...product(), priceSignals: [{ raw: "GBP 9", currency: "GBP", amount: 9 }] },
+          { ...product("rival.example", "r1"), priceSignals: [{ raw: "GBP 7", currency: "GBP", amount: 7 }] },
+        ],
+        coverage: { pagesRequested: targets.length, pagesFetched: 2, maxPages: 64, gaps: [] },
+      };
+    },
+    async actions({ inputs }) {
+      sawEnrichedPrice = inputs.some((input) => input.facts.some((fact) => fact.text === "GBP 9"));
+      return { ok: true, result: deterministicProductActionResult(inputs) };
+    },
+  });
+  const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
+  assert.equal(result.reportStatus, "complete");
+  assert.equal(sawEnrichedPrice, true);
+  const eventKeys = port.events.map((item) => item.idempotencyKey);
+  assert.ok(eventKeys.indexOf("enrichment-complete") < eventKeys.indexOf("actions-started"));
+  assert.ok(eventKeys.indexOf("actions-complete") < eventKeys.indexOf("matching-complete"));
+  const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
+  assert.equal(block.actionPlanning.fallbackActions, 1);
+  assert.equal(block.rows[0].matches[0].decision.actionPlan.source, "deterministic");
+});
+
+test("AI action transport failure retains deterministic moves without limiting the report", async () => {
+  const port = mockPort({
+    async match() { return { ok: true, comparison: comparison({ withPair: true }) }; },
+    async enrich({ targets }) { return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: 64, gaps: [] } }; },
+    async actions() { throw new Error("action provider timeout"); },
+  });
+  const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
+  assert.equal(result.reportStatus, "complete");
+  assert.equal(result.limitedPhases.includes("actions"), false);
+  const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
+  assert.equal(block.rows[0].matches[0].decision.actionPlan.source, "deterministic");
+  assert.match(block.actionPlanning.gaps.join(" "), /provider timeout/i);
+});
+
 test("a final non-crawl failure records one terminal orchestration event", async () => {
   const port = mockPort({ async saveDocument() { throw new Error("storage unavailable"); } });
   await assert.rejects(orchestrateReport(payload, { attemptNumber: 2, isFinalAttempt: true }, port), /storage unavailable/);
@@ -497,6 +557,25 @@ test("HTTP transport retries only bounded transient statuses and never leaks its
   assert.equal(isRetryableHttpStatus(429), true);
   assert.equal(isRetryableHttpStatus(500), true);
   assert.equal(isRetryableHttpStatus(400), false);
+});
+
+test("the HTTP action adapter uses the internal route, bounded budget, and bearer credential", async () => {
+  const calls = [];
+  const result = deterministicProductActionResult([]);
+  const port = createReportOrchestrationHttpPort({
+    appOrigin: "https://market.example",
+    callbackToken: "callback_secret_with_enough_entropy_123456",
+    async fetchImpl(url, init) {
+      calls.push({ url, init });
+      return Response.json({ ok: true, result });
+    },
+  });
+  const response = await port.actions({ inputs: [] });
+  assert.deepEqual(response.result, result);
+  assert.equal(calls[0].url, "https://market.example/api/actions");
+  assert.equal(calls[0].init.headers.Authorization, "Bearer callback_secret_with_enough_entropy_123456");
+  assert.equal(OPERATION_BUDGETS_MS.actions, 35_000);
+  assert.ok(OPERATION_BUDGETS_MS.actions >= AI_ACTION_PLANNER_LIMITS.totalBudgetMs + 5_000, "action transport must preserve serialization headroom above the planner budget");
 });
 
 test("the internal report port maps a missing stored report to null without retrying", async () => {

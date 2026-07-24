@@ -11,6 +11,13 @@ import {
   type ProductRecord,
 } from "../../app/lib/product-intelligence.ts";
 import {
+  applyProductActionPlans,
+  collectProductActionInputs,
+  deterministicProductActionResult,
+  type ProductActionInput,
+  type ProductActionPlanningResult,
+} from "../../app/lib/ai-action-planner.ts";
+import {
   PermanentOrchestrationError,
   REPORT_ORCHESTRATION_CONTRACT_VERSION,
   parseReportOrchestrationPayload,
@@ -44,6 +51,7 @@ export interface ReportOrchestrationPort {
   ads(input: unknown): Promise<{ ok: true; block: JsonBlock }>;
   match(input: { primaryDomain: string; catalogs: Array<{ domain: string; products: ProductRecord[] }> }): Promise<{ ok: true; comparison: ProductComparison }>;
   enrich(input: { targets: unknown[] }): Promise<{ ok: true; products: ProductRecord[]; coverage: NonNullable<ProductComparison["enrichment"]> }>;
+  actions(input: { inputs: ProductActionInput[] }): Promise<{ ok: true; result: ProductActionPlanningResult }>;
   saveDocument(publicId: string, input: { status: "complete" | "limited"; observedAt: string; document: unknown }): Promise<void>;
 }
 
@@ -243,6 +251,29 @@ export async function orchestrateReport(
           limitedPhases.push("enrichment");
           comparison = applyFinalProductEnrichment(comparison, [], { pagesRequested: targets.length, pagesFetched: 0, maxPages: 64, gaps: [{ url: "", reason: message(error, "Selected product enrichment was unavailable.") }] });
           await port.appendEvent(payload.publicId, event("enrichment-limited", "enrichment", "Selected product enrichment ended with a visible coverage gap."));
+        }
+      }
+      const actionInputs = collectProductActionInputs(comparison);
+      if (actionInputs.length) {
+        await port.appendEvent(payload.publicId, event("actions-started", "actions", "Drafting evidence-grounded next moves for the accepted product pairs.", { pairs: actionInputs.length }));
+        try {
+          const planned = await port.actions({ inputs: actionInputs });
+          comparison = applyProductActionPlans(comparison, planned.result);
+          completedPhases.push("actions");
+          await port.appendEvent(payload.publicId, event("actions-complete", "actions", "Next moves were drafted and checked against saved product evidence.", {
+            requested: planned.result.metadata.actionsRequested,
+            aiAccepted: planned.result.metadata.aiActionsAccepted,
+            deterministicFallbacks: planned.result.metadata.fallbackActions,
+          }));
+        } catch (error) {
+          const fallback = deterministicProductActionResult(actionInputs, undefined, [message(error, "AI action planning was unavailable; deterministic recommendations were retained.")]);
+          comparison = applyProductActionPlans(comparison, fallback);
+          completedPhases.push("actions");
+          await port.appendEvent(payload.publicId, event("actions-complete", "actions", "AI action drafting was unavailable, so the report retained its deterministic next moves.", {
+            requested: actionInputs.length,
+            aiAccepted: 0,
+            deterministicFallbacks: actionInputs.length,
+          }));
         }
       }
       document = upsertProductComparisonBlock(document, comparison) as JsonDocument;

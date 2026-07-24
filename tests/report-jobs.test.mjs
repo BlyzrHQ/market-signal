@@ -289,7 +289,7 @@ test("the browser only creates and observes a durable job; public report URLs ar
   ]);
   assert.match(home, /postJson<CreateReportResponse>\("\/api\/reports"/);
   assert.match(home, /window\.location\.assign\(`\/reports\/\$\{created\.report\.publicId\}\/loading`\)/);
-  for (const path of ["/api/crawl", "/api/report", "/api/ads", "/api/match", "/api/enrich-products"]) {
+  for (const path of ["/api/crawl", "/api/report", "/api/ads", "/api/match", "/api/enrich-products", "/api/actions"]) {
     assert.doesNotMatch(home, new RegExp(`[\"'\u0060]${path}[\"'\u0060]`));
   }
   assert.doesNotMatch(home, /action:\s*"(?:event|document)"/);
