@@ -142,7 +142,6 @@ export async function orchestrateReport(
     const targetUrl = typeof domainStatus?.attemptedUrl === "string" ? domainStatus.attemptedUrl : typeof domainStatus?.evidenceUrl === "string" ? domainStatus.evidenceUrl : "";
     const reason = crawl.error || (unavailable ? `${payload.primaryDomain} did not return a public network response.` : `${payload.primaryDomain} is parked, so market analysis could not run.`);
     await port.appendEvent(payload.publicId, limitedEvent("crawl-limited", "crawl", unavailable ? "The submitted domain did not return a public network response after bounded attempts, so the company crawl ended with a visible limitation." : "The submitted domain is parked, so the company crawl ended with a source-linked limitation.", unavailable ? { reason, targetUrl, attemptedUrl: targetUrl } : { reason, targetUrl, evidenceUrl: targetUrl }));
-    await port.appendEvent(payload.publicId, limitedEvent("brief-limited", "brief", "The market brief did not run because the primary crawl was terminally limited.", { upstream: "crawl", reason }));
     await port.appendEvent(payload.publicId, limitedEvent("ads-limited", "ads", "Ad-library checks did not run because the primary crawl was terminally limited.", { upstream: "crawl", reason }));
     await port.appendEvent(payload.publicId, limitedEvent("matching-limited", "matching", "Product matching did not run because the primary crawl was terminally limited.", { upstream: "crawl", reason }));
     const finishedAt = now().toISOString();
@@ -157,7 +156,7 @@ export async function orchestrateReport(
       publicId: payload.publicId,
       reportStatus: "limited",
       completedPhases: ["persistence"],
-      limitedPhases: ["crawl", "brief", "ads", "matching"],
+      limitedPhases: ["crawl", "ads", "matching"],
       startedAt,
       finishedAt,
     };
@@ -179,22 +178,7 @@ export async function orchestrateReport(
   }));
 
   let document = ensureDocument(crawl.document);
-  let marketBrief: unknown = null;
   let comparison: ProductComparison | null = null;
-
-  const briefWork = (async () => {
-    await port.appendEvent(payload.publicId, event("brief-started", "competitors", "Building the source-linked market brief."));
-    try {
-      const result = await port.brief({ primary: primary.domain, domains: crawl.results.filter((item) => item.homepage).map((item) => item.domain) });
-      if (!result || typeof result !== "object" || (result as { ok?: boolean }).ok === false) throw new Error("The market brief was unavailable.");
-      marketBrief = result;
-      completedPhases.push("brief");
-      await port.appendEvent(payload.publicId, event("brief-complete", "competitors", "The source-linked market brief is ready."));
-    } catch (error) {
-      limitedPhases.push("brief");
-      await port.appendEvent(payload.publicId, event("brief-limited", "competitors", "The crawl succeeded, but the market brief has a visible coverage gap.", { reason: message(error, "Market brief unavailable.") }));
-    }
-  })();
 
   const adsWork = (async () => {
     await port.appendEvent(payload.publicId, event("ads-started", "ads", "Checking attributable public advertiser records for the verified companies."));
@@ -283,13 +267,13 @@ export async function orchestrateReport(
     await port.appendEvent(payload.publicId, event("matching-complete", "matching", limited ? "Product matching finished with a visible coverage limitation." : "Product matching finished and accepted comparisons were source-linked.", { limited, attempts: requestCount }));
   })();
 
-  await Promise.all([briefWork, adsWork, matchWork]);
+  await Promise.all([adsWork, matchWork]);
   const reportStatus = limitedPhases.length ? "limited" : "complete";
   const finishedAt = now().toISOString();
   await port.saveDocument(payload.publicId, {
     status: reportStatus,
     observedAt: finishedAt,
-    document: { primaryDomain: crawl.primaryDomain, document, marketBrief },
+    document: { primaryDomain: crawl.primaryDomain, document, marketBrief: null },
   });
   completedPhases.push("persistence");
   return { ok: true, contractVersion: REPORT_ORCHESTRATION_CONTRACT_VERSION, publicId: payload.publicId, reportStatus, completedPhases: [...new Set(completedPhases)], limitedPhases: [...new Set(limitedPhases)], startedAt, finishedAt };
