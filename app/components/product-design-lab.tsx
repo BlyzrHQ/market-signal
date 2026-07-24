@@ -2,7 +2,7 @@
 
 import { KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { PricePosition } from "./price-position";
-import { resolvedPriceDelta } from "../lib/report-presentation";
+import { formatPriceClaim, resolvePriceClaim } from "../lib/price-claims";
 
 export type ProductBattle = {
   primary: Record<string, unknown>;
@@ -72,9 +72,16 @@ function prepareRow(battle: ProductBattle, ar: boolean) {
   const actionPlan = object(decision.actionPlan);
   const primaryPrice = productPrice(battle.primary);
   const rivalPrice = productPrice(battle.rival);
-  const comparablePrice = resolvedPriceDelta(decision.priceComparison);
-  const primaryDisplay = comparablePrice?.primaryRaw || primaryPrice;
-  const rivalDisplay = comparablePrice?.rivalRaw || rivalPrice;
+  const priceClaim = resolvePriceClaim({
+    comparisonValue: decision.priceComparison,
+    primaryRaw: primaryPrice,
+    rivalRaw: rivalPrice,
+    primaryQuantity: battle.primary.quantity,
+    rivalQuantity: battle.rival.quantity,
+  });
+  const priceCopy = formatPriceClaim(priceClaim, ar ? "ar" : "en");
+  const primaryDisplay = priceClaim.primaryRaw || primaryPrice;
+  const rivalDisplay = priceClaim.rivalRaw || rivalPrice;
   const primarySource = safeUrl(battle.primary.sourceUrl);
   const rivalSource = safeUrl(battle.rival.sourceUrl);
   const reasons = list(assessment.reasons).map((value) => display(value)).filter(Boolean).join(" · ") || list(battle.match.sharedTerms).map((value) => display(value)).filter(Boolean).join(" · ");
@@ -88,22 +95,15 @@ function prepareRow(battle: ProductBattle, ar: boolean) {
   const actionModel = display(actionPlan.model);
   const actionPromptVersion = display(actionPlan.promptVersion);
   const actionEvidenceKeys = list(actionPlan.evidenceKeys).map((value) => display(value)).filter(Boolean);
-  const priceStatus = comparablePrice ? "comparable" : primaryDisplay && rivalDisplay ? "basis-unverified" : primaryDisplay || rivalDisplay ? "one-price" : "no-prices";
-  const priceSignal = comparablePrice
-    ? comparablePrice.equal
-      ? (ar ? "نفس السعر المرصود" : "Same observed price")
-      : comparablePrice.percent < 0
-        ? (ar ? `المنافس أرخص بنسبة ${Math.abs(comparablePrice.percent)}%` : `Rival is ${Math.abs(comparablePrice.percent)}% cheaper`)
-        : (ar ? `أنت أرخص بنسبة ${comparablePrice.percent}%` : `You are ${comparablePrice.percent}% cheaper`)
-    : priceStatus === "basis-unverified"
-      ? (ar ? "الأسعار موجودة — أساس المقارنة غير مؤكد" : "Prices found — comparison basis unverified")
-      : priceStatus === "one-price"
-        ? (ar ? "تم العثور على سعر عام واحد فقط" : "Only one public price found")
-        : (ar ? "لم يتم العثور على أسعار عامة" : "No public prices found");
-  const lane = comparablePrice ? comparablePrice.percent < 0 ? "pressure" : "advantage" : "evidence";
+  const priceStatus = priceClaim.kind;
+  const priceSignal = priceCopy.headline;
+  const priceDetail = priceCopy.supporting || priceCopy.detail;
+  const lane = priceCopy.lane;
   const claimType = display(assessment.claimType, "inferred").toLowerCase();
   const confidence = display(battle.match.confidence, ar ? "ثقة محدودة" : "Limited confidence");
-  return { battle, domain, assessment, decision, primaryDisplay, rivalDisplay, primarySource, rivalSource, reasons, verdict, fullAction, shortAction, actionRationale, actionSource, actionModel, actionPromptVersion, actionEvidenceKeys, comparablePrice, priceStatus, priceSignal, lane, claimType, confidence };
+  const matchConfidence = display(battle.match.confidence);
+  const matchStatus = matchConfidence && matchConfidence !== "Low" ? "accepted" : "limited";
+  return { battle, domain, assessment, decision, primaryDisplay, rivalDisplay, primarySource, rivalSource, reasons, verdict, fullAction, shortAction, actionRationale, actionSource, actionModel, actionPromptVersion, actionEvidenceKeys, priceClaim, priceStatus, priceSignal, priceDetail, lane, claimType, confidence, matchStatus };
 }
 
 function ProductIdentity({ role, product, price, source, domain, ar, compact = false, showPrice = true }: { role: "you" | "rival"; product: Record<string, unknown>; price: string; source: string; domain?: string; ar: boolean; compact?: boolean; showPrice?: boolean }) {
@@ -126,13 +126,6 @@ function MatchDetails({ row, observedAt, ar }: { row: ProductRow; observedAt: st
 
 function ProductTablePrice({ value, ar }: { value: string; ar: boolean }) {
   return <strong className={`product-table-price ${value ? "observed" : "unavailable"}`} dir="auto">{value || (ar ? "غير مرصود" : "Not observed")}</strong>;
-}
-
-function productPriceGap(row: ProductRow, ar: boolean) {
-  if (!row.comparablePrice || row.comparablePrice.equal) return "";
-  const amount = Math.abs(row.comparablePrice.primary.amount - row.comparablePrice.rival.amount);
-  const formatted = new Intl.NumberFormat(ar ? "ar" : "en", { maximumFractionDigits: 2 }).format(amount);
-  return ar ? `فارق ${row.comparablePrice.primary.currency} ${formatted}` : `${row.comparablePrice.primary.currency} ${formatted} gap`;
 }
 
 function ProductTableDetails({ row, observedAt, ar }: { row: ProductRow; observedAt: string; ar: boolean }) {
@@ -191,20 +184,20 @@ export function ProductDesignLab({ comparison, battles, primaryDomain, observedA
   };
   const exportCsv = () => {
     const headers = ["your_product", "your_price_raw", "your_price_amount", "your_currency", "rival_domain", "rival_product", "rival_price_raw", "rival_price_amount", "rival_currency", "price_status", "price_signal", "suggested_action", "suggested_action_source", "match_status", "confidence", "observed_at", "your_source", "rival_source"];
-    const data = rows.map((row) => [display(row.battle.primary.name), row.primaryDisplay, row.comparablePrice?.primary.amount ?? "", row.comparablePrice?.primary.currency ?? "", row.domain, display(row.battle.rival.name), row.rivalDisplay, row.comparablePrice?.rival.amount ?? "", row.comparablePrice?.rival.currency ?? "", row.priceStatus, row.comparablePrice ? row.priceSignal : "", row.fullAction, row.actionSource, `${row.verdict ? "accepted" : "unverified"}-${row.claimType}`, row.confidence, observedAt, row.primarySource, row.rivalSource]);
+    const data = rows.map((row) => [display(row.battle.primary.name), row.primaryDisplay, row.priceClaim.primary?.amount ?? "", row.priceClaim.primary?.currency ?? "", row.domain, display(row.battle.rival.name), row.rivalDisplay, row.priceClaim.rival?.amount ?? "", row.priceClaim.rival?.currency ?? "", row.priceStatus, row.priceSignal, row.fullAction, row.actionSource, `${row.matchStatus}-${row.claimType}`, row.confidence, observedAt, row.primarySource, row.rivalSource]);
     const csv = `\uFEFF${[headers, ...data].map((line) => line.map(csvCell).join(",")).join("\r\n")}`;
     const href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })); const anchor = document.createElement("a"); anchor.href = href; anchor.download = `${slug(primaryDomain)}-product-comparison.csv`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(href), 0);
   };
 
   const lanes = [
-    { id: "pressure", title: ar ? "ضغط سعري" : "Price pressure", description: ar ? "المنافس أرخص على أساس قابل للمقارنة." : "The rival is cheaper on a comparable basis." },
-    { id: "advantage", title: ar ? "تفوقك السعري" : "Your edge", description: ar ? "أنت أرخص أو عند تعادل السعر المرصود." : "You lead or hold observed price parity." },
-    { id: "evidence", title: ar ? "يحتاج إلى دليل" : "Needs evidence", description: ar ? "الأسعار مفقودة أو أساس المقارنة غير مؤكد." : "Prices are missing or the comparison basis is unverified." },
+    { id: "pressure", title: ar ? "ضغط سعري" : "Price pressure", description: ar ? "المنافس يتقدم بسعر مباشر أو بسعر وحدة محسوب." : "The rival leads on a direct or computed unit-price basis." },
+    { id: "advantage", title: ar ? "تفوقك السعري" : "Your edge", description: ar ? "أنت تتقدم بسعر مباشر أو بسعر وحدة محسوب." : "You lead on a direct or computed unit-price basis." },
+    { id: "evidence", title: ar ? "يحتاج إلى دليل" : "Needs evidence", description: ar ? "نعرض فرق السعر المعروض مع حجب الادعاء غير المدعوم." : "Listed-price gaps stay visible while unsupported equivalence claims are withheld." },
   ] as const;
 
   return <>
     <header className="panel-intro compact product-lab-intro"><div><span>{ar ? "مقارنة منتج بمنتج" : "PRODUCT VS PRODUCT"}</span><h2>{ar ? "اختر الطريقة الأسهل لرؤية المنافسة" : "Choose the clearest way to see the competition"}</h2><p>{ar ? "ثلاث طرق عرض، ونفس البيانات العامة المحفوظة." : "Three views, one saved set of public evidence."}</p></div></header>
-    <div className="panel-metrics"><div><strong>{rows.length}</strong><span>{ar ? "مطابقات مقبولة" : "accepted matches"}</span></div><div><strong>{rows.filter((row) => row.comparablePrice).length}</strong><span>{ar ? "فروق سعر مباشرة" : "direct price deltas"}</span></div><div><strong>{list(comparison?.rows).length}</strong><span>{ar ? "منتجاتك التي تم تقييمها" : "your products assessed"}</span></div></div>
+    <div className="panel-metrics"><div><strong>{rows.length}</strong><span>{ar ? "مطابقات مقبولة" : "accepted matches"}</span></div><div><strong>{rows.filter((row) => row.priceClaim.kind === "direct").length}</strong><span>{ar ? "فروق سعر مباشرة" : "direct price deltas"}</span></div><div><strong>{list(comparison?.rows).length}</strong><span>{ar ? "منتجاتك التي تم تقييمها" : "your products assessed"}</span></div></div>
     <div className="product-layout-toolbar">
       <div className="product-layout-tabs" role="tablist" aria-label={ar ? "طرق عرض مقارنة المنتجات" : "Product comparison layouts"}>{LAYOUTS.map((item, index) => <button id={`product-layout-tab-${item}`} key={item} ref={(node) => { layoutTabs.current[index] = node; }} type="button" role="tab" aria-selected={layout === item} aria-controls={`product-layout-${item}`} tabIndex={layout === item ? 0 : -1} onClick={() => selectLayout(item)} onKeyDown={(event) => onLayoutKey(event, index)}><span>{String(index + 1).padStart(2, "0")}</span>{LAYOUT_LABELS[item][ar ? "ar" : "en"]}</button>)}</div>
       <div className="product-lab-actions"><button type="button" onClick={exportCsv}>{ar ? "تصدير CSV" : "Export CSV"}</button><button type="button" onClick={shareReport}>{ar ? "مشاركة" : "Share"}</button></div>
@@ -224,13 +217,12 @@ export function ProductDesignLab({ comparison, battles, primaryDomain, observedA
             <th role="columnheader">{ar ? "الخطوة التالية" : "Next move"}</th>
           </tr></thead>
           <tbody role="rowgroup">{rows.map((row, index) => {
-            const priceGap = productPriceGap(row, ar);
             return <tr role="row" className="product-table-row" id={rowAnchor(row, index)} data-lane={row.lane} key={row.battle.key}>
               <td role="cell" className="product-table-product-cell product-table-your-product"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "منتجك" : "Your product"}</span><ProductIdentity role="you" product={row.battle.primary} price={row.primaryDisplay} source={row.primarySource} ar={ar} compact showPrice={false} /></td>
               <td role="cell" className="product-table-price-cell product-table-your-price"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "سعرك" : "Your price"}</span><ProductTablePrice value={row.primaryDisplay} ar={ar} /></td>
               <td role="cell" className="product-table-product-cell product-table-rival-product"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "أقرب منافس" : "Closest rival"}</span><ProductIdentity role="rival" product={row.battle.rival} price={row.rivalDisplay} source={row.rivalSource} domain={row.domain} ar={ar} compact showPrice={false} /></td>
               <td role="cell" className="product-table-price-cell product-table-rival-price"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "سعر المنافس" : "Rival price"}</span><ProductTablePrice value={row.rivalDisplay} ar={ar} /></td>
-              <td role="cell" className="product-table-difference-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "الفرق" : "Difference"}</span><strong className={`product-signal ${row.lane}`}>{row.priceSignal}</strong>{priceGap && <small dir="auto">{priceGap}</small>}</td>
+              <td role="cell" className="product-table-difference-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "الفرق" : "Difference"}</span><strong className={`product-signal ${row.lane}`}>{row.priceSignal}</strong>{row.priceDetail && <small dir="auto">{row.priceDetail}</small>}</td>
               <td role="cell" className="product-table-action-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "الخطوة التالية" : "Next move"}</span><strong className="product-next-move">{row.shortAction}</strong><ProductTableDetails row={row} observedAt={observedAt} ar={ar} /></td>
             </tr>;
           })}</tbody>
@@ -238,7 +230,7 @@ export function ProductDesignLab({ comparison, battles, primaryDomain, observedA
       </div>
     </section>}
 
-    {layout === "matchups" && <section id="product-layout-matchups" role="tabpanel" aria-labelledby="product-layout-tab-matchups" className="product-layout-panel matchup-layout"><ul>{rows.map((row, index) => <li key={row.battle.key} id={rowAnchor(row, index)}><div className="matchup-products"><ProductIdentity role="you" product={row.battle.primary} price={row.primaryDisplay} source={row.primarySource} ar={ar} /><span aria-hidden="true">VS</span><ProductIdentity role="rival" product={row.battle.rival} price={row.rivalDisplay} source={row.rivalSource} domain={row.domain} ar={ar} /></div><div className="matchup-decision"><PricePosition comparisonValue={row.decision.priceComparison} primaryRaw={row.primaryDisplay} rivalRaw={row.rivalDisplay} priceVerdict={display(row.decision.priceVerdict)} locale={ar ? "ar" : "en"} showDetail={false} showValues={false} /><section><span>{ar ? "الخطوة التالية" : "NEXT MOVE"}</span><strong>{row.shortAction}</strong></section></div><MatchDetails row={row} observedAt={observedAt} ar={ar} /></li>)}</ul></section>}
+    {layout === "matchups" && <section id="product-layout-matchups" role="tabpanel" aria-labelledby="product-layout-tab-matchups" className="product-layout-panel matchup-layout"><ul>{rows.map((row, index) => <li key={row.battle.key} id={rowAnchor(row, index)}><div className="matchup-products"><ProductIdentity role="you" product={row.battle.primary} price={row.primaryDisplay} source={row.primarySource} ar={ar} /><span aria-hidden="true">VS</span><ProductIdentity role="rival" product={row.battle.rival} price={row.rivalDisplay} source={row.rivalSource} domain={row.domain} ar={ar} /></div><div className="matchup-decision"><PricePosition comparisonValue={row.decision.priceComparison} primaryRaw={row.primaryDisplay} rivalRaw={row.rivalDisplay} priceVerdict={display(row.decision.priceVerdict)} locale={ar ? "ar" : "en"} primaryQuantity={row.battle.primary.quantity} rivalQuantity={row.battle.rival.quantity} showDetail={false} showValues={false} /><section><span>{ar ? "الخطوة التالية" : "NEXT MOVE"}</span><strong>{row.shortAction}</strong></section></div><MatchDetails row={row} observedAt={observedAt} ar={ar} /></li>)}</ul></section>}
 
     {layout === "opportunities" && <section id="product-layout-opportunities" role="tabpanel" aria-labelledby="product-layout-tab-opportunities" className="product-layout-panel opportunity-layout"><div className="opportunity-lanes">{lanes.map((lane) => { const items = rows.map((row, index) => ({ row, index })).filter(({ row }) => row.lane === lane.id); return <section className={`opportunity-lane ${lane.id}`} aria-labelledby={`lane-${lane.id}`} key={lane.id}><header><div><h3 id={`lane-${lane.id}`}>{lane.title}</h3><p>{lane.description}</p></div><b>{items.length}</b></header><ul>{items.map(({ row, index }) => <li key={row.battle.key} id={rowAnchor(row, index)}><span>{row.domain}</span><div className="opportunity-pair"><strong dir="auto">{display(row.battle.primary.name)}</strong><i aria-hidden="true">→</i><strong dir="auto">{display(row.battle.rival.name)}</strong></div><div className="opportunity-prices"><b dir="auto">{row.primaryDisplay || (ar ? "سعرك غير مرصود" : "Your price not observed")}</b><b dir="auto">{row.rivalDisplay || (ar ? "سعر المنافس غير مرصود" : "Rival price not observed")}</b></div><p className="opportunity-signal">{row.priceSignal}</p><strong className="opportunity-action">{row.shortAction}</strong><MatchDetails row={row} observedAt={observedAt} ar={ar} /></li>)}</ul>{!items.length && <div className="opportunity-empty">{ar ? "لا توجد أزواج في هذه الفئة." : "No pairs in this group."}</div>}</section>; })}</div></section>}
 
