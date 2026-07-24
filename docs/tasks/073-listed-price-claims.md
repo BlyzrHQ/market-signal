@@ -87,4 +87,23 @@ computed.
 - Strict Fable 5 round two: **PASS**, no merge blockers. It verified the shared
   state across table, matchup, opportunities, and CSV; direct-vs-listed truth
   boundaries; sub-1% handling; Arabic parity; and the new regression tests.
-- Pull request, exact Sites deployment, and a fresh MyJam report remain pending.
+- Pull request: [#73](https://github.com/BlyzrHQ/market-signal/pull/73).
+- Sites version 120 deployed commit
+  `b5e80de1d53428862dddecfff5eccec00ce2507e` successfully before production
+  validation.
+- Fresh production report:
+  [MyJam report](https://market-signal.abdulla617931.chatgpt.site/reports/05d4508b898f477fbc44e94a92cf1e6a?view=products&layout=table).
+  It completed against real public data with 5 discovered competitors, 71
+  primary products assessed, 29 accepted matches, and 1 server-approved direct
+  price delta.
+- Live English rendering showed 20 absolute listed-price claims and no instance
+  of `comparison basis unverified`. For example, White Onion displayed `Rival
+  listed price is GBP 0.75 lower` and explicitly withheld a percentage because
+  pack size and variant were not verified as aligned.
+- The approved Parsley Bunch pair retained its direct `You are 54% cheaper`
+  claim and `GBP 1.90 gap`.
+- Live Arabic rendering preserved the same boundary: listed-price differences
+  used `السعر المعروض` wording while the approved pair retained the percentage
+  claim.
+- This documentation-only release record must be included in the final exact
+  commit deployed to Sites before merge.
