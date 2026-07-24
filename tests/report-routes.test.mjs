@@ -6,6 +6,7 @@ const home = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8")
 const loading = await readFile(new URL("../app/reports/[publicId]/loading/page.tsx", import.meta.url), "utf8");
 const report = await readFile(new URL("../app/reports/[publicId]/page.tsx", import.meta.url), "utf8");
 const productLab = await readFile(new URL("../app/components/product-design-lab.tsx", import.meta.url), "utf8");
+const priceClaims = await readFile(new URL("../app/lib/price-claims.ts", import.meta.url), "utf8");
 const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 
 test("submission hands the durable job to its dedicated loading route", () => {
@@ -83,14 +84,15 @@ test("saved product and ad views preserve truth boundaries and source links", ()
   assert.match(productLab, /<th role="columnheader">\{ar \? "سعر المنافس" : "Rival price"\}<\/th>/);
   assert.match(productLab, /<th role="columnheader">\{ar \? "الفرق" : "Difference"\}<\/th>/);
   assert.doesNotMatch(productLab, /<tbody key=|product-table-detail|colSpan=\{4\}/);
-  assert.match(productLab, /resolvedPriceDelta\(decision\.priceComparison\)/);
-  assert.match(productLab, /productPriceGap\(row, ar\)/);
-  assert.match(productLab, /const priceGap = productPriceGap\(row, ar\)/);
-  assert.doesNotMatch(productLab, /productPriceGap\(row, ar\) &&/);
+  assert.match(productLab, /resolvePriceClaim\(\{/);
+  assert.match(productLab, /const priceDetail = priceCopy\.supporting \|\| priceCopy\.detail/);
+  assert.match(productLab, /row\.priceDetail && <small/);
+  assert.match(priceClaims, /kind: "listed-gap"/);
+  assert.match(priceClaims, /Rival listed price is/);
+  assert.doesNotMatch(productLab, /Prices found — comparison basis unverified/);
   assert.match(productLab, /className="product-row-details"/);
   assert.match(productLab, /rows\.map\(\(row, index\) => <li/);
   assert.match(productLab, /filter\(\(\{ row \}\) => row\.lane === lane\.id\)/);
-  assert.match(productLab, /resolvedPriceDelta\(decision\.priceComparison\)/);
   assert.match(productLab, /Open product ↗/);
   assert.match(productLab, /showDetail=\{false\}/);
   assert.match(productLab, /showValues=\{false\}/);

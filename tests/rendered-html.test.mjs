@@ -28,7 +28,7 @@ test("server-renders the Market Signal product shell", async () => {
 });
 
 test("real-data route and product metadata are present", async () => {
-  const [route, crawl, enrichment, storefrontEnrichment, ads, report, page, savedReport, productLab, pricePosition, layout, styles, packageJson, domainUtils, adIntelligence] = await Promise.all([
+  const [route, crawl, enrichment, storefrontEnrichment, ads, report, page, savedReport, productLab, pricePosition, priceClaims, layout, styles, packageJson, domainUtils, adIntelligence] = await Promise.all([
     readFile(new URL("../app/api/analyze/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/crawl/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/enrich-products/route.ts", import.meta.url), "utf8"),
@@ -39,6 +39,7 @@ test("real-data route and product metadata are present", async () => {
     readFile(new URL("../app/reports/[publicId]/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/product-design-lab.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/price-position.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/price-claims.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
@@ -105,20 +106,19 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /dir=\{ar \? "rtl" : "ltr"\}/);
   assert.match(savedReport, /<ProductDesignLab comparison=\{comparison\} battles=\{battles\}/);
   assert.match(productLab, /<PricePosition comparisonValue=\{row\.decision\.priceComparison\}/);
-  assert.match(pricePosition, /resolvedPriceDelta\(comparisonValue\)/);
-  assert.match(pricePosition, /You are \$\{percent\}% cheaper/);
-  assert.match(pricePosition, /Rival is \$\{percent\}% cheaper/);
-  assert.match(pricePosition, /Same observed price/);
-  assert.match(pricePosition, /Price difference is under 1%/);
-  assert.match(pricePosition, /Prices found — comparison basis unverified/);
-  assert.match(pricePosition, /Only one public price found/);
-  assert.match(pricePosition, /No public prices found/);
-  assert.match(pricePosition, /Comparable pair confirmed/);
-  assert.match(pricePosition, /const approvedPair = comparisonValue !== null && comparisonValue !== undefined/);
-  assert.match(pricePosition, /else if \(approvedPair\)/);
-  assert.match(pricePosition, /Both prices are public observations\. We do not call either side cheaper/);
-  assert.doesNotMatch(pricePosition, /priceVerdict \|\| copy\.unavailableDetail/);
-  assert.match(pricePosition, /comparison && !comparison\.equal/);
+  assert.match(pricePosition, /resolvePriceClaim\(\{ comparisonValue, primaryRaw, rivalRaw, primaryQuantity, rivalQuantity \}\)/);
+  assert.match(pricePosition, /formatPriceClaim\(claim, locale\)/);
+  assert.match(priceClaims, /You are \$\{claim\.percent\}% cheaper/);
+  assert.match(priceClaims, /Rival is \$\{claim\.percent\}% cheaper/);
+  assert.match(priceClaims, /Same observed price/);
+  assert.match(priceClaims, /Price difference is under 1%/);
+  assert.match(priceClaims, /Rival listed price is \$\{claim\.currency\} \$\{amount\(claim\.gap\)\} lower/);
+  assert.match(priceClaims, /computed from listed prices/);
+  assert.match(priceClaims, /no percentage is shown/);
+  assert.match(priceClaims, /Only one public price found/);
+  assert.match(priceClaims, /No public prices found/);
+  assert.match(priceClaims, /Comparable pair confirmed/);
+  assert.doesNotMatch(priceClaims, /Prices found — comparison basis unverified/);
   assert.doesNotMatch(savedReport, /price-axis|price-line|price-dot|close-prices|price-picture|price-fallback/);
   assert.match(styles, /repeat\(6, minmax\(0, 1fr\)\)/);
   assert.match(styles, /\.ad-creative-feed \{[^}]*min-width: 0/);
