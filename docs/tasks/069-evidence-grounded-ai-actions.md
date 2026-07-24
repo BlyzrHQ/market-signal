@@ -83,11 +83,33 @@ covered by regression tests. Fable 5 re-read the updated implementation and
 returned `PASS`, with production validation retained as the final pre-merge
 gate.
 
-Codex independently verified typecheck, production build, the full 330-test
+Codex independently verified typecheck, production build, the full 336-test
 suite, and lint. Lint reported only the two pre-existing `no-img-element`
 warnings in the product/report renderers and no errors; this task introduced no
 new lint warning.
 
 ## Production validation
 
-Pending exact-commit deployment and a fresh real-domain report.
+Codex deployed code-bearing commit
+`8765d7615f9f177126c1a34729003d947beea344` to Trigger production version
+`20260722.5` and Sites version 116. Sites deployment
+`appgdep_6a63ab26f6cc8191a3f7e7f2940a526a` reached `SUCCEEDED` at
+<https://market-signal.abdulla617931.chatgpt.site>.
+
+A fresh public `myjam.co.uk` report completed on the first attempt on
+2026-07-24:
+
+- Report ID: `dffd58c95501413d87e58758698d71d2`
+- 65 primary products and 195 candidate matches were assessed.
+- 26 product matches were accepted.
+- 24 grounded AI actions were accepted from `gpt-5.6-luna` using
+  `ai-product-action-v2-exact-tokens`, exceeding the 16-action release gate.
+- Two AI drafts failed proper-noun validation; deterministic recommendations
+  were retained and reported in saved coverage metadata.
+- The live Products table rendered the accepted matches, public source links,
+  observed prices, guarded price comparisons, and grounded next moves.
+- Export coverage remains verified by the test suite: CSV output includes the
+  `suggested_action_source` provenance field for AI and deterministic actions.
+
+The follow-up commit only records this completed release evidence; it does not
+change application or Trigger runtime source.
