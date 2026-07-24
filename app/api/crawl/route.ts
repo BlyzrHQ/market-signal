@@ -13,6 +13,7 @@ import { boundedExtractionDocument, compactCatalogSnapshots, settleWithConcurren
 import { fetchPublicText } from "../../lib/public-fetch";
 import { claimablePagePricePatterns, enrichProductTargets, selectPrimaryProductPriceTargets } from "../../lib/storefront-product-enrichment";
 import { buildExperienceBenchmark } from "../../lib/experience-benchmark";
+import { hasObservedAddToCartControl } from "../../lib/experience-signals";
 
 type ClaimType = "Observed" | "Inferred";
 type Confidence = "High" | "Medium" | "Low";
@@ -269,7 +270,7 @@ async function parsePage(document: string, sourceUrl: string, fetchedAt: string,
   const hasViewport = /<meta[^>]+name\s*=\s*["']viewport["']/i.test(extractionDocument);
   const productLinkCount = internalLinks.filter((path) => /\/(?:products?|shop|store|collections?|catalog|pricing|plans?)(?:\/|$)/i.test(path)).length;
   const hasProductPath = /\/(?:products?|shop|store|collections?|catalog|pricing|plans?)(?:\/|$)/i.test(url.pathname);
-  const hasAddToCart = /(?:add[\s_-]*to[\s_-]*cart|name\s*=\s*["']add|\/cart\/add|data-product-form)/i.test(extractionDocument);
+  const hasAddToCart = hasObservedAddToCartControl(extractionDocument);
   const hasCartLink = /href\s*=\s*["'][^"']*\/cart(?:[/?#"'])/i.test(extractionDocument);
   const hasCheckoutLink = /href\s*=\s*["'][^"']*\/(?:checkout|checkouts)(?:[/?#"'])/i.test(extractionDocument);
   const trustSignals = unique([

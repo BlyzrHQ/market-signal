@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { buildExperienceBenchmark } from "../app/lib/experience-benchmark.ts";
+import { hasObservedAddToCartControl } from "../app/lib/experience-signals.ts";
 import { fetchPublicText } from "../app/lib/public-fetch.ts";
 
 const page = (overrides = {}) => ({
@@ -66,6 +67,32 @@ test("information and image scores reflect missing public product evidence", () 
   assert.equal(primary.information.score, 33);
   assert.equal(primary.images.score, 0);
   assert.equal(primary.images.observed.productImageCoverage, 0);
+});
+
+test("missing image markup is not converted into a losing readiness score", () => {
+  const result = buildExperienceBenchmark([{
+    domain: "shop.example",
+    role: "primary",
+    fetchedAt: "2026-07-22T00:00:00Z",
+    pages: [page({ imageCount: 0, imagesWithAlt: 0, responsiveImageCount: 0 })],
+    products: [product()],
+    catalogProductsDiscovered: 1,
+  }]);
+  const primary = result.domains[0];
+  assert.equal(primary.images.observed.altCoverage, null);
+  assert.equal(primary.images.observed.responsiveCoverage, null);
+  assert.equal(primary.images.score, 100);
+  assert.equal(primary.mobileAccessibility.observed.altCoverage, null);
+  assert.equal(primary.mobileAccessibility.score, 100);
+  assert.match(primary.images.formula, /only the components observed/i);
+  assert.match(primary.mobileAccessibility.formula, /only the components observed/i);
+});
+
+test("add-to-cart detection rejects ordinary address fields", () => {
+  assert.equal(hasObservedAddToCartControl('<form><input name="address"><textarea name="additional_notes"></textarea></form>'), false);
+  assert.equal(hasObservedAddToCartControl('<button name="add">Add item</button>'), true);
+  assert.equal(hasObservedAddToCartControl('<form action="/cart/add"><button>Add to bag</button></form>'), true);
+  assert.equal(hasObservedAddToCartControl("<product-form data-product-form>Buy</product-form>"), true);
 });
 
 test("public fetch exposes bounded response timing and payload bytes", async () => {

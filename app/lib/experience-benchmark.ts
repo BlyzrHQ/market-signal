@@ -66,6 +66,13 @@ const median = (values: number[]) => {
   return sorted.length % 2 ? sorted[middle] : Math.round((sorted[middle - 1] + sorted[middle]) / 2);
 };
 
+function observedWeightedScore(components: Array<{ value: number | null; weight: number }>) {
+  const observed = components.filter((component): component is { value: number; weight: number } => component.value !== null);
+  if (!observed.length) return null;
+  const observedWeight = observed.reduce((sum, component) => sum + component.weight, 0);
+  return observed.reduce((sum, component) => sum + component.value * component.weight, 0) / observedWeight;
+}
+
 function responseMetric(pages: ExperiencePage[]): BenchmarkMetric {
   const timings = pages.map((page) => page.responseTimeMs).filter((value): value is number => typeof value === "number" && value >= 0);
   const bytes = pages.map((page) => page.responseBytes).filter((value): value is number => typeof value === "number" && value >= 0);
@@ -89,12 +96,16 @@ function imageMetric(pages: ExperiencePage[], products: ExperienceProduct[]): Be
   const altCoverage = percent(imagesWithAlt, imageCount);
   const responsiveCoverage = percent(responsiveImages, imageCount);
   const available = [productCoverage, altCoverage, responsiveCoverage].filter((value): value is number => value !== null);
-  const weighted = productCoverage === null ? null : (productCoverage * 0.6) + ((altCoverage || 0) * 0.25) + ((responsiveCoverage || 0) * 0.15);
+  const weighted = observedWeightedScore([
+    { value: productCoverage, weight: 60 },
+    { value: altCoverage, weight: 25 },
+    { value: responsiveCoverage, weight: 15 },
+  ]);
   return {
     score: weighted === null ? null : clamp(weighted),
     sampleSize: Math.max(products.length, imageCount),
     observed: { products: products.length, productsWithImage, productImageCoverage: productCoverage, pageImages: imageCount, altCoverage, responsiveCoverage },
-    formula: "60% product-image coverage + 25% meaningful alt coverage + 15% responsive-image markup. This is image readiness, not subjective visual quality.",
+    formula: "60% product-image coverage + 25% meaningful alt coverage + 15% responsive-image markup, normalized across only the components observed in this crawl. This is image readiness, not subjective visual quality.",
     sourceUrls: available.length ? sourceUrls(pages) : [],
   };
 }
@@ -168,12 +179,16 @@ function mobileAccessibilityMetric(pages: ExperiencePage[]): BenchmarkMetric {
   const imageCount = pages.reduce((sum, page) => sum + (page.imageCount || 0), 0);
   const imagesWithAlt = pages.reduce((sum, page) => sum + (page.imagesWithAlt || 0), 0);
   const altCoverage = percent(imagesWithAlt, imageCount);
-  const score = Number(viewport) * 45 + Number(documentLanguage) * 20 + (altCoverage === null ? 0 : altCoverage * 0.35);
+  const score = observedWeightedScore([
+    { value: Number(viewport) * 100, weight: 45 },
+    { value: Number(documentLanguage) * 100, weight: 20 },
+    { value: altCoverage, weight: 35 },
+  ]);
   return {
-    score: clamp(score),
+    score: score === null ? null : clamp(score),
     sampleSize: pages.length,
     observed: { viewport, documentLanguage, altCoverage },
-    formula: "45 viewport points + 20 document-language points + 35 points scaled by meaningful image alt coverage.",
+    formula: "45% viewport metadata + 20% document language + 35% meaningful image alt coverage, normalized across only the components observed in this crawl.",
     sourceUrls: sourceUrls(pages),
   };
 }

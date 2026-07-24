@@ -156,6 +156,8 @@ test("successful orchestration persists ordered heartbeats and a complete docume
   assert.ok(port.events.some((item) => item.idempotencyKey === "crawl-started"));
   assert.ok(port.events.some((item) => item.idempotencyKey === "ads-complete"));
   assert.ok(port.events.some((item) => item.idempotencyKey === "matching-complete"));
+  assert.equal(port.events.some((item) => item.idempotencyKey.startsWith("brief-")), false);
+  assert.equal(port.saves[0].document.marketBrief, null);
 });
 
 test("independent phase failures remain visible and produce a limited report", async () => {
@@ -211,7 +213,7 @@ test("a source-linked parked domain persists one terminal limited report without
   const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
   assert.equal(result.reportStatus, "limited");
   assert.deepEqual(result.completedPhases, ["persistence"]);
-  assert.deepEqual(result.limitedPhases, ["crawl", "brief", "ads", "matching"]);
+  assert.deepEqual(result.limitedPhases, ["crawl", "ads", "matching"]);
   assert.deepEqual(calls, { brief: 0, ads: 0, match: 0, enrich: 0 });
   assert.equal(port.saves.length, 1);
   assert.equal(port.saves[0].status, "limited");
@@ -246,7 +248,7 @@ test("a bounded unavailable domain persists one terminal limited report without 
   const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
   assert.equal(result.reportStatus, "limited");
   assert.deepEqual(result.completedPhases, ["persistence"]);
-  assert.deepEqual(result.limitedPhases, ["crawl", "brief", "ads", "matching"]);
+  assert.deepEqual(result.limitedPhases, ["crawl", "ads", "matching"]);
   assert.deepEqual(calls, { brief: 0, ads: 0, match: 0, enrich: 0 });
   assert.equal(port.saves.length, 1);
   assert.equal(port.saves[0].status, "limited");
@@ -291,7 +293,7 @@ test("a parked-domain retry replays partial event writes without an idempotency 
   assert.equal(result.reportStatus, "limited");
   assert.equal(saveAttempts, 2);
   assert.equal(storedEvents.get("crawl-limited").metadata.attempt, undefined);
-  assert.equal([...storedEvents.keys()].filter((key) => key.endsWith("-limited")).length, 4);
+  assert.equal([...storedEvents.keys()].filter((key) => key.endsWith("-limited")).length, 3);
 });
 
 test("the HTTP crawl adapter accepts only a bounded source-linked parked-domain 409", async () => {

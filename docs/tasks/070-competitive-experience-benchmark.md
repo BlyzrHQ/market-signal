@@ -56,14 +56,34 @@ The first report view should answer four questions without requiring the user to
 
 ## Fable review
 
-Pending. `claude-fable-5` was requested for the product decision review on 2026-07-22 and returned the account session-limit message. The task must remain unmerged until a strict review returns PASS and any blockers are fixed and re-reviewed.
+Fable 5 (`claude-fable-5`) completed a strict review on 2026-07-24 and
+returned `FAIL` with two blockers:
 
-## Validation in progress
+1. The add-to-cart detector could mistake `name="address"` and similar contact
+   fields for an observed purchase control.
+2. Image readiness and mobile/accessibility converted unobserved image markup
+   into zero-valued score components.
+
+Both blockers were fixed with regression tests. Add-to-cart detection now
+requires an exact attributable cart/bag/basket control signal. Composite scores
+are normalized only across components observed in the crawl; their persisted
+formula strings disclose that behavior.
+
+The review also identified a paid market-brief phase whose result was no longer
+rendered after the benchmark replaced Overview. Fresh orchestration no longer
+calls that phase and persists `marketBrief: null`; the API surface remains
+available for older clients while new reports avoid the unused model cost.
+The experience-map coordinate system is now physically left-to-right in both
+locales so the Arabic “easier access” axis label remains on the increasing end.
+
+Strict re-review remains required before merge.
+
+## Validation
 
 - TypeScript check: passed.
 - Production build: passed.
 - ESLint: passed with the two pre-existing `no-img-element` warnings and no errors.
-- Automated suite on the combined PR #69 + #70 stack: 340/340 tests passed.
+- Automated suite after the Fable blocker fixes: 342/342 tests passed.
 - Fresh public MyJam crawl after the final product-page crawl priority: 602 public products; 459 ms median crawl-response proxy; image readiness 79; product-information completeness 67; product access 100; public purchase-path score 75 with an observed minimum two-step estimate; trust readiness 20; mobile/accessibility basics 85. The five sampled pages included the homepage and four public product pages.
 - A fresh Al Hamdani Sweets check demonstrated materially different evidence rather than fixed output: 51 products; 519 ms response proxy; image readiness 100; information 70; product access 100; purchase-path score 75 with a two-step public estimate; trust 40; mobile/accessibility 100. Its five sampled pages included the homepage and four public product pages.
 - Babanuj produced one successful preliminary measurement, then a later request returned HTTP 403. The final validation records the latter as a crawl availability change rather than reusing stale metrics.
