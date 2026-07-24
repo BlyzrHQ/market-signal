@@ -76,7 +76,10 @@ available for older clients while new reports avoid the unused model cost.
 The experience-map coordinate system is now physically left-to-right in both
 locales so the Arabic “easier access” axis label remains on the increasing end.
 
-Strict re-review remains required before merge.
+Fable 5 completed the strict re-review on 2026-07-24 after independently
+re-running the build, lint, and 342-test suite. It returned `PASS` for the code
+and product review. Exact-commit deployment and live visual validation remained
+the final merge gates.
 
 ## Validation
 
@@ -88,4 +91,38 @@ Strict re-review remains required before merge.
 - A fresh Al Hamdani Sweets check demonstrated materially different evidence rather than fixed output: 51 products; 519 ms response proxy; image readiness 100; information 70; product access 100; purchase-path score 75 with a two-step public estimate; trust 40; mobile/accessibility 100. Its five sampled pages included the homepage and four public product pages.
 - Babanuj produced one successful preliminary measurement, then a later request returned HTTP 403. The final validation records the latter as a crawl availability change rather than reusing stale metrics.
 - `noororganic.com` returned the existing typed HTTP 409 limited state and produced no benchmark score.
-- In-app visual QA is still pending. The browser controller failed during setup with a missing local kernel-assets path; no visual-pass claim has been made.
+- In-app visual QA passed on the fresh production report in English and Arabic:
+  the benchmark tab, gap chart, product experience map, response comparison,
+  scoreboard, disclosures, and language switch all rendered with accessible
+  text. At the 1,280-pixel live viewport, document width remained below the
+  viewport width, the Arabic experience map kept a physical left-to-right
+  increasing axis, and its high-access label and point remained aligned. The
+  browser's temporary narrow-viewport override did not take effect, so no
+  unsupported mobile visual-pass claim is made; responsive behavior remains
+  covered by the automated presentation checks.
+
+## Production validation
+
+- Code-bearing commit: `286cf4f8018feee499c937c79865e599681f8d69`
+- Trigger production version: `20260724.1`
+- Sites version: 118
+- Sites deployment: `appgdep_6a63b2de667c8191b0e33bec2d1de440`
+  (`SUCCEEDED`)
+- Production URL: <https://market-signal.abdulla617931.chatgpt.site>
+- Fresh report:
+  `b788b2df1e6c4da6a4b37820a39f3914` for `myjam.co.uk`
+
+The report completed on its first attempt with no market-brief events and
+persisted one benchmark domain for MyJam plus five verified rivals. MyJam's
+saved observations included a 224 ms median crawl-response proxy across five
+pages, 79 image readiness, 67 product-information completeness, 100 product
+access, a two-step public purchase-path estimate, 20 trust readiness, and 85
+mobile/accessibility basics. Rival response proxies ranged from 291 ms to
+1,806 ms and their scored dimensions differed materially, confirming that the
+dashboard is driven by current public evidence rather than fixed output.
+
+One report started seconds after the Sites publish reached a stale crawl edge
+and did not contain the new block. A direct live crawl then returned the block,
+and the post-propagation report above persisted and rendered it correctly. The
+first report remains immutable and visibly lacks the block; it was not reused
+as release evidence.
