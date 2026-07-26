@@ -1,6 +1,6 @@
 import { auth, tasks } from "@trigger.dev/sdk";
 import type { marketSignalReportOrchestration } from "../../src/trigger/report-orchestration.ts";
-import { REPORT_ORCHESTRATION_CONTRACT_VERSION, type ReportOrchestrationPayload } from "../../src/trigger/contracts/report-orchestration.ts";
+import { REPORT_ORCHESTRATION_CONTRACT_VERSION, type ReportOrchestrationPayload } from "../../src/shared/report-orchestration-contract.ts";
 import { runtimeEnvironmentValue } from "./runtime-env.ts";
 
 export const REPORT_TASK_ID = "market-signal-report-orchestration" as const;
