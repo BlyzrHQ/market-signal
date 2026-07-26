@@ -40,20 +40,32 @@ export default defineConfig(async () => {
   process.env.WRANGLER_LOG_PATH ??= ".wrangler/logs";
   process.env.MINIFLARE_REGISTRY_PATH ??= ".wrangler/registry";
 
+  const nodeTarget = process.env.MARKET_SIGNAL_DEPLOY_TARGET === "node";
   // Wrangler snapshots its log path while the Cloudflare plugin is imported.
-  const { cloudflare } = await import("@cloudflare/vite-plugin");
-
+  const cloudflarePlugin = nodeTarget
+    ? null
+    : (await import("@cloudflare/vite-plugin")).cloudflare({
+        viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
+        config: localBindingConfig,
+      });
+  const nodeRuntimeExternals = {
+    name: "market-signal:node-runtime-externals",
+    enforce: "pre" as const,
+    resolveId(source: string) {
+      return nodeTarget && source === "cloudflare:workers"
+        ? { id: source, external: true }
+        : null;
+    },
+  };
   return {
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,
     plugins: [
+      nodeRuntimeExternals,
       vinext(),
-      sites(),
-      cloudflare({
-        viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
-        config: localBindingConfig,
-      }),
+      ...(nodeTarget ? [] : [sites()]),
+      ...(cloudflarePlugin ? [cloudflarePlugin] : []),
     ],
   };
 });

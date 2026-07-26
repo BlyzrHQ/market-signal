@@ -1,18 +1,12 @@
 import { canonicalDomain } from "./domain.ts";
+import type { ApplicationDatabase, DatabasePreparedStatement } from "./database-contract.ts";
+import { runtimeDatabaseResult } from "./runtime-database.ts";
 
 export type ReportRunStatus = "queued" | "running" | "complete" | "limited" | "failed" | "interrupted";
 export type ReportPhase = "queued" | "crawl" | "competitors" | "brief" | "products" | "matching" | "enrichment" | "actions" | "ads" | "persistence" | "complete" | "failed" | "interrupted";
 
-export type D1PreparedStatementLike = {
-  bind(...values: unknown[]): D1PreparedStatementLike;
-  all<T = Record<string, unknown>>(): Promise<{ results?: T[] }>;
-  run(): Promise<unknown>;
-};
-
-export type D1DatabaseLike = {
-  prepare(query: string): D1PreparedStatementLike;
-  batch(statements: D1PreparedStatementLike[]): Promise<unknown[]>;
-};
+export type D1PreparedStatementLike = DatabasePreparedStatement;
+export type D1DatabaseLike = ApplicationDatabase;
 
 export type StoredReportRun = {
   id: string;
@@ -87,10 +81,9 @@ const SCHEMA_STATEMENTS = [
 
 async function getDatabase(): Promise<D1DatabaseLike | null> {
   try {
-    const workers = await import("cloudflare:workers");
-    const database = (workers.env as unknown as { DB?: D1DatabaseLike }).DB || null;
-    if (!database) logStorageDiagnostic("database-binding-missing");
-    return database;
+    const result = await runtimeDatabaseResult();
+    if (result.diagnosticCode) logStorageDiagnostic(result.diagnosticCode);
+    return result.database;
   } catch {
     logStorageDiagnostic("database-import-failed");
     return null;
