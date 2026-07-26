@@ -1,5 +1,7 @@
 import { canonicalDomain } from "./domain.ts";
 import type { DiscoveryCandidate, DiscoveryProvenance } from "./competitor-discovery.ts";
+import type { ApplicationDatabase, DatabasePreparedStatement } from "./database-contract.ts";
+import { runtimeDatabase } from "./runtime-database.ts";
 
 export type MemoryCandidate = DiscoveryCandidate & {
   provenance: DiscoveryProvenance;
@@ -17,16 +19,8 @@ export type VerifiedCompetitorMemory = {
   evidenceUrl: string;
 };
 
-export type D1PreparedStatementLike = {
-  bind(...values: unknown[]): D1PreparedStatementLike;
-  all<T = Record<string, unknown>>(): Promise<{ results?: T[] }>;
-  run(): Promise<unknown>;
-};
-
-export type D1DatabaseLike = {
-  prepare(query: string): D1PreparedStatementLike;
-  batch(statements: D1PreparedStatementLike[]): Promise<unknown[]>;
-};
+export type D1PreparedStatementLike = DatabasePreparedStatement;
+export type D1DatabaseLike = ApplicationDatabase;
 
 const MEMORY_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 const MAX_INVESTIGATIONS = 6;
@@ -93,8 +87,7 @@ function candidateFromRecord(record: VerifiedCompetitorMemory): MemoryCandidate 
 
 async function getDatabase(): Promise<D1DatabaseLike | null> {
   try {
-    const workers = await import("cloudflare:workers");
-    return ((workers.env as unknown as { DB?: D1DatabaseLike }).DB || null);
+    return await runtimeDatabase();
   } catch {
     return null;
   }
