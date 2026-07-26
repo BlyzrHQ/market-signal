@@ -1,10 +1,13 @@
 import type { ReportOrchestrationPort } from "./report-orchestration-core.ts";
 import { parkingProvider } from "../../app/lib/domain-recovery.ts";
+import { PermanentOrchestrationError } from "../shared/report-orchestration-contract.ts";
+import { parseWorkerApiManifest, WorkerApiContractError } from "../shared/worker-api-contract.ts";
 
 type FetchLike = typeof fetch;
 const MAX_ACCEPTED_ERROR_BODY_BYTES = 1_000_000;
 
 const PATHS = {
+  capabilities: "/api/internal/capabilities",
   report: (publicId: string) => `/api/internal/reports/${publicId}`,
   crawl: "/api/crawl",
   brief: "/api/report",
@@ -15,6 +18,7 @@ const PATHS = {
 } as const;
 
 export const OPERATION_BUDGETS_MS = {
+  preflight: 10_000,
   report: 10_000,
   crawl: 300_000,
   brief: 90_000,
@@ -24,11 +28,12 @@ export const OPERATION_BUDGETS_MS = {
   actions: 35_000,
 } as const;
 
-// read + crawl-start + crawl + crawl-complete + longest parallel lane
+// read + preflight + crawl-start + crawl + crawl-complete + longest parallel lane
 // (matching-start + two match calls + enrichment-start + enrichment +
 // enrichment-complete + actions-start + actions + actions-complete +
 // matching-complete) + final save.
 export const WORST_CASE_CRITICAL_PATH_MS = (OPERATION_BUDGETS_MS.report * 10)
+  + OPERATION_BUDGETS_MS.preflight
   + OPERATION_BUDGETS_MS.crawl
   + (OPERATION_BUDGETS_MS.match * 2)
   + OPERATION_BUDGETS_MS.enrich
@@ -203,6 +208,16 @@ export function createReportOrchestrationHttpPort(configuration: { appOrigin: st
   const call = (path: string, operation: string, timeoutMs: number, body?: unknown) => requestJson(fetchImpl, new URL(path, appOrigin).toString(), token, operation, timeoutMs, body);
 
   return {
+    async preflight() {
+      try {
+        parseWorkerApiManifest(await call(PATHS.capabilities, "Worker API preflight", OPERATION_BUDGETS_MS.preflight));
+      } catch (error) {
+        if (error instanceof WorkerApiContractError || (error instanceof OrchestrationHttpError && !error.retryable)) {
+          throw new PermanentOrchestrationError("The configured application origin does not provide a compatible worker API.");
+        }
+        throw error;
+      }
+    },
     async loadReport(publicId) {
       try {
         const payload = requiredObject<{ ok?: boolean; report?: unknown }>(await call(PATHS.report(publicId), "Stored report read", OPERATION_BUDGETS_MS.report), "Stored report read");

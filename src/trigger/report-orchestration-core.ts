@@ -23,7 +23,7 @@ import {
   parseReportOrchestrationPayload,
   type ReportOrchestrationPayload,
   type ReportOrchestrationSummary,
-} from "./contracts/report-orchestration.ts";
+} from "../shared/report-orchestration-contract.ts";
 
 export const MAX_OPERATION_TIMEOUT_MS = 8 * 60 * 1000;
 
@@ -44,6 +44,7 @@ type CrawlOutcome = CrawlSuccess | ParkedDomainOutcome | UnavailableDomainOutcom
 export type ReportAttemptContext = { attemptNumber: number; isFinalAttempt: boolean };
 
 export interface ReportOrchestrationPort {
+  preflight(): Promise<void>;
   loadReport(publicId: string): Promise<StoredReport | null>;
   appendEvent(publicId: string, event: ReportEvent): Promise<void>;
   crawl(input: { primary: string; domains: string[] }): Promise<CrawlOutcome>;
@@ -114,6 +115,7 @@ export async function orchestrateReport(
   }
   if (stored.run.status === "complete" || stored.run.status === "limited") return replaySummary(stored, now);
   if (stored.run.status === "failed" || stored.run.status === "interrupted") throw new PermanentOrchestrationError(`Stored report is already ${stored.run.status}.`);
+  await port.preflight();
 
   let terminalFailureRecorded = false;
   try {

@@ -11,10 +11,12 @@ import {
 } from "../src/trigger/report-orchestration-core.ts";
 import {
   OPERATION_BUDGETS_MS,
+  OrchestrationHttpError,
   WORST_CASE_CRITICAL_PATH_MS,
   createReportOrchestrationHttpPort,
   isRetryableHttpStatus,
 } from "../src/trigger/report-orchestration-http.ts";
+import { createWorkerApiManifest } from "../src/shared/worker-api-contract.ts";
 import { AI_ACTION_PLANNER_LIMITS, deterministicProductActionResult } from "../app/lib/ai-action-planner.ts";
 
 const payload = {
@@ -105,6 +107,7 @@ function mockPort(overrides = {}) {
   const port = {
     events,
     saves,
+    async preflight() {},
     async loadReport() {
       return {
         run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "queued", createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:00:00.000Z" },
@@ -158,6 +161,20 @@ test("successful orchestration persists ordered heartbeats and a complete docume
   assert.ok(port.events.some((item) => item.idempotencyKey === "matching-complete"));
   assert.equal(port.events.some((item) => item.idempotencyKey.startsWith("brief-")), false);
   assert.equal(port.saves[0].document.marketBrief, null);
+});
+
+test("non-terminal orchestration preflights before its first mutation", async () => {
+  const order = [];
+  const port = mockPort({
+    async preflight() { order.push("preflight"); },
+    async appendEvent(_publicId, value) {
+      order.push(`event:${value.idempotencyKey}`);
+      port.events.push(value);
+    },
+  });
+  await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
+  assert.equal(order[0], "preflight");
+  assert.equal(order[1], "event:crawl-started");
 });
 
 test("independent phase failures remain visible and produce a limited report", async () => {
@@ -395,7 +412,9 @@ test("a replayed parked report preserves the live canonical phase summary", asyn
 });
 
 test("terminal success replay derives its summary and issues no mutations", async () => {
+  let preflights = 0;
   const port = mockPort({
+    async preflight() { preflights += 1; },
     async loadReport() {
       return {
         run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "limited", createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:05:00.000Z" },
@@ -409,6 +428,7 @@ test("terminal success replay derives its summary and issues no mutations", asyn
   assert.deepEqual(result.limitedPhases, ["ads"]);
   assert.equal(port.events.length, 0);
   assert.equal(port.saves.length, 0);
+  assert.equal(preflights, 0);
 });
 
 test("stored run identity drift hard-fails before any mutation", async () => {
@@ -424,6 +444,7 @@ test("stored run identity drift hard-fails before any mutation", async () => {
 test("all operation deadlines keep a two-minute margin below the stale marker", () => {
   assert.equal(MAX_OPERATION_TIMEOUT_MS, 480_000);
   for (const timeout of Object.values(OPERATION_BUDGETS_MS)) assert.ok(timeout <= MAX_OPERATION_TIMEOUT_MS);
+  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 745_000);
   assert.ok(WORST_CASE_CRITICAL_PATH_MS <= 780_000, "critical path must preserve a two-minute task-ceiling margin");
 });
 
@@ -559,6 +580,55 @@ test("HTTP transport retries only bounded transient statuses and never leaks its
   assert.equal(isRetryableHttpStatus(429), true);
   assert.equal(isRetryableHttpStatus(500), true);
   assert.equal(isRetryableHttpStatus(400), false);
+});
+
+test("HTTP preflight validates the private worker API manifest and treats deterministic incompatibility as permanent", async () => {
+  const token = "callback_secret_with_enough_entropy_123456";
+  const calls = [];
+  const valid = createWorkerApiManifest(() => new Date("2026-07-26T12:00:00.000Z"));
+  const port = createReportOrchestrationHttpPort({
+    appOrigin: "https://market.example",
+    callbackToken: token,
+    async fetchImpl(url, init) {
+      calls.push({ url, init });
+      return Response.json(valid);
+    },
+  });
+  await port.preflight();
+  assert.equal(calls[0].url, "https://market.example/api/internal/capabilities");
+  assert.equal(calls[0].init.method, "GET");
+  assert.equal(calls[0].init.headers.Authorization, `Bearer ${token}`);
+
+  for (const response of [
+    Response.json({ ...valid, protocolVersion: "2" }),
+    new Response("missing", { status: 404 }),
+    new Response("unauthorized", { status: 401 }),
+  ]) {
+    const incompatible = createReportOrchestrationHttpPort({
+      appOrigin: "https://market.example",
+      callbackToken: token,
+      async fetchImpl() { return response.clone(); },
+    });
+    await assert.rejects(incompatible.preflight(), PermanentOrchestrationError);
+  }
+});
+
+test("HTTP preflight preserves bounded retries for transient readiness failures", async () => {
+  let calls = 0;
+  const port = createReportOrchestrationHttpPort({
+    appOrigin: "https://market.example",
+    callbackToken: "callback_secret_with_enough_entropy_123456",
+    async fetchImpl() {
+      calls += 1;
+      return new Response("temporarily unavailable", { status: 503 });
+    },
+  });
+  await assert.rejects(port.preflight(), (error) => {
+    assert.equal(error instanceof OrchestrationHttpError, true);
+    assert.equal(error.retryable, true);
+    return true;
+  });
+  assert.equal(calls, 2);
 });
 
 test("the HTTP action adapter uses the internal route, bounded budget, and bearer credential", async () => {

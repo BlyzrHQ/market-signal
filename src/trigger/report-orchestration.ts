@@ -1,6 +1,6 @@
 import { AbortTaskRunError, task } from "@trigger.dev/sdk";
 
-import { PermanentOrchestrationError, type ReportOrchestrationPayload } from "./contracts/report-orchestration.ts";
+import { PermanentOrchestrationError, type ReportOrchestrationPayload } from "../shared/report-orchestration-contract.ts";
 import { orchestrateReport } from "./report-orchestration-core.ts";
 import { createReportOrchestrationHttpPort } from "./report-orchestration-http.ts";
 
