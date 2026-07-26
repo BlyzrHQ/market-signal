@@ -1,0 +1,67 @@
+name: market-signal
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        MARKET_SIGNAL_REVISION: ${MARKET_SIGNAL_REVISION:-unknown}
+    image: market-signal:${MARKET_SIGNAL_IMAGE_TAG:-local}
+    env_file:
+      - ${MARKET_SIGNAL_ENV_FILE:-./deploy/vps/market-signal.env}
+    environment:
+      PORT: 3000
+      MARKET_SIGNAL_SQLITE_PATH: /data/market-signal.sqlite
+      MARKET_SIGNAL_BACKUP_DIR: /backups
+    expose:
+      - "3000"
+    volumes:
+      - /var/lib/market-signal:/data
+      - /var/backups/market-signal:/backups
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 4
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    environment:
+      MARKET_SIGNAL_DOMAIN: ${MARKET_SIGNAL_DOMAIN:?MARKET_SIGNAL_DOMAIN is required}
+    depends_on:
+      app:
+        condition: service_healthy
+        restart: true
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/vps/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  caddy_data:
+  caddy_config:

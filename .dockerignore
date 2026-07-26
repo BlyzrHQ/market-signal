@@ -1,0 +1,17 @@
+.git
+.github
+.openai/*
+!.openai/hosting.json
+.trigger
+.vinext
+.wrangler
+dist
+node_modules
+outputs
+work
+.env*
+deploy/vps/market-signal.env
+*.sqlite
+*.sqlite-*
+*.db
+npm-debug.log*
