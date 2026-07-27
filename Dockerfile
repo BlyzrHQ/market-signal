@@ -14,6 +14,7 @@ ENV NODE_ENV=production \
     MARKET_SIGNAL_SQLITE_PATH=/data/market-signal.sqlite \
     MARKET_SIGNAL_BACKUP_DIR=/backups
 LABEL org.opencontainers.image.title="Market Signal" \
+      org.opencontainers.image.source="https://github.com/BlyzrHQ/market-signal" \
       org.opencontainers.image.revision="${MARKET_SIGNAL_REVISION}"
 WORKDIR /app
 

@@ -15,6 +15,7 @@ test("VPS image and compose keep the app private and persistent", () => {
 
   assert.match(dockerfile, /USER 10001:10001/);
   assert.match(dockerfile, /org\.opencontainers\.image\.revision/);
+  assert.match(dockerfile, /org\.opencontainers\.image\.source="https:\/\/github\.com\/BlyzrHQ\/market-signal"/);
   assert.match(dockerfile, /node_modules\/vinext\/dist\/cli\.js/);
   assert.match(dockerfile, /MARKET_SIGNAL_SQLITE_PATH=\/data\/market-signal\.sqlite/);
   assert.match(compose, /\/var\/lib\/market-signal:\/data/);
@@ -28,6 +29,68 @@ test("VPS image and compose keep the app private and persistent", () => {
   assert.ok(caddyService);
   assert.doesNotMatch(caddyService, /env_file:/);
   assert.match(caddyService, /MARKET_SIGNAL_DOMAIN:/);
+});
+
+test("GitHub VPS deployment is manual, pinned, immutable, and non-destructive", () => {
+  const activeWorkflow = path.join(root, ".github/workflows/deploy-vps.yml");
+  const workflow = fs.existsSync(activeWorkflow)
+    ? fs.readFileSync(activeWorkflow, "utf8")
+    : read("deploy/vps/deploy-vps.workflow.yml");
+  const deploy = read("deploy/vps/deploy-approved-release.sh");
+  const updateKey = read("deploy/vps/update-openai-key.sh");
+  const installer = read("deploy/vps/install-github-deploy-user.sh");
+
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.doesNotMatch(workflow, /^\s*(?:push|pull_request|schedule):/m);
+  assert.match(workflow, /environment:\s*\n\s+name: production/);
+  assert.match(workflow, /cancel-in-progress: false/);
+  assert.match(workflow, /timeout-minutes: 45/);
+  assert.match(workflow, /timeout-minutes: 30/);
+  assert.match(workflow, /ConnectTimeout=10/g);
+  assert.match(workflow, /ServerAliveInterval=15/g);
+  assert.match(workflow, /ServerAliveCountMax=3/g);
+  assert.match(workflow, /StrictHostKeyChecking=yes/g);
+  assert.doesNotMatch(workflow, /ssh-keyscan/);
+  assert.match(workflow, /\^\[0-9a-f\]\{40\}\$/);
+  assert.match(workflow, /git merge-base --is-ancestor/);
+  assert.match(workflow, /git rev-list --first-parent origin\/master/);
+  assert.equal((workflow.match(/persist-credentials: false/g) || []).length, 2);
+  assert.match(workflow, /docker buildx imagetools inspect/);
+  assert.match(workflow, /--retry 6 --retry-all-errors --retry-delay 2/);
+  assert.match(workflow, /OPENAI_API_KEY:[^\n]*secrets\.OPENAI_API_KEY/);
+  assert.doesNotMatch(workflow, /TRIGGER_SECRET_KEY|MARKET_SIGNAL_CALLBACK_TOKEN/);
+  assert.doesNotMatch(workflow, /docker (?:image |system )?prune|down -v|ssh-keyscan/);
+
+  assert.match(deploy, /docker pull "\$\{immutable_ref\}"/);
+  assert.match(deploy, /backup-sqlite\.mjs/);
+  assert.match(deploy, /verify-sqlite-backup\.mjs/);
+  assert.match(deploy, /up -d --no-build --pull never/);
+  assert.match(deploy, /restore_previous_release/);
+  assert.match(deploy, /ROLLBACK: restoring/);
+  assert.match(deploy, /candidate Compose startup failed/);
+  assert.match(deploy, /candidate app did not become healthy/);
+  assert.match(deploy, /candidate internal capability probe failed/);
+  assert.match(deploy, /candidate SQLite read probe failed/);
+  assert.match(deploy, /timeout 10m docker pull/);
+  assert.match(deploy, /running container revision/);
+  assert.doesNotMatch(deploy, /\brm\s+-rf\b|docker (?:image |system )?prune|down -v/);
+
+  assert.match(updateKey, /IFS= read -r api_key/);
+  assert.match(updateKey, /expected exactly one OPENAI_API_KEY entry/);
+  assert.match(updateKey, /mv -f -- "\$\{temporary\}" "\$\{env_file\}"/);
+  assert.doesNotMatch(updateKey, /echo .*api_key|set -x/);
+
+  assert.match(installer, /market-deploy/);
+  assert.match(installer, /ssh-ed25519/);
+  assert.match(installer, /visudo -cf/);
+  assert.match(installer, /chown -R "\$\{deploy_user\}:\$\{deploy_group\}" \/opt\/market-signal\/releases/);
+});
+
+test("repeatable VPS preflight permits only SSH, Caddy, and DHCP listeners", () => {
+  const preflight = read("deploy/vps/preflight.sh");
+  assert.match(preflight, /port != "22" && port != "80" && port != "443"/);
+  assert.match(preflight, /port != "68" && port != "443"/);
+  assert.match(preflight, /\/etc\/market-signal\/deploy\.conf/);
 });
 
 test("runtime dependencies required by vinext are installed in production", () => {
