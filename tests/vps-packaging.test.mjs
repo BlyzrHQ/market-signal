@@ -24,7 +24,7 @@ test("VPS image and compose keep the app private and persistent", () => {
   assert.match(compose, /max-size: "10m"/);
   assert.match(compose, /expose:\s*\n\s*- "3000"/);
   assert.doesNotMatch(compose, /app:[\s\S]*?ports:\s*\n\s*-\s*["']?\d+:3000/);
-  const caddyService = compose.split(/\n  caddy:\n/)[1];
+  const caddyService = compose.split(/\r?\n  caddy:\r?\n/)[1];
   assert.ok(caddyService);
   assert.doesNotMatch(caddyService, /env_file:/);
   assert.match(caddyService, /MARKET_SIGNAL_DOMAIN:/);
