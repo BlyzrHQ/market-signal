@@ -3,6 +3,14 @@ set -Eeuo pipefail
 
 export LC_ALL=C
 
+config_file="/etc/market-signal/deploy.conf"
+if [[ -r "${config_file}" ]]; then
+  # The root-owned deployment config lets the reviewed preflight run through a
+  # narrowly scoped sudo rule without accepting user-controlled arguments.
+  # shellcheck disable=SC1091
+  source "${config_file}"
+fi
+
 domain="${MARKET_SIGNAL_DOMAIN:-}"
 expected_ipv4="${MARKET_SIGNAL_EXPECTED_IPV4:-}"
 
@@ -68,7 +76,7 @@ unexpected_public_tcp="$(
       port = address
       sub(/^.*:/, "", port)
       if (host !~ /^127\./ && host != "[::1]" && host != "::1" &&
-          port != "22") print address
+          port != "22" && port != "80" && port != "443") print address
     }' |
     sort -u
 )" || fail "public TCP listeners could not be inspected"
@@ -84,7 +92,7 @@ unexpected_public_udp="$(
       port = address
       sub(/^.*:/, "", port)
       if (host !~ /^127\./ && host != "[::1]" && host != "::1" &&
-          port != "68") print address
+          port != "68" && port != "443") print address
     }' |
     sort -u
 )" || fail "public UDP listeners could not be inspected"

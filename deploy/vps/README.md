@@ -104,3 +104,15 @@ pre-release backup only when the migration is not backward compatible.
 Keep the existing Sites deployment live until the VPS passes TLS, capability,
 Trigger callback, real crawl, persistence, restart, and backup/restore checks.
 DNS cutover and Trigger production-origin changes are separate release tasks.
+
+## 7. GitHub Actions handoff
+
+After the one-time dedicated deploy account is installed, production releases
+can be dispatched from GitHub without sharing secrets in chat. Follow
+`docs/GITHUB_VPS_HANDOFF.md`. The workflow builds an exact approved `master`
+revision on a GitHub-hosted runner, publishes it to private GHCR by digest,
+takes a verified SQLite backup, and deploys without rebuilding on the VPS.
+
+The workflow updates only `OPENAI_API_KEY`. Trigger credentials remain in the
+VPS runtime file. GitHub Environment approval, pinned SSH host identity,
+immutable image verification, TLS, and container health all fail closed.
