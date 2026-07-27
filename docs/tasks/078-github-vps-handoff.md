@@ -3,13 +3,13 @@
 ## Goal
 
 Allow an operator on another laptop to add a fresh OpenAI project key without
-putting it in chat or Git, then deploy an exact Fable-approved `master` commit
+putting it in chat or Git, then deploy an exact independently approved `master` commit
 to the Market Signal VPS through a protected, manually dispatched GitHub
 Actions workflow.
 
 ## Decision
 
-Fable 5 recommended a two-stage workflow:
+The architecture review recommended a two-stage workflow:
 
 1. validate and build an exact 40-character commit from `master`, then publish
    the image to private GHCR by immutable digest;
@@ -44,7 +44,7 @@ credentials on the VPS were rejected.
   release deletion, DNS mutation, or Sites retirement.
 - The manually dispatched workflow is stored at
   `.github/workflows/deploy-vps.yml` and remains subject to Actions validation
-  plus the strict Fable merge gate.
+  plus the strict independent merge gate.
 - The deploy account is in the Docker group and is therefore effectively
   root-equivalent. Its key is dedicated, environment-scoped, and must be
   rotated after any suspected runner or repository compromise.
@@ -66,5 +66,20 @@ credentials on the VPS were rejected.
    at least 14 days remaining on the certificate.
 9. Old image tags and release directories remain available for explicit
    rollback.
-10. Tests, builds, lint, strict Fable review, merge, and first deployment are
+10. Tests, builds, lint, strict independent review, merge, and first deployment are
     recorded before this task is complete.
+
+## Review status
+
+The strict GPT-5.6 Sol review blocked the first published revision because a
+failed candidate could leave production offline and the GitHub environment
+had no branch restriction. The follow-up adds automatic restoration of the
+previous healthy release, internal capability and SQLite probes, bounded jobs
+and SSH sessions, and a custom `master`-only deployment policy.
+
+The private repository is on a GitHub Free organization plan. GitHub therefore
+does not provide branch protection or required environment reviewers here.
+Three organization administrators currently have write access. The workflow
+must remain unmerged and unused until the repository gains an independently
+enforced `master` approval boundary or deployment credentials move to a
+separately protected broker.

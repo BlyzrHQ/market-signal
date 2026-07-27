@@ -8,12 +8,13 @@ is never pasted into Codex, a PR, an issue, or a repository file.
 
 The manually dispatched workflow is stored at
 `.github/workflows/deploy-vps.yml`. Do not merge changes to it until Actions
-validation and the required final Fable review pass.
+validation and the required independent release review pass.
 
 The repository administrator creates the `production` environment with:
 
 - deployment branches restricted to `master`;
-- required reviewers when the repository plan supports them;
+- required reviewers with self-review disabled when the repository plan
+  supports them;
 - environment variables:
   - `VPS_HOST=191.218.162.18`
   - `VPS_USER=market-deploy`
@@ -35,7 +36,8 @@ provider console. Never generate it with `ssh-keyscan` inside Actions.
 4. Go to **Settings → Environments → production → Environment secrets**.
 5. Create or replace `OPENAI_API_KEY` with the fresh key.
 6. Open **Actions → Deploy approved Market Signal revision → Run workflow**.
-7. Enter the full 40-character SHA of the Fable-approved commit on `master`.
+7. Enter the full 40-character SHA of the independently approved commit on
+   `master`.
 8. Approve the `production` environment when prompted, or ask an eligible
    reviewer to approve it.
 9. Wait for build, backup, deploy, TLS, health, digest, and revision checks to
@@ -50,10 +52,12 @@ bypass the backup gate or overwrite the live database.
 
 ## Rollback
 
-Dispatch the same workflow with the full SHA of the previous approved
-`master` commit. Old release directories and image tags are deliberately not
-deleted. Database restoration is separate and is required only when a schema
-change is not backward compatible.
+Post-switch startup and health failures automatically restore and verify the
+previous release while preserving the SQLite volume and verified backup.
+For an operator-requested rollback, dispatch the same workflow with the full
+SHA of the previous approved `master` commit. Old release directories and
+image tags are deliberately not deleted. Database restoration is separate
+and is required only when a schema change is not backward compatible.
 
 ## Secret boundary
 

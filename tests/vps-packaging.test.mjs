@@ -44,6 +44,11 @@ test("GitHub VPS deployment is manual, pinned, immutable, and non-destructive", 
   assert.doesNotMatch(workflow, /^\s*(?:push|pull_request|schedule):/m);
   assert.match(workflow, /environment:\s*\n\s+name: production/);
   assert.match(workflow, /cancel-in-progress: false/);
+  assert.match(workflow, /timeout-minutes: 45/);
+  assert.match(workflow, /timeout-minutes: 30/);
+  assert.match(workflow, /ConnectTimeout=10/g);
+  assert.match(workflow, /ServerAliveInterval=15/g);
+  assert.match(workflow, /ServerAliveCountMax=3/g);
   assert.match(workflow, /StrictHostKeyChecking=yes/g);
   assert.doesNotMatch(workflow, /ssh-keyscan/);
   assert.match(workflow, /\^\[0-9a-f\]\{40\}\$/);
@@ -60,6 +65,13 @@ test("GitHub VPS deployment is manual, pinned, immutable, and non-destructive", 
   assert.match(deploy, /backup-sqlite\.mjs/);
   assert.match(deploy, /verify-sqlite-backup\.mjs/);
   assert.match(deploy, /up -d --no-build --pull never/);
+  assert.match(deploy, /restore_previous_release/);
+  assert.match(deploy, /ROLLBACK: restoring/);
+  assert.match(deploy, /candidate Compose startup failed/);
+  assert.match(deploy, /candidate app did not become healthy/);
+  assert.match(deploy, /candidate internal capability probe failed/);
+  assert.match(deploy, /candidate SQLite read probe failed/);
+  assert.match(deploy, /timeout 10m docker pull/);
   assert.match(deploy, /running container revision/);
   assert.doesNotMatch(deploy, /\brm\s+-rf\b|docker (?:image |system )?prune|down -v/);
 

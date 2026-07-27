@@ -20,6 +20,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -87,6 +88,7 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     environment:
       name: production
       url: https://${{ vars.MARKET_SIGNAL_DOMAIN }}
@@ -146,6 +148,9 @@ jobs:
           ssh \
             -i "${HOME}/.ssh/market-signal-deploy" \
             -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=3 \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
             "${VPS_USER}@${VPS_HOST}" \
@@ -162,6 +167,9 @@ jobs:
           ssh_args=(
             -i "${HOME}/.ssh/market-signal-deploy"
             -o BatchMode=yes
+            -o ConnectTimeout=10
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=3
             -o StrictHostKeyChecking=yes
             -o UserKnownHostsFile="${HOME}/.ssh/known_hosts"
           )
@@ -190,6 +198,9 @@ jobs:
             ssh \
               -i "${HOME}/.ssh/market-signal-deploy" \
               -o BatchMode=yes \
+              -o ConnectTimeout=10 \
+              -o ServerAliveInterval=15 \
+              -o ServerAliveCountMax=3 \
               -o StrictHostKeyChecking=yes \
               -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
               "${VPS_USER}@${VPS_HOST}" \
@@ -207,6 +218,9 @@ jobs:
             ssh \
               -i "${HOME}/.ssh/market-signal-deploy" \
               -o BatchMode=yes \
+              -o ConnectTimeout=10 \
+              -o ServerAliveInterval=15 \
+              -o ServerAliveCountMax=3 \
               -o StrictHostKeyChecking=yes \
               -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
               "${VPS_USER}@${VPS_HOST}" \
@@ -225,6 +239,9 @@ jobs:
           ssh \
             -i "${HOME}/.ssh/market-signal-deploy" \
             -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=3 \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
             "${VPS_USER}@${VPS_HOST}" \
@@ -247,6 +264,9 @@ jobs:
           ssh \
             -i "${HOME}/.ssh/market-signal-deploy" \
             -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=3 \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
             "${VPS_USER}@${VPS_HOST}" \
