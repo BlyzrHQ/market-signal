@@ -54,6 +54,9 @@ test("GitHub VPS deployment is manual, pinned, immutable, and non-destructive", 
   assert.match(workflow, /\^\[0-9a-f\]\{40\}\$/);
   assert.match(workflow, /git merge-base --is-ancestor/);
   assert.match(workflow, /git rev-list --first-parent origin\/master/);
+  assert.match(workflow, /git cat-file -e "\$\{REQUESTED_SHA\}\^\{commit\}"/);
+  assert.match(workflow, /git checkout --detach "\$\{REQUESTED_SHA\}"/);
+  assert.doesNotMatch(workflow, /git fetch --no-tags origin master/);
   assert.equal((workflow.match(/persist-credentials: false/g) || []).length, 2);
   assert.match(workflow, /docker buildx imagetools inspect/);
   assert.match(workflow, /--retry 6 --retry-all-errors --retry-delay 2/);
