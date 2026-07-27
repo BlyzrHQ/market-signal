@@ -18,9 +18,13 @@ The architecture review recommended a two-stage workflow:
    Trigger credentials and SQLite volumes, take a verified online backup, and
    deploy with `docker compose --no-build`.
 
-Push-triggered deployment, a self-hosted runner, rebuilding on the VPS,
-storing the full runtime environment in GitHub, and long-lived registry
-credentials on the VPS were rejected.
+Push-triggered deployment, rebuilding on the VPS, storing the full runtime
+environment in GitHub, and long-lived registry credentials on the VPS were
+rejected. The original rejection of a self-hosted runner is superseded by
+[Task 080](./080-self-hosted-deploy-runner.md): repeated production runs proved
+that GitHub-hosted runners could build successfully but could not reach the
+Hostinger SSH endpoint. Only the deploy job therefore uses a one-job,
+repository-scoped JIT runner on the VPS; image builds remain GitHub-hosted.
 
 ## Scope
 
@@ -39,7 +43,11 @@ credentials on the VPS were rejected.
 - Trigger credentials remain only in `/etc/market-signal/market-signal.env`.
 - The VPS host key is pinned from the already trusted provisioning session;
   the workflow never runs `ssh-keyscan`.
-- Secrets travel through standard input and never command-line arguments.
+- Runtime OpenAI and SSH credentials travel through standard input or protected
+  files and never command-line arguments. Task 080 records the narrow exception
+  required by GitHub's JIT runner: its single-use registration value is passed
+  to the official runner through the documented `--jitconfig` argument and is
+  removed with the ephemeral runner state after one job.
 - The workflow contains no database deletion, volume deletion, image pruning,
   release deletion, DNS mutation, or Sites retirement.
 - The manually dispatched workflow is stored at

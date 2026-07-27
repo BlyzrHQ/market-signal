@@ -39,7 +39,9 @@ usermod -aG docker "${deploy_user}"
 
 home_dir="$(getent passwd "${deploy_user}" | cut -d: -f6)"
 install -d -o "${deploy_user}" -g "${deploy_group}" -m 0700 "${home_dir}/.ssh"
-printf '%s\n' "${public_key}" >"${home_dir}/.ssh/authorized_keys"
+printf '%s %s\n' \
+  'from="127.0.0.1,::1",no-agent-forwarding,no-port-forwarding,no-X11-forwarding,no-pty' \
+  "${public_key}" >"${home_dir}/.ssh/authorized_keys"
 chown "${deploy_user}:${deploy_group}" "${home_dir}/.ssh/authorized_keys"
 chmod 0600 "${home_dir}/.ssh/authorized_keys"
 
