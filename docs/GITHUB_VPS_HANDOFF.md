@@ -38,8 +38,8 @@ provider console. Never generate it with `ssh-keyscan` inside Actions.
 6. Open **Actions → Deploy approved Market Signal revision → Run workflow**.
 7. Enter the full 40-character SHA of the independently approved commit on
    `master`.
-8. Approve the `production` environment when prompted, or ask an eligible
-   reviewer to approve it.
+8. If the repository plan has an environment reviewer rule, approve the
+   `production` environment when prompted or ask an eligible reviewer.
 9. Wait for build, backup, deploy, TLS, health, digest, and revision checks to
    pass.
 10. Run a real report at `https://signal.blyzr.com` and confirm competitor and

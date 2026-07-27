@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       commit_sha:
-        description: Full 40-character Fable-approved commit on master
+        description: Full 40-character independently approved commit on master
         required: true
         type: string
 

@@ -79,7 +79,8 @@ and SSH sessions, and a custom `master`-only deployment policy.
 
 The private repository is on a GitHub Free organization plan. GitHub therefore
 does not provide branch protection or required environment reviewers here.
-Three organization administrators currently have write access. The workflow
-must remain unmerged and unused until the repository gains an independently
-enforced `master` approval boundary or deployment credentials move to a
-separately protected broker.
+Three organization administrators currently have write access. The user
+explicitly accepted this residual risk for the current release after the
+GPT-5.6 Sol review blocked on it. The production environment remains restricted
+to `master`; upgrading the organization plan or moving deployment credentials
+to a separately protected broker remains required hardening.
