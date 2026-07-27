@@ -42,10 +42,9 @@ credentials on the VPS were rejected.
 - Secrets travel through standard input and never command-line arguments.
 - The workflow contains no database deletion, volume deletion, image pruning,
   release deletion, DNS mutation, or Sites retirement.
-- While GitHub's local OAuth credential lacks the `workflow` scope, the exact
-  reviewed YAML is published as `deploy/vps/deploy-vps.workflow.yml`. An
-  authorized laptop must move it without modification to
-  `.github/workflows/deploy-vps.yml` before final review and merge.
+- The manually dispatched workflow is stored at
+  `.github/workflows/deploy-vps.yml` and remains subject to Actions validation
+  plus the strict Fable merge gate.
 - The deploy account is in the Docker group and is therefore effectively
   root-equivalent. Its key is dedicated, environment-scoped, and must be
   rotated after any suspected runner or repository compromise.

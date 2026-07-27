@@ -6,19 +6,9 @@ is never pasted into Codex, a PR, an issue, or a repository file.
 
 ## One-time repository setup
 
-Until the draft PR's final Fable review is complete, the reviewed workflow is
-stored as `deploy/vps/deploy-vps.workflow.yml`. From an authorized laptop:
-
-```sh
-gh auth refresh -h github.com -s workflow
-mkdir -p .github/workflows
-git mv deploy/vps/deploy-vps.workflow.yml .github/workflows/deploy-vps.yml
-git commit -m "Activate protected VPS deployment workflow"
-git push
-```
-
-Do not merge the PR until that exact move passes Actions validation and the
-required final Fable review.
+The manually dispatched workflow is stored at
+`.github/workflows/deploy-vps.yml`. Do not merge changes to it until Actions
+validation and the required final Fable review pass.
 
 The repository administrator creates the `production` environment with:
 
