@@ -41,5 +41,6 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+/deploy/vps/market-signal.env
 
 .trigger
