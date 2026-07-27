@@ -31,7 +31,7 @@ jobs:
       - name: Check out the requested revision
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: ${{ inputs.commit_sha }}
+          ref: master
           fetch-depth: 0
           persist-credentials: false
 
@@ -45,14 +45,16 @@ jobs:
             echo "A full lowercase 40-character commit SHA is required." >&2
             exit 1
           }
-          git fetch --no-tags origin master
-          [[ "$(git rev-parse HEAD)" == "${REQUESTED_SHA}" ]]
+          [[ "$(git rev-parse HEAD)" == "$(git rev-parse origin/master)" ]]
+          git cat-file -e "${REQUESTED_SHA}^{commit}"
           git merge-base --is-ancestor "${REQUESTED_SHA}" origin/master
           first_parent_match="$(
             git rev-list --first-parent origin/master |
               grep -Fx -- "${REQUESTED_SHA}" || true
           )"
           [[ "${first_parent_match}" == "${REQUESTED_SHA}" ]]
+          git checkout --detach "${REQUESTED_SHA}"
+          [[ "$(git rev-parse HEAD)" == "${REQUESTED_SHA}" ]]
           echo "revision=${REQUESTED_SHA}" >>"${GITHUB_OUTPUT}"
 
       - name: Build and publish immutable image
