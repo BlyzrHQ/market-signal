@@ -1,0 +1,253 @@
+name: Deploy approved Market Signal revision
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Full 40-character Fable-approved commit on master
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: market-signal-production
+  cancel-in-progress: false
+
+env:
+  REGISTRY_IMAGE: ghcr.io/blyzrhq/market-signal
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      revision: ${{ steps.validate.outputs.revision }}
+      digest: ${{ steps.publish.outputs.digest }}
+    steps:
+      - name: Check out the requested revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate an exact master revision
+        id: validate
+        env:
+          REQUESTED_SHA: ${{ inputs.commit_sha }}
+        run: |
+          set -Eeuo pipefail
+          [[ "${REQUESTED_SHA}" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "A full lowercase 40-character commit SHA is required." >&2
+            exit 1
+          }
+          git fetch --no-tags origin master
+          [[ "$(git rev-parse HEAD)" == "${REQUESTED_SHA}" ]]
+          git merge-base --is-ancestor "${REQUESTED_SHA}" origin/master
+          first_parent_match="$(
+            git rev-list --first-parent origin/master |
+              grep -Fx -- "${REQUESTED_SHA}" || true
+          )"
+          [[ "${first_parent_match}" == "${REQUESTED_SHA}" ]]
+          echo "revision=${REQUESTED_SHA}" >>"${GITHUB_OUTPUT}"
+
+      - name: Build and publish immutable image
+        id: publish
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ github.actor }}
+          REVISION: ${{ steps.validate.outputs.revision }}
+        run: |
+          set -Eeuo pipefail
+          printf '%s' "${REGISTRY_TOKEN}" |
+            docker login ghcr.io --username "${REGISTRY_USER}" --password-stdin
+          trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
+          docker build \
+            --platform linux/amd64 \
+            --build-arg "MARKET_SIGNAL_REVISION=${REVISION}" \
+            --tag "${REGISTRY_IMAGE}:${REVISION}" \
+            .
+          label="$(
+            docker image inspect "${REGISTRY_IMAGE}:${REVISION}" \
+              --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+          )"
+          [[ "${label}" == "${REVISION}" ]]
+          docker push "${REGISTRY_IMAGE}:${REVISION}"
+          manifest="$(
+            docker buildx imagetools inspect "${REGISTRY_IMAGE}:${REVISION}" \
+              --format '{{json .Manifest}}'
+          )"
+          digest="$(jq -r '.digest // empty' <<<"${manifest}")"
+          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "digest=${digest}" >>"${GITHUB_OUTPUT}"
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: production
+      url: https://${{ vars.MARKET_SIGNAL_DOMAIN }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Check out the approved revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.build.outputs.revision }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prepare pinned SSH identity
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_HOST_KEY: ${{ vars.VPS_HOST_KEY }}
+          VPS_HOST: ${{ vars.VPS_HOST }}
+        run: |
+          set -Eeuo pipefail
+          [[ -n "${SSH_PRIVATE_KEY}" ]]
+          [[ -n "${VPS_HOST_KEY}" ]]
+          [[ -n "${VPS_HOST}" ]]
+          IFS=. read -r octet1 octet2 octet3 octet4 <<<"${VPS_HOST}"
+          for octet in "${octet1}" "${octet2}" "${octet3}" "${octet4}"; do
+            ((10#${octet} <= 255))
+          done
+          install -d -m 0700 "${HOME}/.ssh"
+          printf '%s\n' "${SSH_PRIVATE_KEY}" | tr -d '\r' \
+            >"${HOME}/.ssh/market-signal-deploy"
+          chmod 0600 "${HOME}/.ssh/market-signal-deploy"
+          printf '%s\n' "${VPS_HOST_KEY}" >"${HOME}/.ssh/known_hosts"
+          chmod 0600 "${HOME}/.ssh/known_hosts"
+          ssh-keygen -y -f "${HOME}/.ssh/market-signal-deploy" >/dev/null
+          ssh-keygen -F "${VPS_HOST}" -f "${HOME}/.ssh/known_hosts" >/dev/null
+
+      - name: Verify production configuration
+        env:
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          VPS_USER: ${{ vars.VPS_USER }}
+          DOMAIN: ${{ vars.MARKET_SIGNAL_DOMAIN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -Eeuo pipefail
+          [[ "${VPS_HOST}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
+          [[ "${VPS_USER}" == "market-deploy" ]]
+          [[ "${DOMAIN}" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "${OPENAI_API_KEY}" =~ ^sk-[A-Za-z0-9_-]{20,}$ ]]
+
+      - name: Run trusted host preflight
+        env:
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          VPS_USER: ${{ vars.VPS_USER }}
+        run: |
+          set -Eeuo pipefail
+          ssh \
+            -i "${HOME}/.ssh/market-signal-deploy" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
+            "${VPS_USER}@${VPS_HOST}" \
+            "sudo /usr/local/sbin/market-signal-preflight"
+
+      - name: Stage reviewed release files
+        env:
+          REVISION: ${{ needs.build.outputs.revision }}
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          VPS_USER: ${{ vars.VPS_USER }}
+        run: |
+          set -Eeuo pipefail
+          remote="${VPS_USER}@${VPS_HOST}"
+          ssh_args=(
+            -i "${HOME}/.ssh/market-signal-deploy"
+            -o BatchMode=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="${HOME}/.ssh/known_hosts"
+          )
+          ssh "${ssh_args[@]}" "${remote}" \
+            "install -d -m 0750 /opt/market-signal/releases/${REVISION}"
+          tar -czf - \
+            compose.yaml \
+            deploy/vps/Caddyfile \
+            deploy/vps/deploy-approved-release.sh \
+            scripts/backup-sqlite.mjs \
+            scripts/verify-sqlite-backup.mjs \
+            scripts/sqlite-backup-utils.mjs |
+            ssh "${ssh_args[@]}" "${remote}" \
+              "tar -xzf - -C /opt/market-signal/releases/${REVISION}"
+          ssh "${ssh_args[@]}" "${remote}" \
+            "chmod 0750 /opt/market-signal/releases/${REVISION}/deploy/vps/deploy-approved-release.sh"
+
+      - name: Update only the OpenAI runtime key
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          VPS_USER: ${{ vars.VPS_USER }}
+        run: |
+          set -Eeuo pipefail
+          printf '%s\n' "${OPENAI_API_KEY}" |
+            ssh \
+              -i "${HOME}/.ssh/market-signal-deploy" \
+              -o BatchMode=yes \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
+              "${VPS_USER}@${VPS_HOST}" \
+              "sudo /usr/local/sbin/market-signal-update-openai-key"
+
+      - name: Authenticate VPS to GHCR for this run
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ github.actor }}
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          VPS_USER: ${{ vars.VPS_USER }}
+        run: |
+          set -Eeuo pipefail
+          printf '%s' "${REGISTRY_TOKEN}" |
+            ssh \
+              -i "${HOME}/.ssh/market-signal-deploy" \
+              -o BatchMode=yes \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
+              "${VPS_USER}@${VPS_HOST}" \
+              "docker login ghcr.io --username '${REGISTRY_USER}' --password-stdin"
+
+      - name: Deploy approved image and verify health
+        env:
+          REVISION: ${{ needs.build.outputs.revision }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+          DOMAIN: ${{ vars.MARKET_SIGNAL_DOMAIN }}
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          VPS_USER: ${{ vars.VPS_USER }}
+        run: |
+          set -Eeuo pipefail
+          release="/opt/market-signal/releases/${REVISION}"
+          ssh \
+            -i "${HOME}/.ssh/market-signal-deploy" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
+            "${VPS_USER}@${VPS_HOST}" \
+            "${release}/deploy/vps/deploy-approved-release.sh '${REVISION}' '${DIGEST}' '${REGISTRY_IMAGE}' '${release}' '${DOMAIN}'"
+          curl --fail --silent --show-error --location \
+            --retry 6 --retry-all-errors --retry-delay 2 \
+            --max-time 30 "https://${DOMAIN}/" >/dev/null
+          openssl s_client \
+            -connect "${DOMAIN}:443" \
+            -servername "${DOMAIN}" </dev/null 2>/dev/null |
+            openssl x509 -checkend 1209600 -noout
+
+      - name: Remove ephemeral VPS registry login
+        if: always()
+        continue-on-error: true
+        env:
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          VPS_USER: ${{ vars.VPS_USER }}
+        run: |
+          ssh \
+            -i "${HOME}/.ssh/market-signal-deploy" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
+            "${VPS_USER}@${VPS_HOST}" \
+            "docker logout ghcr.io >/dev/null 2>&1 || true"

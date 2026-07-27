@@ -32,7 +32,10 @@ test("VPS image and compose keep the app private and persistent", () => {
 });
 
 test("GitHub VPS deployment is manual, pinned, immutable, and non-destructive", () => {
-  const workflow = read(".github/workflows/deploy-vps.yml");
+  const activeWorkflow = path.join(root, ".github/workflows/deploy-vps.yml");
+  const workflow = fs.existsSync(activeWorkflow)
+    ? fs.readFileSync(activeWorkflow, "utf8")
+    : read("deploy/vps/deploy-vps.workflow.yml");
   const deploy = read("deploy/vps/deploy-approved-release.sh");
   const updateKey = read("deploy/vps/update-openai-key.sh");
   const installer = read("deploy/vps/install-github-deploy-user.sh");
