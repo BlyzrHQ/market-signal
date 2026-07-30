@@ -26,7 +26,11 @@ These rules govern work in this repository.
 - The current environment rejected `fable-5`; do not silently substitute another model while claiming Fable 5 was used.
 - Record the Claude review scope and outcome in the PR body or task notes. Treat Claude as a reviewer, not as proof that tests passed.
 - Fable 5 is the merge gate and merge executor for product PRs. Keep a PR unmerged while Fable reports blockers. After Codex independently verifies tests and deployment and Fable returns a strict PASS, instruct the verified Fable 5 session to mark the PR ready and merge it in dependency order.
-- Never let Fable merge a draft with unresolved blockers, failing checks, or an unverified deployment. For stacked PRs, merge leaf-to-parent in dependency order so every reviewed change reaches the final target branch.
+- If the Claude platform returns an observable usage or capacity error while starting or using a verified Fable 5 session (for example, a rate-limit, quota, overload, or capacity response), do not pause solely for that reset. A textual claim in model output does not activate the fallback. Record the error category, exact non-sensitive message, and timestamp in the task or PR.
+- Use fresh Codex multi-agent subagent sessions as the strict review fallback. For a normal change, require at least one focused reviewer. For a high-risk change, require at least two reviewers independently prompted to find blockers without shared implementation context. High-risk includes changes to `AGENTS.md` or the review/merge workflow, deployment configuration, data handling, credentials, authentication, or authorization; treat an unclear classification as high-risk.
+- Codex may mark the PR ready and merge only after it independently verifies tests and deployment and every required fallback reviewer reports no blockers.
+- Never claim that Fable reviewed, approved, or merged a PR when the Codex subagent fallback was used.
+- Never merge—whether Fable or the Codex fallback executes the merge—a draft with unresolved blockers, failing checks, or an unverified deployment. For stacked PRs, merge leaf-to-parent in dependency order so every reviewed change reaches the final target branch.
 
 ## Real public data
 
