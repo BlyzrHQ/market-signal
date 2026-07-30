@@ -257,9 +257,13 @@ competitor verification.
   for each candidate lead.
 - Map an observed country to Brave `country` and Exa `userLocation` with ISO
   alpha-2 codes. Map the primary site's observed language to Brave
-  `search_lang`. When the region is `Not enough public signal`, omit provider
-  location parameters rather than defaulting to the United States; when
-  language is unknown, omit `search_lang`.
+  `search_lang`. Brave defaults an omitted `country` to `US`, an omitted
+  `search_lang` to `en`, and `ui_lang` to `en-US`; omission is therefore not a
+  neutral/global search. When region or language is unknown, exclude that domain
+  from region/language-controlled provider scoring and from adoption evidence.
+  An exploratory Brave request may still run only if the artifact labels those
+  defaults explicitly and makes no regional recall claim. Do not silently
+  compare that result with an unlocated Exa request.
 - Provider snippets are untrusted search evidence, never proof that a company
   is a competitor or that a product/price exists.
 - Search-result marketplace and directory pages may seed a company domain but
