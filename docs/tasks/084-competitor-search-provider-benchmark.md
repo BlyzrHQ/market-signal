@@ -57,6 +57,13 @@ after 24 seconds while completed lanes were retained. This is the baseline to
 beat: valid competitor count alone is not a useful result when public price and
 defensible comparison yield remain shallow.
 
+A second fresh VPS run used the corrected historical store domain,
+`noororganicfood.com`. It completed with 241 primary catalog records but zero
+accepted competitors and zero rival records after both entity and category
+lanes timed out at 24 seconds. This is a direct search-recall baseline: the
+primary crawl worked, while company discovery did not produce a market to
+compare.
+
 ## Provider research
 
 ### Brave Search API — first benchmark candidate
@@ -173,8 +180,13 @@ current end-to-end baseline rather than mislabeled as a raw-index comparison.
 The minimum real-data corpus is:
 
 - `myjam.co.uk`: UK ecommerce with a broad cultural-grocery catalog;
-- `noororganic.com`: ecommerce domain that has previously exposed crawl and
+- `noororganicfood.com`: ecommerce domain that has previously exposed crawl and
   catalog-coverage failures.
+
+`noororganic.com` is not the same benchmark subject: a fresh VPS request on
+2026-07-30 returned a truthful `parked-domain` HTTP 409 and identified a
+GoDaddy/Afternic sale page. It must not be used to score competitor-search
+quality.
 
 Before production adoption, extend the panel to at least one SaaS company and
 one agency so ecommerce-specific ranking does not degrade other supported
