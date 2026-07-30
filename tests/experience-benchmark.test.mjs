@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { buildExperienceBenchmark } from "../app/lib/experience-benchmark.ts";
+import { benchmarkGapAction, orderBenchmarkPositions } from "../app/lib/benchmark-presentation.ts";
 import { hasObservedAddToCartControl } from "../app/lib/experience-signals.ts";
 import { fetchPublicText } from "../app/lib/public-fetch.ts";
 
@@ -88,6 +89,33 @@ test("missing image markup is not converted into a losing readiness score", () =
   assert.match(primary.mobileAccessibility.formula, /only the components observed/i);
 });
 
+test("orders benchmark decisions by proven urgency and keeps unknowns last", () => {
+  const ordered = orderBenchmarkPositions([
+    { key: "small-edge", yours: 70, median: 65, leader: 90 },
+    { key: "unknown", yours: null, median: 60, leader: 90 },
+    { key: "level", yours: 60, median: 60, leader: 90 },
+    { key: "large-gap", yours: 20, median: 60, leader: 90 },
+    { key: "large-edge", yours: 80, median: 65, leader: 90 },
+    { key: "small-gap", yours: 55, median: 60, leader: 90 },
+  ]);
+  assert.deepEqual(ordered.map(({ key, band, delta }) => ({ key, band, delta })), [
+    { key: "large-gap", band: "behind", delta: -40 },
+    { key: "small-gap", band: "behind", delta: -5 },
+    { key: "level", band: "level", delta: 0 },
+    { key: "large-edge", band: "ahead", delta: 15 },
+    { key: "small-edge", band: "ahead", delta: 5 },
+    { key: "unknown", band: "unknown", delta: null },
+  ]);
+});
+
+test("benchmark gap actions use observed evidence and stay localized", () => {
+  assert.equal(benchmarkGapAction("images", { products: 10, productsWithImage: 7 }, false), "Add images to 3 public products currently missing one.");
+  assert.equal(benchmarkGapAction("information", { completedFields: 15, possibleFields: 18 }, false), "Complete 3 missing public fields in the product sample.");
+  assert.equal(benchmarkGapAction("purchasePath", { hasProductPath: false, hasAddToCart: true, hasCartLink: true, hasCheckoutLink: true }, false), "Expose a direct public path to product pages.");
+  assert.match(benchmarkGapAction("trust", { shipping: true, returns: false, contact: false, legal: true, company: true }, false), /returns, contact/);
+  assert.match(benchmarkGapAction("mobileAccessibility", { viewport: false }, true), /عرض/);
+});
+
 test("add-to-cart detection rejects ordinary address fields", () => {
   assert.equal(hasObservedAddToCartControl('<form><input name="address"><textarea name="additional_notes"></textarea></form>'), false);
   assert.equal(hasObservedAddToCartControl('<button name="add">Add item</button>'), true);
@@ -122,6 +150,12 @@ test("crawl document and report route persist and render the benchmark truth bou
   assert.match(report, /<ExperienceBenchmark/);
   assert.match(component, /not Core Web Vitals/);
   assert.match(component, /Unknown/);
-  assert.match(css, /\.benchmark-gap-chart/);
+  assert.match(component, /points behind market median/);
+  assert.match(component, /Your score was not measured/);
+  assert.doesNotMatch(component, /function ScoreBar/);
+  assert.match(css, /\.benchmark-scorecard-row/);
+  assert.match(css, /inset-inline-start/);
+  assert.match(css, /@media \(max-width: 780px\)/);
+  assert.match(css, /\[dir="rtl"\] \.benchmark-track i \{ transform: translate\(50%,-50%\)/);
   assert.match(css, /\.experience-map-plot/);
 });

@@ -1,5 +1,8 @@
 "use client";
 
+import type { CSSProperties } from "react";
+import { benchmarkGapAction, orderBenchmarkPositions } from "../lib/benchmark-presentation";
+
 type Block = Record<string, unknown>;
 type Metric = { score: number | null; sampleSize: number; observed: Record<string, unknown>; formula: string; sourceUrls: string[] };
 type DomainBenchmark = {
@@ -41,8 +44,8 @@ function domain(value: unknown): DomainBenchmark {
 function median(values: number[]) { if (!values.length) return null; const sorted = [...values].sort((a, b) => a - b); const mid = Math.floor(sorted.length / 2); return sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2); }
 function score(metricValue: Metric) { return metricValue.score === null ? null : Math.max(0, Math.min(100, metricValue.score)); }
 
-function ScoreBar({ value, label, tone }: { value: number | null; label: string; tone: "you" | "market" | "leader" }) {
-  return <div className={`benchmark-score-bar ${tone}`}><span>{label}</span><i><b style={{ width: `${value || 0}%` }} /></i><strong>{value === null ? "—" : value}</strong></div>;
+function markerStyle(value: number): CSSProperties {
+  return { insetInlineStart: `${value}%` };
 }
 
 export function ExperienceBenchmark({ block, primaryDomain, ar }: { block?: Block; primaryDomain: string; ar: boolean }) {
@@ -50,8 +53,13 @@ export function ExperienceBenchmark({ block, primaryDomain, ar }: { block?: Bloc
   const primary = domains.find((item) => item.domain === primaryDomain);
   if (!block || !primary) return <section className="benchmark-unavailable"><span>{ar ? "يلزم تقرير جديد" : "NEW RUN REQUIRED"}</span><h2>{ar ? "هذا التقرير أقدم من قياسات التجربة المقارنة" : "This report predates the experience benchmark"}</h2><p>{ar ? "شغّل تقريراً جديداً لقياس سرعة الاستجابة، جاهزية الصور، معلومات المنتجات، سهولة الوصول ومسار الشراء عبر المنافسين." : "Run a fresh report to measure response speed, image readiness, product information, product access, and the public purchase path across verified rivals."}</p></section>;
 
-  const market = SCORE_METRICS.map((key) => ({ key, median: median(domains.map((item) => score(item[key])).filter((value): value is number => value !== null)), leader: Math.max(...domains.map((item) => score(item[key]) ?? -1)) })).filter((item) => item.leader >= 0);
+  const market = SCORE_METRICS.map((key) => {
+    const knownScores = domains.map((item) => score(item[key])).filter((value): value is number => value !== null);
+    return { key, median: median(knownScores), leader: knownScores.length ? Math.max(...knownScores) : null };
+  });
+  const positionedMarket = orderBenchmarkPositions(market.map((item) => ({ ...item, yours: score(primary[item.key]) })));
   const opportunities = market.map((item) => ({ ...item, yours: score(primary[item.key]), gap: item.median === null || score(primary[item.key]) === null ? null : item.median - (score(primary[item.key]) || 0) })).filter((item) => item.gap !== null && item.gap > 0).sort((a, b) => (b.gap || 0) - (a.gap || 0));
+  const advantages = positionedMarket.filter((item) => item.band === "ahead").sort((left, right) => (right.delta || 0) - (left.delta || 0));
   const wins = market.filter((item) => score(primary[item.key]) !== null && score(primary[item.key]) === item.leader).length;
   const primaryResponse = numberOrNull(primary.response.observed.medianMs);
   const responseValues = domains.map((item) => numberOrNull(item.response.observed.medianMs)).filter((value): value is number => value !== null);
@@ -69,9 +77,36 @@ export function ExperienceBenchmark({ block, primaryDomain, ar }: { block?: Bloc
     </section>
 
     <section className="benchmark-gap-chart">
-      <header><div><span>{ar ? "الفجوة إلى السوق" : "GAP TO MARKET"}</span><h3>{ar ? "أنت مقابل المتوسط والمتصدر" : "You vs. median vs. observed leader"}</h3></div><p>{ar ? "درجات جاهزية شفافة من 100؛ لا يتم تحويل القيم المجهولة إلى صفر." : "Transparent readiness scores out of 100; unknown values are never converted to zero."}</p></header>
-      <div className="benchmark-axis"><span>0</span><span>50</span><span>100</span></div>
-      {market.map((item) => { const copy = COPY[item.key]; return <article key={item.key}><div className="benchmark-metric-label"><strong>{copy[ar ? "ar" : "en"]}</strong><small>{copy[ar ? "hintAr" : "hintEn"]}</small></div><div className="benchmark-bars"><ScoreBar value={score(primary[item.key])} label={ar ? "أنت" : "You"} tone="you" /><ScoreBar value={item.median} label={ar ? "الوسط" : "Median"} tone="market" /><ScoreBar value={item.leader} label={ar ? "المتصدر" : "Leader"} tone="leader" /></div></article>; })}
+      <header><div><span>{ar ? "أولويات السوق" : "MARKET PRIORITIES"}</span><h3>{ar ? "ما الذي يجب إصلاحه وما الذي يجب حمايته" : "What to fix—and what to protect"}</h3></div><p>{ar ? "مقارنة جاهزية من 100. النص والقيم هما المرجع؛ العلامات توضح الموضع فقط." : "Readiness comparison out of 100. Text and values are the source of truth; markers only show position."}</p></header>
+      <div className="benchmark-gap-highlights">
+        <div><span>{ar ? "أكبر فجوة مثبتة" : "LARGEST PROVEN GAP"}</span><strong>{opportunities[0] ? COPY[opportunities[0].key][ar ? "ar" : "en"] : (ar ? "لا توجد فجوة مثبتة" : "No proven gap")}</strong><small>{opportunities[0] ? (ar ? `${opportunities[0].gap} نقطة خلف متوسط السوق` : `${opportunities[0].gap} points behind market median`) : (ar ? "القيم المتاحة لا تثبت تأخراً" : "Available values do not prove a deficit")}</small></div>
+        <div><span>{ar ? "أقوى ميزة مثبتة" : "STRONGEST PROVEN EDGE"}</span><strong>{advantages[0] ? COPY[advantages[0].key][ar ? "ar" : "en"] : (ar ? "لا توجد ميزة مثبتة" : "No proven edge")}</strong><small>{advantages[0] ? (ar ? `${advantages[0].delta} نقطة أمام متوسط السوق` : `${advantages[0].delta} points ahead of market median`) : (ar ? "القيم المتاحة لا تثبت تقدماً" : "Available values do not prove an advantage")}</small></div>
+      </div>
+      <div className="benchmark-track-legend" aria-hidden="true"><span className="you">{ar ? "أنت" : "You"}</span><span className="market">{ar ? "متوسط السوق" : "Market median"}</span><span className="leader">{ar ? "المتصدر المرصود" : "Observed leader"}</span></div>
+      <div className="benchmark-scorecard">
+        {positionedMarket.map((item) => {
+          const copy = COPY[item.key];
+          const status = item.band === "unknown"
+            ? (ar ? "لم يتم قياس نتيجتك" : "Your score was not measured")
+            : item.band === "level"
+              ? (ar ? "عند متوسط السوق" : "At market median")
+              : item.band === "behind"
+                ? (ar ? `${Math.abs(item.delta || 0)} نقطة خلف متوسط السوق` : `${Math.abs(item.delta || 0)} points behind market median`)
+                : (ar ? `${item.delta} نقطة أمام متوسط السوق` : `${item.delta} points ahead of market median`);
+          return <article className={`benchmark-scorecard-row ${item.band}`} key={item.key}>
+            <div className="benchmark-metric-label"><strong>{copy[ar ? "ar" : "en"]}</strong><small>{copy[ar ? "hintAr" : "hintEn"]}</small></div>
+            <div className="benchmark-comparison">
+              <div className="benchmark-track" aria-hidden="true">
+                {item.median !== null && <i className="market" style={markerStyle(item.median)} />}
+                {item.leader !== null && <i className="leader" style={markerStyle(item.leader)} />}
+                {item.yours !== null && <i className="you" style={markerStyle(item.yours)} />}
+              </div>
+              <div className="benchmark-values"><span>{ar ? "أنت" : "You"} <b>{item.yours ?? "—"}</b></span><span>{ar ? "الوسط" : "Median"} <b>{item.median ?? "—"}</b></span><span>{ar ? "المتصدر" : "Leader"} <b>{item.leader ?? "—"}</b></span></div>
+            </div>
+            <div className="benchmark-decision"><strong>{status}</strong>{item.band === "behind" && <small>{benchmarkGapAction(item.key, primary[item.key as MetricKey].observed, ar)}</small>}</div>
+          </article>;
+        })}
+      </div>
     </section>
 
     <div className="benchmark-analysis-grid">
