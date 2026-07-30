@@ -59,9 +59,14 @@ key passes preflight from the trusted operator machine.
 
 ## Release validation remaining
 
-- Update production `VPS_HOST` and its pinned host key to loopback.
-- Install the exact approved launcher and generate one labeled repository JIT
-  configuration after the GitHub-hosted build passes.
-- Complete one deployment for the exact approved master SHA.
-- Verify runner cleanup, live HTTPS health, persisted SQLite data, and one real
-  public-domain report after deployment.
+- Production `VPS_HOST` and its pinned host key were updated to loopback.
+- The exact approved launcher generated one labeled repository JIT runner after
+  the hosted build passed.
+- Workflow run `30543311256` deployed exact merge
+  `e0213e1351d79c97d71c724a580e9e9a050a166d`; public HTTPS, the OCI revision,
+  container health, SQLite persistence, backup creation, and protected runtime
+  entries passed.
+- Automatic runner cleanup failed because the root-prefixed `ExecStopPost`
+  process retained the service's filesystem namespace. Manual execution of the
+  root-owned cleanup helper removed the runner state. Task 081 corrects and
+  revalidates this path before task 080 is complete.

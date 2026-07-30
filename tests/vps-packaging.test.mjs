@@ -107,7 +107,16 @@ test("GitHub VPS deployment is manual, pinned, immutable, and non-destructive", 
     runnerInstaller,
     /cleanup_helper="\/usr\/local\/sbin\/market-signal-cleanup-ephemeral-runner"/,
   );
-  assert.match(runnerInstaller, /ExecStopPost=\+\$\{cleanup_helper\}/);
+  assert.match(
+    runnerInstaller,
+    /ExecStopPost=\+\/usr\/bin\/systemd-run --quiet --collect --wait --unit=\$\{cleanup_unit_name\} \$\{cleanup_helper\}/,
+  );
+  assert.match(
+    runnerInstaller,
+    /cleanup_unit_name="market-signal-ephemeral-runner-cleanup\.service"/,
+  );
+  assert.match(runnerInstaller, /\[\[ -x \/usr\/bin\/systemd-run \]\]/);
+  assert.doesNotMatch(runnerInstaller, /^ExecStopPost=\+\$\{cleanup_helper\}$/m);
   assert.match(runnerInstaller, /RuntimeMaxSec=80min/);
   assert.match(runnerInstaller, /KillMode=control-group/);
   assert.match(runnerInstaller, /flock --nonblock 9/);

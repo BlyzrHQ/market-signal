@@ -10,6 +10,7 @@ runner_home="/run/market-signal-runner/home"
 runner_dir="/opt/actions-runner-${runner_version}"
 runtime_dir="/run/market-signal-runner/state"
 unit_name="market-signal-ephemeral-runner.service"
+cleanup_unit_name="market-signal-ephemeral-runner-cleanup.service"
 cleanup_helper="/usr/local/sbin/market-signal-cleanup-ephemeral-runner"
 systemd_owns_cleanup="false"
 archive=""
@@ -54,7 +55,10 @@ flock --nonblock 9 || fail "another ephemeral runner launch is active"
 [[ ! -e "${runtime_dir}" ]] || fail "${runtime_dir} must not already exist"
 [[ ! -e "/etc/systemd/system/${unit_name}" ]] \
   || fail "${unit_name} already exists"
+[[ -z "$(systemctl list-units --all --full --no-legend "${cleanup_unit_name}")" ]] \
+  || fail "${cleanup_unit_name} already exists"
 [[ ! -e "${cleanup_helper}" ]] || fail "${cleanup_helper} already exists"
+[[ -x /usr/bin/systemd-run ]] || fail "/usr/bin/systemd-run is unavailable"
 ! id "${runner_user}" >/dev/null 2>&1 \
   || fail "${runner_user} must not already exist"
 ! getent group "${runner_user}" >/dev/null 2>&1 \
@@ -123,7 +127,7 @@ WorkingDirectory=${runner_dir}
 Environment=HOME=${runner_home}
 EnvironmentFile=${runtime_dir}/environment
 ExecStart=/bin/bash -lc 'exec ./run.sh --jitconfig "\${JIT_CONFIG}"'
-ExecStopPost=+${cleanup_helper}
+ExecStopPost=+/usr/bin/systemd-run --quiet --collect --wait --unit=${cleanup_unit_name} ${cleanup_helper}
 Restart=no
 TimeoutStartSec=40min
 TimeoutStopSec=2min
