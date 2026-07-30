@@ -39,10 +39,17 @@ test("GitHub VPS deployment is manual, pinned, immutable, and non-destructive", 
   const deploy = read("deploy/vps/deploy-approved-release.sh");
   const updateKey = read("deploy/vps/update-openai-key.sh");
   const installer = read("deploy/vps/install-github-deploy-user.sh");
+  const runnerInstaller = read("deploy/vps/run-ephemeral-github-runner.sh");
+  const handoff = read("docs/GITHUB_VPS_HANDOFF.md");
+  const originalDecision = read("docs/tasks/078-github-vps-handoff.md");
 
   assert.match(workflow, /workflow_dispatch:/);
   assert.doesNotMatch(workflow, /^\s*(?:push|pull_request|schedule):/m);
   assert.match(workflow, /environment:\s*\n\s+name: production/);
+  assert.match(
+    workflow,
+    /runs-on:\s*\n\s+- self-hosted\s*\n\s+- linux\s*\n\s+- x64\s*\n\s+- market-signal-production/,
+  );
   assert.match(workflow, /cancel-in-progress: false/);
   assert.match(workflow, /timeout-minutes: 45/);
   assert.match(workflow, /timeout-minutes: 30/);
@@ -87,6 +94,54 @@ test("GitHub VPS deployment is manual, pinned, immutable, and non-destructive", 
   assert.match(installer, /ssh-ed25519/);
   assert.match(installer, /visudo -cf/);
   assert.match(installer, /chown -R "\$\{deploy_user\}:\$\{deploy_group\}" \/opt\/market-signal\/releases/);
+
+  assert.match(runnerInstaller, /runner_version="2\.336\.0"/);
+  assert.match(
+    runnerInstaller,
+    /runner_sha256="04cf0be1aff4c3ec3554466c39124ca250e3effd8873bb7e8d68535aa9505d5d"/,
+  );
+  assert.match(runnerInstaller, /sha256sum --check --status/);
+  assert.match(runnerInstaller, /runner_user="github-runner"/);
+  assert.match(runnerInstaller, /run\.sh --jitconfig/);
+  assert.match(
+    runnerInstaller,
+    /cleanup_helper="\/usr\/local\/sbin\/market-signal-cleanup-ephemeral-runner"/,
+  );
+  assert.match(runnerInstaller, /ExecStopPost=\+\$\{cleanup_helper\}/);
+  assert.match(runnerInstaller, /RuntimeMaxSec=80min/);
+  assert.match(runnerInstaller, /KillMode=control-group/);
+  assert.match(runnerInstaller, /flock --nonblock 9/);
+  assert.match(runnerInstaller, /created_runner_dir="false"/);
+  assert.match(runnerInstaller, /created_runtime_dir="false"/);
+  assert.match(runnerInstaller, /created_user="false"/);
+  assert.match(runnerInstaller, /created_unit="false"/);
+  assert.match(runnerInstaller, /created_cleanup_helper="false"/);
+  assert.match(runnerInstaller, /trap cleanup_partial_install EXIT/);
+  assert.match(runnerInstaller, /trap on_signal HUP INT TERM/);
+  assert.match(runnerInstaller, /trap '' HUP INT TERM/);
+  assert.match(runnerInstaller, /timeout 30s systemctl start/);
+  assert.match(runnerInstaller, /runner_home="\/run\/market-signal-runner\/home"/);
+  assert.match(
+    runnerInstaller,
+    /install -d -o root -g "\$\{runner_user\}" -m 0710 "\/run\/market-signal-runner"/,
+  );
+  assert.match(runnerInstaller, /ProtectSystem=strict/);
+  assert.match(runnerInstaller, /NoNewPrivileges=yes/);
+  assert.match(runnerInstaller, /rm -rf -- '\$\{runner_dir\}'/);
+  assert.doesNotMatch(runnerInstaller, /RUNNER_ALLOW_RUNASROOT/);
+  assert.doesNotMatch(runnerInstaller, /svc\.sh/);
+  assert.match(installer, /from="127\.0\.0\.1,::1"/);
+  assert.match(installer, /no-port-forwarding/);
+
+  assert.match(handoff, /`VPS_HOST=127\.0\.0\.1`/);
+  assert.match(
+    handoff,
+    /`VPS_HOST_KEY=127\.0\.0\.1 ssh-ed25519 <trusted host key>`/,
+  );
+  assert.match(handoff, /actions\/runners\/generate-jitconfig/);
+  assert.match(handoff, /labels\[\]=market-signal-production/);
+  assert.match(handoff, /Do not launch the runner before the build passes/);
+  assert.match(originalDecision, /rejection of a self-hosted runner is superseded/);
 });
 
 test("repeatable VPS preflight permits only SSH, Caddy, and DHCP listeners", () => {
