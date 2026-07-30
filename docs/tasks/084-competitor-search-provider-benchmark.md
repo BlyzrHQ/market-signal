@@ -38,6 +38,25 @@ and a crawler cannot compensate for the wrong companies entering the queue.
   local environment or GitHub repository. Provider quality has not yet been
   measured with a live API call, so no production provider change is approved.
 
+### Fresh VPS baseline
+
+The Go CLI ran the current production pipeline for `myjam.co.uk` against
+`https://signal.blyzr.com` on 2026-07-30. The no-fixture result completed in
+about 40 seconds and found five accepted competitors:
+
+- `desiibasket.com`
+- `afrigrub.co.uk`
+- `oasismarket.co.uk`
+- `afrobox.co.uk`
+- `halalgrocerystore.co.uk`
+
+The crawl observed 602 primary catalog records and 613 rival catalog records,
+but only five rival records exposed a price and the decision document contained
+one `product-comparison` block. The entity lane and one product lane timed out
+after 24 seconds while completed lanes were retained. This is the baseline to
+beat: valid competitor count alone is not a useful result when public price and
+defensible comparison yield remain shallow.
+
 ## Provider research
 
 ### Brave Search API — first benchmark candidate
