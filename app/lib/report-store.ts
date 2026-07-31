@@ -1,6 +1,9 @@
 import { canonicalDomain } from "./domain.ts";
 import type { ApplicationDatabase, DatabasePreparedStatement } from "./database-contract.ts";
 import { runtimeDatabaseResult } from "./runtime-database.ts";
+import { canonicalReportFact, reportFactHash } from "../../src/shared/report-facts.ts";
+import { publicHttpUrl } from "./public-url.ts";
+import { officialAdRecordUrl } from "./ad-intelligence.ts";
 
 export type ReportRunStatus = "queued" | "running" | "complete" | "limited" | "failed" | "interrupted";
 export type ReportPhase = "queued" | "crawl" | "competitors" | "brief" | "products" | "matching" | "enrichment" | "actions" | "ads" | "persistence" | "complete" | "failed" | "interrupted";
@@ -34,12 +37,29 @@ export type StoredReportEvent = {
   observedAt: string;
 };
 
+export type ReportFactKind = "companies" | "products" | "matches" | "ads";
+export type ReportFactChunkInput = {
+  attemptNumber?: number;
+  manifestId: string;
+  kind: ReportFactKind;
+  chunkIndex: number;
+  chunkCount: number;
+  contentHash: string;
+  items: Array<Record<string, unknown>>;
+};
+export type ReportFactManifestInput = {
+  attemptNumber?: number;
+  manifestId: string;
+  manifestHash: string;
+  counts: Record<ReportFactKind, number>;
+};
+
 export type ReportCreateDiagnostic =
   | "invalid-domain"
   | "storage-unavailable"
   | "database-import-failed"
   | "database-binding-missing"
-  | `schema-statement-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18}-failed`
+  | `schema-statement-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21}-failed`
   | `run-create-batch-${"schema-mismatch" | "constraint" | "binding-count" | "transaction" | "batch-api"}`
   | "run-create-unclassified";
 
@@ -50,6 +70,8 @@ const QUEUED_DISPATCH_TIMEOUT_MS = 60 * 60 * 1000;
 export const MAX_REPORT_DOCUMENT_BYTES = 750_000;
 const MAX_SNAPSHOT_CATALOG_PRODUCTS = 40;
 const MAX_SNAPSHOT_UNMATCHED_PRODUCTS = 20;
+const MAX_REPORT_FACT_CHUNKS = 1_000;
+const MAX_REPORT_FACT_CHUNK_BYTES = 1_000_000;
 const INVALID_DOMAIN_MESSAGE = "A valid public domain is required.";
 const STORAGE_UNAVAILABLE_MESSAGE = "Persistent report storage is unavailable.";
 const PUBLIC_ID_PATTERN = /^[a-f0-9]{32}$/;
@@ -57,7 +79,7 @@ const PHASES = new Set<ReportPhase>(["queued", "crawl", "competitors", "brief", 
 const STATUSES = new Set<ReportRunStatus>(["queued", "running", "complete", "limited", "failed", "interrupted"]);
 const schemaInitialization = new WeakMap<object, Promise<void>>();
 const emittedStorageDiagnostics = new Set<string>();
-const REPORT_STORAGE_DIAGNOSTIC = /^(?:database-(?:import-failed|binding-missing)|schema-statement-(?:[1-9]|1[0-8])-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api))$/;
+const REPORT_STORAGE_DIAGNOSTIC = /^(?:database-(?:import-failed|binding-missing)|schema-statement-(?:[1-9]|1\d|2[01])-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api))$/;
 
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS report_runs (id text PRIMARY KEY NOT NULL, public_id text NOT NULL, primary_domain text NOT NULL, locale text DEFAULT 'en' NOT NULL, status text NOT NULL, current_phase text NOT NULL, attempt_count integer DEFAULT 1 NOT NULL, created_at text NOT NULL, updated_at text NOT NULL, heartbeat_at text NOT NULL, expires_at text NOT NULL, error_code text DEFAULT '' NOT NULL, error_message text DEFAULT '' NOT NULL)`,
@@ -77,6 +99,9 @@ const SCHEMA_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS report_matches_run_rival_idx ON report_matches (run_id, rival_domain)`,
   `CREATE TABLE IF NOT EXISTS report_ads (id text PRIMARY KEY NOT NULL, run_id text NOT NULL, domain text NOT NULL, platform text NOT NULL, status text NOT NULL, evidence_json text NOT NULL, observed_at text NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS report_ads_run_domain_idx ON report_ads (run_id, domain)`,
+  `CREATE TABLE IF NOT EXISTS report_fact_chunks (run_id text NOT NULL, manifest_id text NOT NULL, attempt_number integer NOT NULL, kind text NOT NULL, chunk_index integer NOT NULL, chunk_count integer NOT NULL, item_count integer NOT NULL, content_hash text NOT NULL, created_at text NOT NULL, PRIMARY KEY (run_id, manifest_id, kind, chunk_index))`,
+  `CREATE INDEX IF NOT EXISTS report_fact_chunks_run_manifest_idx ON report_fact_chunks (run_id, manifest_id)`,
+  `CREATE TABLE IF NOT EXISTS report_fact_manifests (run_id text PRIMARY KEY NOT NULL, manifest_id text NOT NULL, attempt_number integer NOT NULL, manifest_hash text NOT NULL, company_count integer NOT NULL, product_count integer NOT NULL, match_count integer NOT NULL, ad_count integer NOT NULL, status text NOT NULL, lock_owner text NOT NULL, locked_at text NOT NULL, completed_at text NOT NULL)`,
 ];
 
 async function getDatabase(): Promise<D1DatabaseLike | null> {
@@ -117,6 +142,34 @@ function safeMetadata(value: unknown) {
   const json = JSON.stringify(value);
   if (new TextEncoder().encode(json).byteLength > 8_000) throw new Error("Report event metadata is too large.");
   return JSON.parse(json) as Record<string, unknown>;
+}
+
+function safeUrl(value: unknown, allowEmpty = true) {
+  return publicHttpUrl(value, allowEmpty);
+}
+
+function urlHost(value: unknown) {
+  try { return new URL(String(value || "")).hostname.toLowerCase().replace(/^www\./, ""); } catch { return ""; }
+}
+
+function urlBelongsToDomain(value: unknown, domain: string) {
+  const host = urlHost(value);
+  return Boolean(host && (host === domain || host.endsWith(`.${domain}`)));
+}
+
+function officialAdEvidence(value: unknown, platform: string) {
+  return ["Meta", "Google", "TikTok"].includes(platform) && Boolean(officialAdRecordUrl(value, platform as "Meta" | "Google" | "TikTok"));
+}
+
+function requiredFactFields(kind: ReportFactKind, item: ReturnType<typeof canonicalReportFact>) {
+  const value = item as Record<string, unknown>;
+  const required = kind === "companies" ? ["domain", "role"] : kind === "products" ? ["domain", "productId", "name", "sourceUrl"] : kind === "matches" ? ["id", "primaryProductId", "rivalProductId", "rivalDomain", "verdict"] : ["id", "domain", "platform", "status"];
+  if (required.some((key) => !value[key])) throw new Error("Report fact is missing a required field.");
+  if (kind === "matches" && !["same_product", "close_substitute"].includes(String(value.verdict))) throw new Error("Invalid report match verdict.");
+  if (kind === "ads") {
+    const evidence = value.evidence as Record<string, unknown>;
+    if (value.status !== "verified-active" || !cleanText(evidence?.providerId, 240) || !safeUrl(evidence?.evidenceUrl, false)) throw new Error("Invalid attributable ad fact.");
+  }
 }
 
 export function compactReportDocument(value: unknown): unknown {
@@ -272,7 +325,7 @@ export async function createReportRunResult(input: { primaryDomain: string; loca
   }
 }
 
-export async function appendReportEvent(publicReportId: string, input: { idempotencyKey: string; phase: ReportPhase; status: ReportRunStatus; message: string; metadata?: unknown; errorCode?: string }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+export async function appendReportEvent(publicReportId: string, input: { attemptNumber?: number; idempotencyKey: string; phase: ReportPhase; status: ReportRunStatus; message: string; metadata?: unknown; errorCode?: string }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
   const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
   if (!database) throw new Error("Persistent report storage is unavailable.");
   if (!PUBLIC_ID_PATTERN.test(publicReportId)) throw new Error("Invalid report id.");
@@ -285,15 +338,19 @@ export async function appendReportEvent(publicReportId: string, input: { idempot
   await ensureSchema(database);
   const run = await findRun(database, publicReportId);
   if (!run) throw new Error("Report not found.");
+  const attemptNumber = input.attemptNumber ?? run.attemptCount;
+  if (!Number.isInteger(attemptNumber) || attemptNumber < 1 || attemptNumber !== run.attemptCount) throw new Error("Report callback attempt is stale or invalid.");
   if (["complete", "limited", "failed", "interrupted"].includes(run.status)) throw new Error("A terminal report cannot accept another progress event.");
   await database.batch([
-    database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE(MAX(sequence), 0) + 1, ?, ?, ?, ?, ?, ? FROM report_events WHERE run_id = ? ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, key, input.phase, input.status, message, JSON.stringify(metadata), observedAt, run.id),
-    database.prepare(`UPDATE report_runs SET status = ?, current_phase = ?, updated_at = ?, heartbeat_at = ?, error_code = ?, error_message = ? WHERE id = ? AND ? = (SELECT idempotency_key FROM report_events WHERE run_id = ? ORDER BY sequence DESC LIMIT 1)`).bind(input.status === "limited" ? "running" : input.status, input.phase, observedAt, observedAt, cleanText(input.errorCode, 80), input.status === "failed" ? message : "", run.id, key, run.id),
+    database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE((SELECT MAX(sequence) FROM report_events WHERE run_id = ?), 0) + 1, ?, ?, ?, ?, ?, ? FROM report_runs WHERE id = ? AND attempt_count = ? AND status NOT IN ('complete', 'limited', 'failed', 'interrupted') ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, run.id, key, input.phase, input.status, message, JSON.stringify(metadata), observedAt, run.id, attemptNumber),
+    database.prepare(`UPDATE report_runs SET status = ?, current_phase = ?, updated_at = ?, heartbeat_at = ?, error_code = ?, error_message = ? WHERE id = ? AND attempt_count = ? AND status NOT IN ('complete', 'limited', 'failed', 'interrupted') AND ? = (SELECT idempotency_key FROM report_events WHERE run_id = ? ORDER BY sequence DESC LIMIT 1)`).bind(input.status === "limited" ? "running" : input.status, input.phase, observedAt, observedAt, cleanText(input.errorCode, 80), input.status === "failed" ? message : "", run.id, attemptNumber, key, run.id),
   ]);
+  const persistedRun = await findRun(database, publicReportId);
+  if (!persistedRun || persistedRun.attemptCount !== attemptNumber) throw new Error("Report callback attempt is stale or invalid.");
   return { publicId: run.publicId, phase: input.phase, status: input.status, observedAt };
 }
 
-export async function saveReportDocument(publicReportId: string, document: unknown, options: { status?: "complete" | "limited"; observedAt?: string } = {}, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+export async function saveReportDocument(publicReportId: string, document: unknown, options: { attemptNumber?: number; status?: "complete" | "limited"; observedAt?: string } = {}, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
   const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
   if (!database) throw new Error("Persistent report storage is unavailable.");
   if (!PUBLIC_ID_PATTERN.test(publicReportId) || !document || typeof document !== "object" || Array.isArray(document)) throw new Error("Invalid report document.");
@@ -306,13 +363,183 @@ export async function saveReportDocument(publicReportId: string, document: unkno
   await ensureSchema(database);
   const run = await findRun(database, publicReportId);
   if (!run) throw new Error("Report not found.");
+  const attemptNumber = options.attemptNumber ?? run.attemptCount;
+  if (!Number.isInteger(attemptNumber) || attemptNumber < 1 || attemptNumber !== run.attemptCount) throw new Error("Report callback attempt is stale or invalid.");
   if (["complete", "limited", "failed", "interrupted"].includes(run.status)) throw new Error("A terminal report cannot be overwritten.");
   await database.batch([
-    database.prepare(`INSERT INTO report_documents (run_id, schema_version, document_json, observed_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_id) DO UPDATE SET schema_version = excluded.schema_version, document_json = excluded.document_json, observed_at = excluded.observed_at, updated_at = excluded.updated_at`).bind(run.id, REPORT_SCHEMA_VERSION, documentJson, observedAt, now.toISOString()),
-    database.prepare(`UPDATE report_runs SET status = ?, current_phase = 'complete', updated_at = ?, heartbeat_at = ?, error_code = '', error_message = '' WHERE id = ?`).bind(status, now.toISOString(), now.toISOString(), run.id),
-    database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE(MAX(sequence), 0) + 1, 'report-saved', 'complete', ?, 'Report saved from the completed public-source phases.', '{}', ? FROM report_events WHERE run_id = ? ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, status, now.toISOString(), run.id),
+    database.prepare(`INSERT INTO report_documents (run_id, schema_version, document_json, observed_at, updated_at) SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND attempt_count = ? AND status NOT IN ('complete', 'limited', 'failed', 'interrupted')) ON CONFLICT(run_id) DO UPDATE SET schema_version = excluded.schema_version, document_json = excluded.document_json, observed_at = excluded.observed_at, updated_at = excluded.updated_at`).bind(run.id, REPORT_SCHEMA_VERSION, documentJson, observedAt, now.toISOString(), run.id, attemptNumber),
+    database.prepare(`UPDATE report_runs SET status = ?, current_phase = 'complete', updated_at = ?, heartbeat_at = ?, error_code = '', error_message = '' WHERE id = ? AND attempt_count = ? AND status NOT IN ('complete', 'limited', 'failed', 'interrupted')`).bind(status, now.toISOString(), now.toISOString(), run.id, attemptNumber),
+    database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE((SELECT MAX(sequence) FROM report_events WHERE run_id = ?), 0) + 1, 'report-saved', 'complete', ?, 'Report saved from the completed public-source phases.', '{}', ? FROM report_runs WHERE id = ? AND attempt_count = ? AND status = ? ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, run.id, status, now.toISOString(), run.id, attemptNumber, status),
   ]);
+  const persistedRun = await findRun(database, publicReportId);
+  if (!persistedRun || persistedRun.attemptCount !== attemptNumber || persistedRun.status !== status) throw new Error("Report callback attempt is stale or invalid.");
   return { publicId: run.publicId, status, schemaVersion: REPORT_SCHEMA_VERSION, bytes: new TextEncoder().encode(documentJson).byteLength };
+}
+
+export async function saveReportFactChunk(publicReportId: string, input: ReportFactChunkInput, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error("Persistent report storage is unavailable.");
+  if (!PUBLIC_ID_PATTERN.test(publicReportId) || !/^[a-f0-9]{64}$/.test(input.manifestId) || !/^[a-f0-9]{64}$/.test(input.contentHash)) throw new Error("Invalid report fact chunk identity.");
+  if (!(["companies", "products", "matches", "ads"] as string[]).includes(input.kind) || !Number.isInteger(input.chunkIndex) || !Number.isInteger(input.chunkCount) || input.chunkIndex < 0 || input.chunkCount < 1 || input.chunkCount > MAX_REPORT_FACT_CHUNKS || input.chunkIndex >= input.chunkCount || !Array.isArray(input.items) || input.items.length > 50) throw new Error("Invalid report fact chunk.");
+  await ensureSchema(database);
+  const run = await findRun(database, publicReportId);
+  if (!run) throw new Error("Report not found.");
+  const attemptNumber = input.attemptNumber ?? run.attemptCount;
+  if (!Number.isInteger(attemptNumber) || attemptNumber < 1 || attemptNumber !== run.attemptCount) throw new Error("Report fact callback attempt is stale or invalid.");
+  const items = input.items.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("Invalid report fact.");
+    const fact = canonicalReportFact(input.kind, item);
+    requiredFactFields(input.kind, fact);
+    return fact;
+  });
+  if (input.kind === "matches" || input.kind === "ads") {
+    for (const item of items) {
+      const value = item as Record<string, unknown>;
+      const expectedId = input.kind === "matches"
+        ? await reportFactHash([publicReportId, value.primaryProductId, value.rivalDomain, value.rivalProductId])
+        : await reportFactHash([publicReportId, value.domain, value.platform, (value.evidence as Record<string, unknown>).providerId]);
+      if (value.id !== expectedId) throw new Error("Report fact id is not attributable to this report.");
+    }
+  }
+  const calculatedHash = await reportFactHash(items);
+  if (calculatedHash !== input.contentHash) throw new Error("Report fact chunk hash does not match its content.");
+  if (new TextEncoder().encode(JSON.stringify(items)).byteLength > MAX_REPORT_FACT_CHUNK_BYTES) throw new Error("Report fact chunk canonical content is too large.");
+  const existing = await database.prepare(`SELECT attempt_number, chunk_count, item_count, content_hash FROM report_fact_chunks WHERE run_id = ? AND manifest_id = ? AND kind = ? AND chunk_index = ? LIMIT 1`).bind(run.id, input.manifestId, input.kind, input.chunkIndex).all<Record<string, unknown>>();
+  if (existing.results?.length) {
+    const row = existing.results[0];
+    if (Number(row.attempt_number) > attemptNumber || Number(row.chunk_count) !== input.chunkCount || Number(row.item_count) !== items.length || String(row.content_hash) !== calculatedHash) throw new Error("Report fact chunk replay conflicts with persisted content.");
+    return { replayed: true as const, kind: input.kind, chunkIndex: input.chunkIndex, itemCount: items.length };
+  }
+  if (["complete", "limited", "failed", "interrupted"].includes(run.status)) throw new Error("A terminal report cannot accept report facts.");
+  const completed = await database.prepare(`SELECT manifest_id FROM report_fact_manifests WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>();
+  if (completed.results?.length) throw new Error("Completed report facts are immutable.");
+  const otherManifest = await database.prepare(`SELECT manifest_id, attempt_number FROM report_fact_chunks WHERE run_id = ? AND manifest_id <> ? ORDER BY attempt_number DESC LIMIT 1`).bind(run.id, input.manifestId).all<Record<string, unknown>>();
+  const replacingManifest = Boolean(otherManifest.results?.length);
+  if (replacingManifest && (input.kind !== "companies" || input.chunkIndex !== 0 || Number(otherManifest.results?.[0]?.attempt_number || 0) >= attemptNumber)) throw new Error("A different report fact manifest is already in progress.");
+  if (input.kind === "companies") {
+    for (const item of items) {
+      const value = item as Record<string, unknown>;
+      const domain = String(value.domain);
+      if ((domain === run.primaryDomain) !== (value.role === "primary") || !urlBelongsToDomain(value.evidenceUrl, domain)) throw new Error("Report company attribution does not match its domain or role.");
+    }
+    if (input.chunkIndex === 0 && !items.some((item) => (item as Record<string, unknown>).domain === run.primaryDomain && (item as Record<string, unknown>).role === "primary")) throw new Error("Report company facts are missing the primary domain.");
+  }
+  if (input.kind !== "companies" && items.length) {
+    const domains = [...new Set(items.map((item) => String((item as Record<string, unknown>).domain || (item as Record<string, unknown>).rivalDomain || "")))];
+    const allowed = await database.prepare(`SELECT domain FROM report_companies WHERE run_id = ?`).bind(run.id).all<Record<string, unknown>>();
+    const allowedDomains = new Set([run.primaryDomain, ...(allowed.results || []).map((row) => String(row.domain || ""))]);
+    if (domains.some((domain) => !allowedDomains.has(domain))) throw new Error("Report fact domain was not persisted as a report company.");
+  }
+  if (input.kind === "products" && items.some((item) => !urlBelongsToDomain((item as Record<string, unknown>).sourceUrl, String((item as Record<string, unknown>).domain)))) throw new Error("Report product source does not match its domain.");
+  if (input.kind === "matches" && items.length) {
+    const products = await database.prepare(`SELECT domain, product_id FROM report_products WHERE run_id = ?`).bind(run.id).all<Record<string, unknown>>();
+    const productKeys = new Set((products.results || []).map((row) => `${row.domain}\n${row.product_id}`));
+    const missingReference = items.some((item) => {
+      const value = item as Record<string, unknown>;
+      return !productKeys.has(`${run.primaryDomain}\n${value.primaryProductId}`) || !productKeys.has(`${value.rivalDomain}\n${value.rivalProductId}`);
+    });
+    if (missingReference) throw new Error("Report match references a product that was not persisted.");
+    const invalidSources = items.some((item) => {
+      const value = item as Record<string, unknown>;
+      const evidence = value.evidence as Record<string, unknown>;
+      return !urlBelongsToDomain(evidence.primarySourceUrl, run.primaryDomain) || !urlBelongsToDomain(evidence.rivalSourceUrl, String(value.rivalDomain));
+    });
+    if (invalidSources) throw new Error("Report match evidence source does not match its product domains.");
+  }
+  if (input.kind === "ads" && items.some((item) => {
+    const value = item as Record<string, unknown>;
+    return !officialAdEvidence((value.evidence as Record<string, unknown>).evidenceUrl, String(value.platform));
+  })) throw new Error("Report ad evidence is not an official platform URL.");
+  if ((input.kind === "matches" || input.kind === "ads") && items.length) {
+    const ids = items.map((item) => String((item as Record<string, unknown>).id));
+    const table = input.kind === "matches" ? "report_matches" : "report_ads";
+    const collisions = await database.prepare(`SELECT id FROM ${table} WHERE run_id <> ? AND id IN (${ids.map(() => "?").join(",")}) LIMIT 1`).bind(run.id, ...ids).all<Record<string, unknown>>();
+    if (collisions.results?.length) throw new Error("Report fact id belongs to another report.");
+  }
+  const factStatements = items.map((item) => {
+    const value = item as Record<string, unknown>;
+    if (input.kind === "companies") return database.prepare(`INSERT INTO report_companies (run_id, domain, role, company_name, evidence_url, evidence_json, observed_at) SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM report_fact_chunks WHERE run_id = ? AND manifest_id = ? AND kind = ? AND chunk_index = ? AND content_hash = ?) ON CONFLICT(run_id, domain) DO UPDATE SET role = excluded.role, company_name = excluded.company_name, evidence_url = excluded.evidence_url, evidence_json = excluded.evidence_json, observed_at = excluded.observed_at`).bind(run.id, value.domain, value.role, value.companyName, value.evidenceUrl, JSON.stringify(value.evidence), value.observedAt, run.id, input.manifestId, input.kind, input.chunkIndex, calculatedHash);
+    if (input.kind === "products") return database.prepare(`INSERT INTO report_products (run_id, domain, product_id, name, normalized_name, source_url, image_url, price_json, metadata_json, observed_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM report_fact_chunks WHERE run_id = ? AND manifest_id = ? AND kind = ? AND chunk_index = ? AND content_hash = ?) ON CONFLICT(run_id, domain, product_id) DO UPDATE SET name = excluded.name, normalized_name = excluded.normalized_name, source_url = excluded.source_url, image_url = excluded.image_url, price_json = excluded.price_json, metadata_json = excluded.metadata_json, observed_at = excluded.observed_at`).bind(run.id, value.domain, value.productId, value.name, value.normalizedName, value.sourceUrl, value.imageUrl, JSON.stringify(value.prices), JSON.stringify(value.metadata), value.observedAt, run.id, input.manifestId, input.kind, input.chunkIndex, calculatedHash);
+    if (input.kind === "matches") return database.prepare(`INSERT INTO report_matches (id, run_id, primary_product_id, rival_product_id, rival_domain, verdict, confidence, claim_type, model, prompt_version, evidence_json, observed_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM report_fact_chunks WHERE run_id = ? AND manifest_id = ? AND kind = ? AND chunk_index = ? AND content_hash = ?) ON CONFLICT(id) DO NOTHING`).bind(value.id, run.id, value.primaryProductId, value.rivalProductId, value.rivalDomain, value.verdict, value.confidence, value.claimType, value.model, value.promptVersion, JSON.stringify(value.evidence), value.observedAt, run.id, input.manifestId, input.kind, input.chunkIndex, calculatedHash);
+    return database.prepare(`INSERT INTO report_ads (id, run_id, domain, platform, status, evidence_json, observed_at) SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM report_fact_chunks WHERE run_id = ? AND manifest_id = ? AND kind = ? AND chunk_index = ? AND content_hash = ?) ON CONFLICT(id) DO NOTHING`).bind(value.id, run.id, value.domain, value.platform, value.status, JSON.stringify(value.evidence), value.observedAt, run.id, input.manifestId, input.kind, input.chunkIndex, calculatedHash);
+  });
+  const replacementCondition = `EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND attempt_count = ? AND status NOT IN ('complete', 'limited', 'failed', 'interrupted')) AND EXISTS (SELECT 1 FROM report_fact_chunks WHERE run_id = ? AND manifest_id <> ? AND attempt_number < ?) AND NOT EXISTS (SELECT 1 FROM report_fact_chunks WHERE run_id = ? AND manifest_id <> ? AND attempt_number >= ?) AND NOT EXISTS (SELECT 1 FROM report_fact_manifests WHERE run_id = ?)`;
+  const replacementBindings = [run.id, attemptNumber, run.id, input.manifestId, attemptNumber, run.id, input.manifestId, attemptNumber, run.id] as const;
+  const statements = replacingManifest ? [
+    database.prepare(`DELETE FROM report_matches WHERE run_id = ? AND ${replacementCondition}`).bind(run.id, ...replacementBindings),
+    database.prepare(`DELETE FROM report_ads WHERE run_id = ? AND ${replacementCondition}`).bind(run.id, ...replacementBindings),
+    database.prepare(`DELETE FROM report_products WHERE run_id = ? AND ${replacementCondition}`).bind(run.id, ...replacementBindings),
+    database.prepare(`DELETE FROM report_companies WHERE run_id = ? AND ${replacementCondition}`).bind(run.id, ...replacementBindings),
+    database.prepare(`DELETE FROM report_fact_chunks WHERE run_id = ? AND ${replacementCondition}`).bind(run.id, ...replacementBindings),
+  ] : [];
+  statements.push(database.prepare(`INSERT INTO report_fact_chunks (run_id, manifest_id, attempt_number, kind, chunk_index, chunk_count, item_count, content_hash, created_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND attempt_count = ? AND status NOT IN ('complete', 'limited', 'failed', 'interrupted')) AND NOT EXISTS (SELECT 1 FROM report_fact_manifests WHERE run_id = ?) AND NOT EXISTS (SELECT 1 FROM report_fact_chunks WHERE run_id = ? AND manifest_id <> ? AND attempt_number >= ?) ON CONFLICT(run_id, manifest_id, kind, chunk_index) DO NOTHING`).bind(run.id, input.manifestId, attemptNumber, input.kind, input.chunkIndex, input.chunkCount, items.length, calculatedHash, now.toISOString(), run.id, attemptNumber, run.id, run.id, input.manifestId, attemptNumber));
+  statements.push(...factStatements);
+  await database.batch(statements);
+  const persisted = await database.prepare(`SELECT attempt_number, chunk_count, item_count, content_hash FROM report_fact_chunks WHERE run_id = ? AND manifest_id = ? AND kind = ? AND chunk_index = ? LIMIT 1`).bind(run.id, input.manifestId, input.kind, input.chunkIndex).all<Record<string, unknown>>();
+  const row = persisted.results?.[0];
+  if (!row || Number(row.attempt_number) > attemptNumber || Number(row.chunk_count) !== input.chunkCount || Number(row.item_count) !== items.length || String(row.content_hash) !== calculatedHash) throw new Error("Report fact chunk replay conflicts with persisted content.");
+  return { replayed: Boolean(existing.results?.length), kind: input.kind, chunkIndex: input.chunkIndex, itemCount: items.length };
+}
+
+export async function finalizeReportFactManifest(publicReportId: string, input: ReportFactManifestInput, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error("Persistent report storage is unavailable.");
+  if (!PUBLIC_ID_PATTERN.test(publicReportId) || !/^[a-f0-9]{64}$/.test(input.manifestId) || !/^[a-f0-9]{64}$/.test(input.manifestHash)) throw new Error("Invalid report fact manifest identity.");
+  const counts = input.counts;
+  if (!counts || (["companies", "products", "matches", "ads"] as ReportFactKind[]).some((kind) => !Number.isInteger(counts[kind]) || counts[kind] < 0)) throw new Error("Invalid report fact manifest counts.");
+  await ensureSchema(database);
+  const run = await findRun(database, publicReportId);
+  if (!run) throw new Error("Report not found.");
+  const attemptNumber = input.attemptNumber ?? run.attemptCount;
+  const manifestRow = async () => (await database.prepare(`SELECT manifest_id, attempt_number, manifest_hash, company_count, product_count, match_count, ad_count, status, lock_owner, locked_at FROM report_fact_manifests WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>()).results?.[0];
+  let prior = await manifestRow();
+  const sameManifest = (row: Record<string, unknown>) => String(row.manifest_id) === input.manifestId && Number(row.attempt_number) === attemptNumber && String(row.manifest_hash) === input.manifestHash && Number(row.company_count) === counts.companies && Number(row.product_count) === counts.products && Number(row.match_count) === counts.matches && Number(row.ad_count) === counts.ads;
+  if (!Number.isInteger(attemptNumber) || attemptNumber < 1 || attemptNumber !== run.attemptCount) throw new Error("Report fact callback attempt is stale or invalid.");
+  if (prior && !sameManifest(prior)) throw new Error("Report fact manifest replay conflicts with persisted content.");
+  if (prior?.status === "complete") return { replayed: true as const, manifestId: input.manifestId, counts };
+  if (["complete", "limited", "failed", "interrupted"].includes(run.status)) throw new Error("A terminal report cannot finalize report facts.");
+  const lockOwner = internalId();
+  const lockedAt = now.toISOString();
+  if (!prior) {
+    try {
+      await database.prepare(`INSERT INTO report_fact_manifests (run_id, manifest_id, attempt_number, manifest_hash, company_count, product_count, match_count, ad_count, status, lock_owner, locked_at, completed_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'finalizing', ?, ?, '' WHERE EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND attempt_count = ? AND status NOT IN ('complete', 'limited', 'failed', 'interrupted'))`).bind(run.id, input.manifestId, attemptNumber, input.manifestHash, counts.companies, counts.products, counts.matches, counts.ads, lockOwner, lockedAt, run.id, attemptNumber).run();
+    } catch {
+      prior = await manifestRow();
+      if (!prior || !sameManifest(prior)) throw new Error("Report fact manifest replay conflicts with persisted content.");
+      if (prior.status === "complete") return { replayed: true as const, manifestId: input.manifestId, counts };
+    }
+  } else {
+    await database.prepare(`UPDATE report_fact_manifests SET lock_owner = ?, locked_at = ? WHERE run_id = ? AND manifest_id = ? AND attempt_number = ? AND status = 'finalizing' AND lock_owner = ? AND locked_at = ? AND EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND attempt_count = ? AND status NOT IN ('complete', 'limited', 'failed', 'interrupted'))`).bind(lockOwner, lockedAt, run.id, input.manifestId, attemptNumber, String(prior.lock_owner || ""), String(prior.locked_at || ""), run.id, attemptNumber).run();
+  }
+  prior = await manifestRow();
+  if (prior?.status === "complete" && sameManifest(prior)) return { replayed: true as const, manifestId: input.manifestId, counts };
+  if (!prior || !sameManifest(prior) || prior.status !== "finalizing" || prior.lock_owner !== lockOwner) throw new Error("Report fact manifest finalization could not acquire its lock.");
+  try {
+    const chunks = await database.prepare(`SELECT kind, chunk_index, chunk_count, item_count, content_hash FROM report_fact_chunks WHERE run_id = ? AND manifest_id = ? ORDER BY kind, chunk_index`).bind(run.id, input.manifestId).all<Record<string, unknown>>();
+    const rows = chunks.results || [];
+    for (const kind of ["companies", "products", "matches", "ads"] as ReportFactKind[]) {
+      const group = rows.filter((row) => row.kind === kind);
+      const expectedChunks = counts[kind] === 0 ? 1 : Number(group[0]?.chunk_count || 0);
+      if (group.length !== expectedChunks || group.some((row, index) => Number(row.chunk_index) !== index || Number(row.chunk_count) !== expectedChunks) || group.reduce((sum, row) => sum + Number(row.item_count || 0), 0) !== counts[kind]) throw new Error("Report fact manifest has incomplete or inconsistent chunks.");
+    }
+    const calculatedHash = await reportFactHash(rows.map((row) => ({ kind: row.kind, chunkIndex: Number(row.chunk_index), contentHash: row.content_hash })));
+    if (calculatedHash !== input.manifestHash) throw new Error("Report fact manifest hash does not match its chunks.");
+    const tableCounts = await Promise.all([
+      database.prepare(`SELECT COUNT(*) AS count FROM report_companies WHERE run_id = ?`).bind(run.id).all<Record<string, unknown>>(),
+      database.prepare(`SELECT COUNT(*) AS count FROM report_products WHERE run_id = ?`).bind(run.id).all<Record<string, unknown>>(),
+      database.prepare(`SELECT COUNT(*) AS count FROM report_matches WHERE run_id = ?`).bind(run.id).all<Record<string, unknown>>(),
+      database.prepare(`SELECT COUNT(*) AS count FROM report_ads WHERE run_id = ?`).bind(run.id).all<Record<string, unknown>>(),
+    ]);
+    const actual = tableCounts.map((result) => Number(result.results?.[0]?.count || 0));
+    if (actual[0] !== counts.companies || actual[1] !== counts.products || actual[2] !== counts.matches || actual[3] !== counts.ads) throw new Error("Report fact manifest counts do not match relational facts.");
+    await database.prepare(`UPDATE report_fact_manifests SET status = 'complete', lock_owner = '', locked_at = '', completed_at = ? WHERE run_id = ? AND manifest_id = ? AND attempt_number = ? AND status = 'finalizing' AND lock_owner = ? AND EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND attempt_count = ? AND status NOT IN ('complete', 'limited', 'failed', 'interrupted'))`).bind(now.toISOString(), run.id, input.manifestId, attemptNumber, lockOwner, run.id, attemptNumber).run();
+    const completed = await manifestRow();
+    if (completed?.status === "complete" && sameManifest(completed)) return { replayed: false as const, manifestId: input.manifestId, counts };
+    throw new Error("Report fact manifest finalization lost its lock.");
+  } catch (error) {
+    await database.prepare(`DELETE FROM report_fact_manifests WHERE run_id = ? AND manifest_id = ? AND attempt_number = ? AND status = 'finalizing' AND lock_owner = ?`).bind(run.id, input.manifestId, attemptNumber, lockOwner).run();
+    throw error;
+  }
 }
 
 export async function getStoredReport(publicReportId: string, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
@@ -327,10 +554,10 @@ export async function getStoredReport(publicReportId: string, now = new Date(), 
     const observedAt = now.toISOString();
     const message = "The background worker stopped reporting progress before this phase completed.";
     await database.batch([
-      database.prepare(`UPDATE report_runs SET status = 'interrupted', current_phase = 'interrupted', updated_at = ?, error_code = 'stale-worker', error_message = ? WHERE id = ?`).bind(observedAt, message, run.id),
-      database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE(MAX(sequence), 0) + 1, 'stale-worker-interrupted', 'interrupted', 'interrupted', ?, '{}', ? FROM report_events WHERE run_id = ? ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, message, observedAt, run.id),
+      database.prepare(`UPDATE report_runs SET status = 'interrupted', current_phase = 'interrupted', updated_at = ?, error_code = 'stale-worker', error_message = ? WHERE id = ? AND status = 'running' AND attempt_count = ? AND heartbeat_at = ?`).bind(observedAt, message, run.id, run.attemptCount, run.heartbeatAt),
+      database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE((SELECT MAX(sequence) FROM report_events WHERE run_id = ?), 0) + 1, 'stale-worker-interrupted', 'interrupted', 'interrupted', ?, '{}', ? FROM report_runs WHERE id = ? AND status = 'interrupted' AND attempt_count = ? AND updated_at = ? ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, run.id, message, observedAt, run.id, run.attemptCount, observedAt),
     ]);
-    run = { ...run, status: "interrupted", currentPhase: "interrupted", updatedAt: observedAt, errorCode: "stale-worker", errorMessage: message };
+    run = await findRun(database, publicReportId) || run;
   } else if (run.status === "queued" && Number.isFinite(heartbeatTime) && now.getTime() - heartbeatTime > QUEUED_DISPATCH_TIMEOUT_MS) {
     const dispatchKey = `job-dispatched-attempt-${run.attemptCount}`;
     const dispatchResult = await database.prepare(`SELECT idempotency_key FROM report_events WHERE run_id = ? AND idempotency_key = ? LIMIT 1`).bind(run.id, dispatchKey).all<Record<string, unknown>>();
@@ -338,15 +565,16 @@ export async function getStoredReport(publicReportId: string, now = new Date(), 
       const observedAt = now.toISOString();
       const message = "The background report job was accepted but did not start within the expected time.";
       await database.batch([
-        database.prepare(`UPDATE report_runs SET status = 'failed', current_phase = 'failed', updated_at = ?, error_code = 'dispatch-timeout', error_message = ? WHERE id = ? AND status = 'queued'`).bind(observedAt, message, run.id),
-        database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE(MAX(sequence), 0) + 1, 'queued-dispatch-timeout', 'failed', 'failed', ?, '{}', ? FROM report_events WHERE run_id = ? ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, message, observedAt, run.id),
+        database.prepare(`UPDATE report_runs SET status = 'failed', current_phase = 'failed', updated_at = ?, error_code = 'dispatch-timeout', error_message = ? WHERE id = ? AND status = 'queued' AND attempt_count = ? AND heartbeat_at = ?`).bind(observedAt, message, run.id, run.attemptCount, run.heartbeatAt),
+        database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE((SELECT MAX(sequence) FROM report_events WHERE run_id = ?), 0) + 1, 'queued-dispatch-timeout', 'failed', 'failed', ?, '{}', ? FROM report_runs WHERE id = ? AND status = 'failed' AND attempt_count = ? AND updated_at = ? ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, run.id, message, observedAt, run.id, run.attemptCount, observedAt),
       ]);
-      run = { ...run, status: "failed", currentPhase: "failed", updatedAt: observedAt, errorCode: "dispatch-timeout", errorMessage: message };
+      run = await findRun(database, publicReportId) || run;
     }
   }
-  const [eventsResult, documentResult] = await Promise.all([
+  const [eventsResult, documentResult, manifestResult] = await Promise.all([
     database.prepare(`SELECT sequence, idempotency_key, phase, status, message, metadata_json, observed_at FROM report_events WHERE run_id = ? ORDER BY sequence ASC LIMIT 100`).bind(run.id).all<Record<string, unknown>>(),
     database.prepare(`SELECT schema_version, document_json, observed_at, updated_at FROM report_documents WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>(),
+    database.prepare(`SELECT manifest_id, attempt_number, manifest_hash, company_count, product_count, match_count, ad_count, status, completed_at FROM report_fact_manifests WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>(),
   ]);
   const events = (eventsResult.results || []).map((row): StoredReportEvent => {
     let metadata: Record<string, unknown> = {};
@@ -356,7 +584,16 @@ export async function getStoredReport(publicReportId: string, now = new Date(), 
   const documentRow = documentResult.results?.[0];
   let document: unknown = null;
   try { document = documentRow ? JSON.parse(String(documentRow.document_json || "null")) : null; } catch { document = null; }
-  return { run, events, document, documentSchemaVersion: Number(documentRow?.schema_version || 0), documentObservedAt: String(documentRow?.observed_at || "") };
+  const manifestRow = manifestResult.results?.[0];
+  const factManifest = manifestRow ? {
+    manifestId: String(manifestRow.manifest_id || ""),
+    attemptNumber: Number(manifestRow.attempt_number || 0),
+    manifestHash: String(manifestRow.manifest_hash || ""),
+    counts: { companies: Number(manifestRow.company_count || 0), products: Number(manifestRow.product_count || 0), matches: Number(manifestRow.match_count || 0), ads: Number(manifestRow.ad_count || 0) },
+    status: String(manifestRow.status || ""),
+    completedAt: String(manifestRow.completed_at || ""),
+  } : null;
+  return { run, events, document, documentSchemaVersion: Number(documentRow?.schema_version || 0), documentObservedAt: String(documentRow?.observed_at || ""), factManifest };
 }
 
 export async function markReportDispatched(publicReportId: string, triggerRunId: string, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
@@ -397,8 +634,11 @@ export async function recoverInterruptedReport(publicReportId: string, now = new
   const attemptCount = run.attemptCount + 1;
   const eventKey = `recovery-attempt-${attemptCount}`;
   await database.batch([
-    database.prepare(`UPDATE report_runs SET status = 'queued', current_phase = 'queued', attempt_count = ?, updated_at = ?, heartbeat_at = ?, error_code = '', error_message = '' WHERE id = ? AND status = 'interrupted'`).bind(attemptCount, observedAt, observedAt, run.id),
-    database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE(MAX(sequence), 0) + 1, ?, 'queued', 'queued', 'The interrupted background report was authorized for another attempt.', ?, ? FROM report_events WHERE run_id = ? ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, eventKey, JSON.stringify({ attempt: attemptCount }), observedAt, run.id),
+    database.prepare(`DELETE FROM report_fact_manifests WHERE run_id = ? AND status = 'finalizing' AND attempt_number = ? AND EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND status = 'interrupted' AND attempt_count = ?)`).bind(run.id, run.attemptCount, run.id, run.attemptCount),
+    database.prepare(`UPDATE report_runs SET status = 'queued', current_phase = 'queued', attempt_count = ?, updated_at = ?, heartbeat_at = ?, error_code = '', error_message = '' WHERE id = ? AND status = 'interrupted' AND attempt_count = ?`).bind(attemptCount, observedAt, observedAt, run.id, run.attemptCount),
+    database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE((SELECT MAX(sequence) FROM report_events WHERE run_id = ?), 0) + 1, ?, 'queued', 'queued', 'The interrupted background report was authorized for another attempt.', ?, ? FROM report_runs WHERE id = ? AND status = 'queued' AND attempt_count = ? ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, run.id, eventKey, JSON.stringify({ attempt: attemptCount }), observedAt, run.id, attemptCount),
   ]);
-  return { ...run, status: "queued" as const, currentPhase: "queued" as const, attemptCount, updatedAt: observedAt, heartbeatAt: observedAt, errorCode: "", errorMessage: "" };
+  const recovered = await findRun(database, publicReportId);
+  if (!recovered || recovered.status !== "queued" || recovered.attemptCount !== attemptCount) throw new Error("The report recovery attempt is stale.");
+  return recovered;
 }

@@ -11,10 +11,11 @@ const TOKEN = "callback-test-token-with-sufficient-entropy";
 const PUBLIC_ID = "a".repeat(32);
 
 function request(body, authorization = `Bearer ${TOKEN}`) {
+  const payload = body.action === "recover" || Object.prototype.hasOwnProperty.call(body, "attemptNumber") ? body : { ...body, attemptNumber: 1 };
   return new Request("https://market-signal.example/api/internal/reports/" + PUBLIC_ID, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: authorization },
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
   });
 }
 
@@ -39,7 +40,9 @@ test("internal callback authorization fails closed for missing, malformed, and i
 
 test("report dispatch deduplicates one attempt and creates a distinct recovery run", async () => {
   const runs = new Map();
-  const trigger = async (_payload, options) => {
+  const payloads = [];
+  const trigger = async (payload, options) => {
+    payloads.push(payload);
     if (!runs.has(options.idempotencyKey)) runs.set(options.idempotencyKey, { id: `run_${runs.size + 1}` });
     return runs.get(options.idempotencyKey);
   };
@@ -49,8 +52,9 @@ test("report dispatch deduplicates one attempt and creates a distinct recovery r
   const recovery = await dispatchReportJob({ ...initial, attemptCount: 2 }, { trigger });
   assert.equal(first.runId, duplicate.runId);
   assert.notEqual(first.runId, recovery.runId);
-  assert.equal(reportDispatchIdempotencyKey(initial), `${PUBLIC_ID}:1:1`);
-  assert.equal(reportDispatchIdempotencyKey({ ...initial, attemptCount: 2 }), `${PUBLIC_ID}:1:2`);
+  assert.deepEqual(payloads.map((payload) => payload.reportAttempt), [1, 1, 2]);
+  assert.equal(reportDispatchIdempotencyKey(initial), `${PUBLIC_ID}:2:1`);
+  assert.equal(reportDispatchIdempotencyKey({ ...initial, attemptCount: 2 }), `${PUBLIC_ID}:2:2`);
 });
 
 test("report dispatch diagnostics distinguish missing credentials without exposing their value", async () => {
@@ -222,9 +226,9 @@ test("authenticated recovery increments the attempt, dispatches it, and safely r
   assert.equal((await replay.json()).replayed, true);
   assert.deepEqual(calls, [
     ["recover", 2],
-    ["dispatch", `${PUBLIC_ID}:1:2`],
+    ["dispatch", `${PUBLIC_ID}:2:2`],
     ["record", "run_recovered2"],
-    ["dispatch", `${PUBLIC_ID}:1:2`],
+    ["dispatch", `${PUBLIC_ID}:2:2`],
     ["record", "run_recovered2"],
   ]);
 });
@@ -251,6 +255,50 @@ test("authenticated callbacks are replay-safe and conflicting idempotency keys f
   assert.equal(conflict.status, 409);
   const denied = await handlers.post(request(event, "Bearer wrong"), { params: { publicId: PUBLIC_ID } });
   assert.equal(denied.status, 401);
+});
+
+test("authenticated fact callbacks preserve chunk and manifest contracts", async () => {
+  const stored = report();
+  const writes = [];
+  const handlers = createInternalReportHandlers({
+    get: async () => stored,
+    append: async () => {},
+    save: async () => {},
+    saveFactChunk: async (_id, input) => { writes.push(["chunk", input]); return { replayed: false }; },
+    finalizeFacts: async (_id, input) => { writes.push(["manifest", input]); return { replayed: false }; },
+  }, TOKEN);
+  const missingAttempt = await handlers.post(request({ action: "fact-chunk", attemptNumber: null, manifestId: "a".repeat(64), kind: "products", chunkIndex: 0, chunkCount: 1, contentHash: "b".repeat(64), items: [] }), { params: { publicId: PUBLIC_ID } });
+  const chunk = await handlers.post(request({ action: "fact-chunk", attemptNumber: 1, manifestId: "a".repeat(64), kind: "products", chunkIndex: 0, chunkCount: 1, contentHash: "b".repeat(64), items: [] }), { params: { publicId: PUBLIC_ID } });
+  const manifest = await handlers.post(request({ action: "fact-manifest", attemptNumber: 1, manifestId: "a".repeat(64), manifestHash: "c".repeat(64), counts: { companies: 1, products: 0, matches: 0, ads: 0 } }), { params: { publicId: PUBLIC_ID } });
+  const stale = await handlers.post(request({ action: "fact-chunk", attemptNumber: 2, manifestId: "a".repeat(64), kind: "products", chunkIndex: 0, chunkCount: 1, contentHash: "b".repeat(64), items: [] }), { params: { publicId: PUBLIC_ID } });
+  assert.equal(missingAttempt.status, 400);
+  assert.equal(stale.status, 409);
+  assert.equal(chunk.status, 200);
+  assert.equal(manifest.status, 200);
+  assert.equal(writes[0][0], "chunk");
+  assert.equal(writes[1][0], "manifest");
+});
+
+test("internal callbacks reject oversized bodies before JSON parsing", async () => {
+  let reads = 0;
+  const handlers = createInternalReportHandlers({ get: async () => { reads += 1; return report(); }, append: async () => {}, save: async () => {} }, TOKEN);
+  const response = await handlers.post(new Request(`https://market.example/api/internal/reports/${PUBLIC_ID}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json", "Content-Length": "1500001" },
+    body: "{}",
+  }), { params: { publicId: PUBLIC_ID } });
+  assert.equal(response.status, 400);
+  assert.equal(reads, 0);
+});
+
+test("fact callback conflicts map to 409 and deterministic validation maps to 400", async () => {
+  const stored = report();
+  const base = { get: async () => stored, append: async () => {}, save: async () => {}, finalizeFacts: async () => {} };
+  const body = { action: "fact-chunk", attemptNumber: 1, manifestId: "a".repeat(64), kind: "products", chunkIndex: 0, chunkCount: 1, contentHash: "b".repeat(64), items: [] };
+  const conflictHandlers = createInternalReportHandlers({ ...base, saveFactChunk: async () => { throw new Error("Report fact chunk replay conflicts with persisted content."); } }, TOKEN);
+  const invalidHandlers = createInternalReportHandlers({ ...base, saveFactChunk: async () => { throw new Error("Report fact domain was not persisted as a report company."); } }, TOKEN);
+  assert.equal((await conflictHandlers.post(request(body), { params: { publicId: PUBLIC_ID } })).status, 409);
+  assert.equal((await invalidHandlers.post(request(body), { params: { publicId: PUBLIC_ID } })).status, 400);
 });
 
 test("a lost final callback response replays only for the exact persisted document", async () => {

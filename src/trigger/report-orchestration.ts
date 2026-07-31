@@ -27,7 +27,8 @@ export const marketSignalReportOrchestration = task({
         callbackToken: process.env.MARKET_SIGNAL_CALLBACK_TOKEN || "",
       });
       return await orchestrateReport(payload, {
-        attemptNumber: ctx.attempt.number,
+        attemptNumber: payload.reportAttempt,
+        taskAttemptNumber: ctx.attempt.number,
         isFinalAttempt: ctx.attempt.number >= (ctx.run.maxAttempts || MAX_ATTEMPTS),
       }, port);
     } catch (error) {

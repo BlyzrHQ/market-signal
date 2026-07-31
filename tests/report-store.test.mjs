@@ -39,18 +39,18 @@ class FakeDatabase {
       } else if (q.includes("'run-created'")) {
         this.events.push({ run_id: v[0], sequence: 1, idempotency_key: "run-created", phase: "queued", status: "queued", message: "Report queued for public-source collection.", metadata_json: "{}", observed_at: v[1] });
       } else if (q.includes("'stale-worker-interrupted'")) {
-        if (!this.events.some((event) => event.run_id === v[0] && event.idempotency_key === "stale-worker-interrupted")) this.events.push({ run_id: v[0], sequence: Math.max(...this.events.map((event) => event.sequence)) + 1, idempotency_key: "stale-worker-interrupted", phase: "interrupted", status: "interrupted", message: v[1], metadata_json: "{}", observed_at: v[2] });
+        if (!this.events.some((event) => event.run_id === v[0] && event.idempotency_key === "stale-worker-interrupted")) this.events.push({ run_id: v[0], sequence: Math.max(...this.events.map((event) => event.sequence)) + 1, idempotency_key: "stale-worker-interrupted", phase: "interrupted", status: "interrupted", message: v[2], metadata_json: "{}", observed_at: v[3] });
       } else if (q.includes("'queued-dispatch-timeout'")) {
-        if (!this.events.some((event) => event.run_id === v[0] && event.idempotency_key === "queued-dispatch-timeout")) this.events.push({ run_id: v[0], sequence: Math.max(...this.events.map((event) => event.sequence)) + 1, idempotency_key: "queued-dispatch-timeout", phase: "failed", status: "failed", message: v[1], metadata_json: "{}", observed_at: v[2] });
+        if (!this.events.some((event) => event.run_id === v[0] && event.idempotency_key === "queued-dispatch-timeout")) this.events.push({ run_id: v[0], sequence: Math.max(...this.events.map((event) => event.sequence)) + 1, idempotency_key: "queued-dispatch-timeout", phase: "failed", status: "failed", message: v[2], metadata_json: "{}", observed_at: v[3] });
       } else if (q.includes("'The interrupted background report was authorized")) {
-        if (!this.events.some((event) => event.run_id === v[0] && event.idempotency_key === v[1])) this.events.push({ run_id: v[0], sequence: Math.max(...this.events.map((event) => event.sequence)) + 1, idempotency_key: v[1], phase: "queued", status: "queued", message: "The interrupted background report was authorized for another attempt.", metadata_json: v[2], observed_at: v[3] });
+        if (!this.events.some((event) => event.run_id === v[0] && event.idempotency_key === v[2])) this.events.push({ run_id: v[0], sequence: Math.max(...this.events.map((event) => event.sequence)) + 1, idempotency_key: v[2], phase: "queued", status: "queued", message: "The interrupted background report was authorized for another attempt.", metadata_json: v[3], observed_at: v[4] });
       } else if (q.startsWith("INSERT INTO report_events") && q.includes("COALESCE") && !q.includes("'report-saved'")) {
-        if (!this.events.some((event) => event.run_id === v[0] && event.idempotency_key === v[1])) {
-          this.events.push({ run_id: v[0], sequence: Math.max(0, ...this.events.filter((event) => event.run_id === v[0]).map((event) => event.sequence)) + 1, idempotency_key: v[1], phase: v[2], status: v[3], message: v[4], metadata_json: v[5], observed_at: v[6] });
+        if (!this.events.some((event) => event.run_id === v[0] && event.idempotency_key === v[2])) {
+          this.events.push({ run_id: v[0], sequence: Math.max(0, ...this.events.filter((event) => event.run_id === v[0]).map((event) => event.sequence)) + 1, idempotency_key: v[2], phase: v[3], status: v[4], message: v[5], metadata_json: v[6], observed_at: v[7] });
         }
       } else if (q.startsWith("UPDATE report_runs SET status = ?, current_phase = ?")) {
-        const latest = this.events.filter((event) => event.run_id === v[8]).sort((a, b) => b.sequence - a.sequence)[0];
-        if (latest?.idempotency_key === v[7]) Object.assign(this.runs.find((run) => run.id === v[6]), { status: v[0], current_phase: v[1], updated_at: v[2], heartbeat_at: v[3], error_code: v[4], error_message: v[5] });
+        const latest = this.events.filter((event) => event.run_id === v[9]).sort((a, b) => b.sequence - a.sequence)[0];
+        if (latest?.idempotency_key === v[8]) Object.assign(this.runs.find((run) => run.id === v[6]), { status: v[0], current_phase: v[1], updated_at: v[2], heartbeat_at: v[3], error_code: v[4], error_message: v[5] });
       } else if (q.startsWith("INSERT INTO report_documents")) {
         const existing = this.documents.find((document) => document.run_id === v[0]);
         const row = { run_id: v[0], schema_version: v[1], document_json: v[2], observed_at: v[3], updated_at: v[4] };
@@ -58,7 +58,7 @@ class FakeDatabase {
       } else if (q.startsWith("UPDATE report_runs SET status = ?, current_phase = 'complete'")) {
         Object.assign(this.runs.find((run) => run.id === v[3]), { status: v[0], current_phase: "complete", updated_at: v[1], heartbeat_at: v[2], error_code: "", error_message: "" });
       } else if (q.includes("'report-saved'")) {
-        if (!this.events.some((event) => event.run_id === v[0] && event.idempotency_key === "report-saved")) this.events.push({ run_id: v[0], sequence: Math.max(...this.events.map((event) => event.sequence)) + 1, idempotency_key: "report-saved", phase: "complete", status: v[1], message: "Report saved from the completed public-source phases.", metadata_json: "{}", observed_at: v[2] });
+        if (!this.events.some((event) => event.run_id === v[0] && event.idempotency_key === "report-saved")) this.events.push({ run_id: v[0], sequence: Math.max(...this.events.map((event) => event.sequence)) + 1, idempotency_key: "report-saved", phase: "complete", status: v[2], message: "Report saved from the completed public-source phases.", metadata_json: "{}", observed_at: v[3] });
       } else if (q.startsWith("UPDATE report_runs SET status = 'interrupted'")) {
         Object.assign(this.runs.find((run) => run.id === v[2]), { status: "interrupted", current_phase: "interrupted", updated_at: v[0], error_code: "stale-worker", error_message: v[1] });
       } else if (q.startsWith("UPDATE report_runs SET status = 'failed'")) {

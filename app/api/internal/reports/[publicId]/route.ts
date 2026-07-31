@@ -5,6 +5,8 @@ import {
   markReportDispatched,
   markReportDispatchFailed,
   recoverInterruptedReport,
+  saveReportFactChunk,
+  finalizeReportFactManifest,
   saveReportDocument,
   type ReportPhase,
   type ReportRunStatus,
@@ -14,11 +16,14 @@ import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../
 import { dispatchReportJob } from "../../../../lib/report-dispatch.ts";
 
 type RouteContext = { params: Promise<{ publicId: string }> | { publicId: string } };
+const MAX_INTERNAL_CALLBACK_BODY_BYTES = 1_500_000;
 type StoredReport = NonNullable<Awaited<ReturnType<typeof getStoredReport>>>;
 type InternalReportStore = {
   get(publicId: string): Promise<StoredReport | null>;
   append(publicId: string, input: Parameters<typeof appendReportEvent>[1]): Promise<unknown>;
   save(publicId: string, document: unknown, options: Parameters<typeof saveReportDocument>[2]): Promise<unknown>;
+  saveFactChunk(publicId: string, input: Parameters<typeof saveReportFactChunk>[1]): Promise<unknown>;
+  finalizeFacts(publicId: string, input: Parameters<typeof finalizeReportFactManifest>[1]): Promise<unknown>;
 };
 type InternalRecoveryServices = {
   recover: typeof recoverInterruptedReport;
@@ -31,6 +36,8 @@ const liveStore: InternalReportStore = {
   get: (id) => getStoredReport(id),
   append: (id, input) => appendReportEvent(id, input),
   save: (id, document, options) => saveReportDocument(id, document, options),
+  saveFactChunk: (id, input) => saveReportFactChunk(id, input),
+  finalizeFacts: (id, input) => finalizeReportFactManifest(id, input),
 };
 const liveRecovery: InternalRecoveryServices = {
   recover: recoverInterruptedReport,
@@ -41,6 +48,33 @@ const liveRecovery: InternalRecoveryServices = {
 
 async function publicId(context: RouteContext) {
   return (await context.params).publicId;
+}
+
+async function boundedRequestJson(request: Request) {
+  const declared = Number(request.headers.get("content-length") || 0);
+  if (declared > MAX_INTERNAL_CALLBACK_BODY_BYTES) throw new Error("The internal callback body is too large.");
+  if (!request.body) throw new Error("Invalid internal callback body.");
+  const reader = request.body.getReader();
+  const decoder = new TextDecoder();
+  let total = 0;
+  let json = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_INTERNAL_CALLBACK_BODY_BYTES) {
+      await reader.cancel();
+      throw new Error("The internal callback body is too large.");
+    }
+    json += decoder.decode(value, { stream: true });
+  }
+  try {
+    const value = JSON.parse(json + decoder.decode());
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error();
+    return value as Record<string, unknown>;
+  } catch {
+    throw new Error("Invalid internal callback body.");
+  }
 }
 
 function clean(value: unknown, limit: number) {
@@ -79,7 +113,7 @@ function documentReplayMatches(report: StoredReport, body: Record<string, unknow
 
 function routeError(error: unknown, fallback: string) {
   const message = error instanceof Error ? error.message : fallback;
-  const status = /not found/i.test(message) ? 404 : /invalid|too large|terminal report|saved report document|only an?/i.test(message) ? 400 : 503;
+  const status = /not found/i.test(message) ? 404 : /conflict|different report fact manifest|immutable|already in progress|stale/i.test(message) ? 409 : /invalid|too large|terminal report|saved report document|only an?|incomplete|does not match|was not persisted|missing|required|references a product|belongs to another report|attribution|source|official platform/i.test(message) ? 400 : 503;
   return Response.json({ ok: false, error: message }, { status, headers: { "Cache-Control": "no-store" } });
 }
 
@@ -98,7 +132,7 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
     async post(request: Request, context: RouteContext) {
       if (!await hasValidInternalAuthorization(request.headers.get("authorization"), expectedToken)) return unauthorizedInternalResponse();
       try {
-        const body = await request.json() as Record<string, unknown>;
+        const body = await boundedRequestJson(request);
         const id = await publicId(context);
         const report = await store.get(id);
         if (!report) return Response.json({ ok: false, error: "Report not found." }, { status: 404 });
@@ -119,6 +153,9 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
           try { await recovery.markDispatched(id, job.runId); } catch { /* the accepted worker may already have moved the report to running */ }
           return Response.json({ ok: true, report: recovered, job: { dispatched: true, runId: job.runId }, replayed: replayableRecovery }, { status: 202 });
         }
+        const attemptNumber = Number(body.attemptNumber);
+        if (!Number.isInteger(attemptNumber) || attemptNumber < 1) return Response.json({ ok: false, error: "Invalid report callback attempt." }, { status: 400 });
+        if (attemptNumber !== report.run.attemptCount) return Response.json({ ok: false, error: "The report callback attempt is stale." }, { status: 409 });
         if (body.action === "event") {
           const key = clean(body.idempotencyKey, 120);
           const existing = report.events.find((item) => item.idempotencyKey === key);
@@ -130,6 +167,7 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
             return Response.json({ ok: false, error: "A terminal report cannot accept a new event." }, { status: 409 });
           }
           const event = await store.append(id, {
+            attemptNumber,
             idempotencyKey: key,
             phase: body.phase as ReportPhase,
             status: body.status as ReportRunStatus,
@@ -138,6 +176,27 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
             errorCode: clean(body.errorCode, 80),
           });
           return Response.json({ ok: true, event, replayed: false });
+        }
+        if (body.action === "fact-chunk") {
+          const saved = await store.saveFactChunk(id, {
+            attemptNumber,
+            manifestId: clean(body.manifestId, 64),
+            kind: body.kind as Parameters<typeof saveReportFactChunk>[1]["kind"],
+            chunkIndex: Number(body.chunkIndex),
+            chunkCount: Number(body.chunkCount),
+            contentHash: clean(body.contentHash, 64),
+            items: Array.isArray(body.items) ? body.items as Array<Record<string, unknown>> : [],
+          });
+          return Response.json({ ok: true, saved });
+        }
+        if (body.action === "fact-manifest") {
+          const saved = await store.finalizeFacts(id, {
+            attemptNumber,
+            manifestId: clean(body.manifestId, 64),
+            manifestHash: clean(body.manifestHash, 64),
+            counts: body.counts as Parameters<typeof finalizeReportFactManifest>[1]["counts"],
+          });
+          return Response.json({ ok: true, saved });
         }
         if (body.action === "document") {
           if (["complete", "limited"].includes(report.run.status)) {
@@ -148,6 +207,7 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
             return Response.json({ ok: false, error: "A failed or interrupted report cannot accept a document." }, { status: 409 });
           }
           const saved = await store.save(id, body.document, {
+            attemptNumber,
             status: body.status === "limited" ? "limited" : "complete",
             observedAt: typeof body.observedAt === "string" ? body.observedAt : undefined,
           });

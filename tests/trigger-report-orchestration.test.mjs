@@ -20,11 +20,13 @@ import { createWorkerApiManifest } from "../src/shared/worker-api-contract.ts";
 import { AI_ACTION_PLANNER_LIMITS, deterministicProductActionResult } from "../app/lib/ai-action-planner.ts";
 
 const payload = {
-  contractVersion: "1",
+  contractVersion: "2",
   publicId: "a".repeat(32),
   primaryDomain: "shop.example",
   locale: "en",
+  reportAttempt: 1,
 };
+const recoveryPayload = { ...payload, reportAttempt: 2 };
 
 function product(domain = "shop.example", id = "p1") {
   return {
@@ -104,13 +106,17 @@ function comparison({ withPair = false } = {}) {
 function mockPort(overrides = {}) {
   const events = [];
   const saves = [];
+  const factChunks = [];
+  const factManifests = [];
   const port = {
     events,
     saves,
+    factChunks,
+    factManifests,
     async preflight() {},
     async loadReport() {
       return {
-        run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "queued", createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:00:00.000Z" },
+        run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "queued", attemptCount: 1, createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:00:00.000Z" },
         events: [],
       };
     },
@@ -129,6 +135,8 @@ function mockPort(overrides = {}) {
     async match() { return { ok: true, comparison: comparison() }; },
     async enrich() { throw new Error("not expected"); },
     async actions({ inputs }) { return { ok: true, result: deterministicProductActionResult(inputs) }; },
+    async persistFactChunk(_publicId, value) { factChunks.push(value); },
+    async finalizeFactManifest(_publicId, value) { factManifests.push(value); },
     async saveDocument(_publicId, value) { saves.push(value); },
     ...overrides,
   };
@@ -143,7 +151,8 @@ test("payload contract accepts only a canonical, exact, versioned payload", () =
     { ...payload, publicId: "nope" },
     { ...payload, locale: "fr" },
     { ...payload, callbackUrl: "https://attacker.example" },
-    { ...payload, contractVersion: "2" },
+    { ...payload, contractVersion: "1" },
+    { ...payload, reportAttempt: 0 },
   ]) assert.throws(() => parseReportOrchestrationPayload(invalid), PermanentOrchestrationError);
 });
 
@@ -159,6 +168,9 @@ test("successful orchestration persists ordered heartbeats and a complete docume
   assert.ok(port.events.some((item) => item.idempotencyKey === "crawl-started"));
   assert.ok(port.events.some((item) => item.idempotencyKey === "ads-complete"));
   assert.ok(port.events.some((item) => item.idempotencyKey === "matching-complete"));
+  assert.ok(port.events.some((item) => item.idempotencyKey === "facts-complete"));
+  assert.equal(port.factChunks.length, 4);
+  assert.deepEqual(port.factManifests[0].counts, { companies: 1, products: 1, matches: 0, ads: 0 });
   assert.equal(port.events.some((item) => item.idempotencyKey.startsWith("brief-")), false);
   assert.equal(port.saves[0].document.marketBrief, null);
 });
@@ -186,18 +198,103 @@ test("independent phase failures remain visible and produce a limited report", a
   assert.match(port.events.find((item) => item.idempotencyKey === "ads-limited").metadata.reason, /provider unavailable/);
 });
 
+test("Trigger task retries keep the same database report-attempt ownership", async () => {
+  const port = mockPort();
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port);
+  assert.equal(result.reportStatus, "complete");
+  assert.ok(port.events.every((item) => item.attemptNumber === 1));
+  assert.ok(port.factChunks.every((item) => item.attemptNumber === 1));
+  assert.ok(port.factManifests.every((item) => item.attemptNumber === 1));
+  assert.ok(port.saves.every((item) => item.attemptNumber === 1));
+});
+
+test("relational fact persistence failure stays visible while the dashboard snapshot is still saved", async () => {
+  const port = mockPort({ async persistFactChunk() { throw new Error("database temporarily unavailable"); } });
+  const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
+  assert.equal(result.reportStatus, "limited");
+  assert.deepEqual(result.limitedPhases, ["persistence"]);
+  assert.equal(port.saves.length, 1);
+  assert.match(port.events.find((item) => item.idempotencyKey === "facts-limited").metadata.reason, /database temporarily unavailable/);
+});
+
+test("a retry after manifest finalization reuses the completed facts without rewriting chunks", async () => {
+  const counts = { companies: 2, products: 63, matches: 4, ads: 1 };
+  const port = mockPort({
+    async loadReport() {
+      return {
+        run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "running", attemptCount: 2, createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T10:00:00.000Z" },
+        events: [],
+        factManifest: { manifestId: "a".repeat(64), manifestHash: "b".repeat(64), counts, status: "complete", completedAt: "2026-07-20T09:59:00.000Z" },
+      };
+    },
+  });
+  const result = await orchestrateReport(recoveryPayload, { attemptNumber: 2, isFinalAttempt: true }, port);
+  assert.equal(result.reportStatus, "complete");
+  assert.equal(port.factChunks.length, 0);
+  assert.equal(port.factManifests.length, 0);
+  assert.deepEqual(port.events.find((item) => item.idempotencyKey === "facts-complete").metadata, counts);
+});
+
+test("fact telemetry callback failures never prevent the terminal document", async () => {
+  const port = mockPort({
+    async persistFactChunk() { throw new Error("fact database unavailable"); },
+    async appendEvent(_publicId, value) {
+      if (value.idempotencyKey === "facts-limited") throw new Error("telemetry unavailable");
+      port.events.push(value);
+    },
+  });
+  const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
+  assert.equal(result.reportStatus, "limited");
+  assert.equal(port.saves.length, 1);
+  const completePort = mockPort({
+    async appendEvent(_publicId, value) {
+      if (value.idempotencyKey === "facts-complete") throw new Error("telemetry unavailable");
+      completePort.events.push(value);
+    },
+  });
+  const complete = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, completePort);
+  assert.equal(complete.reportStatus, "complete");
+  assert.equal(completePort.saves.length, 1);
+});
+
+test("a lost finalization response reloads and reuses the authoritative completed manifest", async () => {
+  const counts = { companies: 2, products: 20, matches: 3, ads: 0 };
+  let loads = 0;
+  const port = mockPort({
+    async loadReport() {
+      loads += 1;
+      return {
+        run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "running", attemptCount: 2, createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T10:00:00.000Z" },
+        events: [],
+        factManifest: { manifestId: "a".repeat(64), attemptNumber: 2, manifestHash: "b".repeat(64), counts, status: loads === 1 ? "finalizing" : "complete", completedAt: "2026-07-20T09:59:00.000Z" },
+      };
+    },
+    async finalizeFactManifest() { throw new Error("response lost after commit"); },
+  });
+  const result = await orchestrateReport(recoveryPayload, { attemptNumber: 2, isFinalAttempt: true }, port);
+  assert.equal(result.reportStatus, "complete");
+  assert.equal(loads, 2);
+  assert.equal(port.factChunks.length, 0);
+  assert.equal(port.saves.length, 1);
+});
+
 test("crawl failure remains non-terminal before the final task attempt", async () => {
   const port = mockPort({ async crawl() { throw new Error("timeout"); } });
   await assert.rejects(orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port), /timeout/);
   const failure = port.events.at(-1);
-  assert.equal(failure.idempotencyKey, "crawl-attempt-1-failed");
+  assert.equal(failure.idempotencyKey, "crawl-report-1-task-1-failed");
   assert.equal(failure.status, "running");
   assert.equal(failure.phase, "crawl");
 });
 
 test("crawl failure becomes terminal only on the final task attempt", async () => {
-  const port = mockPort({ async crawl() { throw new Error("still unavailable"); } });
-  await assert.rejects(orchestrateReport(payload, { attemptNumber: 2, isFinalAttempt: true }, port), /still unavailable/);
+  const port = mockPort({
+    async loadReport() {
+      return { run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "queued", attemptCount: 2, createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:00:00.000Z" }, events: [] };
+    },
+    async crawl() { throw new Error("still unavailable"); },
+  });
+  await assert.rejects(orchestrateReport(recoveryPayload, { attemptNumber: 2, isFinalAttempt: true }, port), /still unavailable/);
   const failure = port.events.at(-1);
   assert.equal(failure.idempotencyKey, "crawl-failed");
   assert.equal(failure.status, "failed");
@@ -275,16 +372,18 @@ test("a bounded unavailable domain persists one terminal limited report without 
 test("a parked-domain retry replays partial event writes without an idempotency conflict", async () => {
   const storedEvents = new Map();
   let saveAttempts = 0;
+  let currentAttempt = 1;
   const port = mockPort({
     async loadReport() {
       return {
-        run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "running", createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:00:00.000Z" },
+        run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "running", attemptCount: currentAttempt, createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:00:00.000Z" },
         events: [...storedEvents.values()],
       };
     },
     async appendEvent(_publicId, value) {
       const existing = storedEvents.get(value.idempotencyKey);
-      if (existing && JSON.stringify(existing) !== JSON.stringify(value)) throw new Error(`idempotency conflict: ${value.idempotencyKey}`);
+      const withoutAttempt = (item) => Object.fromEntries(Object.entries(item).filter(([key]) => key !== "attemptNumber"));
+      if (existing && JSON.stringify(withoutAttempt(existing)) !== JSON.stringify(withoutAttempt(value))) throw new Error(`idempotency conflict: ${value.idempotencyKey}`);
       storedEvents.set(value.idempotencyKey, structuredClone(value));
     },
     async crawl() {
@@ -306,7 +405,8 @@ test("a parked-domain retry replays partial event writes without an idempotency 
     },
   });
   await assert.rejects(orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port), /transient save failure/);
-  const result = await orchestrateReport(payload, { attemptNumber: 2, isFinalAttempt: true }, port);
+  currentAttempt = 2;
+  const result = await orchestrateReport(recoveryPayload, { attemptNumber: 2, isFinalAttempt: true }, port);
   assert.equal(result.reportStatus, "limited");
   assert.equal(saveAttempts, 2);
   assert.equal(storedEvents.get("crawl-limited").metadata.attempt, undefined);
@@ -404,7 +504,7 @@ test("a replayed parked report preserves the live canonical phase summary", asyn
       };
     },
   });
-  const result = await orchestrateReport(payload, { attemptNumber: 2, isFinalAttempt: true }, port);
+  const result = await orchestrateReport(recoveryPayload, { attemptNumber: 2, isFinalAttempt: true }, port);
   assert.deepEqual(result.completedPhases, ["persistence"]);
   assert.deepEqual(result.limitedPhases, ["crawl", "brief", "ads", "matching"]);
   assert.equal(port.events.length, 0);
@@ -422,7 +522,7 @@ test("terminal success replay derives its summary and issues no mutations", asyn
       };
     },
   });
-  const result = await orchestrateReport(payload, { attemptNumber: 2, isFinalAttempt: true }, port);
+  const result = await orchestrateReport(recoveryPayload, { attemptNumber: 2, isFinalAttempt: true }, port);
   assert.equal(result.reportStatus, "limited");
   assert.deepEqual(result.completedPhases, ["competitors"]);
   assert.deepEqual(result.limitedPhases, ["ads"]);
@@ -538,8 +638,11 @@ test("AI action transport failure retains deterministic moves without limiting t
 });
 
 test("a final non-crawl failure records one terminal orchestration event", async () => {
-  const port = mockPort({ async saveDocument() { throw new Error("storage unavailable"); } });
-  await assert.rejects(orchestrateReport(payload, { attemptNumber: 2, isFinalAttempt: true }, port), /storage unavailable/);
+  const port = mockPort({
+    async loadReport() { return { run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "queued", attemptCount: 2, createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:00:00.000Z" }, events: [] }; },
+    async saveDocument() { throw new Error("storage unavailable"); },
+  });
+  await assert.rejects(orchestrateReport(recoveryPayload, { attemptNumber: 2, isFinalAttempt: true }, port), /storage unavailable/);
   const failure = port.events.at(-1);
   assert.equal(failure.idempotencyKey, "orchestration-failed");
   assert.equal(failure.status, "failed");
@@ -648,6 +751,19 @@ test("the HTTP action adapter uses the internal route, bounded budget, and beare
   assert.equal(calls[0].init.headers.Authorization, "Bearer callback_secret_with_enough_entropy_123456");
   assert.equal(OPERATION_BUDGETS_MS.actions, 35_000);
   assert.ok(OPERATION_BUDGETS_MS.actions >= AI_ACTION_PLANNER_LIMITS.totalBudgetMs + 5_000, "action transport must preserve serialization headroom above the planner budget");
+});
+
+test("the HTTP report adapter sends authenticated fact chunks and the final manifest", async () => {
+  const bodies = [];
+  const port = createReportOrchestrationHttpPort({
+    appOrigin: "https://market.example",
+    callbackToken: "callback_secret_with_enough_entropy_123456",
+    async fetchImpl(_url, init) { bodies.push(JSON.parse(init.body)); return Response.json({ ok: true }); },
+  });
+  await port.persistFactChunk(payload.publicId, { manifestId: "a".repeat(64), kind: "companies", chunkIndex: 0, chunkCount: 1, contentHash: "b".repeat(64), items: [] });
+  await port.finalizeFactManifest(payload.publicId, { manifestId: "a".repeat(64), manifestHash: "c".repeat(64), counts: { companies: 0, products: 0, matches: 0, ads: 0 } });
+  assert.equal(bodies[0].action, "fact-chunk");
+  assert.equal(bodies[1].action, "fact-manifest");
 });
 
 test("the internal report port maps a missing stored report to null without retrying", async () => {

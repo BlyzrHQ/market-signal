@@ -263,6 +263,14 @@ export function createReportOrchestrationHttpPort(configuration: { appOrigin: st
       if (payload.ok !== true) throw new OrchestrationHttpError("Product action planning", 422, false);
       return payload;
     },
+    async persistFactChunk(publicId, input) {
+      const payload = requiredObject<{ ok?: boolean }>(await call(PATHS.report(publicId), "Report fact chunk callback", OPERATION_BUDGETS_MS.report, { action: "fact-chunk", ...input }), "Report fact chunk callback");
+      if (payload.ok !== true) throw new OrchestrationHttpError("Report fact chunk callback", 502, true);
+    },
+    async finalizeFactManifest(publicId, input) {
+      const payload = requiredObject<{ ok?: boolean }>(await call(PATHS.report(publicId), "Report fact manifest callback", OPERATION_BUDGETS_MS.report, { action: "fact-manifest", ...input }), "Report fact manifest callback");
+      if (payload.ok !== true) throw new OrchestrationHttpError("Report fact manifest callback", 502, true);
+    },
     async saveDocument(publicId, input) {
       const payload = requiredObject<{ ok?: boolean }>(await call(PATHS.report(publicId), "Completed report callback", OPERATION_BUDGETS_MS.report, { action: "document", ...input }), "Completed report callback");
       if (payload.ok !== true) throw new OrchestrationHttpError("Completed report callback", 502, true);
