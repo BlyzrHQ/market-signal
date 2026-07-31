@@ -17,6 +17,7 @@ export type ReportOrchestrationSummary = {
   limitedPhases: string[];
   startedAt: string;
   finishedAt: string;
+  evaluation?: { id: string; inputHash: string; factManifestHash: string; evaluatorVersion: string } | null;
 };
 
 const PUBLIC_ID_PATTERN = /^[a-f0-9]{32}$/;

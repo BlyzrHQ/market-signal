@@ -272,8 +272,9 @@ export function createReportOrchestrationHttpPort(configuration: { appOrigin: st
       if (payload.ok !== true) throw new OrchestrationHttpError("Report fact manifest callback", 502, true);
     },
     async saveDocument(publicId, input) {
-      const payload = requiredObject<{ ok?: boolean }>(await call(PATHS.report(publicId), "Completed report callback", OPERATION_BUDGETS_MS.report, { action: "document", ...input }), "Completed report callback");
+      const payload = requiredObject<{ ok?: boolean; saved?: { evaluation?: import("./report-orchestration-core.ts").SavedEvaluationDispatch | null } }>(await call(PATHS.report(publicId), "Completed report callback", OPERATION_BUDGETS_MS.report, { action: "document", ...input }), "Completed report callback");
       if (payload.ok !== true) throw new OrchestrationHttpError("Completed report callback", 502, true);
+      return { evaluation: payload.saved?.evaluation || null };
     },
   };
 }

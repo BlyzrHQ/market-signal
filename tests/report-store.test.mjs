@@ -243,6 +243,28 @@ test("schema initialization identifies a failing DDL statement without exposing 
   assert.doesNotMatch(JSON.stringify(logged), /raw|D1|SQL/i);
 });
 
+test("evaluation column migration failures use a closed diagnostic", async () => {
+  const database = {
+    prepare(query) {
+      return { bind() { return this; }, async all() { return { results: [] }; }, async run() { if (query.startsWith("ALTER TABLE report_evaluations")) throw new Error("raw migration backend detail"); return {}; } };
+    },
+    async batch() { throw new Error("writes must not begin after migration failure"); },
+  };
+  const originalConsoleError = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
+  try {
+    await assert.rejects(
+      createReportRun({ primaryDomain: "example.com" }, new Date(), database),
+      (error) => error instanceof ReportStorageError && error.code === "evaluation-migration-1-failed" && !/backend|ALTER|migration detail/i.test(error.message),
+    );
+  } finally {
+    console.error = originalConsoleError;
+  }
+  assert.deepEqual(logged, [["report storage diagnostic", { diagnosticCode: "evaluation-migration-1-failed" }]]);
+  assert.doesNotMatch(JSON.stringify(logged), /raw|backend|ALTER TABLE/i);
+});
+
 test("atomic report creation classifies D1 batch failures without exposing raw details", async () => {
   const cases = [
     ["D1_ERROR: table report_runs has no column named attempt_count", "run-create-batch-schema-mismatch"],

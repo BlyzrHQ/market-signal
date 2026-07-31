@@ -33,6 +33,10 @@ Caddy obtains and renews TLS automatically once DNS and ports 80/443 work.
 Set `MARKET_SIGNAL_APP_ORIGIN` in the Trigger.dev environment to the final
 HTTPS domain. Trigger.dev calls `/api/internal/*` using
 `MARKET_SIGNAL_CALLBACK_TOKEN`; the browser never receives this secret.
+The report evaluator uses a different `MARKET_SIGNAL_EVALUATION_TOKEN` on the
+VPS and Trigger.dev. Keep `MARKET_SIGNAL_EVALUATION_DISPATCH_ENABLED=false` in
+both environments until the schema, private endpoint, Trigger worker, and one
+manually claimed evaluation have passed the release canary.
 
 ## 3. Build and start an exact revision
 

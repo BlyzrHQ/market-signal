@@ -5,6 +5,7 @@ import { canonicalReportFact, reportFactHash } from "../../src/shared/report-fac
 import { publicHttpUrl } from "./public-url.ts";
 import { officialAdRecordUrl } from "./ad-intelligence.ts";
 import { DETERMINISTIC_EVALUATOR_VERSION, DETERMINISTIC_RUBRIC_VERSION, profileDeterministicEvaluation } from "./report-evaluator.ts";
+import { REPORT_AGENT_DEFAULT_MODEL, REPORT_AGENT_JUDGE_VERSION, REPORT_AGENT_LIMITS, REPORT_AGENT_PRICING_VERSION, REPORT_AGENT_PROMPT_VERSION, REPORT_AGENT_RUBRIC_VERSION, reserveReportAgentCost } from "./report-agent-judge.ts";
 
 export type ReportRunStatus = "queued" | "running" | "complete" | "limited" | "failed" | "interrupted";
 export type ReportPhase = "queued" | "crawl" | "competitors" | "brief" | "products" | "matching" | "enrichment" | "actions" | "ads" | "persistence" | "complete" | "failed" | "interrupted";
@@ -46,13 +47,28 @@ export type StoredReportEvaluation = {
   factManifestHash: string;
   evaluatorVersion: string;
   rubricVersion: string;
-  status: "pending" | "dispatch_failed" | "deterministic" | "complete" | "agent_rejected" | "insufficient_facts" | "rubric_unavailable" | "failed";
+  status: "pending" | "dispatch_failed" | "dispatching" | "profiling" | "ready_for_judge" | "judging" | "complete" | "agent_rejected" | "insufficient_facts" | "rubric_unavailable" | "failed";
   ratingBasis: "hybrid" | "deterministic_only" | "none";
   deterministicScore: number | null;
   overallScore: number | null;
   grade: string | null;
   deterministic: Record<string, unknown>;
   findings: Array<Record<string, unknown>>;
+  model: string;
+  promptVersion: string;
+  pricingVersion: string;
+  evaluatedAt: string;
+  maxInputTokens: number;
+  maxOutputTokens: number;
+  reservedCostMicrousd: number;
+  packetHash: string;
+  leaseGeneration: number;
+  leaseExpiresAt: string;
+  dispatchGeneration: number;
+  dispatchAttempts: number;
+  dispatchTransportAttempts: number;
+  dispatchOutcome: string;
+  triggerRunId: string;
   errorCode: string;
   createdAt: string;
   startedAt: string;
@@ -82,6 +98,7 @@ export type ReportCreateDiagnostic =
   | "database-import-failed"
   | "database-binding-missing"
   | `schema-statement-${number}-failed`
+  | `evaluation-migration-${number}-failed`
   | `run-create-batch-${"schema-mismatch" | "constraint" | "binding-count" | "transaction" | "batch-api"}`
   | "run-create-unclassified";
 
@@ -101,7 +118,7 @@ const PHASES = new Set<ReportPhase>(["queued", "crawl", "competitors", "brief", 
 const STATUSES = new Set<ReportRunStatus>(["queued", "running", "complete", "limited", "failed", "interrupted"]);
 const schemaInitialization = new WeakMap<object, Promise<void>>();
 const emittedStorageDiagnostics = new Set<string>();
-const REPORT_STORAGE_DIAGNOSTIC = /^(?:database-(?:import-failed|binding-missing)|schema-statement-(?:[1-9]|[12]\d|3[01])-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api))$/;
+const REPORT_STORAGE_DIAGNOSTIC = /^(?:database-(?:import-failed|binding-missing)|schema-statement-(?:[1-9]|[12]\d|3[01])-failed|evaluation-migration-(?:[1-9]|1[0-2])-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api))$/;
 
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS report_runs (id text PRIMARY KEY NOT NULL, public_id text NOT NULL, primary_domain text NOT NULL, locale text DEFAULT 'en' NOT NULL, status text NOT NULL, current_phase text NOT NULL, attempt_count integer DEFAULT 1 NOT NULL, created_at text NOT NULL, updated_at text NOT NULL, heartbeat_at text NOT NULL, expires_at text NOT NULL, error_code text DEFAULT '' NOT NULL, error_message text DEFAULT '' NOT NULL)`,
@@ -124,7 +141,7 @@ const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS report_fact_chunks (run_id text NOT NULL, manifest_id text NOT NULL, attempt_number integer NOT NULL, kind text NOT NULL, chunk_index integer NOT NULL, chunk_count integer NOT NULL, item_count integer NOT NULL, content_hash text NOT NULL, created_at text NOT NULL, PRIMARY KEY (run_id, manifest_id, kind, chunk_index))`,
   `CREATE INDEX IF NOT EXISTS report_fact_chunks_run_manifest_idx ON report_fact_chunks (run_id, manifest_id)`,
   `CREATE TABLE IF NOT EXISTS report_fact_manifests (run_id text PRIMARY KEY NOT NULL, manifest_id text NOT NULL, attempt_number integer NOT NULL, manifest_hash text NOT NULL, company_count integer NOT NULL, product_count integer NOT NULL, match_count integer NOT NULL, ad_count integer NOT NULL, status text NOT NULL, lock_owner text NOT NULL, locked_at text NOT NULL, completed_at text NOT NULL)`,
-  `CREATE TABLE IF NOT EXISTS report_evaluations (id text PRIMARY KEY NOT NULL, run_id text NOT NULL, evaluation_type text NOT NULL, input_hash text NOT NULL, fact_manifest_hash text DEFAULT '' NOT NULL, evaluator_version text NOT NULL, rubric_version text NOT NULL, status text NOT NULL, rating_basis text NOT NULL, overall_score integer, user_value_score integer, evidence_integrity_score integer, evidence_yield_score integer, presentation_score integer, deterministic_score integer, grade text, deterministic_json text DEFAULT '{}' NOT NULL, agent_json text DEFAULT '{}' NOT NULL, findings_json text DEFAULT '[]' NOT NULL, proposals_json text DEFAULT '[]' NOT NULL, model text DEFAULT '' NOT NULL, prompt_version text DEFAULT '' NOT NULL, pricing_version text DEFAULT '' NOT NULL, cost_microusd integer DEFAULT 0 NOT NULL, input_tokens integer DEFAULT 0 NOT NULL, output_tokens integer DEFAULT 0 NOT NULL, error_code text DEFAULT '' NOT NULL, dispatch_attempts integer DEFAULT 0 NOT NULL, created_at text NOT NULL, started_at text DEFAULT '' NOT NULL, completed_at text DEFAULT '' NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS report_evaluations (id text PRIMARY KEY NOT NULL, run_id text NOT NULL, evaluation_type text NOT NULL, input_hash text NOT NULL, fact_manifest_hash text DEFAULT '' NOT NULL, evaluator_version text NOT NULL, rubric_version text NOT NULL, status text NOT NULL, rating_basis text NOT NULL, overall_score integer, user_value_score integer, evidence_integrity_score integer, evidence_yield_score integer, presentation_score integer, deterministic_score integer, grade text, deterministic_json text DEFAULT '{}' NOT NULL, agent_json text DEFAULT '{}' NOT NULL, findings_json text DEFAULT '[]' NOT NULL, proposals_json text DEFAULT '[]' NOT NULL, model text DEFAULT '' NOT NULL, prompt_version text DEFAULT '' NOT NULL, pricing_version text DEFAULT '' NOT NULL, evaluated_at text DEFAULT '' NOT NULL, max_input_tokens integer DEFAULT 0 NOT NULL, max_output_tokens integer DEFAULT 0 NOT NULL, reserved_cost_microusd integer DEFAULT 0 NOT NULL, packet_hash text DEFAULT '' NOT NULL, cost_microusd integer DEFAULT 0 NOT NULL, input_tokens integer DEFAULT 0 NOT NULL, output_tokens integer DEFAULT 0 NOT NULL, error_code text DEFAULT '' NOT NULL, lease_token text DEFAULT '' NOT NULL, lease_generation integer DEFAULT 0 NOT NULL, lease_expires_at text DEFAULT '' NOT NULL, dispatch_generation integer DEFAULT 0 NOT NULL, dispatch_attempts integer DEFAULT 0 NOT NULL, dispatch_transport_attempts integer DEFAULT 0 NOT NULL, dispatch_outcome text DEFAULT '' NOT NULL, trigger_run_id text DEFAULT '' NOT NULL, created_at text NOT NULL, started_at text DEFAULT '' NOT NULL, completed_at text DEFAULT '' NOT NULL)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS report_evaluations_identity_uidx ON report_evaluations (run_id, input_hash, evaluator_version, evaluation_type)`,
   `CREATE INDEX IF NOT EXISTS report_evaluations_run_completed_idx ON report_evaluations (run_id, completed_at)`,
   `CREATE INDEX IF NOT EXISTS report_evaluations_score_completed_idx ON report_evaluations (overall_score, completed_at)`,
@@ -135,6 +152,21 @@ const SCHEMA_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS report_quality_signals_stage_severity_observed_idx ON report_quality_signals (stage, severity, observed_at)`,
   `CREATE TABLE IF NOT EXISTS report_purge_audits (id text PRIMARY KEY NOT NULL, cutoff text NOT NULL, heartbeat_guard text NOT NULL, runs_deleted integer NOT NULL, quality_signals_deleted integer NOT NULL, evaluations_deleted integer NOT NULL, ads_deleted integer NOT NULL, matches_deleted integer NOT NULL, products_deleted integer NOT NULL, companies_deleted integer NOT NULL, fact_chunks_deleted integer NOT NULL, fact_manifests_deleted integer NOT NULL, documents_deleted integer NOT NULL, events_deleted integer NOT NULL, observed_at text NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS report_purge_audits_observed_idx ON report_purge_audits (observed_at)`,
+];
+
+const EVALUATION_COLUMN_MIGRATIONS = [
+  `ALTER TABLE report_evaluations ADD COLUMN evaluated_at text DEFAULT '' NOT NULL`,
+  `ALTER TABLE report_evaluations ADD COLUMN max_input_tokens integer DEFAULT 0 NOT NULL`,
+  `ALTER TABLE report_evaluations ADD COLUMN max_output_tokens integer DEFAULT 0 NOT NULL`,
+  `ALTER TABLE report_evaluations ADD COLUMN reserved_cost_microusd integer DEFAULT 0 NOT NULL`,
+  `ALTER TABLE report_evaluations ADD COLUMN packet_hash text DEFAULT '' NOT NULL`,
+  `ALTER TABLE report_evaluations ADD COLUMN lease_token text DEFAULT '' NOT NULL`,
+  `ALTER TABLE report_evaluations ADD COLUMN lease_generation integer DEFAULT 0 NOT NULL`,
+  `ALTER TABLE report_evaluations ADD COLUMN lease_expires_at text DEFAULT '' NOT NULL`,
+  `ALTER TABLE report_evaluations ADD COLUMN dispatch_generation integer DEFAULT 0 NOT NULL`,
+  `ALTER TABLE report_evaluations ADD COLUMN dispatch_transport_attempts integer DEFAULT 0 NOT NULL`,
+  `ALTER TABLE report_evaluations ADD COLUMN dispatch_outcome text DEFAULT '' NOT NULL`,
+  `ALTER TABLE report_evaluations ADD COLUMN trigger_run_id text DEFAULT '' NOT NULL`,
 ];
 
 async function getDatabase(): Promise<D1DatabaseLike | null> {
@@ -203,6 +235,21 @@ function rowEvaluation(row: Record<string, unknown>): StoredReportEvaluation {
     grade: row.grade === null || row.grade === undefined ? null : String(row.grade),
     deterministic: parsedRecord(row.deterministic_json),
     findings: parsedRecords(row.findings_json),
+    model: String(row.model || ""),
+    promptVersion: String(row.prompt_version || ""),
+    pricingVersion: String(row.pricing_version || ""),
+    evaluatedAt: String(row.evaluated_at || ""),
+    maxInputTokens: Number(row.max_input_tokens || 0),
+    maxOutputTokens: Number(row.max_output_tokens || 0),
+    reservedCostMicrousd: Number(row.reserved_cost_microusd || 0),
+    packetHash: String(row.packet_hash || ""),
+    leaseGeneration: Number(row.lease_generation || 0),
+    leaseExpiresAt: String(row.lease_expires_at || ""),
+    dispatchGeneration: Number(row.dispatch_generation || 0),
+    dispatchAttempts: Number(row.dispatch_attempts || 0),
+    dispatchTransportAttempts: Number(row.dispatch_transport_attempts || 0),
+    dispatchOutcome: String(row.dispatch_outcome || ""),
+    triggerRunId: String(row.trigger_run_id || ""),
     errorCode: String(row.error_code || ""),
     createdAt: String(row.created_at || ""),
     startedAt: String(row.started_at || ""),
@@ -340,6 +387,20 @@ async function initializeSchema(database: D1DatabaseLike) {
       throw new ReportStorageError(diagnosticCode);
     }
   }
+  for (let index = 0; index < EVALUATION_COLUMN_MIGRATIONS.length; index += 1) {
+    try {
+      await database.prepare(EVALUATION_COLUMN_MIGRATIONS[index]).run();
+    } catch (error) {
+      if (/duplicate column name/i.test(error instanceof Error ? error.message : String(error))) continue;
+      const diagnosticCode = `evaluation-migration-${index + 1}-failed`;
+      logStorageDiagnostic(diagnosticCode);
+      throw new ReportStorageError(diagnosticCode);
+    }
+  }
+}
+
+export async function getReportDatabase() {
+  return getDatabase();
 }
 
 async function ensureSchema(database: D1DatabaseLike) {
@@ -447,6 +508,8 @@ export async function saveReportDocument(publicReportId: string, document: unkno
   const manifestRows = await database.prepare(`SELECT manifest_hash, company_count, product_count, match_count, ad_count, status FROM report_fact_manifests WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>();
   const manifest = manifestRows.results?.[0];
   const completeManifest = manifest?.status === "complete" && /^[a-f0-9]{64}$/.test(String(manifest.manifest_hash || ""));
+  const evaluatorModel = process.env.MARKET_SIGNAL_EVALUATOR_MODEL || REPORT_AGENT_DEFAULT_MODEL;
+  const reservation = reserveReportAgentCost(evaluatorModel);
   const evaluationId = internalId();
   const evaluationStatus = completeManifest ? "pending" : "insufficient_facts";
   const evaluationBasis = "none";
@@ -457,7 +520,7 @@ export async function saveReportDocument(publicReportId: string, document: unkno
     database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE((SELECT MAX(sequence) FROM report_events WHERE run_id = ?), 0) + 1, 'report-saved', 'complete', ?, 'Report saved from the completed public-source phases.', '{}', ? FROM report_runs WHERE id = ? AND attempt_count = ? AND status = ? ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, run.id, status, now.toISOString(), run.id, attemptNumber, status),
   ];
   const evaluationStatements = [
-    database.prepare(`INSERT INTO report_evaluations (id, run_id, evaluation_type, input_hash, fact_manifest_hash, evaluator_version, rubric_version, status, rating_basis, overall_score, user_value_score, evidence_integrity_score, evidence_yield_score, presentation_score, deterministic_score, grade, deterministic_json, agent_json, findings_json, proposals_json, model, prompt_version, pricing_version, cost_microusd, input_tokens, output_tokens, error_code, dispatch_attempts, created_at, started_at, completed_at) SELECT ?, ?, 'report', ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', '{}', '[]', '[]', '', '', '', 0, 0, 0, ?, 0, ?, '', ? WHERE EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND attempt_count = ? AND status = ?) ON CONFLICT(run_id, input_hash, evaluator_version, evaluation_type) DO NOTHING`).bind(evaluationId, run.id, documentHash, completeManifest ? String(manifest?.manifest_hash || "") : "", DETERMINISTIC_EVALUATOR_VERSION, DETERMINISTIC_RUBRIC_VERSION, evaluationStatus, evaluationBasis, completeManifest ? "" : "incomplete-fact-manifest", now.toISOString(), evaluationCompletedAt, run.id, attemptNumber, status),
+    database.prepare(`INSERT INTO report_evaluations (id, run_id, evaluation_type, input_hash, fact_manifest_hash, evaluator_version, rubric_version, status, rating_basis, overall_score, user_value_score, evidence_integrity_score, evidence_yield_score, presentation_score, deterministic_score, grade, deterministic_json, agent_json, findings_json, proposals_json, model, prompt_version, pricing_version, evaluated_at, max_input_tokens, max_output_tokens, reserved_cost_microusd, packet_hash, cost_microusd, input_tokens, output_tokens, error_code, lease_token, lease_generation, lease_expires_at, dispatch_generation, dispatch_attempts, dispatch_transport_attempts, dispatch_outcome, trigger_run_id, created_at, started_at, completed_at) SELECT ?, ?, 'report', ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', '{}', '[]', '[]', ?, ?, ?, ?, ?, ?, ?, '', 0, 0, 0, ?, '', 0, '', 0, 0, 0, '', '', ?, '', ? WHERE EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND attempt_count = ? AND status = ?) ON CONFLICT(run_id, input_hash, evaluator_version, evaluation_type) DO NOTHING`).bind(evaluationId, run.id, documentHash, completeManifest ? String(manifest?.manifest_hash || "") : "", REPORT_AGENT_JUDGE_VERSION, REPORT_AGENT_RUBRIC_VERSION, evaluationStatus, evaluationBasis, evaluatorModel, REPORT_AGENT_PROMPT_VERSION, reservation.accepted ? REPORT_AGENT_PRICING_VERSION : "", now.toISOString(), REPORT_AGENT_LIMITS.reservedInputTokens, REPORT_AGENT_LIMITS.reservedOutputTokens, reservation.accepted ? reservation.costWithRegionalUpliftMicrousd : 0, completeManifest ? (reservation.accepted ? "" : reservation.errorCode) : "incomplete-fact-manifest", now.toISOString(), evaluationCompletedAt, run.id, attemptNumber, status),
     ...(!completeManifest ? [database.prepare(`INSERT INTO report_quality_signals (id, evaluation_id, run_id, primary_domain, stage, issue_key, severity, evidence_json, observed_at) SELECT ?, ?, ?, ?, 'persistence', 'incomplete-fact-manifest', 'critical', ?, ? WHERE EXISTS (SELECT 1 FROM report_evaluations WHERE id = ? AND status = 'insufficient_facts') ON CONFLICT(evaluation_id, issue_key) DO NOTHING`).bind(internalId(), evaluationId, run.id, run.primaryDomain, JSON.stringify({ manifestStatus: String(manifest?.status || "missing"), coverageMetricsComputed: false }), now.toISOString(), evaluationId)] : []),
   ];
   let evaluationCreated = true;
@@ -470,14 +533,20 @@ export async function saveReportDocument(publicReportId: string, document: unkno
   }
   const persistedRun = await findRun(database, publicReportId);
   if (!persistedRun || persistedRun.attemptCount !== attemptNumber || persistedRun.status !== status) throw new Error("Report callback attempt is stale or invalid.");
+  let persistedEvaluationId = "";
   if (evaluationCreated && completeManifest) {
     try {
-      await evaluateStoredReport(publicReportId, { inputHash: documentHash, factManifestHash: String(manifest?.manifest_hash || ""), evaluatorVersion: DETERMINISTIC_EVALUATOR_VERSION }, now, database);
+      const rows = await database.prepare(`SELECT id FROM report_evaluations WHERE run_id = ? AND input_hash = ? AND evaluator_version = ? AND evaluation_type = 'report' LIMIT 1`).bind(run.id, documentHash, REPORT_AGENT_JUDGE_VERSION).all<Record<string, unknown>>();
+      persistedEvaluationId = String(rows.results?.[0]?.id || "");
     } catch {
-      console.error("report deterministic evaluation failed", { stage: "evaluation-profile", diagnosticCode: "evaluation-profile-failed" });
+      console.error("report evaluation lookup failed", { stage: "evaluation-lookup", diagnosticCode: "evaluation-lookup-failed" });
     }
   }
-  return { publicId: run.publicId, status, schemaVersion: REPORT_SCHEMA_VERSION, bytes: new TextEncoder().encode(documentJson).byteLength };
+  return { publicId: run.publicId, status, schemaVersion: REPORT_SCHEMA_VERSION, bytes: new TextEncoder().encode(documentJson).byteLength, evaluation: persistedEvaluationId ? { id: persistedEvaluationId, inputHash: documentHash, factManifestHash: String(manifest?.manifest_hash || ""), evaluatorVersion: REPORT_AGENT_JUDGE_VERSION } : null };
+}
+
+export async function ensureReportStorageSchema(database: D1DatabaseLike) {
+  return ensureSchema(database);
 }
 
 export async function getReportEvaluation(publicReportId: string, databaseOverride?: D1DatabaseLike | null) {
@@ -825,8 +894,8 @@ export async function purgeExpiredReports(now = new Date(), databaseOverride?: D
   const heartbeatGuard = new Date(now.getTime() - REPORT_PURGE_HEARTBEAT_GRACE_MS).toISOString();
   const auditCutoff = new Date(now.getTime() - REPORT_PURGE_AUDIT_RETENTION_MS).toISOString();
   const auditId = internalId();
-  const eligibleRuns = `SELECT id FROM report_runs WHERE expires_at <= ? AND heartbeat_at <= ? ORDER BY expires_at ASC LIMIT ${REPORT_PURGE_BATCH_SIZE}`;
-  const eligible = () => [cutoff, heartbeatGuard] as const;
+  const eligibleRuns = `SELECT id FROM report_runs WHERE expires_at <= ? AND heartbeat_at <= ? AND NOT EXISTS (SELECT 1 FROM report_evaluations active_evaluation WHERE active_evaluation.run_id = report_runs.id AND active_evaluation.status IN ('dispatching', 'profiling', 'ready_for_judge', 'judging') AND active_evaluation.lease_expires_at > ?) ORDER BY expires_at ASC LIMIT ${REPORT_PURGE_BATCH_SIZE}`;
+  const eligible = () => [cutoff, heartbeatGuard, cutoff] as const;
   const countFor = (table: string) => `(SELECT COUNT(*) FROM ${table} WHERE run_id IN (${eligibleRuns}))`;
   const runCount = `(SELECT COUNT(*) FROM report_runs WHERE id IN (${eligibleRuns}))`;
   const audit = database.prepare(`INSERT INTO report_purge_audits (id, cutoff, heartbeat_guard, runs_deleted, quality_signals_deleted, evaluations_deleted, ads_deleted, matches_deleted, products_deleted, companies_deleted, fact_chunks_deleted, fact_manifests_deleted, documents_deleted, events_deleted, observed_at) SELECT ?, ?, ?, ${runCount}, ${countFor("report_quality_signals")}, ${countFor("report_evaluations")}, ${countFor("report_ads")}, ${countFor("report_matches")}, ${countFor("report_products")}, ${countFor("report_companies")}, ${countFor("report_fact_chunks")}, ${countFor("report_fact_manifests")}, ${countFor("report_documents")}, ${countFor("report_events")}, ? WHERE EXISTS (${eligibleRuns})`).bind(
@@ -841,6 +910,10 @@ export async function purgeExpiredReports(now = new Date(), databaseOverride?: D
   );
   const guardedDelete = (table: string) => database.prepare(`DELETE FROM ${table} WHERE run_id IN (${eligibleRuns})`).bind(...eligible());
   const statements = [
+    database.prepare(`UPDATE report_runs SET heartbeat_at = ? WHERE id IN (SELECT run_id FROM report_evaluations WHERE evaluation_type = 'report' AND status IN ('dispatching', 'profiling', 'ready_for_judge', 'judging') AND lease_expires_at != '' AND lease_expires_at <= ?)` ).bind(cutoff, cutoff),
+    database.prepare(`UPDATE report_evaluations SET status = 'dispatch_failed', dispatch_outcome = CASE WHEN dispatch_outcome = '' THEN 'unknown' ELSE dispatch_outcome END, lease_expires_at = '' WHERE evaluation_type = 'report' AND status = 'dispatching' AND lease_expires_at != '' AND lease_expires_at <= ?`).bind(cutoff),
+    database.prepare(`UPDATE report_evaluations SET status = 'agent_rejected', rating_basis = 'deterministic_only', overall_score = NULL, grade = NULL, error_code = 'agent-call-outcome-unknown', completed_at = ? WHERE evaluation_type = 'report' AND status = 'judging' AND lease_expires_at != '' AND lease_expires_at <= ?`).bind(cutoff, cutoff),
+    database.prepare(`UPDATE report_evaluations SET status = 'pending', dispatch_outcome = 'accepted', lease_expires_at = '' WHERE evaluation_type = 'report' AND status IN ('profiling', 'ready_for_judge') AND lease_expires_at != '' AND lease_expires_at <= ?`).bind(cutoff),
     audit,
     guardedDelete("report_quality_signals"),
     guardedDelete("report_evaluations"),
@@ -855,7 +928,7 @@ export async function purgeExpiredReports(now = new Date(), databaseOverride?: D
     database.prepare(`DELETE FROM report_runs WHERE id IN (${eligibleRuns})`).bind(...eligible()),
     database.prepare(`DELETE FROM report_purge_audits WHERE observed_at < ?`).bind(auditCutoff),
     database.prepare(`SELECT * FROM report_purge_audits WHERE id = ? LIMIT 1`).bind(auditId),
-    database.prepare(`SELECT COUNT(*) AS count FROM report_runs WHERE expires_at <= ? AND heartbeat_at <= ?`).bind(cutoff, heartbeatGuard),
+    database.prepare(`SELECT COUNT(*) AS count FROM report_runs WHERE expires_at <= ? AND heartbeat_at <= ? AND NOT EXISTS (SELECT 1 FROM report_evaluations active_evaluation WHERE active_evaluation.run_id = report_runs.id AND active_evaluation.status IN ('dispatching', 'profiling', 'ready_for_judge', 'judging') AND active_evaluation.lease_expires_at > ?)` ).bind(cutoff, heartbeatGuard, cutoff),
   ];
   const results = await database.batch(statements);
   const auditRow = (results.at(-2) as { results?: Record<string, unknown>[] } | undefined)?.results?.[0];
