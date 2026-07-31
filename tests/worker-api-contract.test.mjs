@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { createWorkerCapabilitiesHandler } from "../app/api/internal/capabilities/route.ts";
 import {
+  ADVERTISED_WORKER_API_CAPABILITIES,
   REQUIRED_WORKER_API_CAPABILITIES,
   WORKER_API_PROTOCOL_VERSION,
   WORKER_API_SERVICE,
@@ -31,7 +32,11 @@ test("worker API manifest is versioned, additive, and requires every core capabi
 
   assert.equal(manifest.service, WORKER_API_SERVICE);
   assert.equal(manifest.protocolVersion, WORKER_API_PROTOCOL_VERSION);
-  assert.deepEqual(manifest.capabilities, [...REQUIRED_WORKER_API_CAPABILITIES]);
+  assert.deepEqual(manifest.capabilities, [...ADVERTISED_WORKER_API_CAPABILITIES]);
+  assert.deepEqual(REQUIRED_WORKER_API_CAPABILITIES, [
+    "report.read", "report.event.append", "report.document.save", "crawl.execute",
+    "ads.execute", "products.match", "products.enrich", "products.actions",
+  ]);
 });
 
 test("worker API capability route is private and returns a no-store manifest", async () => {
