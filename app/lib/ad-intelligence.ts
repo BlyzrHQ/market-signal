@@ -543,14 +543,14 @@ function outputText(payload: JsonRecord) {
   return "";
 }
 
-function officialUrl(value: unknown, platform: AdPlatform) {
+export function officialAdRecordUrl(value: unknown, platform: AdPlatform) {
   if (typeof value !== "string") return "";
   try {
     const url = new URL(value);
     const host = url.hostname.toLowerCase().replace(/^www\./, "");
     const path = url.pathname.toLowerCase();
     const isRecord = platform === "Meta"
-      ? host === "facebook.com" && path.startsWith("/ads/library") && (url.searchParams.has("id") || url.searchParams.has("ad_archive_id"))
+      ? host === "facebook.com" && (path === "/ads/library" || path.startsWith("/ads/library/")) && (url.searchParams.has("id") || url.searchParams.has("ad_archive_id"))
       : platform === "Google"
         ? host === "adstransparency.google.com" && path !== "/" && /\/(?:advertiser|creative|ad)\//.test(path)
         : host === "library.tiktok.com" && /\/ads?\/(?:detail|creative|\d)/.test(path) && (url.searchParams.has("ad_id") || /\d{5,}/.test(path));
@@ -655,7 +655,7 @@ function sanitizeCompany(raw: unknown, company: CompanyInput, region: string): C
   const platforms = fallback.platforms.map((base) => {
     const rawPlatform = platformItems.find((candidate) => candidate && typeof candidate === "object" && (candidate as JsonRecord).platform === base.platform) as JsonRecord | undefined;
     if (!rawPlatform) return base;
-    const evidenceUrls = (Array.isArray(rawPlatform.evidenceUrls) ? rawPlatform.evidenceUrls : []).map((url) => officialUrl(url, base.platform)).filter(Boolean).slice(0, 8);
+    const evidenceUrls = (Array.isArray(rawPlatform.evidenceUrls) ? rawPlatform.evidenceUrls : []).map((url) => officialAdRecordUrl(url, base.platform)).filter(Boolean).slice(0, 8);
     const requestedStatus = String(rawPlatform.status || "no-verified-result") as AdScanStatus;
     const status: AdScanStatus = requestedStatus === "verified-active" && evidenceUrls.length ? "verified-active" : requestedStatus === "access-limited" ? "access-limited" : "no-verified-result";
     return {

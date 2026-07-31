@@ -115,3 +115,33 @@ export const reportAds = sqliteTable("report_ads", {
 }, (table) => [
   index("report_ads_run_domain_idx").on(table.runId, table.domain),
 ]);
+
+export const reportFactChunks = sqliteTable("report_fact_chunks", {
+  runId: text("run_id").notNull(),
+  manifestId: text("manifest_id").notNull(),
+  attemptNumber: integer("attempt_number").notNull(),
+  kind: text("kind").notNull(),
+  chunkIndex: integer("chunk_index").notNull(),
+  chunkCount: integer("chunk_count").notNull(),
+  itemCount: integer("item_count").notNull(),
+  contentHash: text("content_hash").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.runId, table.manifestId, table.kind, table.chunkIndex] }),
+  index("report_fact_chunks_run_manifest_idx").on(table.runId, table.manifestId),
+]);
+
+export const reportFactManifests = sqliteTable("report_fact_manifests", {
+  runId: text("run_id").primaryKey(),
+  manifestId: text("manifest_id").notNull(),
+  attemptNumber: integer("attempt_number").notNull(),
+  manifestHash: text("manifest_hash").notNull(),
+  companyCount: integer("company_count").notNull(),
+  productCount: integer("product_count").notNull(),
+  matchCount: integer("match_count").notNull(),
+  adCount: integer("ad_count").notNull(),
+  status: text("status").notNull(),
+  lockOwner: text("lock_owner").notNull(),
+  lockedAt: text("locked_at").notNull(),
+  completedAt: text("completed_at").notNull(),
+});

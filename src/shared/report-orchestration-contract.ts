@@ -1,10 +1,11 @@
-export const REPORT_ORCHESTRATION_CONTRACT_VERSION = "1" as const;
+export const REPORT_ORCHESTRATION_CONTRACT_VERSION = "2" as const;
 
 export type ReportOrchestrationPayload = {
   contractVersion: typeof REPORT_ORCHESTRATION_CONTRACT_VERSION;
   publicId: string;
   primaryDomain: string;
   locale: "en" | "ar";
+  reportAttempt: number;
 };
 
 export type ReportOrchestrationSummary = {
@@ -20,7 +21,7 @@ export type ReportOrchestrationSummary = {
 
 const PUBLIC_ID_PATTERN = /^[a-f0-9]{32}$/;
 const DOMAIN_PATTERN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
-const KEYS = ["contractVersion", "locale", "primaryDomain", "publicId"].sort();
+const KEYS = ["contractVersion", "locale", "primaryDomain", "publicId", "reportAttempt"].sort();
 
 export class PermanentOrchestrationError extends Error {
   constructor(message: string) {
@@ -39,5 +40,6 @@ export function parseReportOrchestrationPayload(value: unknown): ReportOrchestra
     throw new PermanentOrchestrationError("primaryDomain must be a canonical public hostname.");
   }
   if (input.locale !== "en" && input.locale !== "ar") throw new PermanentOrchestrationError("Unsupported report locale.");
+  if (!Number.isInteger(input.reportAttempt) || Number(input.reportAttempt) < 1) throw new PermanentOrchestrationError("Invalid report attempt.");
   return input as ReportOrchestrationPayload;
 }

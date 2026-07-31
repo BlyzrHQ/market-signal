@@ -42,6 +42,7 @@ export async function dispatchReportJob(report: DispatchableReport, options: { s
     publicId: report.publicId,
     primaryDomain: report.primaryDomain,
     locale: report.locale,
+    reportAttempt: report.attemptCount,
   };
   const triggerOptions = {
     idempotencyKey: reportDispatchIdempotencyKey(report),

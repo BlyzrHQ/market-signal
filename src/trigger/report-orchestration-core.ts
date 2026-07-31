@@ -24,14 +24,17 @@ import {
   type ReportOrchestrationPayload,
   type ReportOrchestrationSummary,
 } from "../shared/report-orchestration-contract.ts";
+import { buildReportFactBundle } from "../shared/report-facts.ts";
+import type { ReportFactChunkInput, ReportFactManifestInput } from "../../app/lib/report-store.ts";
 
 export const MAX_OPERATION_TIMEOUT_MS = 8 * 60 * 1000;
 
 type RunStatus = "queued" | "running" | "complete" | "limited" | "failed" | "interrupted";
 type ReportEvent = { idempotencyKey: string; phase: string; status: RunStatus; message: string; metadata?: Record<string, unknown> };
 type StoredReport = {
-  run: { publicId: string; primaryDomain: string; locale: "en" | "ar"; status: RunStatus; createdAt: string; updatedAt: string };
+  run: { publicId: string; primaryDomain: string; locale: "en" | "ar"; status: RunStatus; attemptCount: number; createdAt: string; updatedAt: string };
   events: Array<{ idempotencyKey?: string; phase: string; status: RunStatus }>;
+  factManifest?: { manifestId: string; attemptNumber: number; manifestHash: string; counts: Record<"companies" | "products" | "matches" | "ads", number>; status: string; completedAt: string } | null;
 };
 type JsonBlock = { type: string; id: string } & Record<string, unknown>;
 type JsonDocument = { blocks: JsonBlock[] } & Record<string, unknown>;
@@ -41,19 +44,21 @@ type ParkedDomainOutcome = { ok: false; code: "parked-domain"; primaryDomain: st
 type UnavailableDomainOutcome = { ok: false; code: "unavailable-domain"; primaryDomain: string; error: string; document: JsonDocument };
 type CrawlOutcome = CrawlSuccess | ParkedDomainOutcome | UnavailableDomainOutcome;
 
-export type ReportAttemptContext = { attemptNumber: number; isFinalAttempt: boolean };
+export type ReportAttemptContext = { attemptNumber: number; taskAttemptNumber?: number; isFinalAttempt: boolean };
 
 export interface ReportOrchestrationPort {
   preflight(): Promise<void>;
   loadReport(publicId: string): Promise<StoredReport | null>;
-  appendEvent(publicId: string, event: ReportEvent): Promise<void>;
+  appendEvent(publicId: string, event: ReportEvent & { attemptNumber?: number }): Promise<void>;
   crawl(input: { primary: string; domains: string[] }): Promise<CrawlOutcome>;
   brief(input: { primary: string; domains: string[] }): Promise<unknown>;
   ads(input: unknown): Promise<{ ok: true; block: JsonBlock }>;
   match(input: { primaryDomain: string; catalogs: Array<{ domain: string; products: ProductRecord[] }> }): Promise<{ ok: true; comparison: ProductComparison }>;
   enrich(input: { targets: unknown[] }): Promise<{ ok: true; products: ProductRecord[]; coverage: NonNullable<ProductComparison["enrichment"]> }>;
   actions(input: { inputs: ProductActionInput[] }): Promise<{ ok: true; result: ProductActionPlanningResult }>;
-  saveDocument(publicId: string, input: { status: "complete" | "limited"; observedAt: string; document: unknown }): Promise<void>;
+  persistFactChunk(publicId: string, input: ReportFactChunkInput): Promise<void>;
+  finalizeFactManifest(publicId: string, input: ReportFactManifestInput): Promise<void>;
+  saveDocument(publicId: string, input: { attemptNumber?: number; status: "complete" | "limited"; observedAt: string; document: unknown }): Promise<void>;
 }
 
 function event(idempotencyKey: string, phase: string, message: string, metadata?: Record<string, unknown>): ReportEvent {
@@ -108,6 +113,7 @@ export async function orchestrateReport(
   now: () => Date = () => new Date(),
 ): Promise<ReportOrchestrationSummary> {
   const payload: ReportOrchestrationPayload = parseReportOrchestrationPayload(rawPayload);
+  if (payload.reportAttempt !== attempt.attemptNumber) throw new PermanentOrchestrationError("Dispatch payload attempt does not match the active report attempt.");
   const stored = await port.loadReport(payload.publicId);
   if (!stored) throw new PermanentOrchestrationError("Stored report was not found.");
   if (stored.run.primaryDomain !== payload.primaryDomain || stored.run.locale !== payload.locale) {
@@ -115,6 +121,13 @@ export async function orchestrateReport(
   }
   if (stored.run.status === "complete" || stored.run.status === "limited") return replaySummary(stored, now);
   if (stored.run.status === "failed" || stored.run.status === "interrupted") throw new PermanentOrchestrationError(`Stored report is already ${stored.run.status}.`);
+  if (stored.run.attemptCount !== attempt.attemptNumber) throw new PermanentOrchestrationError("Stored report attempt does not match the active worker attempt.");
+  const workerPort = port;
+  port = {
+    ...workerPort,
+    appendEvent: (publicId, reportEvent) => workerPort.appendEvent(publicId, { ...reportEvent, attemptNumber: attempt.attemptNumber }),
+    saveDocument: (publicId, input) => workerPort.saveDocument(publicId, { ...input, attemptNumber: attempt.attemptNumber }),
+  };
   await port.preflight();
 
   let terminalFailureRecorded = false;
@@ -132,7 +145,7 @@ export async function orchestrateReport(
     const detail = message(error, "The public crawl could not be completed.");
     await port.appendEvent(payload.publicId, attempt.isFinalAttempt
       ? { idempotencyKey: "crawl-failed", phase: "failed", status: "failed", message: detail, metadata: { attempt: attempt.attemptNumber } }
-      : event(`crawl-attempt-${attempt.attemptNumber}-failed`, "crawl", "The crawl attempt failed and is eligible for one bounded retry.", { attempt: attempt.attemptNumber }));
+      : event(`crawl-report-${attempt.attemptNumber}-task-${attempt.taskAttemptNumber || 1}-failed`, "crawl", "The crawl attempt failed and is eligible for one bounded retry.", { reportAttempt: attempt.attemptNumber, taskAttempt: attempt.taskAttemptNumber || 1 }));
     terminalFailureRecorded = attempt.isFinalAttempt;
     throw error;
   }
@@ -169,7 +182,7 @@ export async function orchestrateReport(
     const error = new Error(`Primary domain ${payload.primaryDomain} did not return a live crawl result.`);
     await port.appendEvent(payload.publicId, attempt.isFinalAttempt
       ? { idempotencyKey: "crawl-failed", phase: "failed", status: "failed", message: error.message, metadata: { attempt: attempt.attemptNumber } }
-      : event(`crawl-attempt-${attempt.attemptNumber}-failed`, "crawl", "The primary crawl result was unavailable and is eligible for one bounded retry.", { attempt: attempt.attemptNumber }));
+      : event(`crawl-report-${attempt.attemptNumber}-task-${attempt.taskAttemptNumber || 1}-failed`, "crawl", "The primary crawl result was unavailable and is eligible for one bounded retry.", { reportAttempt: attempt.attemptNumber, taskAttempt: attempt.taskAttemptNumber || 1 }));
     terminalFailureRecorded = attempt.isFinalAttempt;
     throw error;
   }
@@ -181,12 +194,14 @@ export async function orchestrateReport(
 
   let document = ensureDocument(crawl.document);
   let comparison: ProductComparison | null = null;
+  let adBlock: JsonBlock | null = null;
 
   const adsWork = (async () => {
     await port.appendEvent(payload.publicId, event("ads-started", "ads", "Checking attributable public advertiser records for the verified companies."));
     try {
       const result = await port.ads(crawl.adRequest);
       if (!result?.ok || !result.block) throw new Error("The public ad-library scan was unavailable.");
+      adBlock = result.block;
       document = replaceBlock(document, result.block);
       completedPhases.push("ads");
       await port.appendEvent(payload.publicId, event("ads-complete", "ads", "The public ad-library phase finished with explicit advertiser coverage states."));
@@ -270,8 +285,34 @@ export async function orchestrateReport(
   })();
 
   await Promise.all([adsWork, matchWork]);
-  const reportStatus = limitedPhases.length ? "limited" : "complete";
   const finishedAt = now().toISOString();
+  let persistedCounts: Record<"companies" | "products" | "matches" | "ads", number> | null = null;
+  try {
+    let priorManifest = stored.factManifest || null;
+    if (priorManifest?.status === "finalizing") {
+      try {
+        await port.finalizeFactManifest(payload.publicId, { attemptNumber: priorManifest.attemptNumber, manifestId: priorManifest.manifestId, manifestHash: priorManifest.manifestHash, counts: priorManifest.counts });
+        priorManifest = { ...priorManifest, status: "complete" };
+      } catch {
+        const refreshed = await port.loadReport(payload.publicId);
+        priorManifest = refreshed?.factManifest || null;
+      }
+    }
+    const counts = priorManifest?.status === "complete" ? priorManifest.counts : null;
+    if (!counts) {
+      const facts = await buildReportFactBundle({ publicId: payload.publicId, crawlResults: crawl.results, comparison, adBlock, observedAt: stored.run.createdAt, attemptNumber: attempt.attemptNumber });
+      for (const chunk of facts.chunks) await port.persistFactChunk(payload.publicId, chunk);
+      await port.finalizeFactManifest(payload.publicId, facts.manifest);
+      persistedCounts = facts.manifest.counts;
+    } else {
+      persistedCounts = counts;
+    }
+  } catch (error) {
+    limitedPhases.push("persistence");
+    try { await port.appendEvent(payload.publicId, event("facts-limited", "persistence", "The presentation can be saved, but the complete relational fact set was not available for evaluation.", { reason: message(error, "Relational fact persistence was unavailable.") })); } catch { /* quality telemetry must not block the terminal document */ }
+  }
+  if (persistedCounts) try { await port.appendEvent(payload.publicId, event("facts-complete", "persistence", "The complete company, product, match, and attributable ad facts were saved for evaluation.", persistedCounts)); } catch { /* the manifest is authoritative and the terminal document still saves */ }
+  const reportStatus = limitedPhases.length ? "limited" : "complete";
   await port.saveDocument(payload.publicId, {
     status: reportStatus,
     observedAt: finishedAt,
