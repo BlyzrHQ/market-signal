@@ -200,3 +200,23 @@ export const reportQualitySignals = sqliteTable("report_quality_signals", {
   index("report_quality_signals_issue_observed_idx").on(table.issueKey, table.observedAt),
   index("report_quality_signals_stage_severity_observed_idx").on(table.stage, table.severity, table.observedAt),
 ]);
+
+export const reportPurgeAudits = sqliteTable("report_purge_audits", {
+  id: text("id").primaryKey(),
+  cutoff: text("cutoff").notNull(),
+  heartbeatGuard: text("heartbeat_guard").notNull(),
+  runsDeleted: integer("runs_deleted").notNull(),
+  qualitySignalsDeleted: integer("quality_signals_deleted").notNull(),
+  evaluationsDeleted: integer("evaluations_deleted").notNull(),
+  adsDeleted: integer("ads_deleted").notNull(),
+  matchesDeleted: integer("matches_deleted").notNull(),
+  productsDeleted: integer("products_deleted").notNull(),
+  companiesDeleted: integer("companies_deleted").notNull(),
+  factChunksDeleted: integer("fact_chunks_deleted").notNull(),
+  factManifestsDeleted: integer("fact_manifests_deleted").notNull(),
+  documentsDeleted: integer("documents_deleted").notNull(),
+  eventsDeleted: integer("events_deleted").notNull(),
+  observedAt: text("observed_at").notNull(),
+}, (table) => [
+  index("report_purge_audits_observed_idx").on(table.observedAt),
+]);

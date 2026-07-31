@@ -101,7 +101,7 @@ const PHASES = new Set<ReportPhase>(["queued", "crawl", "competitors", "brief", 
 const STATUSES = new Set<ReportRunStatus>(["queued", "running", "complete", "limited", "failed", "interrupted"]);
 const schemaInitialization = new WeakMap<object, Promise<void>>();
 const emittedStorageDiagnostics = new Set<string>();
-const REPORT_STORAGE_DIAGNOSTIC = /^(?:database-(?:import-failed|binding-missing)|schema-statement-(?:[1-9]|1\d|2\d)-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api))$/;
+const REPORT_STORAGE_DIAGNOSTIC = /^(?:database-(?:import-failed|binding-missing)|schema-statement-(?:[1-9]|[12]\d|3[01])-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api))$/;
 
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS report_runs (id text PRIMARY KEY NOT NULL, public_id text NOT NULL, primary_domain text NOT NULL, locale text DEFAULT 'en' NOT NULL, status text NOT NULL, current_phase text NOT NULL, attempt_count integer DEFAULT 1 NOT NULL, created_at text NOT NULL, updated_at text NOT NULL, heartbeat_at text NOT NULL, expires_at text NOT NULL, error_code text DEFAULT '' NOT NULL, error_message text DEFAULT '' NOT NULL)`,
@@ -133,6 +133,8 @@ const SCHEMA_STATEMENTS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS report_quality_signals_evaluation_issue_uidx ON report_quality_signals (evaluation_id, issue_key)`,
   `CREATE INDEX IF NOT EXISTS report_quality_signals_issue_observed_idx ON report_quality_signals (issue_key, observed_at)`,
   `CREATE INDEX IF NOT EXISTS report_quality_signals_stage_severity_observed_idx ON report_quality_signals (stage, severity, observed_at)`,
+  `CREATE TABLE IF NOT EXISTS report_purge_audits (id text PRIMARY KEY NOT NULL, cutoff text NOT NULL, heartbeat_guard text NOT NULL, runs_deleted integer NOT NULL, quality_signals_deleted integer NOT NULL, evaluations_deleted integer NOT NULL, ads_deleted integer NOT NULL, matches_deleted integer NOT NULL, products_deleted integer NOT NULL, companies_deleted integer NOT NULL, fact_chunks_deleted integer NOT NULL, fact_manifests_deleted integer NOT NULL, documents_deleted integer NOT NULL, events_deleted integer NOT NULL, observed_at text NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS report_purge_audits_observed_idx ON report_purge_audits (observed_at)`,
 ];
 
 async function getDatabase(): Promise<D1DatabaseLike | null> {
@@ -777,6 +779,105 @@ export async function getStoredReport(publicReportId: string, now = new Date(), 
     completedAt: String(manifestRow.completed_at || ""),
   } : null;
   return { run, events, document, documentSchemaVersion: Number(documentRow?.schema_version || 0), documentObservedAt: String(documentRow?.observed_at || ""), factManifest };
+}
+
+export const REPORT_PURGE_BATCH_SIZE = 25;
+const REPORT_PURGE_HEARTBEAT_GRACE_MS = 24 * 60 * 60 * 1000;
+const REPORT_PURGE_AUDIT_RETENTION_MS = 365 * 24 * 60 * 60 * 1000;
+
+export type ReportPurgeCounts = {
+  runs: number;
+  qualitySignals: number;
+  evaluations: number;
+  ads: number;
+  matches: number;
+  products: number;
+  companies: number;
+  factChunks: number;
+  factManifests: number;
+  documents: number;
+  events: number;
+};
+
+export type ReportPurgeResult = {
+  cutoff: string;
+  heartbeatGuard: string;
+  deleted: ReportPurgeCounts;
+  remaining: number;
+};
+
+function numberField(row: Record<string, unknown> | undefined, key: string) {
+  const value = Number(row?.[key] || 0);
+  return Number.isInteger(value) && value >= 0 ? value : 0;
+}
+
+/**
+ * Deletes one bounded batch of expired report evidence. Every child statement
+ * repeats the eligibility guard so a stale caller cannot delete a report whose
+ * heartbeat was refreshed before the transaction began.
+ */
+export async function purgeExpiredReports(now = new Date(), databaseOverride?: D1DatabaseLike | null): Promise<ReportPurgeResult> {
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error(STORAGE_UNAVAILABLE_MESSAGE);
+  if (!Number.isFinite(now.getTime())) throw new Error("A valid retention cutoff is required.");
+  await ensureSchema(database);
+  const cutoff = now.toISOString();
+  const heartbeatGuard = new Date(now.getTime() - REPORT_PURGE_HEARTBEAT_GRACE_MS).toISOString();
+  const auditCutoff = new Date(now.getTime() - REPORT_PURGE_AUDIT_RETENTION_MS).toISOString();
+  const auditId = internalId();
+  const eligibleRuns = `SELECT id FROM report_runs WHERE expires_at <= ? AND heartbeat_at <= ? ORDER BY expires_at ASC LIMIT ${REPORT_PURGE_BATCH_SIZE}`;
+  const eligible = () => [cutoff, heartbeatGuard] as const;
+  const countFor = (table: string) => `(SELECT COUNT(*) FROM ${table} WHERE run_id IN (${eligibleRuns}))`;
+  const runCount = `(SELECT COUNT(*) FROM report_runs WHERE id IN (${eligibleRuns}))`;
+  const audit = database.prepare(`INSERT INTO report_purge_audits (id, cutoff, heartbeat_guard, runs_deleted, quality_signals_deleted, evaluations_deleted, ads_deleted, matches_deleted, products_deleted, companies_deleted, fact_chunks_deleted, fact_manifests_deleted, documents_deleted, events_deleted, observed_at) SELECT ?, ?, ?, ${runCount}, ${countFor("report_quality_signals")}, ${countFor("report_evaluations")}, ${countFor("report_ads")}, ${countFor("report_matches")}, ${countFor("report_products")}, ${countFor("report_companies")}, ${countFor("report_fact_chunks")}, ${countFor("report_fact_manifests")}, ${countFor("report_documents")}, ${countFor("report_events")}, ? WHERE EXISTS (${eligibleRuns})`).bind(
+    auditId,
+    cutoff,
+    heartbeatGuard,
+    ...eligible(),
+    ...eligible(), ...eligible(), ...eligible(), ...eligible(), ...eligible(), ...eligible(),
+    ...eligible(), ...eligible(), ...eligible(), ...eligible(),
+    cutoff,
+    ...eligible(),
+  );
+  const guardedDelete = (table: string) => database.prepare(`DELETE FROM ${table} WHERE run_id IN (${eligibleRuns})`).bind(...eligible());
+  const statements = [
+    audit,
+    guardedDelete("report_quality_signals"),
+    guardedDelete("report_evaluations"),
+    guardedDelete("report_ads"),
+    guardedDelete("report_matches"),
+    guardedDelete("report_products"),
+    guardedDelete("report_companies"),
+    guardedDelete("report_fact_chunks"),
+    guardedDelete("report_fact_manifests"),
+    guardedDelete("report_documents"),
+    guardedDelete("report_events"),
+    database.prepare(`DELETE FROM report_runs WHERE id IN (${eligibleRuns})`).bind(...eligible()),
+    database.prepare(`DELETE FROM report_purge_audits WHERE observed_at < ?`).bind(auditCutoff),
+    database.prepare(`SELECT * FROM report_purge_audits WHERE id = ? LIMIT 1`).bind(auditId),
+    database.prepare(`SELECT COUNT(*) AS count FROM report_runs WHERE expires_at <= ? AND heartbeat_at <= ?`).bind(cutoff, heartbeatGuard),
+  ];
+  const results = await database.batch(statements);
+  const auditRow = (results.at(-2) as { results?: Record<string, unknown>[] } | undefined)?.results?.[0];
+  const remainingRow = (results.at(-1) as { results?: Record<string, unknown>[] } | undefined)?.results?.[0];
+  return {
+    cutoff,
+    heartbeatGuard,
+    deleted: {
+      runs: numberField(auditRow, "runs_deleted"),
+      qualitySignals: numberField(auditRow, "quality_signals_deleted"),
+      evaluations: numberField(auditRow, "evaluations_deleted"),
+      ads: numberField(auditRow, "ads_deleted"),
+      matches: numberField(auditRow, "matches_deleted"),
+      products: numberField(auditRow, "products_deleted"),
+      companies: numberField(auditRow, "companies_deleted"),
+      factChunks: numberField(auditRow, "fact_chunks_deleted"),
+      factManifests: numberField(auditRow, "fact_manifests_deleted"),
+      documents: numberField(auditRow, "documents_deleted"),
+      events: numberField(auditRow, "events_deleted"),
+    },
+    remaining: numberField(remainingRow, "count"),
+  };
 }
 
 export async function markReportDispatched(publicReportId: string, triggerRunId: string, now = new Date(), databaseOverride?: D1DatabaseLike | null) {

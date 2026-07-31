@@ -12,6 +12,13 @@ export const REQUIRED_WORKER_API_CAPABILITIES = [
   "products.actions",
 ] as const;
 
+export const REPORT_RETENTION_CAPABILITY = "report.retention.purge" as const;
+
+export const ADVERTISED_WORKER_API_CAPABILITIES = [
+  ...REQUIRED_WORKER_API_CAPABILITIES,
+  REPORT_RETENTION_CAPABILITY,
+] as const;
+
 export type RequiredWorkerApiCapability = typeof REQUIRED_WORKER_API_CAPABILITIES[number];
 
 export type WorkerApiManifest = {
@@ -36,7 +43,7 @@ export function createWorkerApiManifest(now: () => Date = () => new Date()): Wor
     ok: true,
     service: WORKER_API_SERVICE,
     protocolVersion: WORKER_API_PROTOCOL_VERSION,
-    capabilities: [...REQUIRED_WORKER_API_CAPABILITIES],
+    capabilities: [...ADVERTISED_WORKER_API_CAPABILITIES],
     observedAt: now().toISOString(),
   };
 }
