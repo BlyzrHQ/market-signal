@@ -8,7 +8,7 @@ import { Worker } from "node:worker_threads";
 
 import { loadRememberedCompetitors, rememberVerifiedCompetitors } from "../app/lib/competitor-memory.ts";
 import { NodeSqliteDatabase } from "../app/lib/node-sqlite-database.ts";
-import { appendReportEvent, createReportRun, finalizeReportFactManifest, getStoredReport, recoverInterruptedReport, saveReportDocument, saveReportFactChunk } from "../app/lib/report-store.ts";
+import { appendReportEvent, createReportRun, evaluateStoredReport, finalizeReportFactManifest, getReportEvaluation, getStoredReport, recoverInterruptedReport, saveReportDocument, saveReportFactChunk } from "../app/lib/report-store.ts";
 import { buildReportFactBundle, canonicalReportFact, reportFactHash } from "../src/shared/report-facts.ts";
 import { closeRuntimeDatabases, runtimeDatabase } from "../app/lib/runtime-database.ts";
 import { publicHttpUrl } from "../app/lib/public-url.ts";
@@ -156,6 +156,33 @@ test("full relational report facts survive snapshot compaction with replay-safe 
     assert.equal(savedMatches.results[0].count, 1);
     assert.equal(savedAds.results[0].count, 1);
     assert.equal(JSON.parse(snapshot.results[0].document_json).blocks[0].products.length, 40);
+    const evaluation = await getReportEvaluation(created.publicId, database);
+    assert.equal(evaluation.status, "deterministic");
+    assert.equal(evaluation.ratingBasis, "deterministic_only");
+    assert.equal(evaluation.overallScore, null);
+    assert.equal(evaluation.grade, null);
+    assert.equal(evaluation.deterministic.raw.primaryProducts, 61);
+    assert.equal(evaluation.deterministic.raw.rivalProducts, 2);
+    assert.equal(evaluation.deterministic.manifest.productCount, 63);
+    assert.equal((await evaluateStoredReport(created.publicId, { inputHash: evaluation.inputHash, factManifestHash: evaluation.factManifestHash, evaluatorVersion: evaluation.evaluatorVersion }, now, database)).replayed, true);
+    await assert.rejects(evaluateStoredReport(created.publicId, { inputHash: "0".repeat(64) }, now, database), /binding conflicts/);
+    const rawEvaluation = (await database.prepare("SELECT overall_score, user_value_score, evidence_integrity_score, evidence_yield_score, presentation_score, grade FROM report_evaluations WHERE run_id = ?").bind(created.id).all()).results[0];
+    assert.deepEqual(rawEvaluation, { overall_score: null, user_value_score: null, evidence_integrity_score: null, evidence_yield_score: null, presentation_score: null, grade: null });
+    const secondConnection = await NodeSqliteDatabase.open(databasePath);
+    try {
+      await getReportEvaluation(created.publicId, secondConnection);
+      await database.prepare("UPDATE report_evaluations SET status = 'pending', deterministic_score = NULL, deterministic_json = '{}', findings_json = '[]', error_code = '', started_at = '', completed_at = '' WHERE id = ?").bind(evaluation.id).run();
+      const expectedBinding = { inputHash: evaluation.inputHash, factManifestHash: evaluation.factManifestHash, evaluatorVersion: evaluation.evaluatorVersion };
+      const concurrent = await Promise.all([
+        evaluateStoredReport(created.publicId, expectedBinding, now, database),
+        evaluateStoredReport(created.publicId, expectedBinding, now, secondConnection),
+      ]);
+      assert.equal(concurrent.every((result) => result.evaluation.status === "deterministic"), true);
+      assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM report_evaluations WHERE run_id = ?").bind(created.id).all()).results[0].count, 1);
+      assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM report_quality_signals WHERE evaluation_id = ? AND issue_key = 'ad-coverage-unknown'").bind(evaluation.id).all()).results[0].count, 0);
+    } finally {
+      secondConnection.close();
+    }
     await assert.rejects(saveReportFactChunk(created.publicId, { ...bundle.chunks[0], contentHash: "0".repeat(64) }, now, database), /hash does not match/);
     const terminalCompany = [{ domain: "catalog.example", role: "primary", companyName: "Catalog", evidenceUrl: "https://catalog.example/", evidence: {}, observedAt: now.toISOString() }];
     await assert.rejects(saveReportFactChunk(created.publicId, { manifestId: "d".repeat(64), kind: "companies", chunkIndex: 0, chunkCount: 1, contentHash: await factHash("companies", terminalCompany), items: terminalCompany }, now, database), /terminal report/);
@@ -169,6 +196,48 @@ test("full relational report facts survive snapshot compaction with replay-safe 
   } finally {
     database.close();
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("terminal report evaluation fails closed without facts and cannot break customer persistence", async () => {
+  const insufficientFixture = await fixture();
+  let database = await NodeSqliteDatabase.open(insufficientFixture.databasePath);
+  try {
+    const now = new Date("2026-07-31T12:00:00.000Z");
+    const created = await createReportRun({ primaryDomain: "service.example" }, now, database);
+    await saveReportDocument(created.publicId, { blocks: [{ type: "summary", title: "Service report" }] }, { status: "limited" }, now, database);
+    const evaluation = await getReportEvaluation(created.publicId, database);
+    assert.equal(evaluation.status, "insufficient_facts");
+    assert.equal(evaluation.ratingBasis, "none");
+    assert.equal(evaluation.deterministicScore, null);
+    assert.equal(evaluation.factManifestHash, "");
+    const signal = (await database.prepare("SELECT issue_key, severity, evidence_json FROM report_quality_signals WHERE evaluation_id = ?").bind(evaluation.id).all()).results[0];
+    assert.equal(signal.issue_key, "incomplete-fact-manifest");
+    assert.equal(signal.severity, "critical");
+    assert.equal(JSON.parse(signal.evidence_json).coverageMetricsComputed, false);
+  } finally {
+    database.close();
+    await rm(insufficientFixture.directory, { recursive: true, force: true });
+  }
+
+  const isolationFixture = await fixture();
+  database = await NodeSqliteDatabase.open(isolationFixture.databasePath);
+  const originalConsoleError = console.error;
+  const errors = [];
+  console.error = (...args) => errors.push(args);
+  try {
+    const now = new Date("2026-07-31T12:10:00.000Z");
+    const created = await createReportRun({ primaryDomain: "durable.example" }, now, database);
+    await database.prepare("DROP TABLE report_evaluations").run();
+    await saveReportDocument(created.publicId, { blocks: [{ type: "summary", title: "Still saved" }] }, { status: "complete" }, now, database);
+    const report = await getStoredReport(created.publicId, now, database);
+    assert.equal(report.run.status, "complete");
+    assert.equal(report.document.blocks[0].title, "Still saved");
+    assert.equal(errors.some((entry) => entry[0] === "report evaluation creation failed"), true);
+  } finally {
+    console.error = originalConsoleError;
+    database.close();
+    await rm(isolationFixture.directory, { recursive: true, force: true });
   }
 });
 

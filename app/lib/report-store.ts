@@ -4,6 +4,7 @@ import { runtimeDatabaseResult } from "./runtime-database.ts";
 import { canonicalReportFact, reportFactHash } from "../../src/shared/report-facts.ts";
 import { publicHttpUrl } from "./public-url.ts";
 import { officialAdRecordUrl } from "./ad-intelligence.ts";
+import { DETERMINISTIC_EVALUATOR_VERSION, DETERMINISTIC_RUBRIC_VERSION, profileDeterministicEvaluation } from "./report-evaluator.ts";
 
 export type ReportRunStatus = "queued" | "running" | "complete" | "limited" | "failed" | "interrupted";
 export type ReportPhase = "queued" | "crawl" | "competitors" | "brief" | "products" | "matching" | "enrichment" | "actions" | "ads" | "persistence" | "complete" | "failed" | "interrupted";
@@ -37,6 +38,27 @@ export type StoredReportEvent = {
   observedAt: string;
 };
 
+export type StoredReportEvaluation = {
+  id: string;
+  runId: string;
+  evaluationType: "report" | "run_failure";
+  inputHash: string;
+  factManifestHash: string;
+  evaluatorVersion: string;
+  rubricVersion: string;
+  status: "pending" | "dispatch_failed" | "deterministic" | "complete" | "agent_rejected" | "insufficient_facts" | "rubric_unavailable" | "failed";
+  ratingBasis: "hybrid" | "deterministic_only" | "none";
+  deterministicScore: number | null;
+  overallScore: number | null;
+  grade: string | null;
+  deterministic: Record<string, unknown>;
+  findings: Array<Record<string, unknown>>;
+  errorCode: string;
+  createdAt: string;
+  startedAt: string;
+  completedAt: string;
+};
+
 export type ReportFactKind = "companies" | "products" | "matches" | "ads";
 export type ReportFactChunkInput = {
   attemptNumber?: number;
@@ -59,7 +81,7 @@ export type ReportCreateDiagnostic =
   | "storage-unavailable"
   | "database-import-failed"
   | "database-binding-missing"
-  | `schema-statement-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21}-failed`
+  | `schema-statement-${number}-failed`
   | `run-create-batch-${"schema-mismatch" | "constraint" | "binding-count" | "transaction" | "batch-api"}`
   | "run-create-unclassified";
 
@@ -79,7 +101,7 @@ const PHASES = new Set<ReportPhase>(["queued", "crawl", "competitors", "brief", 
 const STATUSES = new Set<ReportRunStatus>(["queued", "running", "complete", "limited", "failed", "interrupted"]);
 const schemaInitialization = new WeakMap<object, Promise<void>>();
 const emittedStorageDiagnostics = new Set<string>();
-const REPORT_STORAGE_DIAGNOSTIC = /^(?:database-(?:import-failed|binding-missing)|schema-statement-(?:[1-9]|1\d|2[01])-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api))$/;
+const REPORT_STORAGE_DIAGNOSTIC = /^(?:database-(?:import-failed|binding-missing)|schema-statement-(?:[1-9]|1\d|2\d)-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api))$/;
 
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS report_runs (id text PRIMARY KEY NOT NULL, public_id text NOT NULL, primary_domain text NOT NULL, locale text DEFAULT 'en' NOT NULL, status text NOT NULL, current_phase text NOT NULL, attempt_count integer DEFAULT 1 NOT NULL, created_at text NOT NULL, updated_at text NOT NULL, heartbeat_at text NOT NULL, expires_at text NOT NULL, error_code text DEFAULT '' NOT NULL, error_message text DEFAULT '' NOT NULL)`,
@@ -102,6 +124,15 @@ const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS report_fact_chunks (run_id text NOT NULL, manifest_id text NOT NULL, attempt_number integer NOT NULL, kind text NOT NULL, chunk_index integer NOT NULL, chunk_count integer NOT NULL, item_count integer NOT NULL, content_hash text NOT NULL, created_at text NOT NULL, PRIMARY KEY (run_id, manifest_id, kind, chunk_index))`,
   `CREATE INDEX IF NOT EXISTS report_fact_chunks_run_manifest_idx ON report_fact_chunks (run_id, manifest_id)`,
   `CREATE TABLE IF NOT EXISTS report_fact_manifests (run_id text PRIMARY KEY NOT NULL, manifest_id text NOT NULL, attempt_number integer NOT NULL, manifest_hash text NOT NULL, company_count integer NOT NULL, product_count integer NOT NULL, match_count integer NOT NULL, ad_count integer NOT NULL, status text NOT NULL, lock_owner text NOT NULL, locked_at text NOT NULL, completed_at text NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS report_evaluations (id text PRIMARY KEY NOT NULL, run_id text NOT NULL, evaluation_type text NOT NULL, input_hash text NOT NULL, fact_manifest_hash text DEFAULT '' NOT NULL, evaluator_version text NOT NULL, rubric_version text NOT NULL, status text NOT NULL, rating_basis text NOT NULL, overall_score integer, user_value_score integer, evidence_integrity_score integer, evidence_yield_score integer, presentation_score integer, deterministic_score integer, grade text, deterministic_json text DEFAULT '{}' NOT NULL, agent_json text DEFAULT '{}' NOT NULL, findings_json text DEFAULT '[]' NOT NULL, proposals_json text DEFAULT '[]' NOT NULL, model text DEFAULT '' NOT NULL, prompt_version text DEFAULT '' NOT NULL, pricing_version text DEFAULT '' NOT NULL, cost_microusd integer DEFAULT 0 NOT NULL, input_tokens integer DEFAULT 0 NOT NULL, output_tokens integer DEFAULT 0 NOT NULL, error_code text DEFAULT '' NOT NULL, dispatch_attempts integer DEFAULT 0 NOT NULL, created_at text NOT NULL, started_at text DEFAULT '' NOT NULL, completed_at text DEFAULT '' NOT NULL)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS report_evaluations_identity_uidx ON report_evaluations (run_id, input_hash, evaluator_version, evaluation_type)`,
+  `CREATE INDEX IF NOT EXISTS report_evaluations_run_completed_idx ON report_evaluations (run_id, completed_at)`,
+  `CREATE INDEX IF NOT EXISTS report_evaluations_score_completed_idx ON report_evaluations (overall_score, completed_at)`,
+  `CREATE INDEX IF NOT EXISTS report_evaluations_status_completed_idx ON report_evaluations (status, completed_at)`,
+  `CREATE TABLE IF NOT EXISTS report_quality_signals (id text PRIMARY KEY NOT NULL, evaluation_id text NOT NULL, run_id text NOT NULL, primary_domain text NOT NULL, stage text NOT NULL, issue_key text NOT NULL, severity text NOT NULL, evidence_json text DEFAULT '{}' NOT NULL, observed_at text NOT NULL)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS report_quality_signals_evaluation_issue_uidx ON report_quality_signals (evaluation_id, issue_key)`,
+  `CREATE INDEX IF NOT EXISTS report_quality_signals_issue_observed_idx ON report_quality_signals (issue_key, observed_at)`,
+  `CREATE INDEX IF NOT EXISTS report_quality_signals_stage_severity_observed_idx ON report_quality_signals (stage, severity, observed_at)`,
 ];
 
 async function getDatabase(): Promise<D1DatabaseLike | null> {
@@ -131,6 +162,50 @@ function publicId() {
 
 function internalId() {
   return crypto.randomUUID();
+}
+
+async function sha256Text(value: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((item) => item.toString(16).padStart(2, "0")).join("");
+}
+
+function parsedRecord(value: unknown) {
+  try {
+    const parsed = JSON.parse(String(value || "{}"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch { return {}; }
+}
+
+function parsedRecords(value: unknown) {
+  try {
+    const parsed = JSON.parse(String(value || "[]"));
+    return Array.isArray(parsed) ? parsed.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item))) : [];
+  } catch { return []; }
+}
+
+function rowEvaluation(row: Record<string, unknown>): StoredReportEvaluation {
+  const status = String(row.status || "failed") as StoredReportEvaluation["status"];
+  const ratingBasis = String(row.rating_basis || "none") as StoredReportEvaluation["ratingBasis"];
+  return {
+    id: String(row.id || ""),
+    runId: String(row.run_id || ""),
+    evaluationType: row.evaluation_type === "run_failure" ? "run_failure" : "report",
+    inputHash: String(row.input_hash || ""),
+    factManifestHash: String(row.fact_manifest_hash || ""),
+    evaluatorVersion: String(row.evaluator_version || ""),
+    rubricVersion: String(row.rubric_version || ""),
+    status,
+    ratingBasis,
+    deterministicScore: row.deterministic_score === null || row.deterministic_score === undefined ? null : Number(row.deterministic_score),
+    overallScore: row.overall_score === null || row.overall_score === undefined ? null : Number(row.overall_score),
+    grade: row.grade === null || row.grade === undefined ? null : String(row.grade),
+    deterministic: parsedRecord(row.deterministic_json),
+    findings: parsedRecords(row.findings_json),
+    errorCode: String(row.error_code || ""),
+    createdAt: String(row.created_at || ""),
+    startedAt: String(row.started_at || ""),
+    completedAt: String(row.completed_at || ""),
+  };
 }
 
 function addDays(value: Date, days: number) {
@@ -366,14 +441,122 @@ export async function saveReportDocument(publicReportId: string, document: unkno
   const attemptNumber = options.attemptNumber ?? run.attemptCount;
   if (!Number.isInteger(attemptNumber) || attemptNumber < 1 || attemptNumber !== run.attemptCount) throw new Error("Report callback attempt is stale or invalid.");
   if (["complete", "limited", "failed", "interrupted"].includes(run.status)) throw new Error("A terminal report cannot be overwritten.");
-  await database.batch([
+  const documentHash = await sha256Text(documentJson);
+  const manifestRows = await database.prepare(`SELECT manifest_hash, company_count, product_count, match_count, ad_count, status FROM report_fact_manifests WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>();
+  const manifest = manifestRows.results?.[0];
+  const completeManifest = manifest?.status === "complete" && /^[a-f0-9]{64}$/.test(String(manifest.manifest_hash || ""));
+  const evaluationId = internalId();
+  const evaluationStatus = completeManifest ? "pending" : "insufficient_facts";
+  const evaluationBasis = "none";
+  const evaluationCompletedAt = completeManifest ? "" : now.toISOString();
+  const baseStatements = [
     database.prepare(`INSERT INTO report_documents (run_id, schema_version, document_json, observed_at, updated_at) SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND attempt_count = ? AND status NOT IN ('complete', 'limited', 'failed', 'interrupted')) ON CONFLICT(run_id) DO UPDATE SET schema_version = excluded.schema_version, document_json = excluded.document_json, observed_at = excluded.observed_at, updated_at = excluded.updated_at`).bind(run.id, REPORT_SCHEMA_VERSION, documentJson, observedAt, now.toISOString(), run.id, attemptNumber),
     database.prepare(`UPDATE report_runs SET status = ?, current_phase = 'complete', updated_at = ?, heartbeat_at = ?, error_code = '', error_message = '' WHERE id = ? AND attempt_count = ? AND status NOT IN ('complete', 'limited', 'failed', 'interrupted')`).bind(status, now.toISOString(), now.toISOString(), run.id, attemptNumber),
     database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE((SELECT MAX(sequence) FROM report_events WHERE run_id = ?), 0) + 1, 'report-saved', 'complete', ?, 'Report saved from the completed public-source phases.', '{}', ? FROM report_runs WHERE id = ? AND attempt_count = ? AND status = ? ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, run.id, status, now.toISOString(), run.id, attemptNumber, status),
-  ]);
+  ];
+  const evaluationStatements = [
+    database.prepare(`INSERT INTO report_evaluations (id, run_id, evaluation_type, input_hash, fact_manifest_hash, evaluator_version, rubric_version, status, rating_basis, overall_score, user_value_score, evidence_integrity_score, evidence_yield_score, presentation_score, deterministic_score, grade, deterministic_json, agent_json, findings_json, proposals_json, model, prompt_version, pricing_version, cost_microusd, input_tokens, output_tokens, error_code, dispatch_attempts, created_at, started_at, completed_at) SELECT ?, ?, 'report', ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', '{}', '[]', '[]', '', '', '', 0, 0, 0, ?, 0, ?, '', ? WHERE EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND attempt_count = ? AND status = ?) ON CONFLICT(run_id, input_hash, evaluator_version, evaluation_type) DO NOTHING`).bind(evaluationId, run.id, documentHash, completeManifest ? String(manifest?.manifest_hash || "") : "", DETERMINISTIC_EVALUATOR_VERSION, DETERMINISTIC_RUBRIC_VERSION, evaluationStatus, evaluationBasis, completeManifest ? "" : "incomplete-fact-manifest", now.toISOString(), evaluationCompletedAt, run.id, attemptNumber, status),
+    ...(!completeManifest ? [database.prepare(`INSERT INTO report_quality_signals (id, evaluation_id, run_id, primary_domain, stage, issue_key, severity, evidence_json, observed_at) SELECT ?, ?, ?, ?, 'persistence', 'incomplete-fact-manifest', 'critical', ?, ? WHERE EXISTS (SELECT 1 FROM report_evaluations WHERE id = ? AND status = 'insufficient_facts') ON CONFLICT(evaluation_id, issue_key) DO NOTHING`).bind(internalId(), evaluationId, run.id, run.primaryDomain, JSON.stringify({ manifestStatus: String(manifest?.status || "missing"), coverageMetricsComputed: false }), now.toISOString(), evaluationId)] : []),
+  ];
+  let evaluationCreated = true;
+  try {
+    await database.batch([...baseStatements, ...evaluationStatements]);
+  } catch {
+    evaluationCreated = false;
+    console.error("report evaluation creation failed", { stage: "evaluation-create", diagnosticCode: "evaluation-create-failed" });
+    await database.batch(baseStatements);
+  }
   const persistedRun = await findRun(database, publicReportId);
   if (!persistedRun || persistedRun.attemptCount !== attemptNumber || persistedRun.status !== status) throw new Error("Report callback attempt is stale or invalid.");
+  if (evaluationCreated && completeManifest) {
+    try {
+      await evaluateStoredReport(publicReportId, { inputHash: documentHash, factManifestHash: String(manifest?.manifest_hash || ""), evaluatorVersion: DETERMINISTIC_EVALUATOR_VERSION }, now, database);
+    } catch {
+      console.error("report deterministic evaluation failed", { stage: "evaluation-profile", diagnosticCode: "evaluation-profile-failed" });
+    }
+  }
   return { publicId: run.publicId, status, schemaVersion: REPORT_SCHEMA_VERSION, bytes: new TextEncoder().encode(documentJson).byteLength };
+}
+
+export async function getReportEvaluation(publicReportId: string, databaseOverride?: D1DatabaseLike | null) {
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error("Persistent report storage is unavailable.");
+  if (!PUBLIC_ID_PATTERN.test(publicReportId)) throw new Error("Invalid report id.");
+  await ensureSchema(database);
+  const run = await findRun(database, publicReportId);
+  if (!run) return null;
+  const rows = await database.prepare(`SELECT * FROM report_evaluations WHERE run_id = ? AND evaluation_type = 'report' ORDER BY created_at DESC LIMIT 1`).bind(run.id).all<Record<string, unknown>>();
+  return rows.results?.[0] ? rowEvaluation(rows.results[0]) : null;
+}
+
+export async function evaluateStoredReport(publicReportId: string, expected: { inputHash?: string; factManifestHash?: string; evaluatorVersion?: string } = {}, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error("Persistent report storage is unavailable.");
+  if (!PUBLIC_ID_PATTERN.test(publicReportId)) throw new Error("Invalid report id.");
+  await ensureSchema(database);
+  const run = await findRun(database, publicReportId);
+  if (!run) throw new Error("Report not found.");
+  if (run.status !== "complete" && run.status !== "limited") throw new Error("Only a terminal customer report can be evaluated.");
+  const evaluationRows = await database.prepare(`SELECT * FROM report_evaluations WHERE run_id = ? AND evaluation_type = 'report' AND evaluator_version = ? ORDER BY created_at DESC LIMIT 1`).bind(run.id, expected.evaluatorVersion || DETERMINISTIC_EVALUATOR_VERSION).all<Record<string, unknown>>();
+  if (!evaluationRows.results?.length) throw new Error("Report evaluation was not created.");
+  const evaluation = rowEvaluation(evaluationRows.results[0]);
+  if ((expected.inputHash && expected.inputHash !== evaluation.inputHash) || (expected.factManifestHash && expected.factManifestHash !== evaluation.factManifestHash) || (expected.evaluatorVersion && expected.evaluatorVersion !== evaluation.evaluatorVersion)) throw new Error("Report evaluation binding conflicts with the persisted evidence snapshot.");
+  if (["deterministic", "rubric_unavailable", "insufficient_facts", "failed", "complete", "agent_rejected"].includes(evaluation.status)) return { evaluation, replayed: true as const };
+  if (evaluation.status !== "pending") throw new Error("Report evaluation is not available for deterministic profiling.");
+  const documentRows = await database.prepare(`SELECT document_json FROM report_documents WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>();
+  const manifestRows = await database.prepare(`SELECT manifest_hash, company_count, product_count, match_count, ad_count, status FROM report_fact_manifests WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>();
+  const documentJson = String(documentRows.results?.[0]?.document_json || "");
+  const manifest = manifestRows.results?.[0];
+  if (!documentJson || manifest?.status !== "complete") throw new Error("Report evaluation facts are incomplete.");
+  const calculatedInputHash = await sha256Text(documentJson);
+  if (calculatedInputHash !== evaluation.inputHash || String(manifest.manifest_hash || "") !== evaluation.factManifestHash || evaluation.evaluatorVersion !== DETERMINISTIC_EVALUATOR_VERSION) throw new Error("Report evaluation binding conflicts with the persisted evidence snapshot.");
+  const [companyRows, productRows, matchRows, adRows, eventRows] = await Promise.all([
+    database.prepare(`SELECT * FROM report_companies WHERE run_id = ? ORDER BY domain`).bind(run.id).all<Record<string, unknown>>(),
+    database.prepare(`SELECT * FROM report_products WHERE run_id = ? ORDER BY domain, product_id`).bind(run.id).all<Record<string, unknown>>(),
+    database.prepare(`SELECT * FROM report_matches WHERE run_id = ? ORDER BY rival_domain, id`).bind(run.id).all<Record<string, unknown>>(),
+    database.prepare(`SELECT * FROM report_ads WHERE run_id = ? ORDER BY domain, platform, id`).bind(run.id).all<Record<string, unknown>>(),
+    database.prepare(`SELECT * FROM report_events WHERE run_id = ? ORDER BY sequence`).bind(run.id).all<Record<string, unknown>>(),
+  ]);
+  let profile: ReturnType<typeof profileDeterministicEvaluation>;
+  try {
+    profile = profileDeterministicEvaluation({
+      primaryDomain: run.primaryDomain,
+      terminalStatus: run.status,
+      evaluatedAt: now.toISOString(),
+      document: JSON.parse(documentJson) as unknown,
+      manifest: {
+        companyCount: Number(manifest.company_count || 0),
+        productCount: Number(manifest.product_count || 0),
+        matchCount: Number(manifest.match_count || 0),
+        adCount: Number(manifest.ad_count || 0),
+      },
+      companies: companyRows.results || [],
+      products: productRows.results || [],
+      matches: matchRows.results || [],
+      ads: adRows.results || [],
+      events: eventRows.results || [],
+    });
+  } catch {
+    profile = {
+      status: "failed",
+      deterministicScore: null,
+      deterministic: { evaluatorVersion: DETERMINISTIC_EVALUATOR_VERSION, rubricVersion: DETERMINISTIC_RUBRIC_VERSION, schemaValid: false },
+      findings: [{ issueKey: "deterministic-profiler-failed", message: "The persisted evidence snapshot could not be profiled." }],
+      signals: [{ stage: "evaluation", issueKey: "deterministic-profiler-failed", severity: "critical", evidence: { inputHash: evaluation.inputHash, factManifestHash: evaluation.factManifestHash } }],
+      errorCode: "deterministic-profiler-failed",
+    };
+  }
+  const completedAt = now.toISOString();
+  const ratingBasis = profile.status === "failed" ? "none" : "deterministic_only";
+  const update = database.prepare(`UPDATE report_evaluations SET status = ?, rating_basis = ?, deterministic_score = ?, deterministic_json = ?, findings_json = ?, error_code = ?, started_at = CASE WHEN started_at = '' THEN ? ELSE started_at END, completed_at = ? WHERE id = ? AND status = 'pending' AND input_hash = ? AND fact_manifest_hash = ? AND evaluator_version = ? AND overall_score IS NULL AND user_value_score IS NULL AND evidence_integrity_score IS NULL AND evidence_yield_score IS NULL AND presentation_score IS NULL AND grade IS NULL`).bind(profile.status, ratingBasis, profile.deterministicScore, JSON.stringify(profile.deterministic), JSON.stringify(profile.findings), profile.errorCode, completedAt, completedAt, evaluation.id, evaluation.inputHash, evaluation.factManifestHash, evaluation.evaluatorVersion);
+  const signalStatements = profile.signals.map((signal) => database.prepare(`INSERT INTO report_quality_signals (id, evaluation_id, run_id, primary_domain, stage, issue_key, severity, evidence_json, observed_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM report_evaluations WHERE id = ? AND status = ?) ON CONFLICT(evaluation_id, issue_key) DO NOTHING`).bind(internalId(), evaluation.id, run.id, run.primaryDomain, cleanText(signal.stage, 80), cleanText(signal.issueKey, 120), signal.severity, JSON.stringify(signal.evidence), completedAt, evaluation.id, profile.status));
+  await database.batch([update, ...signalStatements]);
+  const persistedRows = await database.prepare(`SELECT * FROM report_evaluations WHERE id = ? LIMIT 1`).bind(evaluation.id).all<Record<string, unknown>>();
+  if (!persistedRows.results?.length) throw new Error("Report evaluation was not persisted.");
+  const persisted = rowEvaluation(persistedRows.results[0]);
+  if (persisted.inputHash !== evaluation.inputHash || persisted.factManifestHash !== evaluation.factManifestHash || persisted.evaluatorVersion !== evaluation.evaluatorVersion) throw new Error("Report evaluation binding conflicts with the persisted evidence snapshot.");
+  if (persisted.status === "pending") throw new Error("Report evaluation persistence conflicted with another profiler.");
+  return { evaluation: persisted, replayed: false as const };
 }
 
 export async function saveReportFactChunk(publicReportId: string, input: ReportFactChunkInput, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
