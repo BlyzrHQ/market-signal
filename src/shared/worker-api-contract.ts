@@ -17,6 +17,7 @@ export const REPORT_RETENTION_CAPABILITY = "report.retention.purge" as const;
 export const ADVERTISED_WORKER_API_CAPABILITIES = [
   ...REQUIRED_WORKER_API_CAPABILITIES,
   REPORT_RETENTION_CAPABILITY,
+  ...REPORT_EVALUATION_CAPABILITIES,
 ] as const;
 
 export type RequiredWorkerApiCapability = typeof REQUIRED_WORKER_API_CAPABILITIES[number];
@@ -66,3 +67,4 @@ export function parseWorkerApiManifest(value: unknown): WorkerApiManifest {
   }
   return manifest as WorkerApiManifest;
 }
+import { REPORT_EVALUATION_CAPABILITIES } from "./report-evaluation-contract.ts";

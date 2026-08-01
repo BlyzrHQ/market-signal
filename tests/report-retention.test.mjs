@@ -75,6 +75,40 @@ test("retention includes exact cutoff boundaries and is replay safe", async (t) 
   assert.equal(await scalar(database, "SELECT COUNT(*) AS count FROM report_purge_audits"), 1);
 });
 
+test("retention preserves an expired report while its evaluation lease is active", async (t) => {
+  const { database } = await databaseFixture(t);
+  const run = await seedCompleteReport(database, "active-evaluation");
+  const oldHeartbeat = new Date(NOW.getTime() - 2 * 86_400_000).toISOString();
+  const activeLease = new Date(NOW.getTime() + 5 * 60_000).toISOString();
+  await database.prepare("UPDATE report_runs SET expires_at = ?, heartbeat_at = ? WHERE id = ?").bind(NOW.toISOString(), oldHeartbeat, run.id).run();
+  await database.prepare("UPDATE report_evaluations SET status = 'judging', lease_expires_at = ? WHERE run_id = ?").bind(activeLease, run.id).run();
+
+  assert.equal((await purgeExpiredReports(NOW, database)).deleted.runs, 0);
+  assert.equal(await scalar(database, "SELECT COUNT(*) AS count FROM report_runs WHERE id = ?", run.id), 1);
+
+  await database.prepare("UPDATE report_evaluations SET lease_expires_at = ? WHERE run_id = ?").bind(NOW.toISOString(), run.id).run();
+  assert.equal((await purgeExpiredReports(NOW, database)).deleted.runs, 0);
+  const reconciled = (await database.prepare("SELECT status, rating_basis, error_code FROM report_evaluations WHERE run_id = ?").bind(run.id).all()).results[0];
+  assert.deepEqual(reconciled, { status: "agent_rejected", rating_basis: "deterministic_only", error_code: "agent-call-outcome-unknown" });
+  assert.equal((await purgeExpiredReports(new Date(NOW.getTime() + 2 * 86_400_000), database)).deleted.runs, 1);
+});
+
+test("retention makes an abandoned dispatch recoverable without changing report observation time", async (t) => {
+  const { database } = await databaseFixture(t);
+  const run = await seedCompleteReport(database, "expired-dispatch");
+  const originalUpdatedAt = OLD.toISOString();
+  const oldHeartbeat = new Date(NOW.getTime() - 2 * 86_400_000).toISOString();
+  await database.prepare("UPDATE report_runs SET expires_at = ?, heartbeat_at = ? WHERE id = ?").bind(NOW.toISOString(), oldHeartbeat, run.id).run();
+  await database.prepare("UPDATE report_evaluations SET status = 'dispatching', dispatch_generation = 1, dispatch_outcome = 'unknown', lease_token = ?, lease_expires_at = ? WHERE run_id = ?").bind("d".repeat(64), NOW.toISOString(), run.id).run();
+
+  assert.equal((await purgeExpiredReports(NOW, database)).deleted.runs, 0);
+  const evaluation = (await database.prepare("SELECT status, dispatch_generation, dispatch_outcome, lease_expires_at FROM report_evaluations WHERE run_id = ?").bind(run.id).all()).results[0];
+  assert.deepEqual(evaluation, { status: "dispatch_failed", dispatch_generation: 1, dispatch_outcome: "unknown", lease_expires_at: "" });
+  const persistedRun = (await database.prepare("SELECT heartbeat_at, updated_at FROM report_runs WHERE id = ?").bind(run.id).all()).results[0];
+  assert.deepEqual(persistedRun, { heartbeat_at: NOW.toISOString(), updated_at: originalUpdatedAt });
+  assert.equal((await purgeExpiredReports(new Date(NOW.getTime() + 2 * 86_400_000), database)).deleted.runs, 1);
+});
+
 test("an injected SQLite child-delete failure rolls back deletes and audit insertion", async (t) => {
   const { database } = await databaseFixture(t);
   await seedCompleteReport(database, "rollback");

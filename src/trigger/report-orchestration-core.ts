@@ -43,6 +43,7 @@ type CrawlSuccess = { ok: true; primaryDomain: string; results: CrawlResult[]; a
 type ParkedDomainOutcome = { ok: false; code: "parked-domain"; primaryDomain: string; error: string; document: JsonDocument };
 type UnavailableDomainOutcome = { ok: false; code: "unavailable-domain"; primaryDomain: string; error: string; document: JsonDocument };
 type CrawlOutcome = CrawlSuccess | ParkedDomainOutcome | UnavailableDomainOutcome;
+export type SavedEvaluationDispatch = { id: string; inputHash: string; factManifestHash: string; evaluatorVersion: string };
 
 export type ReportAttemptContext = { attemptNumber: number; taskAttemptNumber?: number; isFinalAttempt: boolean };
 
@@ -58,7 +59,7 @@ export interface ReportOrchestrationPort {
   actions(input: { inputs: ProductActionInput[] }): Promise<{ ok: true; result: ProductActionPlanningResult }>;
   persistFactChunk(publicId: string, input: ReportFactChunkInput): Promise<void>;
   finalizeFactManifest(publicId: string, input: ReportFactManifestInput): Promise<void>;
-  saveDocument(publicId: string, input: { attemptNumber?: number; status: "complete" | "limited"; observedAt: string; document: unknown }): Promise<void>;
+  saveDocument(publicId: string, input: { attemptNumber?: number; status: "complete" | "limited"; observedAt: string; document: unknown }): Promise<{ evaluation: SavedEvaluationDispatch | null }>;
 }
 
 function event(idempotencyKey: string, phase: string, message: string, metadata?: Record<string, unknown>): ReportEvent {
@@ -160,7 +161,7 @@ export async function orchestrateReport(
     await port.appendEvent(payload.publicId, limitedEvent("ads-limited", "ads", "Ad-library checks did not run because the primary crawl was terminally limited.", { upstream: "crawl", reason }));
     await port.appendEvent(payload.publicId, limitedEvent("matching-limited", "matching", "Product matching did not run because the primary crawl was terminally limited.", { upstream: "crawl", reason }));
     const finishedAt = now().toISOString();
-    await port.saveDocument(payload.publicId, {
+    const saved = await port.saveDocument(payload.publicId, {
       status: "limited",
       observedAt: finishedAt,
       document: { primaryDomain: crawl.primaryDomain, document, marketBrief: null },
@@ -172,6 +173,7 @@ export async function orchestrateReport(
       reportStatus: "limited",
       completedPhases: ["persistence"],
       limitedPhases: ["crawl", "ads", "matching"],
+      evaluation: saved?.evaluation || null,
       startedAt,
       finishedAt,
     };
@@ -313,13 +315,13 @@ export async function orchestrateReport(
   }
   if (persistedCounts) try { await port.appendEvent(payload.publicId, event("facts-complete", "persistence", "The complete company, product, match, and attributable ad facts were saved for evaluation.", persistedCounts)); } catch { /* the manifest is authoritative and the terminal document still saves */ }
   const reportStatus = limitedPhases.length ? "limited" : "complete";
-  await port.saveDocument(payload.publicId, {
+  const saved = await port.saveDocument(payload.publicId, {
     status: reportStatus,
     observedAt: finishedAt,
     document: { primaryDomain: crawl.primaryDomain, document, marketBrief: null },
   });
   completedPhases.push("persistence");
-  return { ok: true, contractVersion: REPORT_ORCHESTRATION_CONTRACT_VERSION, publicId: payload.publicId, reportStatus, completedPhases: [...new Set(completedPhases)], limitedPhases: [...new Set(limitedPhases)], startedAt, finishedAt };
+  return { ok: true, contractVersion: REPORT_ORCHESTRATION_CONTRACT_VERSION, publicId: payload.publicId, reportStatus, completedPhases: [...new Set(completedPhases)], limitedPhases: [...new Set(limitedPhases)], startedAt, finishedAt, evaluation: saved?.evaluation || null };
   } catch (error) {
     if (attempt.isFinalAttempt && !terminalFailureRecorded) {
       try {
