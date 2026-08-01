@@ -38,6 +38,14 @@ export type StoredReportEvent = {
   observedAt: string;
 };
 
+export type StoredReportSnapshot = {
+  run: StoredReportRun;
+  events: StoredReportEvent[];
+  document: unknown;
+  documentSchemaVersion: number;
+  documentObservedAt: string;
+};
+
 export type StoredReportEvaluation = {
   id: string;
   runId: string;
@@ -779,6 +787,54 @@ export async function getStoredReport(publicReportId: string, now = new Date(), 
     completedAt: String(manifestRow.completed_at || ""),
   } : null;
   return { run, events, document, documentSchemaVersion: Number(documentRow?.schema_version || 0), documentObservedAt: String(documentRow?.observed_at || ""), factManifest };
+}
+
+/**
+ * Imports a public presentation snapshot from the retired deployment without
+ * extending retention or replacing a report already owned by this database.
+ */
+export async function importStoredReportSnapshot(snapshot: StoredReportSnapshot, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error(STORAGE_UNAVAILABLE_MESSAGE);
+  const run = snapshot?.run;
+  if (!run || !PUBLIC_ID_PATTERN.test(run.publicId)) throw new Error("Invalid legacy report snapshot.");
+  const primaryDomain = canonicalDomain(run.primaryDomain);
+  if (!primaryDomain || primaryDomain !== run.primaryDomain) throw new Error("Invalid legacy report snapshot.");
+  if (!(["complete", "limited"] as ReportRunStatus[]).includes(run.status) || run.currentPhase !== "complete") throw new Error("Invalid legacy report snapshot.");
+  if (!Number.isInteger(run.attemptCount) || run.attemptCount < 1) throw new Error("Invalid legacy report snapshot.");
+  const createdAt = Date.parse(run.createdAt);
+  const updatedAt = Date.parse(run.updatedAt);
+  const heartbeatAt = Date.parse(run.heartbeatAt);
+  const expiresAt = Date.parse(run.expiresAt);
+  const retentionWindowMs = REPORT_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  if (![createdAt, updatedAt, heartbeatAt, expiresAt].every(Number.isFinite) || expiresAt <= now.getTime() || createdAt >= expiresAt || expiresAt - createdAt > retentionWindowMs) throw new Error("Invalid legacy report snapshot.");
+  if (snapshot.documentSchemaVersion !== REPORT_SCHEMA_VERSION || !snapshot.document || typeof snapshot.document !== "object" || Array.isArray(snapshot.document)) throw new Error("Invalid legacy report snapshot.");
+  const documentJson = JSON.stringify(snapshot.document);
+  if (new TextEncoder().encode(documentJson).byteLength > MAX_REPORT_DOCUMENT_BYTES) throw new Error("Invalid legacy report snapshot.");
+  const documentObservedAt = Date.parse(snapshot.documentObservedAt);
+  if (!Number.isFinite(documentObservedAt)) throw new Error("Invalid legacy report snapshot.");
+  if (!Array.isArray(snapshot.events) || snapshot.events.length > 100) throw new Error("Invalid legacy report snapshot.");
+  const events = snapshot.events.map((event) => {
+    const sequence = Number(event?.sequence);
+    const idempotencyKey = cleanText(event?.idempotencyKey, 120);
+    const message = cleanText(event?.message, 280);
+    const observedAt = Date.parse(event?.observedAt);
+    if (!Number.isInteger(sequence) || sequence < 1 || !idempotencyKey || !message || !PHASES.has(event?.phase) || !STATUSES.has(event?.status) || !Number.isFinite(observedAt)) throw new Error("Invalid legacy report snapshot.");
+    return { ...event, sequence, idempotencyKey, message, metadata: safeMetadata(event.metadata), observedAt: new Date(observedAt).toISOString() };
+  });
+  if (new Set(events.map((event) => event.sequence)).size !== events.length || new Set(events.map((event) => event.idempotencyKey)).size !== events.length) throw new Error("Invalid legacy report snapshot.");
+
+  await ensureSchema(database);
+  const id = internalId();
+  const statements = [
+    database.prepare(`INSERT INTO report_runs (id, public_id, primary_domain, locale, status, current_phase, attempt_count, created_at, updated_at, heartbeat_at, expires_at, error_code, error_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(public_id) DO NOTHING`).bind(id, run.publicId, primaryDomain, run.locale === "ar" ? "ar" : "en", run.status, run.currentPhase, run.attemptCount, new Date(createdAt).toISOString(), new Date(updatedAt).toISOString(), new Date(heartbeatAt).toISOString(), new Date(expiresAt).toISOString(), cleanText(run.errorCode, 80), cleanText(run.errorMessage, 280)),
+    ...events.map((event) => database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND public_id = ?) ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(id, event.sequence, event.idempotencyKey, event.phase, event.status, event.message, JSON.stringify(event.metadata), event.observedAt, id, run.publicId)),
+    database.prepare(`INSERT INTO report_documents (run_id, schema_version, document_json, observed_at, updated_at) SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND public_id = ?) ON CONFLICT(run_id) DO NOTHING`).bind(id, REPORT_SCHEMA_VERSION, documentJson, new Date(documentObservedAt).toISOString(), now.toISOString(), id, run.publicId),
+  ];
+  await database.batch(statements);
+  const persisted = await getStoredReport(run.publicId, now, database);
+  if (!persisted) throw new Error("Legacy report snapshot could not be persisted.");
+  return persisted;
 }
 
 export const REPORT_PURGE_BATCH_SIZE = 25;
