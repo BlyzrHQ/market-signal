@@ -57,7 +57,66 @@ test("returns truthful bounded catalog snapshots without mutating the aggregate 
   assert.equal(catalog.persistedProductCount, 40);
   assert.equal(catalog.totalProductCount, 312);
   assert.equal(catalog.productsTruncated, true);
+  assert.equal(catalog.pricedProductCount, 0);
+  assert.equal(catalog.totalPricedProductCount, 0);
   assert.equal(products.length, 312);
+});
+
+test("keeps observed-price products in a stable, truthfully labeled catalog sample", () => {
+  const products = Array.from({ length: 605 }, (_, index) => ({
+    id: `p-${index}`,
+    name: `Product ${index}`,
+    priceSignals: index >= 500 && index < 516
+      ? [{ amount: index + 0.5, currency: "GBP", source: "json-ld" }]
+      : [],
+  }));
+  const document = { version: "1", blocks: [{ type: "product-catalog", id: "primary", domain: "myjam.co.uk", products }] };
+
+  const catalog = compactCatalogSnapshots(document, 40).blocks[0];
+
+  assert.deepEqual(catalog.products.slice(0, 16).map((product) => product.id), Array.from({ length: 16 }, (_, index) => `p-${500 + index}`));
+  assert.deepEqual(catalog.products.slice(16).map((product) => product.id), Array.from({ length: 24 }, (_, index) => `p-${index}`));
+  assert.equal(catalog.persistedProductCount, 40);
+  assert.equal(catalog.totalProductCount, 605);
+  assert.equal(catalog.pricedProductCount, 16);
+  assert.equal(catalog.totalPricedProductCount, 16);
+  assert.equal(catalog.productsTruncated, true);
+  assert.equal(document.blocks[0].products[0].id, "p-0");
+});
+
+test("limits an over-cap priced catalog while preserving priced order", () => {
+  const products = Array.from({ length: 50 }, (_, index) => ({
+    id: `priced-${index}`,
+    priceSignals: [{ amount: index + 1, currency: "USD" }],
+  }));
+  const catalog = compactCatalogSnapshots({ version: "1", blocks: [{ type: "product-catalog", id: "rival", products }] }, 10).blocks[0];
+
+  assert.deepEqual(catalog.products.map((product) => product.id), Array.from({ length: 10 }, (_, index) => `priced-${index}`));
+  assert.equal(catalog.pricedProductCount, 10);
+  assert.equal(catalog.totalPricedProductCount, 50);
+});
+
+test("does not classify incomplete or invalid price signals as comparable prices", () => {
+  const products = [
+    { id: "no-currency", priceSignals: [{ amount: 10, currency: "" }] },
+    { id: "zero", priceSignals: [{ amount: 0, currency: "GBP" }] },
+    { id: "not-a-number", priceSignals: [{ amount: "unknown", currency: "GBP" }] },
+    { id: "valid", priceSignals: [{ amount: 4.5, currency: "GBP" }] },
+  ];
+  const catalog = compactCatalogSnapshots({ version: "1", blocks: [{ type: "product-catalog", id: "catalog", products }] }, 4).blocks[0];
+
+  assert.deepEqual(catalog.products.map((product) => product.id), ["valid", "no-currency", "zero", "not-a-number"]);
+  assert.equal(catalog.pricedProductCount, 1);
+  assert.equal(catalog.totalPricedProductCount, 1);
+});
+
+test("leaves non-catalog and legacy catalog-shaped blocks untouched", () => {
+  const blocks = [
+    { type: "product-comparison", id: "comparison", products: [{ id: "comparison-product" }] },
+    { type: "product-catalog", id: "legacy", products: "not-an-array" },
+  ];
+  const compacted = compactCatalogSnapshots({ version: "1", blocks }, 1);
+  assert.deepEqual(compacted.blocks, blocks);
 });
 
 test("keeps an interrupted crawl addressable through its durable report URL", () => {

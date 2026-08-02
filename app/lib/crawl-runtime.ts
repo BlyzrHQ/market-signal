@@ -105,17 +105,37 @@ export function boundedExtractionDocument(document: string, maxBytes: number) {
 type ReportBlock = Record<string, unknown> & { type: string; id: string };
 type ReportDocument = { version: string; blocks: ReportBlock[] } & Record<string, unknown>;
 
+function hasComparableObservedPrice(product: unknown) {
+  if (!product || typeof product !== "object") return false;
+  const signals = (product as { priceSignals?: unknown }).priceSignals;
+  if (!Array.isArray(signals)) return false;
+  return signals.some((signal) => {
+    if (!signal || typeof signal !== "object") return false;
+    const { amount, currency } = signal as { amount?: unknown; currency?: unknown };
+    return typeof amount === "number"
+      && Number.isFinite(amount)
+      && amount > 0
+      && typeof currency === "string"
+      && currency.trim().length > 0;
+  });
+}
+
 export function compactCatalogSnapshots<T extends ReportDocument>(document: T, maxProductsPerCatalog = 40): T {
   const limit = Math.max(0, Math.floor(maxProductsPerCatalog));
   return {
     ...document,
     blocks: document.blocks.map((block) => {
       if (block.type !== "product-catalog" || !Array.isArray(block.products)) return block;
+      const pricedProducts = block.products.filter(hasComparableObservedPrice);
+      const unpricedProducts = block.products.filter((product) => !hasComparableObservedPrice(product));
+      const products = [...pricedProducts, ...unpricedProducts].slice(0, limit);
       return {
         ...block,
-        products: block.products.slice(0, limit),
-        persistedProductCount: Math.min(block.products.length, limit),
+        products,
+        persistedProductCount: products.length,
         totalProductCount: block.products.length,
+        pricedProductCount: products.filter(hasComparableObservedPrice).length,
+        totalPricedProductCount: pricedProducts.length,
         productsTruncated: block.products.length > limit,
       };
     }),
