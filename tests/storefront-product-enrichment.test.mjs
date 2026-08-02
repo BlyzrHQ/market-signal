@@ -108,6 +108,23 @@ test("recognizes directly observed Arabic AED and SAR currency tokens", () => {
   assert.deepEqual(sar.priceSignals, [{ raw: "SAR 19.75", currency: "SAR", amount: 19.75 }]);
 });
 
+test("requires Arabic currency tokens to be bounded and adjacent to a price", () => {
+  const ordinaryWords = extractScopedProductPageEvidence(`
+    <h1>عسل سريع ومؤكد</h1>
+    <div class="summary"><p class="price">12.50</p>
+      <form data-product_variations="[{&quot;display_price&quot;:12.5}]"></form>
+    </div>
+  `);
+  const honorific = extractScopedProductPageEvidence('<h1>Sr Honey</h1><div class="summary"><p class="price">12.50</p></div>');
+  assert.deepEqual(ordinaryWords.priceSignals, []);
+  assert.deepEqual(honorific.priceSignals, []);
+});
+
+test("normalizes Eastern Arabic digits only when paired with observed currency", () => {
+  const evidence = extractScopedProductPageEvidence('<h1>عسل</h1><div class="summary"><p class="price">١٩٫٧٥ ر.س</p></div>');
+  assert.deepEqual(evidence.priceSignals, [{ raw: "SAR 19.75", currency: "SAR", amount: 19.75 }]);
+});
+
 test("removes only exact-zero unstructured price patterns", () => {
   assert.deepEqual(
     claimablePagePricePatterns(["$0", "$0.00", "0 USD", "EUR 0,00", "$0.99", "EUR 0,50", "GBP 12"]),
@@ -267,6 +284,29 @@ test("a missing robots file permits only the existing bounded product enrichment
     assert.equal(result.products[0].priceSignals[0].amount, 8.5);
     assert.match(result.coverage.gaps[0].reason, /No robots\.txt was published \(HTTP 404\)/);
     assert.deepEqual(calls, ["https://shop.test/robots.txt", "https://shop.test/products/maamoul-pistachio"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("reports a missing robots policy once per domain instead of once per product", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("not found", { status: 404 });
+    const name = url.includes("second") ? "Maamoul Walnut" : "Maamoul Pistachio";
+    return new Response(`<html><head><title>${name}</title><script type="application/ld+json">${JSON.stringify({
+      "@context": "https://schema.org", "@type": "Product", name,
+      offers: { "@type": "Offer", price: "8.50", priceCurrency: "USD" },
+    })}</script></head><body><h1>${name}</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([
+      target(),
+      target({ sourceUrl: "https://shop.test/products/second", productId: "second", expectedName: "Maamoul Walnut" }),
+    ], 2);
+    assert.equal(result.products.length, 2);
+    assert.equal(result.coverage.gaps.filter((gap) => /No robots\.txt was published/.test(gap.reason)).length, 1);
   } finally {
     globalThis.fetch = originalFetch;
   }

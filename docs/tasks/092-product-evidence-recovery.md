@@ -59,8 +59,10 @@ test domains; region or ISO minor-unit inference is not used.
 
 Replaying bounded enrichment against persisted first-party catalog records on
 2026-08-02 produced the following before/after evidence. The baseline catalogs
-contained secure images but almost no prices because only six selected pages
-could be enriched.
+contained secure images but almost no prices. The measured gain comes from the
+larger bounded enrichment sample and improved currency extraction; all three
+original report domains currently publish robots.txt. The missing-robots change
+is a separately tested correctness fix, not the cause of these gains.
 
 - Noor Organic: first 16 targets, 16 fetched, 16 priced, 16 imaged (baseline
   catalog: 0/40 priced, 40/40 imaged).
@@ -77,3 +79,16 @@ could be enriched.
 
 Every recovered value came from the cited first-party page or its same-domain
 public storefront endpoint. No third-party or region-inferred value was used.
+
+## Strict review remediation
+
+Fable 5's first strict review returned BLOCK after finding that abbreviated
+Arabic currency letters could match inside ordinary words and label an otherwise
+real amount with the wrong currency. Currency tokens now require both Arabic
+letter boundaries and direct adjacency to the amount. Negative tests cover
+ordinary Arabic words and the English “Sr” honorific; Eastern Arabic digits and
+decimal separators are also normalized only when an observed currency token is
+present. Missing-robots coverage notices are deduplicated to one per domain, and
+a route-level test proves that an HTTP 404 robots response permits sitemap and
+bounded product-page expansion. The post-fix suite passes 425/425; lint has zero
+errors (two pre-existing image warnings), and the VPS build assertion passes.

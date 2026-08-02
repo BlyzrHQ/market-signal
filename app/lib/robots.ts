@@ -9,6 +9,8 @@ export type RobotsAvailability = "available" | "missing" | "unreachable";
 export function robotsAvailability(result: { ok: boolean; status: number } | null | undefined): RobotsAvailability {
   if (result?.ok) return "available";
   if (result && (result.status === 404 || result.status === 410)) return "missing";
+  // Authentication, throttling, server, and network failures stay fail-closed;
+  // only an explicitly absent policy permits the existing bounded crawl.
   return "unreachable";
 }
 

@@ -75,17 +75,38 @@ function decodeEvidence(value: string) {
     .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 16)));
 }
 
+function normalizeLocalizedNumbers(value: string) {
+  return value
+    .replace(/[\u0660-\u0669]/g, (digit) => String(digit.charCodeAt(0) - 0x0660))
+    .replace(/[\u06f0-\u06f9]/g, (digit) => String(digit.charCodeAt(0) - 0x06f0))
+    .replace(/\u066b/g, ".")
+    .replace(/\u066c/g, ",");
+}
+
+const CURRENCY_TOKENS: Record<string, string> = {
+  GBP: "(?:\\u00A3|\\bGBP\\b)",
+  EUR: "(?:\\u20AC|\\bEUR\\b)",
+  USD: "(?:\\$|\\bUSD\\b)",
+  KWD: "(?:\\bKWD\\b|(?<![\\u0600-\\u06FF])(?:ك\\s*\\.?\\s*د|د\\s*\\.?\\s*ك)(?![\\u0600-\\u06FF]))",
+  BHD: "(?:\\bBHD\\b|(?<![\\u0600-\\u06FF])(?:ب\\s*\\.?\\s*د|د\\s*\\.?\\s*ب)(?![\\u0600-\\u06FF]))",
+  OMR: "(?:\\bOMR\\b|(?<![\\u0600-\\u06FF])(?:ر\\s*\\.?\\s*ع|ع\\s*\\.?\\s*ر)(?![\\u0600-\\u06FF]))",
+  AED: "(?:\\bAED\\b|(?<![\\u0600-\\u06FF])(?:إ\\s*\\.?\\s*د|د\\s*\\.?\\s*إ)(?![\\u0600-\\u06FF]))",
+  SAR: "(?:\\bSAR\\b|\\bSR\\b|(?<![\\u0600-\\u06FF])(?:س\\s*\\.?\\s*ر|ر\\s*\\.?\\s*س)(?![\\u0600-\\u06FF]))",
+  QAR: "\\bQAR\\b",
+  CAD: "\\bCAD\\b",
+  AUD: "\\bAUD\\b",
+};
+
+function currencyAmountExpression(currency: string) {
+  const decimals = /^(?:KWD|BHD|OMR)$/.test(currency) ? 3 : 2;
+  const amount = `[0-9]{1,6}(?:,[0-9]{3})*(?:\\.[0-9]{1,${decimals}})?`;
+  const token = CURRENCY_TOKENS[currency] || currency.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:${token})\\s*(${amount})|(${amount})\\s*(?:${token})`, "giu");
+}
+
 function currencyFromMarkup(value: string) {
-  const decoded = decodeEvidence(value);
-  if (/\u00A3/.test(decoded)) return "GBP";
-  if (/\u20AC/.test(decoded)) return "EUR";
-  if (/\$/.test(decoded)) return "USD";
-  if (/(?:ك\s*\.?\s*د|د\s*\.?\s*ك)/u.test(decoded)) return "KWD";
-  if (/(?:ب\s*\.?\s*د|د\s*\.?\s*ب)/u.test(decoded)) return "BHD";
-  if (/(?:ر\s*\.?\s*ع|ع\s*\.?\s*ر)/u.test(decoded)) return "OMR";
-  if (/(?:إ\s*\.?\s*د|د\s*\.?\s*إ)/u.test(decoded)) return "AED";
-  if (/(?:س\s*\.?\s*ر|ر\s*\.?\s*س|\bSR\b)/iu.test(decoded)) return "SAR";
-  return decoded.match(/\b(?:GBP|USD|EUR|AED|SAR|KWD|QAR|CAD|AUD)\b/i)?.[0]?.toUpperCase() || "";
+  const decoded = normalizeLocalizedNumbers(decodeEvidence(value).replace(/<[^>]*>/g, " "));
+  return Object.keys(CURRENCY_TOKENS).find((currency) => currencyAmountExpression(currency).test(decoded)) || "";
 }
 
 function publicImageFromScope(scope: string, sourceUrl: string) {
@@ -118,21 +139,8 @@ function scopedPriceSignals(currency: string, values: number[]) {
 }
 
 function markedAmounts(markup: string, currency: string) {
-  const decoded = decodeEvidence(markup.replace(/<[^>]*>/g, " "));
-  const tokens: Record<string, string> = {
-    GBP: "(?:\\u00A3|GBP)",
-    EUR: "(?:\\u20AC|EUR)",
-    USD: "(?:\\$|USD)",
-    KWD: "(?:KWD|ك\\s*\\.?\\s*د|د\\s*\\.?\\s*ك)",
-    BHD: "(?:BHD|ب\\s*\\.?\\s*د|د\\s*\\.?\\s*ب)",
-    OMR: "(?:OMR|ر\\s*\\.?\\s*ع|ع\\s*\\.?\\s*ر)",
-    AED: "(?:AED|إ\\s*\\.?\\s*د|د\\s*\\.?\\s*إ)",
-    SAR: "(?:SAR|SR|س\\s*\\.?\\s*ر|ر\\s*\\.?\\s*س)",
-  };
-  const decimals = /^(?:KWD|BHD|OMR)$/.test(currency) ? 3 : 2;
-  const amount = `[0-9]{1,6}(?:,[0-9]{3})*(?:\\.[0-9]{1,${decimals}})?`;
-  const token = tokens[currency] || currency.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const expression = new RegExp(`(?:${token})\\s*(${amount})|(${amount})\\s*(?:${token})`, "giu");
+  const decoded = normalizeLocalizedNumbers(decodeEvidence(markup.replace(/<[^>]*>/g, " ")));
+  const expression = currencyAmountExpression(currency);
   return [...decoded.matchAll(expression)].map((match) => Number((match[1] || match[2]).replace(/,/g, "")));
 }
 
@@ -287,7 +295,6 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       const availability = robotsAvailability(robotsResult);
       if (availability === "unreachable") return { product: null, gap: gap("robots.txt was unreachable, so selected-product enrichment was skipped.") };
       const robots = availability === "available" && robotsResult ? parseRobots(robotsResult.text) : parseRobots("");
-      const missingRobotsGap = availability === "missing" ? gap(`No robots.txt was published (HTTP ${robotsResult?.status}); bounded selected-product enrichment proceeded.`) : null;
       if (!robots.allows(new URL(item.sourceUrl).pathname)) return { product: null, gap: gap("robots.txt disallows this selected product page.") };
       const fetched = await fetchSameDomain(item.sourceUrl, item.domain, "text/html,application/xhtml+xml");
       if (!fetched.ok || !/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`) };
@@ -324,7 +331,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       if (!identity.accepted) return { product: null, gap: gap(identity.reason) };
       const accepted = identity.products[0];
       const unresolvedAdapterGap = adapterGap && accepted && !hasConfirmedPrice([accepted]) ? adapterGap : "";
-      return { product: accepted ? { ...accepted, id: item.productId } : null, gap: unresolvedAdapterGap ? gap(unresolvedAdapterGap) : missingRobotsGap };
+      return { product: accepted ? { ...accepted, id: item.productId } : null, gap: unresolvedAdapterGap ? gap(unresolvedAdapterGap) : null };
     } catch (error) {
       return { product: null, gap: gap(error instanceof Error ? `Selected product page could not be fetched: ${error.message}` : "Selected product page could not be fetched.") };
     }
@@ -345,7 +352,12 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
   }));
 
   const products = entries.flatMap((entry) => entry.product ? [entry.product] : []);
-  const gaps = entries.flatMap((entry) => entry.gap ? [entry.gap] : []);
+  const missingRobotsGaps = [...robotsByDomain.entries()].flatMap(([domain, result]) => {
+    if (robotsAvailability(result) !== "missing") return [];
+    const first = selected.find((item) => item.domain === domain);
+    return first ? [{ url: `https://${domain}/robots.txt`, productId: first.productId, role: first.role, reason: `No robots.txt was published (HTTP ${result?.status}); bounded selected-product enrichment proceeded.` }] : [];
+  });
+  const gaps = [...entries.flatMap((entry) => entry.gap ? [entry.gap] : []), ...missingRobotsGaps];
   return { products, coverage: { pagesRequested: selected.length, pagesFetched: products.length, maxPages: boundedMax, gaps } satisfies ProductEnrichmentCoverage };
 }
 
