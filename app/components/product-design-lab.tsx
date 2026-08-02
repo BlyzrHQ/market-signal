@@ -40,7 +40,6 @@ function repairEncoding(value: string) {
 function display(value: unknown, fallback = "") { return repairEncoding(typeof value === "string" ? value : "").replace(/&ndash;/g, "–").replace(/&amp;/g, "&").trim() || fallback; }
 function safeUrl(value: unknown) { const url = display(value); return /^https?:\/\/[^\s]+$/i.test(url) ? url : ""; }
 function slug(value: unknown) { return display(value, "item").toLowerCase().replace(/[^a-z0-9.-]+/g, "-").replace(/^-+|-+$/g, "") || "item"; }
-function viewHref(view: string, anchor = "") { return `?view=${view}${anchor ? `#${anchor}` : ""}`; }
 function productPrice(product: Record<string, unknown>) {
   const signals = list(product.priceSignals).map(object);
   const priced = signals.flatMap((signal) => typeof signal.amount === "number" && display(signal.currency) ? [{ amount: signal.amount, currency: display(signal.currency) }] : []);
@@ -120,7 +119,7 @@ function MatchDetails({ row, observedAt, ar }: { row: ProductRow; observedAt: st
     <section><span>{ar ? "أساس المطابقة" : "MATCH BASIS"}</span><strong>{row.verdict.replace(/_/g, " ")}</strong><p>{row.reasons || (ar ? "لم تُحفظ أسباب إضافية." : "No additional match reasons were saved.")}</p></section>
     <section><span>{ar ? "سبب الخطوة" : "ACTION RATIONALE"}</span><strong>{row.actionSource === "ai" ? (ar ? "توصية صاغها الذكاء الاصطناعي" : "AI-drafted recommendation") : (ar ? "توصية قائمة على القواعد" : "Rule-based recommendation")}</strong><p>{row.actionRationale || row.fullAction}</p>{row.actionSource === "ai" && <small>{[row.actionModel, row.actionPromptVersion].filter(Boolean).join(" · ")}</small>}</section>
     <section><span>{ar ? "حالة الدليل" : "EVIDENCE STATE"}</span><strong>{row.claimType} · {row.confidence}</strong><p>{ar ? "لوحظ" : "Observed"} {new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</p></section>
-    <section><span>{ar ? "المصادر" : "SOURCES"}</span><div className="product-detail-links">{row.primarySource && <a href={row.primarySource} target="_blank" rel="noreferrer">{ar ? "مصدر منتجك ↗" : "Your source ↗"}</a>}{row.rivalSource && <a href={row.rivalSource} target="_blank" rel="noreferrer">{ar ? "مصدر المنافس ↗" : "Rival source ↗"}</a>}<a href={viewHref("evidence", `evidence-${slug(row.domain)}`)}>{ar ? "دفتر الأدلة" : "Evidence ledger"}</a></div></section>
+    <section><span>{ar ? "المصادر" : "SOURCES"}</span><div className="product-detail-links">{row.primarySource && <a href={row.primarySource} target="_blank" rel="noreferrer">{ar ? "مصدر منتجك ↗" : "Your source ↗"}</a>}{row.rivalSource && <a href={row.rivalSource} target="_blank" rel="noreferrer">{ar ? "مصدر المنافس ↗" : "Rival source ↗"}</a>}</div></section>
   </div></details>;
 }
 
@@ -138,7 +137,6 @@ function ProductTableDetails({ row, observedAt, ar }: { row: ProductRow; observe
       {row.actionEvidenceKeys.length > 0 && <p><b>{ar ? "الأدلة المستخدمة" : "Evidence used"}</b><span>{row.actionEvidenceKeys.join(" · ")}</span></p>}
       <p><b>{ar ? "حالة الدليل" : "Evidence state"}</b><span>{row.verdict.replace(/_/g, " ")} · {row.claimType} · {row.confidence}</span></p>
       <p><b>{ar ? "لوحظ" : "Observed"}</b><time dateTime={observedAt}>{new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</time></p>
-      <a href={viewHref("evidence", `evidence-${slug(row.domain)}`)}>{ar ? "افتح دفتر الأدلة" : "Open evidence ledger"}</a>
     </div>
   </details>;
 }
@@ -149,7 +147,6 @@ export function ProductDesignLab({ comparison, battles, primaryDomain, observedA
   const [shareFallback, setShareFallback] = useState("");
   const layoutTabs = useRef<Array<HTMLButtonElement | null>>([]);
   const rows = useMemo(() => battles.map((battle) => prepareRow(battle, ar)), [battles, ar]);
-  const enrichmentGaps = list(object(comparison?.enrichment).gaps).map(object);
 
   useEffect(() => {
     const sync = () => {
@@ -203,7 +200,6 @@ export function ProductDesignLab({ comparison, battles, primaryDomain, observedA
       <div className="product-lab-actions"><button type="button" onClick={exportCsv}>{ar ? "تصدير CSV" : "Export CSV"}</button><button type="button" onClick={shareReport}>{ar ? "مشاركة" : "Share"}</button></div>
     </div>
     {(shareStatus || shareFallback) && <div className="product-share-status" role="status" aria-live="polite"><span>{shareStatus}</span>{shareFallback && <input value={shareFallback} readOnly onFocus={(event) => event.currentTarget.select()} aria-label={ar ? "رابط التقرير" : "Report link"} />}</div>}
-    {enrichmentGaps.length > 0 && <div className="product-evidence-gaps" role="status"><header><span>{ar ? "فجوة بيانات المنتج" : "PRODUCT DATA GAP"}</span><strong>{ar ? `تعذر إكمال ${enrichmentGaps.length} صفحة محددة` : `${enrichmentGaps.length} selected page${enrichmentGaps.length === 1 ? "" : "s"} could not be completed`}</strong></header>{enrichmentGaps.slice(0, 4).map((gap, index) => <p key={`${display(gap.productId)}-${index}`}><b>{display(gap.role, ar ? "منتج" : "product")}</b><span>{display(gap.reason, ar ? "لم تتوفر أدلة كافية للسعر أو الصورة." : "Price or image evidence was not available from this page.")}</span>{safeUrl(gap.url) && <a href={safeUrl(gap.url)} target="_blank" rel="noreferrer">{ar ? "افتح المصدر ↗" : "Open source ↗"}</a>}</p>)}</div>}
 
     {layout === "table" && <section id="product-layout-table" role="tabpanel" aria-labelledby="product-layout-tab-table" className="product-layout-panel product-table-layout">
       <div className="product-compact-table-shell">

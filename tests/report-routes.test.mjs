@@ -38,10 +38,10 @@ test("completed report route reconstructs the evidence renderer from D1", () => 
 
 test("saved reports expose deep-linkable accessible intelligence tabs", () => {
   assert.match(report, /type View = "overview" \| "competitors" \| "products" \| "ads" \| "evidence"/);
-  assert.match(report, /const VIEWS: View\[\] = \["overview", "competitors", "products", "ads", "evidence"\]/);
-  assert.match(report, /value === "methodology" && views\.includes\("evidence"\)/);
-  assert.match(report, /if \(legacyMethod\) url\.hash = "method"/);
-  assert.match(report, /evidence: \{ en: "Evidence & Method", ar: "الأدلة والمنهجية" \}/);
+  assert.match(report, /const VIEWS: View\[\] = \["competitors", "products", "overview"\]/);
+  assert.match(report, /return views\.includes\(value as View\) \? value as View : views\[0\] \|\| "overview"/);
+  assert.doesNotMatch(report, /value === "methodology"/);
+  assert.match(report, /url\.hash = ""/);
   assert.match(report, /new URLSearchParams\(window\.location\.search\)\.get\("view"\)/);
   assert.match(report, /window\.addEventListener\("popstate", sync\)/);
   assert.match(report, /role="tablist"/);
@@ -56,8 +56,10 @@ test("saved reports expose deep-linkable accessible intelligence tabs", () => {
   assert.match(report, /if \(!hash\) window\.requestAnimationFrame\(\(\) => window\.scrollTo\(\{ top: 0, behavior: "auto" \}\)\)/);
   assert.match(report, /onClick=\{onWorkspaceClick\}/);
   assert.match(report, /viewHref\("products", productAnchor\(domain\)\)/);
-  assert.match(report, /viewHref\("ads", adAnchor\(domain\)\)/);
-  assert.match(report, /viewHref\("evidence", evidenceAnchor\(domain\)\)/);
+  assert.doesNotMatch(report, /viewHref\("ads"/);
+  assert.doesNotMatch(report, /viewHref\("evidence"/);
+  assert.match(report, /terminalDomain \? \["overview"\] : VIEWS/);
+  assert.doesNotMatch(productLab, /viewHref\("evidence"|view=evidence|Evidence ledger|Open evidence ledger/);
 });
 
 test("saved reports use a persistent dashboard shell without the old report hero", () => {
@@ -65,7 +67,8 @@ test("saved reports use a persistent dashboard shell without the old report hero
   assert.match(report, /className="dashboard-brand"/);
   assert.match(report, /className="dashboard-report-identity"/);
   assert.match(report, /className="report-dashboard-main"/);
-  assert.match(report, /item === "evidence" && <b>\{evidence\.length \+ gaps\.length\}<\/b>/);
+  assert.doesNotMatch(report, /item === "ads" && activeAds/);
+  assert.doesNotMatch(report, /item === "evidence" && <b>/);
   assert.doesNotMatch(report, /stored-report-hero/);
   assert.doesNotMatch(css, /\.stored-report-hero/);
   assert.match(css, /\.dashboard-view-title span,\.report-route-meta span \{ display: none; \}[\s\S]*\.report-route-meta time \{ font-size: 7px; \}/);
@@ -105,9 +108,8 @@ test("saved product and ad views preserve truth boundaries and source links", ()
   assert.match(productLab, /firstSentence\.length >= 15 \? firstSentence : full/);
   assert.match(productLab, /row\.primarySource && <a href=\{row\.primarySource\}/);
   assert.match(productLab, /row\.rivalSource && <a href=\{row\.rivalSource\}/);
-  assert.match(productLab, /enrichmentGaps/);
-  assert.match(productLab, /PRODUCT DATA GAP/);
-  assert.match(productLab, /Open source ↗/);
+  assert.doesNotMatch(productLab, /enrichmentGaps/);
+  assert.doesNotMatch(productLab, /PRODUCT DATA GAP/);
   assert.match(report, /not proof of zero ads/);
   assert.match(report, /This does not mean the companies do not advertise/);
   assert.match(report, /Who is verifiably advertising, and what are their ads saying\?/);
@@ -122,7 +124,6 @@ test("saved product and ad views preserve truth boundaries and source links", ()
   assert.match(report, /list\(platform\.evidenceUrls\).*Ad record \$\{index \+ 1\} ↗/);
   assert.match(report, /url\.protocol === "https:" && \["fbcdn\.net", "fbsbx\.com", "facebook\.com"\]/);
   assert.match(report, /alt=\{headline\}/);
-  assert.match(report, /item === "ads" && activeAds > 0/);
   assert.match(report, /truth-pill/);
   assert.match(report, /repairEncoding/);
 });
