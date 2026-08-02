@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { productDecision } from "../app/lib/product-intelligence.ts";
+import { resetSharedRobotsPolicyResolverForTests, sharedRobotsPolicyResolver } from "../app/lib/robots-policy.ts";
 import { claimablePagePricePatterns, enrichProductTargets, extractScopedProductPageEvidence, publicProductTarget, selectPrimaryProductPriceTargets } from "../app/lib/storefront-product-enrichment.ts";
+
+test.beforeEach(() => resetSharedRobotsPolicyResolverForTests());
 
 function product(index, overrides = {}) {
   return {
@@ -267,6 +270,56 @@ test("skips product and adapter fetches when robots disallows the selected page"
   }
 });
 
+test("a cached robots denial still blocks the selected product page", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    return new Response("User-agent: *\nDisallow: /products/", { headers: { "content-type": "text/plain" } });
+  };
+  try {
+    await sharedRobotsPolicyResolver.resolve("shop.test", "shop.test");
+    globalThis.fetch = async (input) => {
+      calls.push(String(input));
+      return new Response("should not be fetched", { headers: { "content-type": "text/html" } });
+    };
+    const result = await enrichProductTargets([target()], 1);
+    assert.equal(result.products.length, 0);
+    assert.match(result.coverage.gaps[0].reason, /robots\.txt disallows/i);
+    assert.deepEqual(calls, ["https://shop.test/robots.txt"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a cached successful robots policy carries a later product enrichment request", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input) => {
+    calls.push(String(input));
+    return new Response("User-agent: *\nAllow: /products/", { headers: { "content-type": "text/plain" } });
+  };
+  try {
+    await sharedRobotsPolicyResolver.resolve("shop.test", "shop.test");
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      calls.push(url);
+      return new Response(`<html><head><title>Maamoul Pistachio</title><script type="application/ld+json">${JSON.stringify({
+        "@context": "https://schema.org", "@type": "Product", name: "Maamoul Pistachio",
+        image: "https://cdn.shop.test/maamoul.jpg", offers: { "@type": "Offer", price: "8.50", priceCurrency: "USD" },
+      })}</script></head><body><h1>Maamoul Pistachio</h1></body></html>`, { headers: { "content-type": "text/html" } });
+    };
+    const result = await enrichProductTargets([target()], 1);
+    assert.equal(result.coverage.pagesFetched, 1);
+    assert.equal(result.products[0].imageUrl, "https://cdn.shop.test/maamoul.jpg");
+    assert.equal(result.products[0].priceSignals[0].amount, 8.5);
+    assert.deepEqual(calls, ["https://shop.test/robots.txt", "https://shop.test/products/maamoul-pistachio"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("a missing robots file permits only the existing bounded product enrichment", async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
@@ -323,7 +376,12 @@ test("an unreachable robots file remains fail closed", async () => {
     const result = await enrichProductTargets([target()], 1);
     assert.equal(result.products.length, 0);
     assert.match(result.coverage.gaps[0].reason, /robots\.txt was unreachable/i);
-    assert.deepEqual(calls, ["https://shop.test/robots.txt"]);
+    assert.deepEqual(calls, [
+      "https://shop.test/robots.txt",
+      "https://shop.test/robots.txt",
+      "https://www.shop.test/robots.txt",
+      "https://www.shop.test/robots.txt",
+    ]);
   } finally {
     globalThis.fetch = originalFetch;
   }

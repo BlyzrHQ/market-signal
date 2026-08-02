@@ -2,7 +2,7 @@ import { canonicalDomain, normalizeDomain } from "./domain.ts";
 import { bilingualNormalize, parseCanonicalQuantity } from "./product-normalization.ts";
 import { extractProductsFromHtml, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "./product-intelligence.ts";
 import { confirmedProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "./product-page-adapters.ts";
-import { parseRobots, robotsAvailability } from "./robots.ts";
+import { sharedRobotsPolicyResolver } from "./robots-policy.ts";
 
 const MAX_DOCUMENT_BYTES = 1_500_000;
 export const MAX_ENRICHMENT_TARGETS = 64;
@@ -279,22 +279,20 @@ export function claimablePagePricePatterns(values: string[]) {
 export async function enrichProductTargets(targets: ProductEnrichmentTarget[], maxPages = 24) {
   const boundedMax = Math.max(0, Math.min(MAX_ENRICHMENT_TARGETS, Math.floor(maxPages)));
   const selected = targets.slice(0, boundedMax);
-  const robotsByDomain = new Map<string, Awaited<ReturnType<typeof fetchSameDomain>> | null>();
+  const robotsByDomain = new Map<string, Awaited<ReturnType<typeof sharedRobotsPolicyResolver.resolve>>>();
   await Promise.all([...new Set(selected.map((item) => item.domain))].map(async (domain) => {
-    try {
-      robotsByDomain.set(domain, await fetchSameDomain(`https://${domain}/robots.txt`, domain, "text/plain"));
-    } catch {
-      robotsByDomain.set(domain, null);
-    }
+    const preferred = selected.find((item) => item.domain === domain)?.sourceUrl || domain;
+    robotsByDomain.set(domain, await sharedRobotsPolicyResolver.resolve(domain, preferred));
   }));
 
   const enrichOne = async (item: ProductEnrichmentTarget) => {
     const gap = (reason: string): EnrichmentGap => ({ url: item.sourceUrl, productId: item.productId, role: item.role, reason });
     try {
       const robotsResult = robotsByDomain.get(item.domain);
-      const availability = robotsAvailability(robotsResult);
+      const availability = robotsResult?.availability || "unreachable";
       if (availability === "unreachable") return { product: null, gap: gap("robots.txt was unreachable, so selected-product enrichment was skipped.") };
-      const robots = availability === "available" && robotsResult ? parseRobots(robotsResult.text) : parseRobots("");
+      const robots = robotsResult?.policy;
+      if (!robots) return { product: null, gap: gap("robots.txt was unreachable, so selected-product enrichment was skipped.") };
       if (!robots.allows(new URL(item.sourceUrl).pathname)) return { product: null, gap: gap("robots.txt disallows this selected product page.") };
       const fetched = await fetchSameDomain(item.sourceUrl, item.domain, "text/html,application/xhtml+xml");
       if (!fetched.ok || !/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`) };
@@ -353,9 +351,9 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
 
   const products = entries.flatMap((entry) => entry.product ? [entry.product] : []);
   const missingRobotsGaps = [...robotsByDomain.entries()].flatMap(([domain, result]) => {
-    if (robotsAvailability(result) !== "missing") return [];
+    if (result.availability !== "missing") return [];
     const first = selected.find((item) => item.domain === domain);
-    return first ? [{ url: `https://${domain}/robots.txt`, productId: first.productId, role: first.role, reason: `No robots.txt was published (HTTP ${result?.status}); bounded selected-product enrichment proceeded.` }] : [];
+    return first ? [{ url: result.sourceUrl, productId: first.productId, role: first.role, reason: `No robots.txt was published (HTTP ${result.status}); bounded selected-product enrichment proceeded.` }] : [];
   });
   const gaps = [...entries.flatMap((entry) => entry.gap ? [entry.gap] : []), ...missingRobotsGaps];
   return { products, coverage: { pagesRequested: selected.length, pagesFetched: products.length, maxPages: boundedMax, gaps } satisfies ProductEnrichmentCoverage };
