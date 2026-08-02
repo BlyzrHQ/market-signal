@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { POST } from "../app/api/enrich-products/route.ts";
+import { resetSharedRobotsPolicyResolverForTests } from "../app/lib/robots-policy.ts";
+
+test.beforeEach(() => resetSharedRobotsPolicyResolverForTests());
 
 test("enriches the exact selected product page with authoritative price and secure image", async () => {
   const originalFetch = globalThis.fetch;

@@ -1,6 +1,6 @@
 import { canonicalDomain, normalizeDomain } from "../../lib/domain.ts";
 import { buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity, type ProductComparison, type ProductRecord } from "../../lib/product-intelligence.ts";
-import { parseRobots, robotsAvailability } from "../../lib/robots.ts";
+import { sharedRobotsPolicyResolver } from "../../lib/robots-policy.ts";
 import { discoverCompetitors, type DiscoveryCandidate, type DiscoveryResult } from "../../lib/competitor-discovery.ts";
 import { attributableFacebookUrl, type AdIntelligenceResult } from "../../lib/ad-intelligence.ts";
 import { compareVerifiedCompetitors, resolveVerificationMarket, verifyCompetitorEntity, type CompetitorVerification, type FirstPartyRegionSource, type VerificationMarket } from "../../lib/competitor-verification.ts";
@@ -313,11 +313,11 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
   }
   const domain = base.hostname;
   const gaps: Gap[] = [];
-  const robotsResult = await fetchText(new URL("/robots.txt", base).toString(), "text/plain", domain);
-  const robotsState = robotsAvailability(robotsResult);
-  const robots = robotsState === "available" ? parseRobots(robotsResult.text) : parseRobots("");
-  if (robotsState === "missing") gaps.push({ url: new URL("/robots.txt", base).toString(), reason: `No robots.txt was published (HTTP ${robotsResult.status}); the bounded public crawl proceeded.`, observedAt: startedAt });
-  if (robotsState === "unreachable") gaps.push({ url: new URL("/robots.txt", base).toString(), reason: "robots.txt was unreachable; expansion is limited to the homepage.", observedAt: startedAt });
+  const robotsResult = await sharedRobotsPolicyResolver.resolve(domain, base.hostname);
+  const robotsState = robotsResult.availability;
+  const robots = robotsResult.policy;
+  if (robotsState === "missing") gaps.push({ url: robotsResult.sourceUrl, reason: `No robots.txt was published (HTTP ${robotsResult.status}); the bounded public crawl proceeded.`, observedAt: startedAt });
+  if (robotsState === "unreachable") gaps.push({ url: robotsResult.sourceUrl, reason: "robots.txt was unreachable; expansion is limited to the homepage.", observedAt: startedAt });
   if (robotsState === "available" && !robots.allows("/")) {
     gaps.push({ url: base.toString(), reason: "robots.txt disallows the homepage for this scanner.", observedAt: startedAt });
     return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: 0, pagesFetched: 0, maxPages: maxHtmlPages, robotsChecked: true }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt };
@@ -325,12 +325,12 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
   const homepageResult = await fetchText(base.toString(), "text/html,application/xhtml+xml", domain);
   if (!homepageResult.ok || !/text\/html|application\/xhtml\+xml/i.test(homepageResult.contentType)) {
     gaps.push({ url: base.toString(), reason: homepageResult.error || `homepage returned HTTP ${homepageResult.status}.`, observedAt: startedAt });
-    return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: 1, pagesFetched: 0, maxPages: maxHtmlPages, robotsChecked: robotsResult.ok }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt, ...(homepageResult.failureKind ? { homepageFailure: { kind: homepageResult.failureKind, attemptedUrl: base.toString(), reason: homepageResult.error || "request failed", observedAt: startedAt } } : {}) };
+    return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: 1, pagesFetched: 0, maxPages: maxHtmlPages, robotsChecked: robotsState === "available" }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt, ...(homepageResult.failureKind ? { homepageFailure: { kind: homepageResult.failureKind, attemptedUrl: base.toString(), reason: homepageResult.error || "request failed", observedAt: startedAt } } : {}) };
   }
   const homepageHost = new URL(homepageResult.url).hostname.toLowerCase().replace(/^www\./, "");
   if (homepageHost !== domain.replace(/^www\./, "")) {
     gaps.push({ url: base.toString(), reason: "homepage redirected off the submitted domain.", observedAt: startedAt });
-    return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: 1, pagesFetched: 0, maxPages: maxHtmlPages, robotsChecked: robotsResult.ok }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt };
+    return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: 1, pagesFetched: 0, maxPages: maxHtmlPages, robotsChecked: robotsState === "available" }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt };
   }
   const clientRedirect = extractStaticClientRedirect(homepageResult.text, homepageResult.url);
   if (clientRedirect) {
@@ -338,7 +338,7 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
     const provider = redirectResult.redirectDomain ? parkingProvider(redirectResult.redirectDomain) : "";
     if (provider) {
       gaps.push({ url: clientRedirect, reason: `${domain} redirects to a ${provider} domain-for-sale service; no company report was generated.`, observedAt: startedAt });
-      return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: 2, pagesFetched: 1, maxPages: maxHtmlPages, robotsChecked: robotsResult.ok }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt, siteState: { status: "parked", provider, evidenceUrl: clientRedirect, redirectDomain: redirectResult.redirectDomain! } };
+      return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: 2, pagesFetched: 1, maxPages: maxHtmlPages, robotsChecked: robotsState === "available" }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt, siteState: { status: "parked", provider, evidenceUrl: clientRedirect, redirectDomain: redirectResult.redirectDomain! } };
     }
   }
   const homepageExtractionDocument = boundedExtractionDocument(homepageResult.text, MAX_HTML_EXTRACTION_BYTES);
@@ -408,7 +408,7 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
     if (page && !page.claims.some((claim) => claim.id === offering.claimIds[0])) page.claims.push({ id: offering.claimIds[0], claimType: "Observed", text: `${domain} presents “${offering.name}” as a first-party ${business.businessType === "ecommerce" ? "subscription or product option" : "service or capability"}.`, sourceUrl: offering.sourceUrl, observedAt: offering.observedAt, confidence: "Medium" });
   }
   const products = selectPreferredProducts([...observedProducts, ...fallbackOfferings]);
-  return { domain, role, homepage, pages, products, candidates, gaps, coverage: { pagesRequested: 1 + paths.length, pagesFetched: pages.length, maxPages: maxHtmlPages, robotsChecked: robotsResult.ok }, productCoverage: { scannedPages: pages.length, catalogProductsDiscovered: sitemapProducts.length, thirdPartyReferenced: pages.reduce((sum, page) => sum + page.thirdPartyProductCount, 0) }, fetchedAt: startedAt };
+  return { domain, role, homepage, pages, products, candidates, gaps, coverage: { pagesRequested: 1 + paths.length, pagesFetched: pages.length, maxPages: maxHtmlPages, robotsChecked: robotsState === "available" }, productCoverage: { scannedPages: pages.length, catalogProductsDiscovered: sitemapProducts.length, thirdPartyReferenced: pages.reduce((sum, page) => sum + page.thirdPartyProductCount, 0) }, fetchedAt: startedAt };
 }
 
 function comparisonSourceUrls(results: DomainCrawl[], primaryDomain: string) {
@@ -436,15 +436,15 @@ async function enrichMatchedProductPages(results: DomainCrawl[], primaryDomain: 
     const gaps: Gap[] = [];
     if (!result?.homepage) return { domain, sourceUrls, pages: [] as CrawlPage[], gaps };
     const base = normalizeDomain(result.homepage.sourceUrl);
-    const robotsUrl = new URL("/robots.txt", base).toString();
-    const robotsResult = await fetchText(robotsUrl, "text/plain", domain);
-    const robotsState = robotsAvailability(robotsResult);
+    const robotsResult = await sharedRobotsPolicyResolver.resolve(domain, base.hostname);
+    const robotsUrl = robotsResult.sourceUrl;
+    const robotsState = robotsResult.availability;
     if (robotsState === "unreachable") {
       for (const sourceUrl of sourceUrls) gaps.push({ url: sourceUrl, reason: "Matched product price enrichment was skipped because robots.txt was unreachable.", observedAt });
       return { domain, sourceUrls, pages: [] as CrawlPage[], gaps };
     }
     if (robotsState === "missing") gaps.push({ url: robotsUrl, reason: `No robots.txt was published (HTTP ${robotsResult.status}); bounded matched-product enrichment proceeded.`, observedAt });
-    const robots = robotsState === "available" ? parseRobots(robotsResult.text) : parseRobots("");
+    const robots = robotsResult.policy;
     const entries = await Promise.all(sourceUrls.map(async (sourceUrl) => {
       const path = new URL(sourceUrl).pathname;
       if (!robots.allows(path)) return { page: null, gap: { url: sourceUrl, reason: "robots.txt disallows this matched product price-enrichment page.", observedAt } as Gap };
