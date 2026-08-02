@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseRobots } from "../app/lib/robots.ts";
+import { parseRobots, robotsAvailability } from "../app/lib/robots.ts";
 
 const shopifyRobots = `
 User-agent: *
@@ -44,4 +44,13 @@ test("end anchors and empty disallow directives follow robots semantics", () => 
   assert.equal(policy.allows("/file"), false);
   assert.equal(policy.allows("/file/more"), true);
   assert.equal(policy.allows("/anything"), true);
+});
+
+test("robots availability distinguishes an absent policy from an unreachable policy", () => {
+  assert.equal(robotsAvailability({ ok: true, status: 200 }), "available");
+  assert.equal(robotsAvailability({ ok: false, status: 404 }), "missing");
+  assert.equal(robotsAvailability({ ok: false, status: 410 }), "missing");
+  assert.equal(robotsAvailability({ ok: false, status: 429 }), "unreachable");
+  assert.equal(robotsAvailability({ ok: false, status: 503 }), "unreachable");
+  assert.equal(robotsAvailability(null), "unreachable");
 });
