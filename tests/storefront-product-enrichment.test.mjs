@@ -93,6 +93,21 @@ test("does not claim a scoped amount without a confirmed same-page currency", ()
   assert.equal(evidence.basis, "unavailable");
 });
 
+test("preserves three-decimal KWD prices from Arabic visible markup", () => {
+  const evidence = extractScopedProductPageEvidence(`
+    <h1 class="product_title">عسل سدر 500 جرام</h1>
+    <div class="summary entry-summary"><p class="price"><span>1.255 ك.د</span></p></div>
+  `);
+  assert.deepEqual(evidence.priceSignals, [{ raw: "KWD 1.255", currency: "KWD", amount: 1.255 }]);
+});
+
+test("recognizes directly observed Arabic AED and SAR currency tokens", () => {
+  const aed = extractScopedProductPageEvidence('<h1>تمر</h1><div class="summary"><p class="price">د.إ 12.50</p></div>');
+  const sar = extractScopedProductPageEvidence('<h1>عسل</h1><div class="summary"><p class="price">19.75 ر.س</p></div>');
+  assert.deepEqual(aed.priceSignals, [{ raw: "AED 12.5", currency: "AED", amount: 12.5 }]);
+  assert.deepEqual(sar.priceSignals, [{ raw: "SAR 19.75", currency: "SAR", amount: 19.75 }]);
+});
+
 test("removes only exact-zero unstructured price patterns", () => {
   assert.deepEqual(
     claimablePagePricePatterns(["$0", "$0.00", "0 USD", "EUR 0,00", "$0.99", "EUR 0,50", "GBP 12"]),
@@ -229,6 +244,45 @@ test("skips product and adapter fetches when robots disallows the selected page"
     const result = await enrichProductTargets([target()], 6);
     assert.equal(result.coverage.pagesFetched, 0);
     assert.match(result.coverage.gaps[0].reason, /robots\.txt disallows/i);
+    assert.deepEqual(calls, ["https://shop.test/robots.txt"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a missing robots file permits only the existing bounded product enrichment", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("/robots.txt")) return new Response("not found", { status: 404 });
+    return new Response(`<html><head><title>Maamoul Pistachio</title><script type="application/ld+json">${JSON.stringify({
+      "@context": "https://schema.org", "@type": "Product", name: "Maamoul Pistachio",
+      image: "https://cdn.shop.test/maamoul.jpg", offers: { "@type": "Offer", price: "8.50", priceCurrency: "USD" },
+    })}</script></head><body><h1>Maamoul Pistachio</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target()], 1);
+    assert.equal(result.products[0].priceSignals[0].amount, 8.5);
+    assert.match(result.coverage.gaps[0].reason, /No robots\.txt was published \(HTTP 404\)/);
+    assert.deepEqual(calls, ["https://shop.test/robots.txt", "https://shop.test/products/maamoul-pistachio"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("an unreachable robots file remains fail closed", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input) => {
+    calls.push(String(input));
+    return new Response("unavailable", { status: 503 });
+  };
+  try {
+    const result = await enrichProductTargets([target()], 1);
+    assert.equal(result.products.length, 0);
+    assert.match(result.coverage.gaps[0].reason, /robots\.txt was unreachable/i);
     assert.deepEqual(calls, ["https://shop.test/robots.txt"]);
   } finally {
     globalThis.fetch = originalFetch;

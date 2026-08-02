@@ -67,8 +67,8 @@ test("real-data route and product metadata are present", async () => {
   assert.doesNotMatch(crawl, /await scanOfficialAdLibraries/);
   assert.match(crawl, /adRequest/);
   assert.match(crawl, /MAX_DISCOVERED_HTML_PAGES = 3/);
-  assert.match(crawl, /MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES = 6/);
-  assert.match(crawl, /MAX_PRIMARY_PRODUCT_PRICE_PAGES = 6/);
+  assert.match(crawl, /MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES = 16/);
+  assert.match(crawl, /MAX_PRIMARY_PRODUCT_PRICE_PAGES = 16/);
   assert.match(crawl, /selectPrimaryProductPriceTargets/);
   assert.match(crawl, /primaryPriceEnrichmentPagesFetched/);
   assert.match(crawl, /selectProductEnrichmentTargets/);

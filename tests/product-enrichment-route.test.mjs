@@ -66,7 +66,7 @@ test("returns a visible source gap when one selected product domain cannot be re
     assert.equal(response.status, 200);
     assert.equal(payload.ok, true);
     assert.equal(payload.coverage.pagesFetched, 0);
-    assert.match(payload.coverage.gaps[0].reason, /could not be read/i);
+    assert.match(payload.coverage.gaps[0].reason, /robots\.txt was unreachable/i);
     assert.equal(payload.coverage.gaps[0].productId, "lemon-tea");
     assert.equal(payload.coverage.gaps[0].role, "rival");
   } finally {

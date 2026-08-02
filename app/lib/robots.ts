@@ -4,6 +4,14 @@ export type RobotsPolicy = {
   allows: (path: string) => boolean;
 };
 
+export type RobotsAvailability = "available" | "missing" | "unreachable";
+
+export function robotsAvailability(result: { ok: boolean; status: number } | null | undefined): RobotsAvailability {
+  if (result?.ok) return "available";
+  if (result && (result.status === 404 || result.status === 410)) return "missing";
+  return "unreachable";
+}
+
 type Rule = { directive: "allow" | "disallow"; pattern: string };
 type Group = { agents: string[]; rules: Rule[] };
 

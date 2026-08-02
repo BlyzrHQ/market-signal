@@ -1,6 +1,6 @@
 import { canonicalDomain, normalizeDomain } from "../../lib/domain";
 import { buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity, type ProductComparison, type ProductRecord } from "../../lib/product-intelligence";
-import { parseRobots } from "../../lib/robots";
+import { parseRobots, robotsAvailability } from "../../lib/robots";
 import { discoverCompetitors, type DiscoveryCandidate, type DiscoveryResult } from "../../lib/competitor-discovery";
 import { attributableFacebookUrl, type AdIntelligenceResult } from "../../lib/ad-intelligence";
 import { compareVerifiedCompetitors, resolveVerificationMarket, verifyCompetitorEntity, type CompetitorVerification, type FirstPartyRegionSource, type VerificationMarket } from "../../lib/competitor-verification";
@@ -97,8 +97,8 @@ const MAX_HTML_PAGES = 5;
 const MAX_DISCOVERED_HTML_PAGES = 3;
 const MAX_SITEMAP_DOCUMENTS = 4;
 const MAX_DISCOVERED_SITEMAP_DOCUMENTS = 2;
-const MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES = 6;
-const MAX_PRIMARY_PRODUCT_PRICE_PAGES = 6;
+const MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES = 16;
+const MAX_PRIMARY_PRODUCT_PRICE_PAGES = 16;
 const MAX_DOCUMENT_BYTES = 1_500_000;
 const MAX_HTML_EXTRACTION_BYTES = 400_000;
 const COMPETITOR_CRAWL_CONCURRENCY = 3;
@@ -314,9 +314,11 @@ async function crawlDomain(input: string, role: DomainCrawl["role"], seededProdu
   const domain = base.hostname;
   const gaps: Gap[] = [];
   const robotsResult = await fetchText(new URL("/robots.txt", base).toString(), "text/plain", domain);
-  const robots = robotsResult.ok ? parseRobots(robotsResult.text) : { sitemaps: [], hasRules: false, allows: () => true };
-  if (!robotsResult.ok) gaps.push({ url: new URL("/robots.txt", base).toString(), reason: "robots.txt could not be read; expansion is limited to the homepage.", observedAt: startedAt });
-  if (robotsResult.ok && !robots.allows("/")) {
+  const robotsState = robotsAvailability(robotsResult);
+  const robots = robotsState === "available" ? parseRobots(robotsResult.text) : parseRobots("");
+  if (robotsState === "missing") gaps.push({ url: new URL("/robots.txt", base).toString(), reason: `No robots.txt was published (HTTP ${robotsResult.status}); the bounded public crawl proceeded.`, observedAt: startedAt });
+  if (robotsState === "unreachable") gaps.push({ url: new URL("/robots.txt", base).toString(), reason: "robots.txt was unreachable; expansion is limited to the homepage.", observedAt: startedAt });
+  if (robotsState === "available" && !robots.allows("/")) {
     gaps.push({ url: base.toString(), reason: "robots.txt disallows the homepage for this scanner.", observedAt: startedAt });
     return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: 0, pagesFetched: 0, maxPages: maxHtmlPages, robotsChecked: true }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt };
   }
@@ -345,7 +347,7 @@ async function crawlDomain(input: string, role: DomainCrawl["role"], seededProdu
   let sitemapPaths: string[] = [];
   let sitemapProducts: ProductRecord[] = [];
   const sitemapUrl = (() => { try { const candidate = new URL(robots.sitemaps[0] || "/sitemap.xml", base); return canonicalDomain(candidate.hostname) === canonicalDomain(domain) && /^https?:$/.test(candidate.protocol) ? candidate.toString() : new URL("/sitemap.xml", base).toString(); } catch { return new URL("/sitemap.xml", base).toString(); } })();
-  if (robotsResult.ok) {
+  if (robotsState !== "unreachable") {
     const sitemapEvidence = await collectSitemapEvidence(sitemapUrl, domain, startedAt, maxSitemapDocuments);
     sitemapPaths = sitemapEvidence.paths;
     sitemapProducts = sitemapEvidence.products;
@@ -353,7 +355,7 @@ async function crawlDomain(input: string, role: DomainCrawl["role"], seededProdu
   const candidates = discovered.candidates.slice(0, 12).map((candidate, index) => ({ domain: candidate.domain, reason: `A public page linked to this domain with “${candidate.text.slice(0, 120)}”. This is a possible match, not a confirmed competitor.`, sourceUrl: candidate.sourceUrl, claimIds: [`${domain}-candidate-${index}`] }));
   candidates.forEach((candidate, index) => homepage.claims.push(makeClaim(domain, `candidate-${index}`, `${domain} linked to possible market candidate ${candidate.domain}; anchor context supports investigation only.`, candidate.sourceUrl, startedAt, "Inferred", "Low")));
   const seededPaths = seededCrawlPaths(seededProductUrls, domain);
-  const observedPaths = robotsResult.ok ? unique([...discovered.paths, ...sitemapPaths], 500) : [];
+  const observedPaths = robotsState !== "unreachable" ? unique([...discovered.paths, ...sitemapPaths], 500) : [];
   const sortedObservedPaths = observedPaths.sort((left, right) => {
     return productPathPriority(left) - productPathPriority(right) || left.localeCompare(right);
   });
@@ -436,11 +438,13 @@ async function enrichMatchedProductPages(results: DomainCrawl[], primaryDomain: 
     const base = normalizeDomain(result.homepage.sourceUrl);
     const robotsUrl = new URL("/robots.txt", base).toString();
     const robotsResult = await fetchText(robotsUrl, "text/plain", domain);
-    if (!robotsResult.ok) {
-      for (const sourceUrl of sourceUrls) gaps.push({ url: sourceUrl, reason: "Matched product price enrichment was skipped because robots.txt could not be read.", observedAt });
+    const robotsState = robotsAvailability(robotsResult);
+    if (robotsState === "unreachable") {
+      for (const sourceUrl of sourceUrls) gaps.push({ url: sourceUrl, reason: "Matched product price enrichment was skipped because robots.txt was unreachable.", observedAt });
       return { domain, sourceUrls, pages: [] as CrawlPage[], gaps };
     }
-    const robots = parseRobots(robotsResult.text);
+    if (robotsState === "missing") gaps.push({ url: robotsUrl, reason: `No robots.txt was published (HTTP ${robotsResult.status}); bounded matched-product enrichment proceeded.`, observedAt });
+    const robots = robotsState === "available" ? parseRobots(robotsResult.text) : parseRobots("");
     const entries = await Promise.all(sourceUrls.map(async (sourceUrl) => {
       const path = new URL(sourceUrl).pathname;
       if (!robots.allows(path)) return { page: null, gap: { url: sourceUrl, reason: "robots.txt disallows this matched product price-enrichment page.", observedAt } as Gap };
