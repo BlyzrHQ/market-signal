@@ -1,0 +1,81 @@
+{
+  "observedAt": "2026-08-03T11:45:54.316Z",
+  "origin": "https://market-signal.abdulla617931.chatgpt.site",
+  "status": 200,
+  "ok": true,
+  "error": null,
+  "elapsedMs": 33017,
+  "primaryProductCount": 80,
+  "reconciliationCoverage": {
+    "pagesRequested": 60,
+    "pagesFetched": 60,
+    "maxPages": 64,
+    "eligibleProducts": 60,
+    "truncated": false
+  },
+  "recoveredCount": 4,
+  "recovered": [
+    {
+      "id": "babanuj.com-product-zaitoune-sweets-kol-and-shkor-with-honey-500g-115r09",
+      "name": "Zaitoune Baklava with Honey Special Edition (Kol Shkor) 500g",
+      "imageUrl": "https://cdn.shopify.com/s/files/1/0673/0216/2690/files/xLxZWo2lqEeb7Egna200nsoQq_h2REYdcmCaVopmQz4.jpg?v=1735902614",
+      "prices": [
+        {
+          "raw": "USD 46.4",
+          "currency": "USD",
+          "amount": 46.4
+        }
+      ],
+      "previousIdentity": "Previous sitemap identity: zaitoune sweets kol and shkor with honey 500g (https://www.babanuj.com/product/zaitoune-sweets-kol-and-shkor-with-honey-500g)",
+      "sourceUrl": "https://www.babanuj.com/product/zaitoune-sweets-kol-and-shkor-with-honey-500g"
+    },
+    {
+      "id": "babanuj.com-product-zaitoune-sweets-mixed-nawashif-500g-1sd9ba",
+      "name": "Zaitoune Sesame Cookies (Barazek)",
+      "imageUrl": "https://cdn.shopify.com/s/files/1/0673/0216/2690/files/71iWDKiqCZL._SL1500.jpg?v=1780566920",
+      "prices": [
+        {
+          "raw": "USD 10.8",
+          "currency": "USD",
+          "amount": 10.8
+        },
+        {
+          "raw": "USD 21.6",
+          "currency": "USD",
+          "amount": 21.6
+        }
+      ],
+      "previousIdentity": "Previous sitemap identity: zaitoune sweets mixed nawashif 500g (https://www.babanuj.com/product/zaitoune-sweets-mixed-nawashif-500g)",
+      "sourceUrl": "https://www.babanuj.com/product/zaitoune-sweets-mixed-nawashif-500g"
+    },
+    {
+      "id": "babanuj.com-product-zaitoune-sweets-maamoul-with-walnut-500g-10b4y0",
+      "name": "Zaitoune Mamoul With Walnut 600g",
+      "imageUrl": "https://cdn.shopify.com/s/files/1/0673/0216/2690/files/eDwe4k8BLt0uUlISbCwvIdMjgAzBZyfa7Zhixihk1kg.jpg?v=1735902709",
+      "prices": [
+        {
+          "raw": "USD 30.6",
+          "currency": "USD",
+          "amount": 30.6
+        }
+      ],
+      "previousIdentity": "Previous sitemap identity: zaitoune sweets maamoul with walnut 500g (https://www.babanuj.com/product/zaitoune-sweets-maamoul-with-walnut-500g)",
+      "sourceUrl": "https://www.babanuj.com/product/zaitoune-sweets-maamoul-with-walnut-500g"
+    },
+    {
+      "id": "babanuj.com-product-zaitoune-sweets-mabrouma-400g-1uvau4",
+      "name": "Zaitoune Baklava Rolls (Mabrouma) 500g",
+      "imageUrl": "https://cdn.shopify.com/s/files/1/0673/0216/2690/files/SqWV5MgHc1syTBqt5t_rtNMIRjioMT0ChN-E4XkRnWk.jpg?v=1735902581",
+      "prices": [
+        {
+          "raw": "USD 43.2",
+          "currency": "USD",
+          "amount": 43.2
+        }
+      ],
+      "previousIdentity": "Previous sitemap identity: zaitoune sweets mabrouma 400g (https://www.babanuj.com/product/zaitoune-sweets-mabrouma-400g)",
+      "sourceUrl": "https://www.babanuj.com/product/zaitoune-sweets-mabrouma-400g"
+    }
+  ],
+  "staleRemaining": []
+}
