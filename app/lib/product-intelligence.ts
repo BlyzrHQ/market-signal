@@ -1257,6 +1257,37 @@ export function selectProductEnrichmentTargets(comparison: ProductComparison, ma
   return selected;
 }
 
+export function planPreliminaryCatalogReconciliation(comparison: ProductComparison, primaryProducts: ProductRecord[], maxPages = 64) {
+  const boundedMax = Math.max(0, Math.min(64, Math.floor(maxPages)));
+  const matchedScoreById = new Map<string, number>();
+  for (const row of comparison.rows) {
+    const realMatches = row.matches.filter((match) => Boolean(match.product));
+    if (realMatches.length) matchedScoreById.set(row.primary.id, Math.max(...realMatches.map((match) => match.score)));
+  }
+  const seenUrls = new Set<string>();
+  const eligible = primaryProducts.flatMap((product) => {
+    if (product.jsonLdType !== "Product" || hasComparablePublicPrice(product)) return [];
+    const sourceUrl = safeProductSource(product);
+    if (!sourceUrl || seenUrls.has(sourceUrl)) return [];
+    seenUrls.add(sourceUrl);
+    return [{ product, sourceUrl, pairScore: matchedScoreById.get(product.id) || 0 }];
+  }).sort((left, right) => Number(right.pairScore > 0) - Number(left.pairScore > 0)
+    || right.pairScore - left.pairScore
+    || left.product.name.localeCompare(right.product.name)
+    || left.sourceUrl.localeCompare(right.sourceUrl));
+  const targets = eligible.slice(0, boundedMax).map(({ product, sourceUrl, pairScore }) => ({
+    domain: product.domain,
+    sourceUrl,
+    productId: product.id,
+    expectedName: product.name,
+    expectedType: "Product" as const,
+    pairScore,
+    role: "primary" as const,
+    allowCatalogReplacement: true as const,
+  }));
+  return { targets, totalEligible: eligible.length, truncated: eligible.length > targets.length };
+}
+
 export function selectFinalProductEnrichmentTargets(comparison: ProductComparison, maxPages = 24): ProductEnrichmentTarget[] {
   const boundedMax = Math.max(0, Math.min(64, Math.floor(maxPages)));
   if (!boundedMax) return [];

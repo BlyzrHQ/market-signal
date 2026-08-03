@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyFinalProductEnrichment, applyPreMatchCatalogEnrichment, buildProductComparison, buildProductPairCandidateIndex, catalogReplacementAuditAttribute, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, retrieveProductPairCandidates, scoreProductPair, selectFinalProductEnrichmentTargets, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
+import { applyFinalProductEnrichment, applyPreMatchCatalogEnrichment, buildProductComparison, buildProductPairCandidateIndex, catalogReplacementAuditAttribute, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, planPreliminaryCatalogReconciliation, retrieveProductPairCandidates, scoreProductPair, selectFinalProductEnrichmentTargets, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
 
 function extraction(overrides = {}) {
   return extractProductsFromHtml({
@@ -956,6 +956,33 @@ test("pre-match catalog reconciliation replaces stale identity without inheritin
   assert.equal(reconciled[0].identifiers.sku, "LIVE-600");
   assert.deepEqual(reconciled[0].claimIds, live.claimIds);
   assert.equal(reconciled[0].claimIds.includes("stale-sitemap-claim"), false);
+});
+
+test("preliminary catalog planning uses the full primary catalog without flagging rivals", () => {
+  const matched = { ...product("matched", "shop.test", "Walnut Maamoul 500g"), jsonLdType: "Product", sourceUrl: "https://shop.test/shop/walnut-maamoul" };
+  const unmatched = { ...product("unmatched", "shop.test", "Old Nougat 500g"), jsonLdType: "Product", sourceUrl: "https://shop.test/shop/old-nougat" };
+  const rival = { ...product("rival", "rival.test", "Walnut Maamoul 500g"), jsonLdType: "Product", sourceUrl: "https://rival.test/shop/walnut-maamoul" };
+  const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: [matched, unmatched] }, { domain: "rival.test", products: [rival] }]);
+  const { targets, totalEligible, truncated } = planPreliminaryCatalogReconciliation(comparison, [matched, unmatched], 64);
+  assert.deepEqual(new Set(targets.map((target) => target.productId)), new Set([matched.id, unmatched.id]));
+  assert.equal(totalEligible, 2);
+  assert.equal(truncated, false);
+  assert.equal(targets.every((target) => target.role === "primary" && target.allowCatalogReplacement === true), true);
+  assert.equal(targets.some((target) => target.productId === rival.id), false);
+});
+
+test("preliminary catalog planning covers zero-competitor catalogs and exposes its sixty-four page limit", () => {
+  const primary = Array.from({ length: 70 }, (_, index) => ({
+    ...product(`primary-${index}`, "shop.test", `Catalog Product ${String(index).padStart(2, "0")}`),
+    jsonLdType: "Product",
+    sourceUrl: `https://shop.test/shop/catalog-${index}`,
+  }));
+  const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: primary }]);
+  const plan = planPreliminaryCatalogReconciliation(comparison, primary, 64);
+  assert.equal(plan.targets.length, 64);
+  assert.equal(plan.totalEligible, 70);
+  assert.equal(plan.truncated, true);
+  assert.equal(plan.targets.every((target) => target.role === "primary" && target.allowCatalogReplacement === true), true);
 });
 
 test("pre-match catalog reconciliation drops a stale URL when the live identity already exists", () => {
