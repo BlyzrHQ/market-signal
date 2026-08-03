@@ -5,6 +5,7 @@ import { canonicalReportFact, reportFactHash } from "../../src/shared/report-fac
 import { publicHttpUrl } from "./public-url.ts";
 import { officialAdRecordUrl } from "./ad-intelligence.ts";
 import { DETERMINISTIC_EVALUATOR_VERSION, DETERMINISTIC_RUBRIC_VERSION, profileDeterministicEvaluation } from "./report-evaluator.ts";
+import { compactTerminalReportDocument, REPORT_SNAPSHOT_HARD_BYTES } from "../../src/shared/report-document-compaction.ts";
 
 export type ReportRunStatus = "queued" | "running" | "complete" | "limited" | "failed" | "interrupted";
 export type ReportPhase = "queued" | "crawl" | "competitors" | "brief" | "products" | "matching" | "enrichment" | "actions" | "ads" | "persistence" | "complete" | "failed" | "interrupted";
@@ -44,6 +45,14 @@ export type StoredReportSnapshot = {
   document: unknown;
   documentSchemaVersion: number;
   documentObservedAt: string;
+  primaryProducts?: StoredPrimaryProducts;
+};
+
+export type StoredPrimaryProducts = {
+  authoritative: boolean;
+  totalCount: number;
+  products: Array<Record<string, unknown>>;
+  truncated: boolean;
 };
 
 export type StoredReportEvaluation = {
@@ -97,9 +106,7 @@ const REPORT_SCHEMA_VERSION = 1;
 const REPORT_RETENTION_DAYS = 90;
 const STALE_RUN_MS = 10 * 60 * 1000;
 const QUEUED_DISPATCH_TIMEOUT_MS = 60 * 60 * 1000;
-export const MAX_REPORT_DOCUMENT_BYTES = 750_000;
-const MAX_SNAPSHOT_CATALOG_PRODUCTS = 40;
-const MAX_SNAPSHOT_UNMATCHED_PRODUCTS = 20;
+export const MAX_REPORT_DOCUMENT_BYTES = REPORT_SNAPSHOT_HARD_BYTES;
 const MAX_REPORT_FACT_CHUNKS = 1_000;
 const MAX_REPORT_FACT_CHUNK_BYTES = 1_000_000;
 const INVALID_DOMAIN_MESSAGE = "A valid public domain is required.";
@@ -257,30 +264,7 @@ function requiredFactFields(kind: ReportFactKind, item: ReturnType<typeof canoni
   }
 }
 
-export function compactReportDocument(value: unknown): unknown {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  const root = value as Record<string, unknown>;
-  const nested = root.document && typeof root.document === "object" && !Array.isArray(root.document) ? root.document as Record<string, unknown> : root;
-  if (!Array.isArray(nested.blocks)) return value;
-  const blocks = nested.blocks.map((raw) => {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
-    const block = raw as Record<string, unknown>;
-    const products = Array.isArray(block.products) ? block.products : null;
-    const declaredTotal = Number(block.totalProductCount);
-    const totalProductCount = Number.isFinite(declaredTotal) && declaredTotal >= (products?.length || 0) ? Math.floor(declaredTotal) : products?.length || 0;
-    if (block.type === "product-catalog" && products) {
-      const compactProducts = products.slice(0, MAX_SNAPSHOT_CATALOG_PRODUCTS);
-      return { ...block, products: compactProducts, persistedProductCount: compactProducts.length, totalProductCount, productsTruncated: totalProductCount > compactProducts.length };
-    }
-    if (block.type === "product-unmatched" && products) {
-      const compactProducts = products.slice(0, MAX_SNAPSHOT_UNMATCHED_PRODUCTS);
-      return { ...block, products: compactProducts, persistedProductCount: compactProducts.length, totalProductCount, productsTruncated: totalProductCount > compactProducts.length };
-    }
-    return block;
-  });
-  const compactNested = { ...nested, blocks };
-  return nested === root ? compactNested : { ...root, document: compactNested };
-}
+export const compactReportDocument = compactTerminalReportDocument;
 
 function rowRun(row: Record<string, unknown>): StoredReportRun {
   return {
@@ -439,9 +423,6 @@ export async function saveReportDocument(publicReportId: string, document: unkno
   const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
   if (!database) throw new Error("Persistent report storage is unavailable.");
   if (!PUBLIC_ID_PATTERN.test(publicReportId) || !document || typeof document !== "object" || Array.isArray(document)) throw new Error("Invalid report document.");
-  const compactedDocument = compactReportDocument(document);
-  const documentJson = JSON.stringify(compactedDocument);
-  if (new TextEncoder().encode(documentJson).byteLength > MAX_REPORT_DOCUMENT_BYTES) throw new Error("The presentation snapshot is too large; store catalogs as relational report products.");
   const requestedObservedAt = cleanText(options.observedAt, 40);
   const observedAt = requestedObservedAt && Number.isFinite(Date.parse(requestedObservedAt)) ? new Date(requestedObservedAt).toISOString() : now.toISOString();
   const status = options.status === "limited" ? "limited" : "complete";
@@ -451,10 +432,14 @@ export async function saveReportDocument(publicReportId: string, document: unkno
   const attemptNumber = options.attemptNumber ?? run.attemptCount;
   if (!Number.isInteger(attemptNumber) || attemptNumber < 1 || attemptNumber !== run.attemptCount) throw new Error("Report callback attempt is stale or invalid.");
   if (["complete", "limited", "failed", "interrupted"].includes(run.status)) throw new Error("A terminal report cannot be overwritten.");
-  const documentHash = await sha256Text(documentJson);
   const manifestRows = await database.prepare(`SELECT manifest_hash, company_count, product_count, match_count, ad_count, status FROM report_fact_manifests WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>();
   const manifest = manifestRows.results?.[0];
   const completeManifest = manifest?.status === "complete" && /^[a-f0-9]{64}$/.test(String(manifest.manifest_hash || ""));
+  const factCounts = completeManifest ? { companies: Number(manifest?.company_count || 0), products: Number(manifest?.product_count || 0), matches: Number(manifest?.match_count || 0), ads: Number(manifest?.ad_count || 0) } : null;
+  const compactedDocument = compactTerminalReportDocument(document, undefined, { factsAuthoritative: completeManifest, factCounts });
+  const documentJson = JSON.stringify(compactedDocument);
+  if (new TextEncoder().encode(documentJson).byteLength > MAX_REPORT_DOCUMENT_BYTES) throw new Error("The presentation snapshot is too large; store catalogs as relational report products.");
+  const documentHash = await sha256Text(documentJson);
   const evaluationId = internalId();
   const evaluationStatus = completeManifest ? "pending" : "insufficient_facts";
   const evaluationBasis = "none";
@@ -786,7 +771,40 @@ export async function getStoredReport(publicReportId: string, now = new Date(), 
     status: String(manifestRow.status || ""),
     completedAt: String(manifestRow.completed_at || ""),
   } : null;
-  return { run, events, document, documentSchemaVersion: Number(documentRow?.schema_version || 0), documentObservedAt: String(documentRow?.observed_at || ""), factManifest };
+  const primaryProducts: StoredPrimaryProducts = { authoritative: false, totalCount: 0, products: [], truncated: false };
+  if (factManifest?.status === "complete") {
+    const [countResult, productResult] = await Promise.all([
+      database.prepare(`SELECT COUNT(*) AS count FROM report_products WHERE run_id = ? AND domain = ?`).bind(run.id, run.primaryDomain).all<Record<string, unknown>>(),
+      database.prepare(`SELECT product_id, domain, name, normalized_name, source_url, image_url, price_json, metadata_json, observed_at FROM report_products WHERE run_id = ? AND domain = ? ORDER BY product_id LIMIT 200`).bind(run.id, run.primaryDomain).all<Record<string, unknown>>(),
+    ]);
+    primaryProducts.authoritative = true;
+    primaryProducts.totalCount = Number(countResult.results?.[0]?.count || 0);
+    primaryProducts.products = (productResult.results || []).map((row) => {
+      let prices: unknown = [];
+      let metadata: Record<string, unknown> = {};
+      try { prices = JSON.parse(String(row.price_json || "[]")); } catch { prices = []; }
+      try { metadata = JSON.parse(String(row.metadata_json || "{}")); } catch { metadata = {}; }
+      return {
+        id: String(row.product_id || ""),
+        domain: String(row.domain || ""),
+        name: String(row.name || ""),
+        normalizedName: String(row.normalized_name || ""),
+        sourceUrl: String(row.source_url || ""),
+        imageUrl: String(row.image_url || ""),
+        priceSignals: Array.isArray(prices) ? prices : [],
+        category: String(metadata.category || ""),
+        jsonLdType: String(metadata.jsonLdType || ""),
+        ownership: String(metadata.ownership || ""),
+        extraction: String(metadata.extraction || ""),
+        confidence: String(metadata.confidence || ""),
+        identifiers: metadata.identifiers && typeof metadata.identifiers === "object" && !Array.isArray(metadata.identifiers) ? metadata.identifiers : {},
+        quantity: metadata.quantity && typeof metadata.quantity === "object" && !Array.isArray(metadata.quantity) ? metadata.quantity : {},
+        observedAt: String(row.observed_at || ""),
+      };
+    });
+    primaryProducts.truncated = primaryProducts.totalCount > primaryProducts.products.length;
+  }
+  return { run, events, document, documentSchemaVersion: Number(documentRow?.schema_version || 0), documentObservedAt: String(documentRow?.observed_at || ""), factManifest, primaryProducts };
 }
 
 /**

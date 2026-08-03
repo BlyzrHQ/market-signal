@@ -82,12 +82,16 @@ test("report runs persist ordered idempotent events and a reloadable document", 
   await appendReportEvent(created.publicId, { idempotencyKey: "ads-started", phase: "ads", status: "running", message: "Checking attributable ads." }, new Date("2026-07-16T00:01:02.000Z"), database);
   await appendReportEvent(created.publicId, { idempotencyKey: "actions-started", phase: "actions", status: "running", message: "Drafting evidence-grounded next moves." }, new Date("2026-07-16T00:01:02.500Z"), database);
   await appendReportEvent(created.publicId, { idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Late duplicate transport retry." }, new Date("2026-07-16T00:01:03.000Z"), database);
-  await saveReportDocument(created.publicId, { blocks: [{ type: "market-profile", id: "profile" }] }, { status: "complete" }, new Date("2026-07-16T00:02:00.000Z"), database);
+  await saveReportDocument(created.publicId, { blocks: [{ type: "market-profile", id: "profile" }, { type: "presentation-compaction", id: "presentation-compaction", relationalFactsAuthoritative: true, factCounts: { companies: 99, products: 99, matches: 99, ads: 99 } }] }, { status: "complete" }, new Date("2026-07-16T00:02:00.000Z"), database);
   const reloaded = await getStoredReport(created.publicId, new Date("2026-07-16T00:03:00.000Z"), database);
   assert.equal(reloaded.run.status, "complete");
   assert.deepEqual(reloaded.events.map((event) => event.idempotencyKey), ["run-created", "crawl-started", "ads-started", "actions-started", "report-saved"]);
   assert.deepEqual(reloaded.events[1].metadata, { pages: 5 });
-  assert.deepEqual(reloaded.document, { blocks: [{ type: "market-profile", id: "profile" }] });
+  assert.equal(reloaded.document.blocks[0].type, "market-profile");
+  assert.equal(reloaded.document.blocks[0].id, "profile");
+  assert.equal(reloaded.document.blocks[1].type, "presentation-compaction");
+  assert.equal(reloaded.document.blocks[1].relationalFactsAuthoritative, false);
+  assert.equal(reloaded.document.blocks[1].factCounts, null);
   assert.equal(reloaded.documentSchemaVersion, 1);
 });
 
@@ -160,7 +164,7 @@ test("report persistence rejects missing databases, invalid ids, and oversized d
   await assert.rejects(() => getStoredReport("enumerate-me", new Date(), new FakeDatabase()), /Invalid report id/);
   const database = new FakeDatabase();
   const created = await createReportRun({ primaryDomain: "example.com" }, new Date(), database);
-  await assert.rejects(() => saveReportDocument(created.publicId, { value: "x".repeat(MAX_REPORT_DOCUMENT_BYTES) }, {}, new Date(), database), /too large/);
+  await assert.rejects(() => saveReportDocument(created.publicId, { value: "x".repeat(MAX_REPORT_DOCUMENT_BYTES) }, {}, new Date(), database), /budget|too large/);
 });
 
 test("terminal reports cannot regress or be overwritten", async () => {
@@ -180,10 +184,10 @@ test("only a persisted document can declare a report complete", async () => {
 test("large catalogs become a bounded truthful presentation snapshot", () => {
   const products = Array.from({ length: 500 }, (_, index) => ({ id: `p-${index}`, name: `Product ${index}`, description: "x".repeat(1800) }));
   const compacted = compactReportDocument({ primaryDomain: "example.com", document: { version: "1", blocks: [{ type: "product-catalog", id: "catalog", products }, { type: "product-unmatched", id: "unmatched", products }] } });
-  assert.equal(compacted.document.blocks[0].products.length, 40);
+  assert.equal(compacted.document.blocks[0].products.length, 12);
   assert.equal(compacted.document.blocks[0].totalProductCount, 500);
   assert.equal(compacted.document.blocks[0].productsTruncated, true);
-  assert.equal(compacted.document.blocks[1].products.length, 20);
+  assert.equal(compacted.document.blocks[1].products.length, 6);
   assert.ok(new TextEncoder().encode(JSON.stringify(compacted)).byteLength < MAX_REPORT_DOCUMENT_BYTES);
 });
 
@@ -192,8 +196,8 @@ test("persistence preserves original counts on an already compacted transport sn
   const compacted = compactReportDocument({ version: "1", blocks: [{ type: "product-catalog", id: "catalog", products, persistedProductCount: 40, totalProductCount: 312, productsTruncated: true }] });
   const catalog = compacted.blocks[0];
 
-  assert.equal(catalog.products.length, 40);
-  assert.equal(catalog.persistedProductCount, 40);
+  assert.equal(catalog.products.length, 12);
+  assert.equal(catalog.persistedProductCount, 12);
   assert.equal(catalog.totalProductCount, 312);
   assert.equal(catalog.productsTruncated, true);
 });

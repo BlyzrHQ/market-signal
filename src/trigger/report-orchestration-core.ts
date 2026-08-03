@@ -25,6 +25,7 @@ import {
   type ReportOrchestrationSummary,
 } from "../shared/report-orchestration-contract.ts";
 import { buildReportFactBundle } from "../shared/report-facts.ts";
+import { compactTerminalReportDocument } from "../shared/report-document-compaction.ts";
 import type { ReportFactChunkInput, ReportFactManifestInput } from "../../app/lib/report-store.ts";
 
 export const MAX_OPERATION_TIMEOUT_MS = 8 * 60 * 1000;
@@ -163,7 +164,7 @@ export async function orchestrateReport(
     await port.saveDocument(payload.publicId, {
       status: "limited",
       observedAt: finishedAt,
-      document: { primaryDomain: crawl.primaryDomain, document, marketBrief: null },
+      document: compactTerminalReportDocument({ primaryDomain: crawl.primaryDomain, document, marketBrief: null }, undefined, { factsAuthoritative: false, factCounts: null }),
     });
     return {
       ok: true,
@@ -316,7 +317,7 @@ export async function orchestrateReport(
   await port.saveDocument(payload.publicId, {
     status: reportStatus,
     observedAt: finishedAt,
-    document: { primaryDomain: crawl.primaryDomain, document, marketBrief: null },
+    document: compactTerminalReportDocument({ primaryDomain: crawl.primaryDomain, document, marketBrief: null }, undefined, { factsAuthoritative: Boolean(persistedCounts), factCounts: persistedCounts }),
   });
   completedPhases.push("persistence");
   return { ok: true, contractVersion: REPORT_ORCHESTRATION_CONTRACT_VERSION, publicId: payload.publicId, reportStatus, completedPhases: [...new Set(completedPhases)], limitedPhases: [...new Set(limitedPhases)], startedAt, finishedAt };

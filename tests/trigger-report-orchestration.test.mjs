@@ -16,6 +16,8 @@ import {
   createReportOrchestrationHttpPort,
   isRetryableHttpStatus,
 } from "../src/trigger/report-orchestration-http.ts";
+import { encodedJsonBytes, REPORT_CALLBACK_ENVELOPE_BYTES, REPORT_PRESENTATION_TARGET_BYTES } from "../src/shared/report-document-compaction.ts";
+import { babanujScaleDocument } from "./fixtures/babanuj-report-document.mjs";
 import { createWorkerApiManifest } from "../src/shared/worker-api-contract.ts";
 import { AI_ACTION_PLANNER_LIMITS, deterministicProductActionResult } from "../app/lib/ai-action-planner.ts";
 
@@ -173,6 +175,9 @@ test("successful orchestration persists ordered heartbeats and a complete docume
   assert.deepEqual(port.factManifests[0].counts, { companies: 1, products: 1, matches: 0, ads: 0 });
   assert.equal(port.events.some((item) => item.idempotencyKey.startsWith("brief-")), false);
   assert.equal(port.saves[0].document.marketBrief, null);
+  const compaction = port.saves[0].document.document.blocks.find((block) => block.type === "presentation-compaction");
+  assert.equal(compaction.relationalFactsAuthoritative, true);
+  assert.deepEqual(compaction.factCounts, { companies: 1, products: 1, matches: 0, ads: 0 });
 });
 
 test("non-terminal orchestration preflights before its first mutation", async () => {
@@ -215,6 +220,7 @@ test("relational fact persistence failure stays visible while the dashboard snap
   assert.deepEqual(result.limitedPhases, ["persistence"]);
   assert.equal(port.saves.length, 1);
   assert.match(port.events.find((item) => item.idempotencyKey === "facts-limited").metadata.reason, /database temporarily unavailable/);
+  assert.equal(port.saves[0].document.document.blocks.find((block) => block.type === "presentation-compaction").relationalFactsAuthoritative, false);
 });
 
 test("a retry after manifest finalization reuses the completed facts without rewriting chunks", async () => {
@@ -764,6 +770,22 @@ test("the HTTP report adapter sends authenticated fact chunks and the final mani
   await port.finalizeFactManifest(payload.publicId, { manifestId: "a".repeat(64), manifestHash: "c".repeat(64), counts: { companies: 0, products: 0, matches: 0, ads: 0 } });
   assert.equal(bodies[0].action, "fact-chunk");
   assert.equal(bodies[1].action, "fact-manifest");
+});
+
+test("the HTTP report adapter compacts a large terminal document before transport", async () => {
+  let body;
+  const source = babanujScaleDocument();
+  const originalBytes = encodedJsonBytes(source);
+  const port = createReportOrchestrationHttpPort({
+    appOrigin: "https://market.example",
+    callbackToken: "callback_secret_with_enough_entropy_123456",
+    async fetchImpl(_url, init) { body = JSON.parse(init.body); return Response.json({ ok: true }); },
+  });
+  await port.saveDocument(payload.publicId, { status: "limited", observedAt: "2026-08-03T00:00:00.000Z", document: source });
+  assert.ok(originalBytes > REPORT_PRESENTATION_TARGET_BYTES);
+  assert.ok(encodedJsonBytes(body.document) <= REPORT_PRESENTATION_TARGET_BYTES);
+  assert.ok(encodedJsonBytes(body) < REPORT_CALLBACK_ENVELOPE_BYTES);
+  assert.equal(body.document.document.blocks.find((block) => block.type === "presentation-compaction").relationalFactsAuthoritative, false);
 });
 
 test("the internal report port maps a missing stored report to null without retrying", async () => {
