@@ -6,6 +6,8 @@ import { createPersistentReport, POST as createReportRoute } from "../app/api/re
 import { createInternalReportHandlers } from "../app/api/internal/reports/[publicId]/route.ts";
 import { hasValidInternalAuthorization } from "../app/lib/internal-auth.ts";
 import { dispatchReportJob, reportDispatchIdempotencyKey, ReportDispatchError } from "../app/lib/report-dispatch.ts";
+import { compactTerminalReportDocument } from "../src/shared/report-document-compaction.ts";
+import { babanujScaleDocument } from "./fixtures/babanuj-report-document.mjs";
 
 const TOKEN = "callback-test-token-with-sufficient-entropy";
 const PUBLIC_ID = "a".repeat(32);
@@ -312,6 +314,25 @@ test("a lost final callback response replays only for the exact persisted docume
   assert.equal(saves, 0);
   const conflict = await handlers.post(request({ action: "document", status: "limited", document: { ...document, marketBrief: { changed: true } } }), { params: { publicId: PUBLIC_ID } });
   assert.equal(conflict.status, 409);
+});
+
+test("a lost large callback response replays its exact compacted snapshot and rejects changed compacted content", async () => {
+  const original = babanujScaleDocument();
+  const document = compactTerminalReportDocument(original);
+  const stored = { ...report({ primaryDomain: original.primaryDomain, status: "limited", currentPhase: "complete" }), document, documentSchemaVersion: 1 };
+  let saves = 0;
+  const handlers = createInternalReportHandlers({ get: async () => stored, append: async () => {}, save: async () => { saves += 1; } }, TOKEN);
+
+  const replay = await handlers.post(request({ action: "document", status: "limited", observedAt: "2026-08-03T00:02:00.000Z", document }), { params: { publicId: PUBLIC_ID } });
+  assert.equal(replay.status, 200);
+  assert.equal((await replay.json()).replayed, true);
+  assert.equal(saves, 0);
+
+  const changed = structuredClone(document);
+  changed.document.blocks.find((block) => block.type === "summary").body = "Changed useful result";
+  const conflict = await handlers.post(request({ action: "document", status: "limited", document: changed }), { params: { publicId: PUBLIC_ID } });
+  assert.equal(conflict.status, 409);
+  assert.equal(saves, 0);
 });
 
 test("terminal failures refuse new events and documents", async () => {

@@ -7,7 +7,7 @@ import { ExperienceBenchmark } from "../../components/experience-benchmark";
 
 type Block = { type: string; id: string } & Record<string, unknown>;
 type View = "overview" | "competitors" | "products" | "ads" | "evidence";
-type StoredPayload = { ok: boolean; error?: string; report?: { run: { primaryDomain: string; locale: "en" | "ar"; status: string; createdAt: string; updatedAt: string; errorMessage: string }; document: { document?: { version: "1"; generatedAt: string; blocks: Block[] }; marketBrief?: Record<string, unknown> } | null; documentSchemaVersion: number } };
+type StoredPayload = { ok: boolean; error?: string; report?: { run: { primaryDomain: string; locale: "en" | "ar"; status: string; createdAt: string; updatedAt: string; errorMessage: string }; document: { document?: { version: "1"; generatedAt: string; blocks: Block[] }; marketBrief?: Record<string, unknown> } | null; documentSchemaVersion: number; primaryProducts?: { authoritative: boolean; totalCount: number; products: Array<Record<string, unknown>>; truncated: boolean } } };
 
 const VIEWS: View[] = ["competitors", "products", "overview"];
 const VIEW_LABELS: Record<View, { en: string; ar: string }> = {
@@ -79,7 +79,7 @@ function AdCreativeCard({ concept, ar }: { concept: Record<string, unknown>; ar:
   </article>;
 }
 
-function ReportWorkspace({ blocks, primaryDomain, observedAt, reportStatus, ar, onToggleLocale }: { blocks: Block[]; primaryDomain: string; observedAt: string; reportStatus: string; ar: boolean; onToggleLocale: () => void }) {
+function ReportWorkspace({ blocks, primaryProducts, primaryDomain, observedAt, reportStatus, ar, onToggleLocale }: { blocks: Block[]; primaryProducts?: { authoritative: boolean; totalCount: number; products: Array<Record<string, unknown>>; truncated: boolean }; primaryDomain: string; observedAt: string; reportStatus: string; ar: boolean; onToggleLocale: () => void }) {
   const domainStatus = blocks.find((block) => block.type === "domain-status" && ["parked", "unavailable"].includes(display(block.status).toLowerCase()));
   const domainState = display(domainStatus?.status).toLowerCase();
   const terminalDomain = Boolean(domainStatus);
@@ -164,7 +164,7 @@ function ReportWorkspace({ blocks, primaryDomain, observedAt, reportStatus, ar, 
         {!competitors.length && <div className="truth-state limited"><strong>{ar ? "لم يتم التحقق من منافس" : "No competitor was verified"}</strong><p>{ar ? "هذا نقص في التغطية، وليس دليلاً على عدم وجود منافسين." : "This is a coverage gap, not proof that no competitors exist."}</p></div>}
       </>}
 
-      {view === "products" && <ProductDesignLab comparison={comparison} battles={battles} primaryDomain={primaryDomain} observedAt={observedAt} ar={ar} />}
+      {view === "products" && <ProductDesignLab comparison={comparison} battles={battles} primaryProducts={primaryProducts} primaryDomain={primaryDomain} observedAt={observedAt} ar={ar} />}
 
       {view === "ads" && <>
         <header className="panel-intro compact"><div><span>{ar ? "مراقبة الإعلانات" : "AD WATCH"}</span><h2>{ar ? "من يعلن فعلاً، وماذا تقول إعلاناته؟" : "Who is verifiably advertising, and what are their ads saying?"}</h2><p>{display(adBlock?.limitation, ar ? "تختلف تغطية مكتبات الإعلانات حسب السوق والمنصة." : "Ad-library coverage varies by market and platform.")}</p></div></header>
@@ -196,5 +196,5 @@ export default function StoredReportPage({ params }: { params: Promise<{ publicI
   if (report && !document && ["failed", "interrupted"].includes(report.run.status)) return <main className="stored-report-state" lang={ar ? "ar" : "en"} dir={dir}><Link href="/">Market Signal</Link><h1>{ar ? "توقف هذا التقرير" : "This report stopped"}</h1><p>{report.run.errorMessage || (ar ? "ابدأ تقريراً جديداً للمحاولة مرة أخرى." : "Start a fresh report to try again.")}</p></main>;
   if (!report || !document) return <main className="stored-report-state"><div className="route-spinner" /><p>Opening the saved market report…</p></main>;
   if (report.documentSchemaVersion !== 1) return <main className="stored-report-state" lang={ar ? "ar" : "en"} dir={dir}><Link href="/">Market Signal</Link><h1>{ar ? "نسخة التقرير غير مدعومة" : "Unsupported report version"}</h1></main>;
-  return <main className="stored-report-page" lang={ar ? "ar" : "en"} dir={dir}><ReportWorkspace blocks={document.blocks} primaryDomain={report.run.primaryDomain} observedAt={report.run.updatedAt} reportStatus={report.run.status} ar={ar} onToggleLocale={() => setLocaleOverride(ar ? "en" : "ar")} /></main>;
+  return <main className="stored-report-page" lang={ar ? "ar" : "en"} dir={dir}><ReportWorkspace blocks={document.blocks} primaryProducts={report.primaryProducts} primaryDomain={report.run.primaryDomain} observedAt={report.run.updatedAt} reportStatus={report.run.status} ar={ar} onToggleLocale={() => setLocaleOverride(ar ? "en" : "ar")} /></main>;
 }

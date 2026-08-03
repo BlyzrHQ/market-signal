@@ -15,6 +15,7 @@ type ProductLayout = "table" | "matchups" | "opportunities";
 type ProductDesignLabProps = {
   comparison?: Record<string, unknown>;
   battles: ProductBattle[];
+  primaryProducts?: { authoritative: boolean; totalCount: number; products: Array<Record<string, unknown>>; truncated: boolean };
   primaryDomain: string;
   observedAt: string;
   ar: boolean;
@@ -141,12 +142,13 @@ function ProductTableDetails({ row, observedAt, ar }: { row: ProductRow; observe
   </details>;
 }
 
-export function ProductDesignLab({ comparison, battles, primaryDomain, observedAt, ar }: ProductDesignLabProps) {
+export function ProductDesignLab({ comparison, battles, primaryProducts, primaryDomain, observedAt, ar }: ProductDesignLabProps) {
   const [layout, setLayout] = useState<ProductLayout>("table");
   const [shareStatus, setShareStatus] = useState("");
   const [shareFallback, setShareFallback] = useState("");
   const layoutTabs = useRef<Array<HTMLButtonElement | null>>([]);
   const rows = useMemo(() => battles.map((battle) => prepareRow(battle, ar)), [battles, ar]);
+  const catalogProducts = primaryProducts?.authoritative ? primaryProducts.products : [];
 
   useEffect(() => {
     const sync = () => {
@@ -229,6 +231,8 @@ export function ProductDesignLab({ comparison, battles, primaryDomain, observedA
     {layout === "matchups" && <section id="product-layout-matchups" role="tabpanel" aria-labelledby="product-layout-tab-matchups" className="product-layout-panel matchup-layout"><ul>{rows.map((row, index) => <li key={row.battle.key} id={rowAnchor(row, index)}><div className="matchup-products"><ProductIdentity role="you" product={row.battle.primary} price={row.primaryDisplay} source={row.primarySource} ar={ar} /><span aria-hidden="true">VS</span><ProductIdentity role="rival" product={row.battle.rival} price={row.rivalDisplay} source={row.rivalSource} domain={row.domain} ar={ar} /></div><div className="matchup-decision"><PricePosition comparisonValue={row.decision.priceComparison} primaryRaw={row.primaryDisplay} rivalRaw={row.rivalDisplay} priceVerdict={display(row.decision.priceVerdict)} locale={ar ? "ar" : "en"} primaryQuantity={row.battle.primary.quantity} rivalQuantity={row.battle.rival.quantity} showDetail={false} showValues={false} /><section><span>{ar ? "الخطوة التالية" : "NEXT MOVE"}</span><strong>{row.shortAction}</strong></section></div><MatchDetails row={row} observedAt={observedAt} ar={ar} /></li>)}</ul></section>}
 
     {layout === "opportunities" && <section id="product-layout-opportunities" role="tabpanel" aria-labelledby="product-layout-tab-opportunities" className="product-layout-panel opportunity-layout"><div className="opportunity-lanes">{lanes.map((lane) => { const items = rows.map((row, index) => ({ row, index })).filter(({ row }) => row.lane === lane.id); return <section className={`opportunity-lane ${lane.id}`} aria-labelledby={`lane-${lane.id}`} key={lane.id}><header><div><h3 id={`lane-${lane.id}`}>{lane.title}</h3><p>{lane.description}</p></div><b>{items.length}</b></header><ul>{items.map(({ row, index }) => <li key={row.battle.key} id={rowAnchor(row, index)}><span>{row.domain}</span><div className="opportunity-pair"><strong dir="auto">{display(row.battle.primary.name)}</strong><i aria-hidden="true">→</i><strong dir="auto">{display(row.battle.rival.name)}</strong></div><div className="opportunity-prices"><b dir="auto">{row.primaryDisplay || (ar ? "سعرك غير مرصود" : "Your price not observed")}</b><b dir="auto">{row.rivalDisplay || (ar ? "سعر المنافس غير مرصود" : "Rival price not observed")}</b></div><p className="opportunity-signal">{row.priceSignal}</p><strong className="opportunity-action">{row.shortAction}</strong><MatchDetails row={row} observedAt={observedAt} ar={ar} /></li>)}</ul>{!items.length && <div className="opportunity-empty">{ar ? "لا توجد أزواج في هذه الفئة." : "No pairs in this group."}</div>}</section>; })}</div></section>}
+
+    {catalogProducts.length > 0 && <details className="primary-catalog-panel"><summary><span>{ar ? "كتالوجك المحفوظ" : "Your saved catalog"}</span><strong>{catalogProducts.length}{primaryProducts?.truncated ? ` / ${primaryProducts.totalCount}` : ""}</strong></summary><div className="primary-catalog-grid">{catalogProducts.map((product) => <article key={display(product.id)}><ProductIdentity role="you" product={product} price={productPrice(product)} source={safeUrl(product.sourceUrl)} ar={ar} compact /></article>)}</div></details>}
 
     {!rows.length && <div className="truth-state limited"><strong>{ar ? "لا توجد مطابقة منتجات موثقة" : "No defensible product match was saved"}</strong><p>{ar ? "تم فحص الكتالوج، لكن لا ينبغي عرض زوج ضعيف على أنه مقارنة." : "Catalogs were assessed, but a weak pair should not be presented as a comparison."}</p></div>}
   </>;

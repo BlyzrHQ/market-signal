@@ -206,7 +206,7 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
           if (["failed", "interrupted"].includes(report.run.status)) {
             return Response.json({ ok: false, error: "A failed or interrupted report cannot accept a document." }, { status: 409 });
           }
-          const saved = await store.save(id, body.document, {
+          const saved = await store.save(id, compactReportDocument(body.document), {
             attemptNumber,
             status: body.status === "limited" ? "limited" : "complete",
             observedAt: typeof body.observedAt === "string" ? body.observedAt : undefined,

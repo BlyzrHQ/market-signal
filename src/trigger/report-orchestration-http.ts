@@ -2,6 +2,7 @@ import type { ReportOrchestrationPort } from "./report-orchestration-core.ts";
 import { parkingProvider } from "../../app/lib/domain-recovery.ts";
 import { PermanentOrchestrationError } from "../shared/report-orchestration-contract.ts";
 import { parseWorkerApiManifest, WorkerApiContractError } from "../shared/worker-api-contract.ts";
+import { compactTerminalReportDocument, encodedJsonBytes, REPORT_CALLBACK_ENVELOPE_BYTES } from "../shared/report-document-compaction.ts";
 
 type FetchLike = typeof fetch;
 const MAX_ACCEPTED_ERROR_BODY_BYTES = 1_000_000;
@@ -272,7 +273,9 @@ export function createReportOrchestrationHttpPort(configuration: { appOrigin: st
       if (payload.ok !== true) throw new OrchestrationHttpError("Report fact manifest callback", 502, true);
     },
     async saveDocument(publicId, input) {
-      const payload = requiredObject<{ ok?: boolean }>(await call(PATHS.report(publicId), "Completed report callback", OPERATION_BUDGETS_MS.report, { action: "document", ...input }), "Completed report callback");
+      const body = { action: "document", ...input, document: compactTerminalReportDocument(input.document) };
+      if (encodedJsonBytes(body) >= REPORT_CALLBACK_ENVELOPE_BYTES) throw new PermanentOrchestrationError("The compacted report callback exceeds the internal transport budget.");
+      const payload = requiredObject<{ ok?: boolean }>(await call(PATHS.report(publicId), "Completed report callback", OPERATION_BUDGETS_MS.report, body), "Completed report callback");
       if (payload.ok !== true) throw new OrchestrationHttpError("Completed report callback", 502, true);
     },
   };

@@ -155,7 +155,16 @@ test("full relational report facts survive snapshot compaction with replay-safe 
     assert.equal(savedProducts.results[0].count, 63);
     assert.equal(savedMatches.results[0].count, 1);
     assert.equal(savedAds.results[0].count, 1);
-    assert.equal(JSON.parse(snapshot.results[0].document_json).blocks[0].products.length, 40);
+    const catalogSnapshot = JSON.parse(snapshot.results[0].document_json).blocks[0];
+    assert.equal(catalogSnapshot.products.length, 12);
+    assert.equal(catalogSnapshot.totalProductCount, 61);
+    assert.equal(catalogSnapshot.persistedProductCount, 12);
+    assert.equal(catalogSnapshot.productsTruncated, true);
+    const hydrated = await getStoredReport(created.publicId, now, database);
+    assert.equal(hydrated.primaryProducts.authoritative, true);
+    assert.equal(hydrated.primaryProducts.totalCount, 61);
+    assert.equal(hydrated.primaryProducts.products.length, 61);
+    assert.ok(hydrated.primaryProducts.products.every((product) => product.imageUrl && product.priceSignals.length));
     const evaluation = await getReportEvaluation(created.publicId, database);
     assert.equal(evaluation.status, "deterministic");
     assert.equal(evaluation.ratingBasis, "deterministic_only");
