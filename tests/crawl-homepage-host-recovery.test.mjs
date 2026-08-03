@@ -128,3 +128,29 @@ test("does not re-resolve robots or fetch the alternate homepage after a robots 
     resetSharedRobotsPolicyResolverForTests();
   }
 });
+
+test("does not fetch the alternate homepage when its robots re-resolution is throttled", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  resetSharedRobotsPolicyResolverForTests();
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url === "https://shop.test/robots.txt") return response("forbidden", 403, "text/plain");
+    if (url === "https://shop.test/") return response("forbidden", 403);
+    if (url === "https://www.shop.test/robots.txt") return response("slow down", 429, "text/plain");
+    throw new Error(`Unexpected request: ${url}`);
+  };
+  try {
+    const result = await crawlDomain("shop.test", "primary");
+    assert.equal(result.homepage, null);
+    assert.deepEqual(calls, [
+      "https://shop.test/robots.txt",
+      "https://shop.test/",
+      "https://www.shop.test/robots.txt",
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetSharedRobotsPolicyResolverForTests();
+  }
+});

@@ -359,22 +359,25 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
       robotsState = robotsResult.availability;
       robots = robotsResult.policy;
     }
-    if (robotsState === "available" && !robots.allows("/")) {
-      gaps.push({ url: alternateBase.toString(), reason: "robots.txt disallows the homepage for this scanner; the alternate host was not fetched.", observedAt: startedAt });
-      return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: homepageRequests, pagesFetched: 0, maxPages: maxHtmlPages, robotsChecked: true }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt };
-    }
-    homepageRequests += 1;
-    attemptedAlternateBase = alternateBase;
-    homepageResult = await fetchText(alternateBase.toString(), "text/html,application/xhtml+xml", domain);
-    if (isHtmlHomepage(homepageResult)) {
-      gaps.push({
-        url: submittedBase.toString(),
-        reason: `${submittedBase.toString()} returned ${submittedHomepageResult.error || `HTTP ${submittedHomepageResult.status}`}; the crawl continued on the same company's canonical host ${alternateBase.toString()}.`,
-        observedAt: startedAt,
-      });
-      base = normalizeDomain(homepageResult.url || alternateBase.toString());
-    } else {
-      gaps.push({ url: submittedBase.toString(), reason: submittedHomepageResult.error || `homepage returned HTTP ${submittedHomepageResult.status}.`, observedAt: startedAt });
+    const alternateRobotsThrottled = robotsState === "unreachable" && robotsResult.status === 429;
+    if (!alternateRobotsThrottled) {
+      if (robotsState === "available" && !robots.allows("/")) {
+        gaps.push({ url: alternateBase.toString(), reason: "robots.txt disallows the homepage for this scanner; the alternate host was not fetched.", observedAt: startedAt });
+        return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: homepageRequests, pagesFetched: 0, maxPages: maxHtmlPages, robotsChecked: true }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt };
+      }
+      homepageRequests += 1;
+      attemptedAlternateBase = alternateBase;
+      homepageResult = await fetchText(alternateBase.toString(), "text/html,application/xhtml+xml", domain);
+      if (isHtmlHomepage(homepageResult)) {
+        gaps.push({
+          url: submittedBase.toString(),
+          reason: `${submittedBase.toString()} returned ${submittedHomepageResult.error || `HTTP ${submittedHomepageResult.status}`}; the crawl continued on the same company's canonical host ${alternateBase.toString()}.`,
+          observedAt: startedAt,
+        });
+        base = normalizeDomain(homepageResult.url || alternateBase.toString());
+      } else {
+        gaps.push({ url: submittedBase.toString(), reason: submittedHomepageResult.error || `homepage returned HTTP ${submittedHomepageResult.status}.`, observedAt: startedAt });
+      }
     }
   }
   if (robotsState === "missing") gaps.push({ url: robotsResult.sourceUrl, reason: `No robots.txt was published (HTTP ${robotsResult.status}); the bounded public crawl proceeded.`, observedAt: startedAt });
