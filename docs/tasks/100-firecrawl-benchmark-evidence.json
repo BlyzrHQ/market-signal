@@ -1,0 +1,84 @@
+{
+  "observedAt": "2026-08-03T10:28:44.602Z",
+  "scope": {
+    "domain": "babanuj.com",
+    "sampleSize": 10,
+    "firecrawlRevision": "9554ad079840b0d405d5b1e5b1c57e577b4249cb",
+    "firecrawlBaseUrl": "http://localhost:3002",
+    "marketSignalEnrichUrl": "https://signal.blyzr.com/api/enrich-products"
+  },
+  "discovery": {
+    "directSitemap": { "elapsedMs": 78, "links": 105, "productLinks": 80 },
+    "firecrawlMap": { "elapsedMs": 493, "links": 105, "productLinks": 80 },
+    "productSetDifference": { "onlyInFirecrawlProducts": [], "onlyInSitemapProducts": [] },
+    "surfaces": {
+      "homepage": {
+        "url": "https://www.babanuj.com",
+        "direct": { "elapsedMs": 94, "status": 200, "finalUrl": "https://www.babanuj.com/", "documentBytes": 231287, "productLinks": 24 },
+        "firecrawl": { "elapsedMs": 813, "status": 200, "finalUrl": "https://www.babanuj.com", "documentBytes": 136432, "productLinks": 24 }
+      },
+      "collection": {
+        "url": "https://www.babanuj.com/collections/cookies",
+        "direct": { "elapsedMs": 81, "status": 200, "finalUrl": "https://www.babanuj.com/collections/cookies", "documentBytes": 121788, "productLinks": 10 },
+        "firecrawl": { "elapsedMs": 747, "status": 200, "finalUrl": "https://www.babanuj.com/collections/cookies", "documentBytes": 50953, "productLinks": 10 }
+      }
+    }
+  },
+  "summary": {
+    "firecrawl": { "pagesRequested": 10, "pagesFetched": 10, "pagesWithImage": 10, "pagesWithVisiblePrice": 10, "medianScrapeMs": 1777 },
+    "marketSignal": { "requestElapsedMs": 430, "pagesRequested": 10, "pagesAccepted": 6, "acceptedWithImage": 6, "acceptedWithPrice": 6, "identityGaps": 4 },
+    "acceptedPairsWithSamePrice": "6/6"
+  },
+  "pairs": [
+    {
+      "url": "https://www.babanuj.com/product/zaitoune-maamoul-date-250g",
+      "firecrawl": { "status": 200, "sourceUrl": "https://www.babanuj.com/product/zaitoune-maamoul-date-250g", "redirected": false, "elapsedMs": 1855, "name": "Zaitoune Mamoul With Dates 250g", "hasImage": true, "price": 10.8, "currency": "USD", "error": null },
+      "marketSignal": { "accepted": true, "name": "Zaitoune Mamoul With Dates 250g", "hasImage": true, "price": 10.8, "currency": "USD", "gapCode": null }
+    },
+    {
+      "url": "https://www.babanuj.com/product/zaitoune-sweets-mix-baklawa-pistachio-and-honey-500g",
+      "firecrawl": { "status": 200, "sourceUrl": "https://www.babanuj.com/product/zaitoune-sweets-mix-baklawa-pistachio-and-honey-500g", "redirected": false, "elapsedMs": 1775, "name": "Zaitoune Baklava Box With Honey 500g", "hasImage": true, "price": 48.7, "currency": "USD", "error": null },
+      "marketSignal": { "accepted": true, "name": "Zaitoune Baklava With Honey 500g", "hasImage": true, "price": 48.7, "currency": "USD", "gapCode": null }
+    },
+    {
+      "url": "https://www.babanuj.com/product/zaitoune-sweets-kol-and-shkor-with-honey-500g",
+      "firecrawl": { "status": 200, "sourceUrl": "https://www.babanuj.com/product/zaitoune-sweets-kol-and-shkor-with-honey-500g", "redirected": false, "elapsedMs": 1807, "name": "Zaitoune Baklava with Honey Special Edition...", "hasImage": true, "price": 46.4, "currency": "USD", "error": null },
+      "marketSignal": { "accepted": false, "name": null, "hasImage": false, "price": null, "currency": null, "gapCode": "identity_mismatch" }
+    },
+    {
+      "url": "https://www.babanuj.com/product/zaitoune-dates-mamoul-500g",
+      "firecrawl": { "status": 200, "sourceUrl": "https://www.babanuj.com/product/zaitoune-dates-mamoul-500g", "redirected": false, "elapsedMs": 1797, "name": "Zaitoune Mamoul With Dates 500g", "hasImage": true, "price": 21.6, "currency": "USD", "error": null },
+      "marketSignal": { "accepted": true, "name": "Zaitoune Mamoul With Dates 500g", "hasImage": true, "price": 21.6, "currency": "USD", "gapCode": null }
+    },
+    {
+      "url": "https://www.babanuj.com/product/zaitoune-sweets-mixed-nawashif-500g",
+      "firecrawl": { "status": 200, "sourceUrl": "https://www.babanuj.com/product/zaitoune-sweets-mixed-nawashif-500g", "redirected": false, "elapsedMs": 1724, "name": "Zaitoune Sesame Cookies (Barazek)", "hasImage": true, "price": 10.8, "currency": "USD", "error": null },
+      "marketSignal": { "accepted": false, "name": null, "hasImage": false, "price": null, "currency": null, "gapCode": "identity_mismatch" }
+    },
+    {
+      "url": "https://www.babanuj.com/product/zaitoune-sweets-mix-baklawa-1kg",
+      "firecrawl": { "status": 200, "sourceUrl": "https://www.babanuj.com/product/zaitoune-sweets-mix-baklawa-1kg", "redirected": false, "elapsedMs": 1834, "name": "Zaitoune Baklava 1000g", "hasImage": true, "price": 64.8, "currency": "USD", "error": null },
+      "marketSignal": { "accepted": true, "name": "Zaitoune Baklava 1000g", "hasImage": true, "price": 64.8, "currency": "USD", "gapCode": null }
+    },
+    {
+      "url": "https://www.babanuj.com/product/zaitoune-sweets-maamoul-with-walnut-500g",
+      "firecrawl": { "status": 200, "sourceUrl": "https://www.babanuj.com/product/zaitoune-sweets-maamoul-with-walnut-500g", "redirected": false, "elapsedMs": 1684, "name": "Zaitoune Mamoul With Walnut 600g", "hasImage": true, "price": 30.6, "currency": "USD", "error": null },
+      "marketSignal": { "accepted": false, "name": null, "hasImage": false, "price": null, "currency": null, "gapCode": "identity_mismatch" }
+    },
+    {
+      "url": "https://www.babanuj.com/product/zaitoune-sweets-pistachio-maamoul-500g",
+      "firecrawl": { "status": 200, "sourceUrl": "https://www.babanuj.com/product/zaitoune-sweets-pistachio-maamoul-500g", "redirected": false, "elapsedMs": 1688, "name": "Zaitoune Mamoul With Pistachio 500g", "hasImage": true, "price": 43.2, "currency": "USD", "error": null },
+      "marketSignal": { "accepted": true, "name": "Zaitoune Mamoul With Pistachio 500g", "hasImage": true, "price": 43.2, "currency": "USD", "gapCode": null }
+    },
+    {
+      "url": "https://www.babanuj.com/product/zaitoune-sweets-mabrouma-400g",
+      "firecrawl": { "status": 200, "sourceUrl": "https://www.babanuj.com/product/zaitoune-sweets-mabrouma-400g", "redirected": false, "elapsedMs": 1703, "name": "Zaitoune Baklava Rolls (Mabrouma) 500g", "hasImage": true, "price": 43.2, "currency": "USD", "error": null },
+      "marketSignal": { "accepted": false, "name": null, "hasImage": false, "price": null, "currency": null, "gapCode": "identity_mismatch" }
+    },
+    {
+      "url": "https://www.babanuj.com/product/zaitoune-turkish-delight-250g",
+      "firecrawl": { "status": 200, "sourceUrl": "https://www.babanuj.com/product/zaitoune-turkish-delight-250g", "redirected": false, "elapsedMs": 1778, "name": "Zaitoune Turkish Delight (Lokum) 250g", "hasImage": true, "price": 19.99, "currency": "USD", "error": null },
+      "marketSignal": { "accepted": true, "name": "Zaitoune Turkish Delight (Lokum) 250g", "hasImage": true, "price": 19.99, "currency": "USD", "gapCode": null }
+    }
+  ]
+}
