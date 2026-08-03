@@ -107,10 +107,10 @@ function withRecoveryProvenance(result: EdgeResult, primaryDomain: string, edgeH
 
 export async function recoverCrawlThroughEdge(
   payload: EdgePayload,
-  options: { configuredUrl?: string; requestUrl: string; callbackToken: string; fetchImpl?: typeof fetch; timeoutMs?: number; maxResponseBytes?: number },
+  options: { configuredUrl?: string; requestUrl: string; callbackToken: string; deployTarget?: string; fetchImpl?: typeof fetch; timeoutMs?: number; maxResponseBytes?: number },
 ) {
   const edgeUrl = validatedEdgeCrawlUrl(options.configuredUrl, options.requestUrl);
-  if (!edgeUrl || options.callbackToken.length < 32 || /\s/.test(options.callbackToken)) return undefined;
+  if (!edgeUrl || options.deployTarget !== "node" || options.callbackToken.length < 32 || /\s/.test(options.callbackToken)) return undefined;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? EDGE_TIMEOUT_MS);
   try {
@@ -118,7 +118,7 @@ export async function recoverCrawlThroughEdge(
       method: "POST",
       redirect: "manual",
       signal: controller.signal,
-      headers: { "Content-Type": "application/json", Accept: "application/json", Authorization: `Bearer ${options.callbackToken}`, [EDGE_CRAWL_MARKER]: "1" },
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify(payload),
     });
     if (!response.ok || !/^application\/json\b/i.test(response.headers.get("content-type") || "")) return null;

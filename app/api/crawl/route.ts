@@ -634,7 +634,7 @@ export async function POST(request: Request) {
       const callbackToken = await runtimeEnvironmentValue("MARKET_SIGNAL_CALLBACK_TOKEN");
       const recovered = await recoverCrawlThroughEdge(
         { primary: primaryDomain, domains },
-        { configuredUrl: process.env.MARKET_SIGNAL_EDGE_CRAWL_URL, requestUrl: request.url, callbackToken },
+        { configuredUrl: process.env.MARKET_SIGNAL_EDGE_CRAWL_URL, requestUrl: request.url, callbackToken, deployTarget: process.env.MARKET_SIGNAL_DEPLOY_TARGET },
       );
       if (recovered) return Response.json(recovered);
       if (recovered === null && primary) {
