@@ -1,5 +1,6 @@
 import { canonicalDomain } from "./domain.ts";
-import type { ProductEnrichmentTarget, ProductRecord } from "./product-intelligence.ts";
+import { isCatalogReplacementProduct, type ProductEnrichmentTarget, type ProductRecord } from "./product-intelligence.ts";
+import { bilingualNormalize, canonicalGtin, parseCanonicalQuantity, type ProductIdentifiers } from "./product-normalization.ts";
 import type { ProductEnrichmentCoverage } from "./storefront-product-enrichment.ts";
 
 const ALLOWED_EDGE_ENRICH_URL = "https://market-signal.abdulla617931.chatgpt.site/api/enrich-products";
@@ -29,6 +30,21 @@ export function validatedEdgeEnrichmentUrl(value: string | undefined, requestUrl
 
 function boundedString(value: unknown, limit: number) {
   return typeof value === "string" && value.length <= limit ? value : null;
+}
+
+function sanitizeIdentifiers(value: unknown): ProductIdentifiers | null | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (!Array.isArray(record.gtins) || record.gtins.length > 20) return null;
+  const gtins = record.gtins.map(canonicalGtin);
+  if (gtins.some((entry) => !entry)) return null;
+  const read = (key: "sku" | "mpn" | "brand") => record[key] === undefined ? undefined : boundedString(record[key], 120);
+  const sku = read("sku");
+  const mpn = read("mpn");
+  const brand = read("brand");
+  if (sku === null || mpn === null || brand === null) return null;
+  return { gtins: gtins as string[], ...(sku ? { sku } : {}), ...(mpn ? { mpn } : {}), ...(brand ? { brand } : {}) };
 }
 
 function sanitizeProduct(value: unknown, target: ProductEnrichmentTarget): ProductRecord | null {
@@ -68,7 +84,9 @@ function sanitizeProduct(value: unknown, target: ProductEnrichmentTarget): Produ
   if (!Array.isArray(item.claimIds) || item.claimIds.length > 100 || item.claimIds.some((entry) => boundedString(entry, 500) === null)) return null;
   if (!['Product', 'PageSignal'].includes(String(item.jsonLdType)) || !['self-declared-brand', 'path-inferred', 'third-party-referenced'].includes(String(item.ownership))) return null;
   if (!['json-ld', 'storefront-api', 'page-signal', 'sitemap'].includes(String(item.extraction)) || !['High', 'Medium'].includes(String(item.confidence))) return null;
-  return {
+  const identifiers = sanitizeIdentifiers(item.identifiers);
+  if (identifiers === null) return null;
+  const product = {
     id,
     domain: canonicalDomain(domain),
     name,
@@ -85,7 +103,12 @@ function sanitizeProduct(value: unknown, target: ProductEnrichmentTarget): Produ
     imageUrl: imageUrl || "",
     observedAt,
     claimIds: item.claimIds as string[],
+    ...(identifiers ? { identifiers } : {}),
   };
+  if (isCatalogReplacementProduct(product as ProductRecord) && target.allowCatalogReplacement !== true) return null;
+  return isCatalogReplacementProduct(product as ProductRecord)
+    ? { ...product, normalizedName: bilingualNormalize(name), quantity: parseCanonicalQuantity(name) || undefined } as ProductRecord
+    : product as ProductRecord;
 }
 
 function validateResult(parsed: EdgeResult, targets: ProductEnrichmentTarget[]) {

@@ -1,5 +1,5 @@
 import { canonicalDomain, normalizeDomain } from "../../lib/domain.ts";
-import { buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity, type ProductComparison, type ProductRecord } from "../../lib/product-intelligence.ts";
+import { applyPreMatchCatalogEnrichment, buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity, type ProductComparison, type ProductRecord } from "../../lib/product-intelligence.ts";
 import { sharedRobotsPolicyResolver } from "../../lib/robots-policy.ts";
 import { discoverCompetitors, type DiscoveryCandidate, type DiscoveryResult } from "../../lib/competitor-discovery.ts";
 import { attributableFacebookUrl, type AdIntelligenceResult } from "../../lib/ad-intelligence.ts";
@@ -569,7 +569,7 @@ async function enrichPrimaryProductPrices(result: DomainCrawl) {
   const observedAt = new Date().toISOString();
   return {
     ...result,
-    products: selectPreferredProducts([...result.products, ...enrichment.products]),
+    products: applyPreMatchCatalogEnrichment(result.products, enrichment.products),
     gaps: [
       ...result.gaps,
       ...enrichment.coverage.gaps.map((gap) => ({ url: gap.url, reason: `Primary product price enrichment: ${gap.reason}`, observedAt })),

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyFinalProductEnrichment, buildProductComparison, buildProductPairCandidateIndex, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, retrieveProductPairCandidates, scoreProductPair, selectFinalProductEnrichmentTargets, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
+import { applyFinalProductEnrichment, applyPreMatchCatalogEnrichment, buildProductComparison, buildProductPairCandidateIndex, catalogReplacementAuditAttribute, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, retrieveProductPairCandidates, scoreProductPair, selectFinalProductEnrichmentTargets, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
 
 function extraction(overrides = {}) {
   return extractProductsFromHtml({
@@ -925,6 +925,88 @@ test("final enrichment updates the selected pair and recomputes its price decisi
   assert.equal(enriched.rows[0].matches[0].product.imageUrl, "https://cdn.tea.test/tea.jpg");
   assert.match(enriched.rows[0].matches[0].decision.priceVerdict, /GBP 2\.00 cheaper/);
   assert.deepEqual(enriched.enrichment, { pagesRequested: 2, pagesFetched: 2, maxPages: 24, gaps: [] });
+});
+
+test("pre-match catalog reconciliation replaces stale identity without inheriting stale fields", () => {
+  const stale = {
+    ...product("walnut", "shop.test", "Maamoul Walnut 500g"),
+    jsonLdType: "Product",
+    sourceUrl: "https://shop.test/products/maamoul-walnut-500g",
+    quantity: { kind: "mass", amount: 500, unit: "g" },
+    identifiers: { gtins: [], sku: "STALE-500", brand: "Old Brand" },
+    claimIds: ["stale-sitemap-claim"],
+  };
+  const live = {
+    ...stale,
+    name: "Maamoul Walnut 600g",
+    normalizedName: "maamoul walnut 600g",
+    quantity: { kind: "mass", amount: 600, unit: "g" },
+    identifiers: { gtins: [], sku: "LIVE-600", brand: "Live Brand" },
+    priceSignals: [{ raw: "USD 12.5", currency: "USD", amount: 12.5 }],
+    imageUrl: "https://cdn.shop.test/walnut-600g.jpg",
+    extraction: "storefront-api",
+    confidence: "High",
+    attributes: [catalogReplacementAuditAttribute(stale.name, stale.sourceUrl)],
+    claimIds: ["live-observed", "walnut-catalog-replacement-1"],
+  };
+  const reconciled = applyPreMatchCatalogEnrichment([stale], [live]);
+  assert.equal(reconciled.length, 1);
+  assert.equal(reconciled[0].name, live.name);
+  assert.equal(reconciled[0].quantity.amount, 600);
+  assert.equal(reconciled[0].identifiers.sku, "LIVE-600");
+  assert.deepEqual(reconciled[0].claimIds, live.claimIds);
+  assert.equal(reconciled[0].claimIds.includes("stale-sitemap-claim"), false);
+});
+
+test("pre-match catalog reconciliation drops a stale URL when the live identity already exists", () => {
+  const stale = { ...product("stale", "shop.test", "Old Baklava 500g"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/old-baklava" };
+  const existing = { ...product("current", "shop.test", "Baklava Special 500g"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/baklava-special", quantity: { kind: "mass", amount: 500, unit: "g" } };
+  const replacement = {
+    ...existing,
+    id: stale.id,
+    sourceUrl: stale.sourceUrl,
+    extraction: "json-ld",
+    attributes: [catalogReplacementAuditAttribute(stale.name, stale.sourceUrl)],
+  };
+  const reconciled = applyPreMatchCatalogEnrichment([stale, existing], [replacement]);
+  assert.equal(reconciled.length, 1);
+  assert.equal(reconciled[0].id, existing.id);
+  assert.equal(reconciled[0].sourceUrl, existing.sourceUrl);
+  assert.match(reconciled[0].attributes.join(" "), /Previous sitemap identity: Old Baklava 500g/);
+});
+
+test("pre-match catalog reconciliation collapses equal live names when both quantities are absent", () => {
+  const stale = { ...product("stale", "shop.test", "Old Mixed Nawashif 500g"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/old-nawashif" };
+  const existing = { ...product("barazek", "shop.test", "Sesame Cookies (Barazek)"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/barazek", quantity: undefined };
+  const replacement = {
+    ...existing,
+    id: stale.id,
+    sourceUrl: stale.sourceUrl,
+    extraction: "json-ld",
+    attributes: [catalogReplacementAuditAttribute(stale.name, stale.sourceUrl)],
+  };
+  const reconciled = applyPreMatchCatalogEnrichment([stale, existing], [replacement]);
+  assert.equal(reconciled.length, 1);
+  assert.equal(reconciled[0].id, existing.id);
+  assert.equal(reconciled[0].quantity, undefined);
+  assert.match(reconciled[0].attributes.join(" "), /Previous sitemap identity: Old Mixed Nawashif 500g/);
+});
+
+test("post-match enrichment ignores a replacement-marked product even if injected", () => {
+  const primary = { ...product("tea", "shop.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/lemon-ginger-tea" };
+  const rival = { ...product("rival-tea", "tea.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://tea.test/products/lemon-ginger-tea" };
+  const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "tea.test", products: [rival] }]);
+  const injected = {
+    ...primary,
+    name: "Completely Different Product 1kg",
+    normalizedName: "completely different product 1kg",
+    priceSignals: [{ raw: "GBP 99", currency: "GBP", amount: 99 }],
+    attributes: [catalogReplacementAuditAttribute(primary.name, primary.sourceUrl)],
+  };
+  const enriched = applyFinalProductEnrichment(comparison, [injected], { pagesRequested: 1, pagesFetched: 1, maxPages: 24, gaps: [] });
+  assert.equal(enriched.rows[0].primary.name, primary.name);
+  assert.deepEqual(enriched.rows[0].primary.priceSignals, primary.priceSignals);
+  assert.equal(selectFinalProductEnrichmentTargets(comparison, 24).some((target) => target.allowCatalogReplacement), false);
 });
 
 test("final enrichment joins equivalent canonical product URLs after host and scheme redirects", () => {

@@ -253,6 +253,143 @@ test("rejects a storefront payload whose product identity contradicts the target
   }
 });
 
+test("catalog drift stays rejected unless the pre-match caller explicitly permits replacement", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response(`<html><head><title>Maamoul Walnut... | Shop</title><script type="application/ld+json">${JSON.stringify({
+      "@context": "https://schema.org", "@type": "Product", name: "Maamoul Walnut 600g",
+      image: "https://cdn.shop.test/walnut-600g.jpg", offers: { "@type": "Offer", price: "12.50", priceCurrency: "USD" },
+    })}</script></head><body><h1>Maamoul Walnut 600g</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const stale = target({ expectedName: "Maamoul Walnut 500g", sourceUrl: "https://shop.test/products/maamoul-walnut-500g" });
+    const rejected = await enrichProductTargets([stale], 1);
+    assert.equal(rejected.products.length, 0);
+    assert.equal(rejected.coverage.gaps[0].code, "identity_mismatch");
+
+    const replaced = await enrichProductTargets([{ ...stale, allowCatalogReplacement: true }], 1);
+    assert.equal(replaced.products.length, 1);
+    assert.equal(replaced.products[0].id, stale.productId);
+    assert.equal(replaced.products[0].name, "Maamoul Walnut 600g");
+    assert.equal(replaced.products[0].quantity.amount, 600);
+    assert.equal(replaced.products[0].priceSignals[0].amount, 12.5);
+    assert.equal(replaced.products[0].imageUrl, "https://cdn.shop.test/walnut-600g.jpg");
+    assert.match(replaced.products[0].attributes.join(" "), /Previous sitemap identity: Maamoul Walnut 500g/);
+    assert.equal(replaced.products[0].claimIds.some((id) => id.includes("catalog-replacement")), true);
+    assert.equal(replaced.coverage.gaps.length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("catalog replacement rejects ambiguous structured identities and page-signal-only evidence", async () => {
+  const originalFetch = globalThis.fetch;
+  let mode = "ambiguous";
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    const scripts = mode === "ambiguous" ? `
+      <script type="application/ld+json">${JSON.stringify({ "@context": "https://schema.org", "@type": "Product", name: "Maamoul Walnut 600g", offers: { "@type": "Offer", price: "12.50", priceCurrency: "USD" } })}</script>
+      <script type="application/ld+json">${JSON.stringify({ "@context": "https://schema.org", "@type": "Product", name: "Maamoul Pistachio 600g", offers: { "@type": "Offer", price: "14.50", priceCurrency: "USD" } })}</script>` : "";
+    return new Response(`<html><head><title>Maamoul Walnut Pistachio 600g | Shop</title>${scripts}<meta property="og:price:currency" content="USD"></head><body><h1>Maamoul Walnut Pistachio 600g</h1><div class="summary"><p class="price">USD 12.50</p><img class="product-image" src="https://cdn.shop.test/live.jpg"></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const stale = target({ expectedName: "Old Maamoul 500g", sourceUrl: "https://shop.test/shop/old-maamoul", allowCatalogReplacement: true });
+    const ambiguous = await enrichProductTargets([stale], 1);
+    assert.equal(ambiguous.products.length, 0);
+    assert.equal(ambiguous.coverage.gaps[0].code, "identity_mismatch");
+    mode = "page-signal";
+    resetSharedRobotsPolicyResolverForTests();
+    const unstructured = await enrichProductTargets([stale], 1);
+    assert.equal(unstructured.products.length, 0);
+    assert.equal(unstructured.coverage.gaps[0].code, "identity_mismatch");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("catalog replacement rejects adapter disagreement and a structured quantity that conflicts with the page title", async () => {
+  const originalFetch = globalThis.fetch;
+  let mode = "adapter-disagreement";
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({ title: "Maamoul Pistachio 600g", handle: "old-maamoul", variants: [{ title: "Default Title", price: 1450 }] });
+    const title = mode === "adapter-disagreement" ? "Maamoul Walnut Pistachio 600g | Shop" : "Maamoul Walnut 500g | Shop";
+    return new Response(`<html><head><title>${title}</title><meta property="og:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({
+      "@context": "https://schema.org", "@type": "Product", name: "Maamoul Walnut 600g",
+      image: "https://cdn.shop.test/walnut.jpg", offers: { "@type": "Offer", price: "12.50", priceCurrency: "USD" },
+    })}</script></head><body><h1>${title}</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const targetValue = target({ expectedName: "Old Maamoul 400g", sourceUrl: "https://shop.test/products/old-maamoul", allowCatalogReplacement: true });
+    const disagreement = await enrichProductTargets([targetValue], 1);
+    assert.equal(disagreement.products.length, 0);
+    assert.equal(disagreement.coverage.gaps[0].code, "identity_mismatch");
+    mode = "quantity-conflict";
+    resetSharedRobotsPolicyResolverForTests();
+    const quantityConflict = await enrichProductTargets([{ ...targetValue, sourceUrl: "https://shop.test/shop/old-maamoul" }], 1);
+    assert.equal(quantityConflict.products.length, 0);
+    assert.equal(quantityConflict.coverage.gaps[0].code, "identity_mismatch");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("ordinary Shopify enrichment keeps expected-quantity variant steering for opted-in primary targets", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({
+      title: "Maamoul Walnut",
+      handle: "maamoul-walnut",
+      variants: [
+        { title: "500g", price: 1250 },
+        { title: "1kg", price: 2300 },
+      ],
+    });
+    return new Response('<html><head><title>Shop</title><meta property="og:price:currency" content="USD"></head><body></body></html>', { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Maamoul Walnut 500g", sourceUrl: "https://shop.test/products/maamoul-walnut", allowCatalogReplacement: true })], 1);
+    assert.equal(result.products.length, 1);
+    assert.deepEqual(result.products[0].priceSignals.map((signal) => signal.amount), [12.5]);
+    assert.equal(result.products[0].quantity.amount, 500);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("catalog replacement rejects a same-domain redirect to another product path", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith("/products/old-maamoul")) return new Response(null, { status: 302, headers: { location: "/products/live-maamoul-600g" } });
+    return new Response(`<html><head><title>Live Maamoul 600g | Shop</title><script type="application/ld+json">${JSON.stringify({
+      "@context": "https://schema.org", "@type": "Product", name: "Live Maamoul 600g",
+      image: "https://cdn.shop.test/live.jpg", offers: { "@type": "Offer", price: "12.50", priceCurrency: "USD" },
+    })}</script></head><body><h1>Live Maamoul 600g</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Old Maamoul 500g", sourceUrl: "https://shop.test/products/old-maamoul", allowCatalogReplacement: true })], 1);
+    assert.equal(result.products.length, 0);
+    assert.equal(result.coverage.gaps[0].code, "identity_mismatch");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("primary targets opt into catalog replacement while public parsing stays strict boolean", () => {
+  const targets = selectPrimaryProductPriceTargets([product(1, { name: "Maamoul Walnut 500g", normalizedName: "maamoul walnut 500g" })], "shop.test", 1);
+  assert.equal(targets[0].allowCatalogReplacement, true);
+  assert.equal(publicProductTarget(target({ allowCatalogReplacement: "true" })).allowCatalogReplacement, undefined);
+  assert.equal(publicProductTarget(target({ allowCatalogReplacement: true })).allowCatalogReplacement, true);
+});
+
 test("skips product and adapter fetches when robots disallows the selected page", async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];

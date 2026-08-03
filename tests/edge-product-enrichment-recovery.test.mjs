@@ -61,6 +61,29 @@ test("recovers a bounded identity-matched product without transmitting secrets",
   assert.equal(recovered[0].imageUrl, product.imageUrl);
 });
 
+test("edge recovery permits a marked replacement only for an explicitly eligible target", async () => {
+  const eligible = { ...target, expectedName: "Maamoul Walnut 500g", allowCatalogReplacement: true };
+  const replacement = {
+    ...product,
+    name: "Maamoul Walnut 600g",
+    normalizedName: "untrusted edge normalization",
+    attributes: [`Previous sitemap identity: ${eligible.expectedName} (${eligible.sourceUrl})`],
+    identifiers: { gtins: [], sku: "LIVE-600", brand: "Live Brand" },
+  };
+  const call = (targets) => recoverProductEnrichmentThroughEdge(targets, {
+    configuredUrl: edgeUrl,
+    requestUrl: "https://signal.blyzr.com/api/enrich-products",
+    callbackToken: token,
+    deployTarget: "node",
+    fetchImpl: async () => Response.json({ ok: true, products: [replacement], coverage: { pagesRequested: 1, pagesFetched: 1, maxPages: 1, gaps: [] } }),
+  });
+  const accepted = await call([eligible]);
+  assert.equal(accepted[0].normalizedName, "maamoul walnut 600g");
+  assert.equal(accepted[0].quantity.amount, 600);
+  assert.equal(accepted[0].identifiers.sku, "LIVE-600");
+  assert.equal(await call([target]), null);
+});
+
 test("does zero egress whenever a recovery gate is absent", async (t) => {
   const cases = [
     ["no targets", [], "node", edgeUrl, token, "https://signal.blyzr.com/api/enrich-products"],
