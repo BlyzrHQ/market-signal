@@ -52,6 +52,7 @@ test("accepts a bounded identity-matched live edge result and records provenance
       configuredUrl: edgeUrl,
       requestUrl: "https://signal.blyzr.com/api/crawl",
       callbackToken: token,
+      deployTarget: "node",
       fetchImpl: async (input, init) => {
         request = { input: String(input), init };
         return Response.json({
@@ -65,8 +66,9 @@ test("accepts a bounded identity-matched live edge result and records provenance
     },
   );
   assert.equal(request.input, edgeUrl);
-  assert.equal(request.init.headers[EDGE_CRAWL_MARKER], "1");
-  assert.equal(request.init.headers.Authorization, `Bearer ${token}`);
+  assert.equal(request.init.headers[EDGE_CRAWL_MARKER], undefined);
+  assert.equal(request.init.headers.Authorization, undefined);
+  assert.doesNotMatch(JSON.stringify(request), new RegExp(token));
   assert.deepEqual(JSON.parse(request.init.body), { primary: "shop.test", domains: ["shop.test"] });
   assert.equal(recovered.edgeRecovery.recovered, true);
   assert.equal(recovered.results[0].coverage.crawlEgress, "edge-recovered");
@@ -75,7 +77,7 @@ test("accepts a bounded identity-matched live edge result and records provenance
 });
 
 test("rejects oversized, non-JSON, failed, or identity-mismatched edge responses", async (t) => {
-  const options = { configuredUrl: edgeUrl, requestUrl: "https://signal.blyzr.com/api/crawl", callbackToken: token, maxResponseBytes: 128 };
+  const options = { configuredUrl: edgeUrl, requestUrl: "https://signal.blyzr.com/api/crawl", callbackToken: token, deployTarget: "node", maxResponseBytes: 128 };
   await t.test("declared oversize", async () => {
     const result = await recoverCrawlThroughEdge({ primary: "shop.test", domains: ["shop.test"] }, { ...options, fetchImpl: async () => new Response("{}", { headers: { "content-type": "application/json", "content-length": "129" } }) });
     assert.equal(result, null);
@@ -92,4 +94,29 @@ test("rejects oversized, non-JSON, failed, or identity-mismatched edge responses
     const result = await recoverCrawlThroughEdge({ primary: "shop.test", domains: ["shop.test"] }, { ...options, maxResponseBytes: 2_000, fetchImpl: async () => Response.json({ ok: true, live: true, primaryDomain: "shop.test", results: [{ domain: "shop.test", homepage: { sourceUrl: "https://attacker.test/" }, products: [] }] }) });
     assert.equal(result, null);
   });
+});
+
+test("permits edge egress only from the VPS build target with a valid local gate", async (t) => {
+  for (const [name, deployTarget, callbackToken] of [
+    ["missing deploy target", undefined, token],
+    ["Sites deploy target", "sites", token],
+    ["missing local gate", "node", ""],
+    ["short local gate", "node", "short"],
+  ]) {
+    await t.test(name, async () => {
+      let fetchCalls = 0;
+      const result = await recoverCrawlThroughEdge(
+        { primary: "shop.test", domains: ["shop.test"] },
+        {
+          configuredUrl: edgeUrl,
+          requestUrl: "https://signal.blyzr.com/api/crawl",
+          callbackToken,
+          deployTarget,
+          fetchImpl: async () => { fetchCalls += 1; throw new Error("must not fetch"); },
+        },
+      );
+      assert.equal(result, undefined);
+      assert.equal(fetchCalls, 0);
+    });
+  }
 });
