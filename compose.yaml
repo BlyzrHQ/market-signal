@@ -16,6 +16,7 @@ services:
       MARKET_SIGNAL_BACKUP_DIR: /backups
       MARKET_SIGNAL_DEPLOY_TARGET: node
       MARKET_SIGNAL_EDGE_CRAWL_URL: https://market-signal.abdulla617931.chatgpt.site/api/crawl
+      MARKET_SIGNAL_EDGE_ENRICH_URL: https://market-signal.abdulla617931.chatgpt.site/api/enrich-products
     expose:
       - "3000"
     volumes:

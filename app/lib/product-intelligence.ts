@@ -131,7 +131,8 @@ export type ProductComparison = {
     pagesRequested: number;
     pagesFetched: number;
     maxPages: number;
-    gaps: Array<{ url: string; reason: string; productId?: string; role?: "primary" | "rival" }>;
+    gaps: Array<{ url: string; reason: string; productId?: string; role?: "primary" | "rival"; code?: string }>;
+    edgeRecovery?: { recovered: number; requested: number; provider: string; observedAt: string };
   };
   actionPlanning?: {
     method: "ai-grounded" | "deterministic-fallback";

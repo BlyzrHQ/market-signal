@@ -10,13 +10,20 @@ const MAX_PER_DOMAIN_CONCURRENCY = 2;
 const REQUEST_TIMEOUT_MS = 8_000;
 const USER_AGENT = "MarketSignalPublicScanner/0.1";
 
-type EnrichmentGap = { url: string; productId: string; role: ProductEnrichmentTarget["role"]; reason: string };
+export type EnrichmentGap = {
+  url: string;
+  productId: string;
+  role: ProductEnrichmentTarget["role"];
+  reason: string;
+  code?: "robots_unreachable" | "robots_disallowed" | "fetch_failed" | "identity_mismatch" | "adapter_limited";
+};
 
 export type ProductEnrichmentCoverage = {
   pagesRequested: number;
   pagesFetched: number;
   maxPages: number;
   gaps: EnrichmentGap[];
+  edgeRecovery?: { recovered: number; requested: number; provider: string; observedAt: string };
 };
 
 function text(value: unknown, limit: number) {
@@ -286,16 +293,16 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
   }));
 
   const enrichOne = async (item: ProductEnrichmentTarget) => {
-    const gap = (reason: string): EnrichmentGap => ({ url: item.sourceUrl, productId: item.productId, role: item.role, reason });
+    const gap = (reason: string, code?: EnrichmentGap["code"]): EnrichmentGap => ({ url: item.sourceUrl, productId: item.productId, role: item.role, reason, ...(code ? { code } : {}) });
     try {
       const robotsResult = robotsByDomain.get(item.domain);
       const availability = robotsResult?.availability || "unreachable";
-      if (availability === "unreachable") return { product: null, gap: gap("robots.txt was unreachable, so selected-product enrichment was skipped.") };
+      if (availability === "unreachable") return { product: null, gap: gap("robots.txt was unreachable, so selected-product enrichment was skipped.", "robots_unreachable") };
       const robots = robotsResult?.policy;
-      if (!robots) return { product: null, gap: gap("robots.txt was unreachable, so selected-product enrichment was skipped.") };
-      if (!robots.allows(new URL(item.sourceUrl).pathname)) return { product: null, gap: gap("robots.txt disallows this selected product page.") };
+      if (!robots) return { product: null, gap: gap("robots.txt was unreachable, so selected-product enrichment was skipped.", "robots_unreachable") };
+      if (!robots.allows(new URL(item.sourceUrl).pathname)) return { product: null, gap: gap("robots.txt disallows this selected product page.", "robots_disallowed") };
       const fetched = await fetchSameDomain(item.sourceUrl, item.domain, "text/html,application/xhtml+xml");
-      if (!fetched.ok || !/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`) };
+      if (!fetched.ok || !/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed") };
       const extracted = pageExtraction(fetched.text, fetched.url, item.domain);
       const expected = expectedProduct(item);
       addScopedProductPageEvidence(fetched.text, fetched.url, expected, extracted.result.products, extracted.pageTitle);
@@ -326,12 +333,12 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
         }
       }
       const identity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle, { allowScopedPageSignal: true });
-      if (!identity.accepted) return { product: null, gap: gap(identity.reason) };
+      if (!identity.accepted) return { product: null, gap: gap(identity.reason, "identity_mismatch") };
       const accepted = identity.products[0];
       const unresolvedAdapterGap = adapterGap && accepted && !hasConfirmedPrice([accepted]) ? adapterGap : "";
-      return { product: accepted ? { ...accepted, id: item.productId } : null, gap: unresolvedAdapterGap ? gap(unresolvedAdapterGap) : null };
+      return { product: accepted ? { ...accepted, id: item.productId } : null, gap: unresolvedAdapterGap ? gap(unresolvedAdapterGap, "adapter_limited") : null };
     } catch (error) {
-      return { product: null, gap: gap(error instanceof Error ? `Selected product page could not be fetched: ${error.message}` : "Selected product page could not be fetched.") };
+      return { product: null, gap: gap(error instanceof Error ? `Selected product page could not be fetched: ${error.message}` : "Selected product page could not be fetched.", "fetch_failed") };
     }
   };
 

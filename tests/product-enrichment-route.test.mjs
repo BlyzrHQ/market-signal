@@ -6,6 +6,118 @@ import { resetSharedRobotsPolicyResolverForTests } from "../app/lib/robots-polic
 
 test.beforeEach(() => resetSharedRobotsPolicyResolverForTests());
 
+test("retries only a typed robots-unreachable target through the configured edge", async () => {
+  const originalFetch = globalThis.fetch;
+  const previous = {
+    token: process.env.MARKET_SIGNAL_CALLBACK_TOKEN,
+    target: process.env.MARKET_SIGNAL_DEPLOY_TARGET,
+    url: process.env.MARKET_SIGNAL_EDGE_ENRICH_URL,
+  };
+  const calls = [];
+  process.env.MARKET_SIGNAL_CALLBACK_TOKEN = "a-valid-test-callback-token-with-32-chars";
+  process.env.MARKET_SIGNAL_DEPLOY_TARGET = "node";
+  process.env.MARKET_SIGNAL_EDGE_ENRICH_URL = "https://market-signal.abdulla617931.chatgpt.site/api/enrich-products";
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (url === process.env.MARKET_SIGNAL_EDGE_ENRICH_URL) return Response.json({
+      ok: true,
+      products: [{
+        id: "babanuj-maamoul",
+        domain: "babanuj.com",
+        name: "Zaitoune Mamoul With Dates 250g",
+        normalizedName: "zaitoune mamoul with dates 250g",
+        description: "",
+        category: "product",
+        jsonLdType: "Product",
+        priceSignals: [{ raw: "USD 10.8", currency: "USD", amount: 10.8 }],
+        attributes: [],
+        ownership: "path-inferred",
+        extraction: "json-ld",
+        confidence: "Medium",
+        sourceUrl: "https://www.babanuj.com/product/zaitoune-maamoul-date-250g",
+        imageUrl: "https://cdn.shopify.com/babanuj-maamoul.jpg",
+        observedAt: "2026-08-03T00:00:00.000Z",
+        claimIds: [],
+      }],
+      coverage: { pagesRequested: 1, pagesFetched: 1, maxPages: 1, gaps: [] },
+    });
+    throw new Error("VPS egress unavailable");
+  };
+  try {
+    const response = await POST(new Request("https://signal.blyzr.com/api/enrich-products", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ targets: [{
+        domain: "babanuj.com",
+        sourceUrl: "https://www.babanuj.com/product/zaitoune-maamoul-date-250g",
+        productId: "babanuj-maamoul",
+        expectedName: "zaitoune maamoul date 250g",
+        expectedType: "Product",
+        role: "primary",
+      }] }),
+    }));
+    const payload = await response.json();
+    assert.equal(payload.ok, true);
+    assert.equal(payload.products[0].imageUrl, "https://cdn.shopify.com/babanuj-maamoul.jpg");
+    assert.equal(payload.products[0].priceSignals[0].amount, 10.8);
+    assert.equal(payload.coverage.edgeRecovery.recovered, 1);
+    assert.equal(calls.filter((call) => call.url === process.env.MARKET_SIGNAL_EDGE_ENRICH_URL).length, 1);
+    const edgeCall = calls.find((call) => call.url === process.env.MARKET_SIGNAL_EDGE_ENRICH_URL);
+    assert.equal(edgeCall.init.headers.Authorization, undefined);
+    assert.doesNotMatch(JSON.stringify(edgeCall), /a-valid-test-callback-token/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of Object.entries(previous)) {
+      const envName = key === "token" ? "MARKET_SIGNAL_CALLBACK_TOKEN" : key === "target" ? "MARKET_SIGNAL_DEPLOY_TARGET" : "MARKET_SIGNAL_EDGE_ENRICH_URL";
+      if (value === undefined) delete process.env[envName]; else process.env[envName] = value;
+    }
+  }
+});
+
+test("never forwards a robots-disallowed target with an unreachable target", async () => {
+  const originalFetch = globalThis.fetch;
+  const previous = {
+    token: process.env.MARKET_SIGNAL_CALLBACK_TOKEN,
+    target: process.env.MARKET_SIGNAL_DEPLOY_TARGET,
+    url: process.env.MARKET_SIGNAL_EDGE_ENRICH_URL,
+  };
+  let edgeBody;
+  process.env.MARKET_SIGNAL_CALLBACK_TOKEN = "a-valid-test-callback-token-with-32-chars";
+  process.env.MARKET_SIGNAL_DEPLOY_TARGET = "node";
+  process.env.MARKET_SIGNAL_EDGE_ENRICH_URL = "https://market-signal.abdulla617931.chatgpt.site/api/enrich-products";
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url === process.env.MARKET_SIGNAL_EDGE_ENRICH_URL) {
+      edgeBody = JSON.parse(init.body);
+      return Response.json({ ok: true, products: [], coverage: { pagesRequested: 1, pagesFetched: 0, maxPages: 64, gaps: [] } });
+    }
+    if (url === "https://blocked.test/robots.txt") return new Response("User-agent: *\nDisallow: /product/", { headers: { "content-type": "text/plain" } });
+    if (url === "https://unreachable.test/robots.txt") throw new Error("network unavailable");
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  try {
+    const response = await POST(new Request("https://signal.blyzr.com/api/enrich-products", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ targets: [
+        { domain: "blocked.test", sourceUrl: "https://blocked.test/product/cake", productId: "blocked", expectedName: "Cake", expectedType: "Product", role: "rival" },
+        { domain: "unreachable.test", sourceUrl: "https://unreachable.test/product/honey", productId: "unreachable", expectedName: "Honey", expectedType: "Product", role: "primary" },
+      ] }),
+    }));
+    const payload = await response.json();
+    assert.equal(payload.ok, true);
+    assert.deepEqual(edgeBody.targets.map((item) => item.productId), ["unreachable"]);
+    assert.equal(payload.coverage.gaps.some((gap) => gap.productId === "blocked" && gap.code === "robots_disallowed"), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of Object.entries(previous)) {
+      const envName = key === "token" ? "MARKET_SIGNAL_CALLBACK_TOKEN" : key === "target" ? "MARKET_SIGNAL_DEPLOY_TARGET" : "MARKET_SIGNAL_EDGE_ENRICH_URL";
+      if (value === undefined) delete process.env[envName]; else process.env[envName] = value;
+    }
+  }
+});
+
 test("enriches the exact selected product page with authoritative price and secure image", async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
