@@ -44,9 +44,9 @@ function sanitizeProduct(value: unknown, target: ProductEnrichmentTarget): Produ
   const imageUrl = boundedString(item.imageUrl, 2_000);
   const observedAt = boundedString(item.observedAt, 100);
   if (!id || id !== target.productId || !domain || canonicalDomain(domain) !== canonicalDomain(target.domain)) return null;
-  if (!name || normalizedName === null || description === null || category === null || !sourceUrl || !observedAt) return null;
+  if (!name || normalizedName === null || description === null || category === null || !sourceUrl || imageUrl === null || !observedAt || !Number.isFinite(Date.parse(observedAt))) return null;
   if (canonicalProductUrl(sourceUrl) !== canonicalProductUrl(target.sourceUrl)) return null;
-  if (!imageUrl || imageUrl === "") {
+  if (imageUrl === "") {
     // Empty images are valid gaps; non-empty images must be HTTPS.
   } else {
     try { if (new URL(imageUrl).protocol !== "https:") return null; } catch { return null; }
@@ -146,7 +146,6 @@ export function mergeEdgeProductEnrichment(
 ) {
   if (recovered === undefined) return local;
   const recoveredIds = new Set((recovered || []).map((product) => product.id));
-  const eligibleIds = new Set(eligibleTargets.map((target) => target.productId));
   const retainedGaps = local.coverage.gaps.filter((gap) => !recoveredIds.has(gap.productId));
   if (recovered === null) retainedGaps.push({
     url: eligibleTargets[0]?.sourceUrl || "https://market-signal.abdulla617931.chatgpt.site/api/enrich-products",
@@ -160,7 +159,7 @@ export function mergeEdgeProductEnrichment(
     coverage: {
       ...local.coverage,
       pagesFetched: local.coverage.pagesFetched + (recovered?.length || 0),
-      gaps: retainedGaps.filter((gap) => !eligibleIds.has(gap.productId) || !recoveredIds.has(gap.productId)),
+      gaps: retainedGaps,
       edgeRecovery: { recovered: recovered?.length || 0, requested: eligibleTargets.length, provider, observedAt: new Date().toISOString() },
     },
   };

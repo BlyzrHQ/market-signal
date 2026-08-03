@@ -31,7 +31,7 @@ Rejected alternatives included forwarding the full batch, proxying only `robots.
 ## Validation
 
 - Real public probe: the Sites enrichment endpoint returned the exact Babanuj `zaitoune-maamoul-date-250g` product with a Shopify CDN image and an observed `USD 10.8` offer.
-- Focused route, recovery, storefront, and VPS packaging tests: 50 passed.
-- Full suite: 474 passed, 0 failed.
+- Focused route, recovery, storefront, and VPS packaging tests: 52 passed.
+- Full suite: 476 passed, 0 failed.
 - Typecheck and production build: passed.
 - ESLint: 0 errors; two pre-existing `no-img-element` warnings.

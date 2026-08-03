@@ -117,3 +117,23 @@ test("merges recovered products, removes only their original gaps, and records p
   assert.equal(merged.coverage.gaps.length, 0);
   assert.deepEqual({ recovered: merged.coverage.edgeRecovery.recovered, requested: merged.coverage.edgeRecovery.requested }, { recovered: 1, requested: 1 });
 });
+
+test("keeps the original gap and adds a visible gap when the edge response fails validation", () => {
+  const local = { products: [], coverage: { pagesRequested: 1, pagesFetched: 0, maxPages: 64, gaps: [{ url: target.sourceUrl, productId: target.productId, role: target.role, reason: "robots unreachable", code: "robots_unreachable" }] } };
+  const merged = mergeEdgeProductEnrichment(local, [target], null, "market-signal.abdulla617931.chatgpt.site");
+  assert.deepEqual(merged.coverage.gaps.map((gap) => gap.code), ["robots_unreachable", "fetch_failed"]);
+  assert.deepEqual({ recovered: merged.coverage.edgeRecovery.recovered, requested: merged.coverage.edgeRecovery.requested }, { recovered: 0, requested: 1 });
+});
+
+test("rejects oversized images and invalid observation timestamps instead of silently dropping them", async () => {
+  for (const invalid of [{ ...product, imageUrl: `https://cdn.shop.test/${"a".repeat(2_100)}` }, { ...product, observedAt: "not-a-date" }]) {
+    const result = await recoverProductEnrichmentThroughEdge([target], {
+      configuredUrl: edgeUrl,
+      requestUrl: "https://signal.blyzr.com/api/enrich-products",
+      callbackToken: token,
+      deployTarget: "node",
+      fetchImpl: async () => Response.json({ ok: true, products: [invalid], coverage: { pagesRequested: 1, pagesFetched: 1, maxPages: 64 } }),
+    });
+    assert.equal(result, null);
+  }
+});
