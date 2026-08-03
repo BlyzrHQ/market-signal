@@ -351,7 +351,8 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
   let homepageResult = submittedHomepageResult;
   const alternateBase = alternateHomepageBase(base, domain);
   let attemptedAlternateBase: URL | null = null;
-  if (!isHtmlHomepage(homepageResult) && alternateBase && canRecoverHomepageOnAlternateHost(homepageResult)) {
+  const robotsThrottled = robotsState === "unreachable" && robotsResult.status === 429;
+  if (!robotsThrottled && !isHtmlHomepage(homepageResult) && alternateBase && canRecoverHomepageOnAlternateHost(homepageResult)) {
     const robotsRefusedSubmittedHost = robotsState === "unreachable" && [401, 403, 407, 451].includes(robotsResult.status);
     if (robotsRefusedSubmittedHost) {
       robotsResult = await sharedRobotsPolicyResolver.resolve(domain, alternateBase.hostname);

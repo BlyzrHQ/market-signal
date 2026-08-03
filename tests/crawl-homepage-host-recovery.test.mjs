@@ -116,7 +116,8 @@ test("does not re-resolve robots or fetch the alternate homepage after a robots 
   globalThis.fetch = async (input) => {
     const url = String(input);
     calls.push(url);
-    return response("slow down", 429, "text/plain");
+    if (url.endsWith("/robots.txt")) return response("slow down", 429, "text/plain");
+    return response("forbidden", 403);
   };
   try {
     const result = await crawlDomain("shop.test", "primary");
