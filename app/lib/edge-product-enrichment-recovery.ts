@@ -3,9 +3,11 @@ import { isCatalogReplacementProduct, type ProductEnrichmentTarget, type Product
 import { bilingualNormalize, canonicalGtin, parseCanonicalQuantity, type ProductIdentifiers } from "./product-normalization.ts";
 import type { ProductEnrichmentCoverage } from "./storefront-product-enrichment.ts";
 
+export const EDGE_PRODUCT_ENRICHMENT_MARKER = "x-market-signal-edge-product-fallback";
 const ALLOWED_EDGE_ENRICH_URL = "https://market-signal.abdulla617931.chatgpt.site/api/enrich-products";
 const EDGE_TIMEOUT_MS = 45_000;
 const EDGE_MAX_RESPONSE_BYTES = 2_000_000;
+const EDGE_RECOVERABLE_HTTP_STATUSES = new Set([401, 403, 407, 429, 451]);
 
 type EdgeResult = { ok?: unknown; products?: unknown; coverage?: unknown };
 
@@ -26,6 +28,26 @@ export function validatedEdgeEnrichmentUrl(value: string | undefined, requestUrl
     if (candidate.username || candidate.password || candidate.search || candidate.hash) return null;
     return candidate;
   } catch { return null; }
+}
+
+export function edgeRecoverableProductTargets(
+  local: { products: ProductRecord[]; coverage: ProductEnrichmentCoverage },
+  targets: ProductEnrichmentTarget[],
+) {
+  const locallyResolved = new Set(local.products.map((product) => product.id));
+  const eligibleIds = new Set(local.coverage.gaps.flatMap((gap) => {
+    if (locallyResolved.has(gap.productId)) return [];
+    if (gap.code === "robots_unreachable") return [gap.productId];
+    if (gap.code !== "fetch_failed") return [];
+    if (gap.failureKind === "network" && gap.httpStatus === 0) return [gap.productId];
+    return gap.failureKind === "http" && EDGE_RECOVERABLE_HTTP_STATUSES.has(Number(gap.httpStatus)) ? [gap.productId] : [];
+  }));
+  const seen = new Set<string>();
+  return targets.filter((target) => {
+    if (!eligibleIds.has(target.productId) || seen.has(target.productId)) return false;
+    seen.add(target.productId);
+    return true;
+  });
 }
 
 function boundedString(value: unknown, limit: number) {
@@ -118,7 +140,8 @@ function validateResult(parsed: EdgeResult, targets: ProductEnrichmentTarget[]) 
   for (const key of ["pagesRequested", "pagesFetched"]) {
     if (!Number.isInteger(coverage[key]) || Number(coverage[key]) < 0 || Number(coverage[key]) > targets.length) return null;
   }
-  if (!Number.isInteger(coverage.maxPages) || Number(coverage.maxPages) < targets.length || Number(coverage.maxPages) > 64) return null;
+  if (Number(coverage.pagesRequested) !== targets.length || Number(coverage.pagesFetched) !== parsed.products.length || Number(coverage.pagesFetched) > Number(coverage.pagesRequested)) return null;
+  if (!Number.isInteger(coverage.maxPages) || Number(coverage.maxPages) < Number(coverage.pagesRequested) || Number(coverage.maxPages) > 64) return null;
   const byId = new Map(targets.map((target) => [target.productId, target]));
   const products: ProductRecord[] = [];
   const seen = new Set<string>();
@@ -140,7 +163,7 @@ export async function recoverProductEnrichmentThroughEdge(
   options: { configuredUrl?: string; requestUrl: string; callbackToken: string; deployTarget?: string; fetchImpl?: typeof fetch; timeoutMs?: number; maxResponseBytes?: number },
 ) {
   const edgeUrl = validatedEdgeEnrichmentUrl(options.configuredUrl, options.requestUrl);
-  if (!targets.length || !edgeUrl || options.deployTarget !== "node" || options.callbackToken.length < 32 || /\s/.test(options.callbackToken)) return undefined;
+  if (!targets.length || targets.length > 64 || !edgeUrl || options.deployTarget !== "node" || options.callbackToken.length < 32 || /\s/.test(options.callbackToken)) return undefined;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? EDGE_TIMEOUT_MS);
   try {
@@ -148,7 +171,12 @@ export async function recoverProductEnrichmentThroughEdge(
       method: "POST",
       redirect: "manual",
       signal: controller.signal,
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        Authorization: `Bearer ${options.callbackToken}`,
+        [EDGE_PRODUCT_ENRICHMENT_MARKER]: "1",
+      },
       body: JSON.stringify({ targets }),
     });
     if (!response.ok || !/^application\/json\b/i.test(response.headers.get("content-type") || "")) return null;

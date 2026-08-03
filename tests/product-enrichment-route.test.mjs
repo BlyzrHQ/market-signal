@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { POST } from "../app/api/enrich-products/route.ts";
+import { EDGE_PRODUCT_ENRICHMENT_MARKER } from "../app/lib/edge-product-enrichment-recovery.ts";
 import { resetSharedRobotsPolicyResolverForTests } from "../app/lib/robots-policy.ts";
 
 test.beforeEach(() => resetSharedRobotsPolicyResolverForTests());
@@ -64,14 +65,73 @@ test("retries only a typed robots-unreachable target through the configured edge
     assert.equal(payload.coverage.edgeRecovery.recovered, 1);
     assert.equal(calls.filter((call) => call.url === process.env.MARKET_SIGNAL_EDGE_ENRICH_URL).length, 1);
     const edgeCall = calls.find((call) => call.url === process.env.MARKET_SIGNAL_EDGE_ENRICH_URL);
-    assert.equal(edgeCall.init.headers.Authorization, undefined);
-    assert.doesNotMatch(JSON.stringify(edgeCall), /a-valid-test-callback-token/);
+    assert.equal(edgeCall.init.headers.Authorization, "Bearer a-valid-test-callback-token-with-32-chars");
+    assert.equal(edgeCall.init.headers[EDGE_PRODUCT_ENRICHMENT_MARKER], "1");
+    assert.doesNotMatch(edgeCall.init.body, /a-valid-test-callback-token/);
   } finally {
     globalThis.fetch = originalFetch;
     for (const [key, value] of Object.entries(previous)) {
       const envName = key === "token" ? "MARKET_SIGNAL_CALLBACK_TOKEN" : key === "target" ? "MARKET_SIGNAL_DEPLOY_TARGET" : "MARKET_SIGNAL_EDGE_ENRICH_URL";
       if (value === undefined) delete process.env[envName]; else process.env[envName] = value;
     }
+  }
+});
+
+test("rejects an unauthenticated marked edge enrichment request before reading targets", async () => {
+  const previous = process.env.MARKET_SIGNAL_CALLBACK_TOKEN;
+  process.env.MARKET_SIGNAL_CALLBACK_TOKEN = "a-valid-test-callback-token-with-32-chars";
+  try {
+    const response = await POST(new Request("https://market-signal.abdulla617931.chatgpt.site/api/enrich-products", {
+      method: "POST",
+      headers: { "content-type": "application/json", [EDGE_PRODUCT_ENRICHMENT_MARKER]: "1" },
+      body: JSON.stringify({ targets: [] }),
+    }));
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), { ok: false, error: "Unauthorized." });
+  } finally {
+    if (previous === undefined) delete process.env.MARKET_SIGNAL_CALLBACK_TOKEN; else process.env.MARKET_SIGNAL_CALLBACK_TOKEN = previous;
+  }
+});
+
+test("accepts an authenticated marked edge request and performs its own robots check", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousToken = process.env.MARKET_SIGNAL_CALLBACK_TOKEN;
+  const previousTarget = process.env.MARKET_SIGNAL_DEPLOY_TARGET;
+  const calls = [];
+  process.env.MARKET_SIGNAL_CALLBACK_TOKEN = "a-valid-test-callback-token-with-32-chars";
+  process.env.MARKET_SIGNAL_DEPLOY_TARGET = "sites";
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response('<html><head><title>Date Maamoul 250g</title><script type="application/ld+json">{"@context":"https://schema.org","@type":"Product","name":"Date Maamoul 250g","image":"https://cdn.shop.test/date.jpg","offers":{"@type":"Offer","price":"10.80","priceCurrency":"USD"}}</script></head><body><h1>Date Maamoul 250g</h1></body></html>', { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const response = await POST(new Request("https://market-signal.abdulla617931.chatgpt.site/api/enrich-products", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        [EDGE_PRODUCT_ENRICHMENT_MARKER]: "1",
+        authorization: "Bearer a-valid-test-callback-token-with-32-chars",
+      },
+      body: JSON.stringify({ targets: [{
+        domain: "shop.test",
+        sourceUrl: "https://shop.test/product/date-maamoul-250g",
+        productId: "date-maamoul",
+        expectedName: "Date Maamoul 250g",
+        expectedType: "Product",
+        role: "primary",
+      }] }),
+    }));
+    const payload = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(payload.products[0].imageUrl, "https://cdn.shop.test/date.jpg");
+    assert.equal(payload.products[0].priceSignals[0].amount, 10.8);
+    assert.deepEqual(calls, ["https://shop.test/robots.txt", "https://shop.test/product/date-maamoul-250g"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousToken === undefined) delete process.env.MARKET_SIGNAL_CALLBACK_TOKEN; else process.env.MARKET_SIGNAL_CALLBACK_TOKEN = previousToken;
+    if (previousTarget === undefined) delete process.env.MARKET_SIGNAL_DEPLOY_TARGET; else process.env.MARKET_SIGNAL_DEPLOY_TARGET = previousTarget;
   }
 });
 

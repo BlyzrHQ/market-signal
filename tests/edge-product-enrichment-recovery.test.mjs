@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { mergeEdgeProductEnrichment, recoverProductEnrichmentThroughEdge, validatedEdgeEnrichmentUrl } from "../app/lib/edge-product-enrichment-recovery.ts";
+import { EDGE_PRODUCT_ENRICHMENT_MARKER, edgeRecoverableProductTargets, mergeEdgeProductEnrichment, recoverProductEnrichmentThroughEdge, validatedEdgeEnrichmentUrl } from "../app/lib/edge-product-enrichment-recovery.ts";
 
 const edgeUrl = "https://market-signal.abdulla617931.chatgpt.site/api/enrich-products";
 const token = "a-valid-test-callback-token-with-32-chars";
@@ -40,7 +40,7 @@ test("permits only the distinct exact Sites enrichment endpoint", () => {
   assert.equal(validatedEdgeEnrichmentUrl(`${edgeUrl}?domain=shop.test`, "https://signal.blyzr.com/api/enrich-products"), null);
 });
 
-test("recovers a bounded identity-matched product without transmitting secrets", async () => {
+test("recovers a bounded identity-matched product through an authenticated edge request", async () => {
   let request;
   const recovered = await recoverProductEnrichmentThroughEdge([target], {
     configuredUrl: edgeUrl,
@@ -53,12 +53,75 @@ test("recovers a bounded identity-matched product without transmitting secrets",
     },
   });
   assert.equal(request.input, edgeUrl);
-  assert.equal(request.init.headers.Authorization, undefined);
-  assert.equal(request.init.headers["x-market-signal-edge-fallback"], undefined);
-  assert.doesNotMatch(JSON.stringify(request), new RegExp(token));
+  assert.equal(request.init.headers.Authorization, `Bearer ${token}`);
+  assert.equal(request.init.headers[EDGE_PRODUCT_ENRICHMENT_MARKER], "1");
+  assert.doesNotMatch(request.init.body, new RegExp(token));
   assert.deepEqual(JSON.parse(request.init.body), { targets: [target] });
   assert.equal(recovered[0].priceSignals[0].amount, 10.8);
   assert.equal(recovered[0].imageUrl, product.imageUrl);
+});
+
+test("selects only unresolved robots or typed access-block failures for one edge batch", () => {
+  const targets = [
+    target,
+    { ...target, productId: "local-success", sourceUrl: "https://shop.test/product/local-success" },
+    { ...target, productId: "blocked-403", sourceUrl: "https://shop.test/product/blocked-403" },
+    { ...target, productId: "network", sourceUrl: "https://shop.test/product/network" },
+    { ...target, productId: "missing-404", sourceUrl: "https://shop.test/product/missing-404" },
+    { ...target, productId: "non-html", sourceUrl: "https://shop.test/product/non-html" },
+    { ...target, productId: "identity", sourceUrl: "https://shop.test/product/identity" },
+  ];
+  const localSuccess = { ...product, id: "local-success", sourceUrl: targets[1].sourceUrl };
+  const gap = (productId, code, httpStatus) => ({
+    url: targets.find((item) => item.productId === productId)?.sourceUrl || target.sourceUrl,
+    productId,
+    role: "primary",
+    reason: code,
+    code,
+    ...(httpStatus === undefined ? {} : { httpStatus }),
+    ...(code === "fetch_failed" ? { failureKind: httpStatus === 0 ? "network" : httpStatus === 200 ? "content" : "http" } : {}),
+  });
+  const selected = edgeRecoverableProductTargets({
+    products: [localSuccess],
+    coverage: {
+      pagesRequested: targets.length,
+      pagesFetched: 1,
+      maxPages: 64,
+      gaps: [
+        gap("local-success", "fetch_failed", 403),
+        gap("blocked-403", "fetch_failed", 403),
+        gap("network", "fetch_failed", 0),
+        gap("missing-404", "fetch_failed", 404),
+        gap("non-html", "fetch_failed", 200),
+        gap("identity", "identity_mismatch"),
+        gap("maamoul-date", "robots_unreachable"),
+      ],
+    },
+  }, [...targets, { ...targets[2] }]);
+  assert.deepEqual(selected.map((item) => item.productId), ["maamoul-date", "blocked-403", "network"]);
+});
+
+test("uses the explicit HTTP recovery allowlist and rejects ordinary failures", () => {
+  const statuses = [401, 403, 407, 429, 451, 404, 410, 500, 503, 200];
+  const targets = statuses.map((status) => ({ ...target, productId: `status-${status}`, sourceUrl: `https://shop.test/product/status-${status}` }));
+  const selected = edgeRecoverableProductTargets({
+    products: [],
+    coverage: {
+      pagesRequested: targets.length,
+      pagesFetched: 0,
+      maxPages: 64,
+      gaps: statuses.map((status) => ({
+        url: `https://shop.test/product/status-${status}`,
+        productId: `status-${status}`,
+        role: "primary",
+        reason: `HTTP ${status}`,
+        code: "fetch_failed",
+        httpStatus: status,
+        failureKind: status === 200 ? "content" : "http",
+      })),
+    },
+  }, targets);
+  assert.deepEqual(selected.map((item) => item.productId), ["status-401", "status-403", "status-407", "status-429", "status-451"]);
 });
 
 test("edge recovery permits a marked replacement only for an explicitly eligible target", async () => {
@@ -98,6 +161,55 @@ test("does zero egress whenever a recovery gate is absent", async (t) => {
       const result = await recoverProductEnrichmentThroughEdge(targets, { configuredUrl, requestUrl, callbackToken, deployTarget, fetchImpl: async () => { calls += 1; throw new Error("must not fetch"); } });
       assert.equal(result, undefined);
       assert.equal(calls, 0);
+    });
+  }
+});
+
+test("allows exactly 64 targets and rejects 65 targets with zero egress", async () => {
+  const targets64 = Array.from({ length: 64 }, (_, index) => ({
+    ...target,
+    productId: `product-${index}`,
+    sourceUrl: `https://shop.test/product/product-${index}`,
+  }));
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    return Response.json({ ok: true, products: [], coverage: { pagesRequested: 64, pagesFetched: 0, maxPages: 64, gaps: [] } });
+  };
+  assert.deepEqual(await recoverProductEnrichmentThroughEdge(targets64, {
+    configuredUrl: edgeUrl,
+    requestUrl: "https://signal.blyzr.com/api/enrich-products",
+    callbackToken: token,
+    deployTarget: "node",
+    fetchImpl,
+  }), []);
+  assert.equal(calls, 1);
+  assert.equal(await recoverProductEnrichmentThroughEdge([...targets64, { ...target, productId: "product-64", sourceUrl: "https://shop.test/product/product-64" }], {
+    configuredUrl: edgeUrl,
+    requestUrl: "https://signal.blyzr.com/api/enrich-products",
+    callbackToken: token,
+    deployTarget: "node",
+    fetchImpl,
+  }), undefined);
+  assert.equal(calls, 1);
+});
+
+test("rejects contradictory edge coverage metadata", async (t) => {
+  const cases = [
+    ["requested count differs", { pagesRequested: 0, pagesFetched: 1, maxPages: 1, gaps: [] }, [product]],
+    ["fetched count differs", { pagesRequested: 1, pagesFetched: 0, maxPages: 1, gaps: [] }, [product]],
+    ["max pages is below requested", { pagesRequested: 1, pagesFetched: 1, maxPages: 0, gaps: [] }, [product]],
+  ];
+  for (const [name, coverage, products] of cases) {
+    await t.test(name, async () => {
+      const result = await recoverProductEnrichmentThroughEdge([target], {
+        configuredUrl: edgeUrl,
+        requestUrl: "https://signal.blyzr.com/api/enrich-products",
+        callbackToken: token,
+        deployTarget: "node",
+        fetchImpl: async () => Response.json({ ok: true, products, coverage }),
+      });
+      assert.equal(result, null);
     });
   }
 });

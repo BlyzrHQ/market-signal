@@ -11,7 +11,8 @@ import { forgetRememberedCompetitors, loadRememberedCompetitors, mergeRemembered
 import { discoverDomainAlternatives, extractStaticClientRedirect, parkingProvider } from "../../lib/domain-recovery.ts";
 import { boundedExtractionDocument, compactCatalogSnapshots, settleWithConcurrency, unavailableAfterBoundedAttempts, type PublicEndpointFailure } from "../../lib/crawl-runtime.ts";
 import { fetchPublicText } from "../../lib/public-fetch.ts";
-import { claimablePagePricePatterns, enrichProductTargets, selectPrimaryProductPriceTargets } from "../../lib/storefront-product-enrichment.ts";
+import { claimablePagePricePatterns, selectPrimaryProductPriceTargets, type ProductEnrichmentCoverage } from "../../lib/storefront-product-enrichment.ts";
+import { enrichProductTargetsWithRecovery, type ProductEnrichmentRecoveryOptions } from "../../lib/product-enrichment-recovery.ts";
 import { buildExperienceBenchmark } from "../../lib/experience-benchmark.ts";
 import { hasObservedAddToCartControl } from "../../lib/experience-signals.ts";
 import { EDGE_CRAWL_MARKER, isEdgeRecoveryEligible, recoverCrawlThroughEdge } from "../../lib/edge-crawl-recovery.ts";
@@ -73,6 +74,7 @@ type CrawlPage = {
 
 type Gap = { url: string; reason: string; observedAt: string };
 type Candidate = { domain: string; reason: string; sourceUrl: string; claimIds: string[] };
+type EdgeProductRecovery = NonNullable<ProductEnrichmentCoverage["edgeRecovery"]>;
 
 type DomainCrawl = {
   domain: string;
@@ -88,8 +90,8 @@ type DomainCrawl = {
   discovery?: DiscoveryCandidate & CompetitorVerification;
   enrichmentPages?: CrawlPage[];
   priceEnrichment?: { pagesRequested: number; pagesFetched: number; maxPages: number };
-  primaryPriceEnrichment?: { pagesRequested: number; pagesFetched: number; maxPages: number };
-  catalogReconciliation?: { pagesRequested: number; pagesFetched: number; maxPages: number; eligibleProducts: number; truncated: boolean };
+  primaryPriceEnrichment?: { pagesRequested: number; pagesFetched: number; maxPages: number; edgeRecovery?: EdgeProductRecovery };
+  catalogReconciliation?: { pagesRequested: number; pagesFetched: number; maxPages: number; eligibleProducts: number; truncated: boolean; edgeRecovery?: EdgeProductRecovery };
   siteState?: { status: "parked"; provider: string; evidenceUrl: string; redirectDomain: string } | { status: "unavailable"; attemptedUrl: string; reason: string; observedAt: string };
   homepageFailure?: PublicEndpointFailure;
   homepageAccessDenied?: { status: 403; hosts: string[] };
@@ -490,14 +492,14 @@ function comparisonSourceUrls(results: DomainCrawl[], primaryDomain: string) {
   return required;
 }
 
-export async function reconcilePreliminaryPrimaryCatalog(results: DomainCrawl[], primaryDomain: string) {
+export async function reconcilePreliminaryPrimaryCatalog(results: DomainCrawl[], primaryDomain: string, recoveryOptions?: ProductEnrichmentRecoveryOptions) {
   const preliminary = buildProductComparison(primaryDomain, results.map((result) => ({ domain: result.domain, products: result.products })), comparisonSourceUrls(results, primaryDomain));
   const primary = results.find((result) => result.domain === primaryDomain);
   if (!primary) return results;
   const plan = planPreliminaryCatalogReconciliation(preliminary, primary.products, MAX_CATALOG_RECONCILIATION_PAGES);
   const targets = plan.targets;
   if (!targets.length) return results;
-  const enrichment = await enrichProductTargets(targets, MAX_CATALOG_RECONCILIATION_PAGES);
+  const enrichment = await enrichProductTargetsWithRecovery(targets, MAX_CATALOG_RECONCILIATION_PAGES, recoveryOptions);
   const observedAt = new Date().toISOString();
   return results.map((result) => result.domain === primaryDomain ? {
     ...result,
@@ -513,12 +515,13 @@ export async function reconcilePreliminaryPrimaryCatalog(results: DomainCrawl[],
       maxPages: MAX_CATALOG_RECONCILIATION_PAGES,
       eligibleProducts: plan.totalEligible,
       truncated: plan.truncated,
+      ...(enrichment.coverage.edgeRecovery ? { edgeRecovery: enrichment.coverage.edgeRecovery } : {}),
     },
   } : result);
 }
 
-async function enrichMatchedProductPages(inputResults: DomainCrawl[], primaryDomain: string) {
-  const results = await reconcilePreliminaryPrimaryCatalog(inputResults, primaryDomain);
+async function enrichMatchedProductPages(inputResults: DomainCrawl[], primaryDomain: string, recoveryOptions?: ProductEnrichmentRecoveryOptions) {
+  const results = await reconcilePreliminaryPrimaryCatalog(inputResults, primaryDomain, recoveryOptions);
   const comparison = buildProductComparison(primaryDomain, results.map((result) => ({ domain: result.domain, products: result.products })), comparisonSourceUrls(results, primaryDomain));
   const targets = selectProductEnrichmentTargets(comparison, MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES);
   if (!targets.length) return results;
@@ -592,10 +595,10 @@ async function crawlPrimaryDomain(domain: string) {
   };
 }
 
-async function enrichPrimaryProductPrices(result: DomainCrawl) {
+export async function enrichPrimaryProductPrices(result: DomainCrawl, recoveryOptions?: ProductEnrichmentRecoveryOptions) {
   const targets = selectPrimaryProductPriceTargets(result.products, result.domain, MAX_PRIMARY_PRODUCT_PRICE_PAGES);
   if (!targets.length) return { ...result, primaryPriceEnrichment: { pagesRequested: 0, pagesFetched: 0, maxPages: MAX_PRIMARY_PRODUCT_PRICE_PAGES } };
-  const enrichment = await enrichProductTargets(targets, MAX_PRIMARY_PRODUCT_PRICE_PAGES);
+  const enrichment = await enrichProductTargetsWithRecovery(targets, MAX_PRIMARY_PRODUCT_PRICE_PAGES, recoveryOptions);
   const observedAt = new Date().toISOString();
   return {
     ...result,
@@ -608,6 +611,7 @@ async function enrichPrimaryProductPrices(result: DomainCrawl) {
       pagesRequested: enrichment.coverage.pagesRequested,
       pagesFetched: enrichment.coverage.pagesFetched,
       maxPages: MAX_PRIMARY_PRODUCT_PRICE_PAGES,
+      ...(enrichment.coverage.edgeRecovery ? { edgeRecovery: enrichment.coverage.edgeRecovery } : {}),
     },
   };
 }
@@ -621,7 +625,31 @@ function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?
   if (benchmarkInputs.length) blocks.push({ type: "experience-benchmark", id: "experience-benchmark", ...buildExperienceBenchmark(benchmarkInputs.map((result) => ({ domain: result.domain, role: result.role, fetchedAt: result.fetchedAt, pages: result.pages, products: result.products, catalogProductsDiscovered: result.productCoverage.catalogProductsDiscovered }))) });
   for (const result of discovered) blocks.push({ type: "competitor", id: `competitor-${result.domain}`, domain: result.domain, companyName: result.discovery?.companyName, title: result.homepage?.title, description: result.homepage?.description, reason: result.discovery?.reason, marketCategory: result.discovery?.marketCategory, relationship: result.discovery?.relationship, sharedOfferings: result.discovery?.sharedOfferings, categoryAlignment: result.discovery?.categoryAlignment, regionCompatibility: result.discovery?.regionCompatibility, hasProductOverlap: result.discovery?.hasProductOverlap, matchedPrimaryProductName: result.discovery?.provenPrimaryProduct?.name, matchedProductName: result.discovery?.provenRivalProduct?.name, matchedProductUrl: result.discovery?.provenRivalProduct?.sourceUrl || result.discovery?.websiteUrl, searchQuery: result.discovery?.searchQuery, discoverySourceUrl: result.discovery?.sourceUrl, websiteSourceUrl: result.homepage?.sourceUrl, verificationScore: result.discovery?.verificationScore, confidence: result.discovery?.confidence, overlapTerms: result.discovery?.overlapTerms, productCount: result.products.length, prices: result.products.flatMap((product) => product.priceSignals.map((price) => price.raw)).slice(0, 6), provenance: result.discovery?.provenance || "discovered-this-run", rememberedVerifiedAt: result.discovery?.rememberedVerifiedAt || "" });
   for (const result of results) {
-    blocks.push({ type: "coverage", id: `coverage-${result.domain}`, domain: result.domain, role: result.role, pagesRequested: result.coverage.pagesRequested, pagesFetched: result.coverage.pagesFetched, maxPages: result.coverage.maxPages, robotsChecked: result.coverage.robotsChecked, attempts: result.coverage.attempts || 1, primaryPriceEnrichmentPagesRequested: result.primaryPriceEnrichment?.pagesRequested || 0, primaryPriceEnrichmentPagesFetched: result.primaryPriceEnrichment?.pagesFetched || 0, primaryPriceEnrichmentMaxPagesPerReport: MAX_PRIMARY_PRODUCT_PRICE_PAGES, catalogReconciliationPagesRequested: result.catalogReconciliation?.pagesRequested || 0, catalogReconciliationPagesFetched: result.catalogReconciliation?.pagesFetched || 0, catalogReconciliationEligibleProducts: result.catalogReconciliation?.eligibleProducts || 0, catalogReconciliationTruncated: result.catalogReconciliation?.truncated || false, catalogReconciliationMaxPagesPerReport: MAX_CATALOG_RECONCILIATION_PAGES, priceEnrichmentPagesRequested: result.priceEnrichment?.pagesRequested || 0, priceEnrichmentPagesFetched: result.priceEnrichment?.pagesFetched || 0, priceEnrichmentMaxPagesPerReport: MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES, gaps: result.gaps });
+    blocks.push({
+      type: "coverage",
+      id: `coverage-${result.domain}`,
+      domain: result.domain,
+      role: result.role,
+      pagesRequested: result.coverage.pagesRequested,
+      pagesFetched: result.coverage.pagesFetched,
+      maxPages: result.coverage.maxPages,
+      robotsChecked: result.coverage.robotsChecked,
+      attempts: result.coverage.attempts || 1,
+      primaryPriceEnrichmentPagesRequested: result.primaryPriceEnrichment?.pagesRequested || 0,
+      primaryPriceEnrichmentPagesFetched: result.primaryPriceEnrichment?.pagesFetched || 0,
+      primaryPriceEnrichmentEdgeRecovery: result.primaryPriceEnrichment?.edgeRecovery || null,
+      primaryPriceEnrichmentMaxPagesPerReport: MAX_PRIMARY_PRODUCT_PRICE_PAGES,
+      catalogReconciliationPagesRequested: result.catalogReconciliation?.pagesRequested || 0,
+      catalogReconciliationPagesFetched: result.catalogReconciliation?.pagesFetched || 0,
+      catalogReconciliationEligibleProducts: result.catalogReconciliation?.eligibleProducts || 0,
+      catalogReconciliationTruncated: result.catalogReconciliation?.truncated || false,
+      catalogReconciliationEdgeRecovery: result.catalogReconciliation?.edgeRecovery || null,
+      catalogReconciliationMaxPagesPerReport: MAX_CATALOG_RECONCILIATION_PAGES,
+      priceEnrichmentPagesRequested: result.priceEnrichment?.pagesRequested || 0,
+      priceEnrichmentPagesFetched: result.priceEnrichment?.pagesFetched || 0,
+      priceEnrichmentMaxPagesPerReport: MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES,
+      gaps: result.gaps,
+    });
     if (result.homepage) {
       blocks.push({ type: "company", id: `company-${result.domain}`, domain: result.domain, role: result.role, title: result.homepage.title, description: result.homepage.description, pages: result.pages.map((page) => ({ url: page.sourceUrl, path: page.path, title: page.title, claimIds: page.claims.map((claim) => claim.id) })) });
       blocks.push({ type: "product-catalog", id: `product-catalog-${result.domain}`, domain: result.domain, role: result.role, products: result.products, scannedPages: result.productCoverage.scannedPages, primaryPriceEnrichmentPagesFetched: result.primaryPriceEnrichment?.pagesFetched || 0, catalogReconciliationPagesFetched: result.catalogReconciliation?.pagesFetched || 0, priceEnrichmentPagesFetched: result.priceEnrichment?.pagesFetched || 0, catalogProductsDiscovered: result.productCoverage.catalogProductsDiscovered, thirdPartyReferenced: result.productCoverage.thirdPartyReferenced, coverageNote: `Discovered ${result.productCoverage.catalogProductsDiscovered} product URLs from public sitemaps, fetched ${result.productCoverage.scannedPages} representative public page${result.productCoverage.scannedPages === 1 ? "" : "s"}, fetched ${result.primaryPriceEnrichment?.pagesFetched || 0} primary catalog page${result.primaryPriceEnrichment?.pagesFetched === 1 ? "" : "s"} before discovery, reconciled ${result.catalogReconciliation?.pagesFetched || 0} preliminary-match catalog page${result.catalogReconciliation?.pagesFetched === 1 ? "" : "s"}, and fetched ${result.priceEnrichment?.pagesFetched || 0} final matched product page${result.priceEnrichment?.pagesFetched === 1 ? "" : "s"}.` });
@@ -722,7 +750,13 @@ export async function POST(request: Request) {
       const error = reason ? `The primary domain could not be crawled: ${reason}` : "The primary domain could not be crawled.";
       return Response.json({ ok: false, live: false, error, results: submittedResults, document: buildDocument(submittedResults, primaryDomain) }, { status: 400 });
     }
-    primary = await enrichPrimaryProductPrices(primary);
+    const productRecoveryOptions: ProductEnrichmentRecoveryOptions = {
+      configuredUrl: process.env.MARKET_SIGNAL_EDGE_ENRICH_URL,
+      requestUrl: new URL("/api/enrich-products", request.url).toString(),
+      callbackToken: await runtimeEnvironmentValue("MARKET_SIGNAL_CALLBACK_TOKEN"),
+      deployTarget: process.env.MARKET_SIGNAL_DEPLOY_TARGET,
+    };
+    primary = await enrichPrimaryProductPrices(primary, productRecoveryOptions);
     submittedResults = submittedResults.map((result) => result.domain === primaryDomain ? primary! : result);
     let discovery: DiscoveryResult;
     try {
@@ -751,7 +785,7 @@ export async function POST(request: Request) {
     if ((!forgotten.available && rememberedFailures.length) || (!remembered.available && confirmed.length)) {
       discovery = { ...discovery, gaps: [...discovery.gaps, "Verified competitor memory could not be updated; this report still uses only the current live crawl."] };
     }
-    const results = await enrichMatchedProductPages([...submittedResults, ...confirmed], primaryDomain);
+    const results = await enrichMatchedProductPages([...submittedResults, ...confirmed], primaryDomain, productRecoveryOptions);
     const enrichedPrimary = results.find((result) => result.domain === primaryDomain) || primary;
     const enrichedConfirmed = results.filter((result) => result.role === "discovered-competitor");
     const adTargets = [enrichedPrimary, ...enrichedConfirmed].filter((result, index, all) => all.findIndex((candidate) => candidate.domain === result.domain) === index);

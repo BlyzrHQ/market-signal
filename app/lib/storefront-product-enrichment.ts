@@ -16,6 +16,8 @@ export type EnrichmentGap = {
   role: ProductEnrichmentTarget["role"];
   reason: string;
   code?: "robots_unreachable" | "robots_disallowed" | "fetch_failed" | "identity_mismatch" | "adapter_limited";
+  httpStatus?: number;
+  failureKind?: "robots" | "network" | "http" | "content" | "identity" | "adapter" | "redirect";
 };
 
 export type ProductEnrichmentCoverage = {
@@ -30,6 +32,16 @@ function text(value: unknown, limit: number) {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
 }
 
+class ProductFetchFailure extends Error {
+  readonly failureKind: NonNullable<EnrichmentGap["failureKind"]>;
+
+  constructor(message: string, failureKind: NonNullable<EnrichmentGap["failureKind"]>) {
+    super(message);
+    this.name = "ProductFetchFailure";
+    this.failureKind = failureKind;
+  }
+}
+
 async function fetchSameDomain(url: string, domain: string, accept: string) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -38,24 +50,32 @@ async function fetchSameDomain(url: string, domain: string, accept: string) {
     for (let redirect = 0; redirect <= 3; redirect += 1) {
       const checked = new URL(current);
       normalizeDomain(checked.hostname);
-      if (canonicalDomain(checked.hostname) !== canonicalDomain(domain)) throw new Error("redirected off the product domain");
-      const response = await fetch(current, { redirect: "manual", signal: controller.signal, headers: { Accept: accept, "User-Agent": USER_AGENT } });
+      if (canonicalDomain(checked.hostname) !== canonicalDomain(domain)) throw new ProductFetchFailure("redirected off the product domain", "redirect");
+      let response: Response;
+      try {
+        response = await fetch(current, { redirect: "manual", signal: controller.signal, headers: { Accept: accept, "User-Agent": USER_AGENT } });
+      } catch (error) {
+        throw new ProductFetchFailure(error instanceof Error ? error.message : "network request failed", "network");
+      }
       if ([301, 302, 303, 307, 308].includes(response.status)) {
         const location = response.headers.get("location");
-        if (!location || redirect === 3) throw new Error("redirect limit reached");
+        if (!location || redirect === 3) throw new ProductFetchFailure("redirect limit reached", "redirect");
         current = new URL(location, current).toString();
         continue;
       }
-      const bytes = await response.arrayBuffer();
+      const contentType = response.headers.get("content-type") || "";
+      if (!response.ok) return { ok: false, status: response.status, contentType, url: current, text: "" };
+      let bytes: ArrayBuffer;
+      try { bytes = await response.arrayBuffer(); } catch { throw new ProductFetchFailure("response body could not be read", "content"); }
       return {
-        ok: response.ok,
+        ok: true,
         status: response.status,
-        contentType: response.headers.get("content-type") || "",
+        contentType,
         url: current,
         text: new TextDecoder().decode(bytes.slice(0, MAX_DOCUMENT_BYTES)),
       };
     }
-    throw new Error("redirect limit reached");
+    throw new ProductFetchFailure("redirect limit reached", "redirect");
   } finally {
     clearTimeout(timeout);
   }
@@ -351,16 +371,17 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
   }));
 
   const enrichOne = async (item: ProductEnrichmentTarget) => {
-    const gap = (reason: string, code?: EnrichmentGap["code"]): EnrichmentGap => ({ url: item.sourceUrl, productId: item.productId, role: item.role, reason, ...(code ? { code } : {}) });
+    const gap = (reason: string, code?: EnrichmentGap["code"], httpStatus?: number, failureKind?: EnrichmentGap["failureKind"]): EnrichmentGap => ({ url: item.sourceUrl, productId: item.productId, role: item.role, reason, ...(code ? { code } : {}), ...(httpStatus !== undefined ? { httpStatus } : {}), ...(failureKind ? { failureKind } : {}) });
     try {
       const robotsResult = robotsByDomain.get(item.domain);
       const availability = robotsResult?.availability || "unreachable";
-      if (availability === "unreachable") return { product: null, gap: gap("robots.txt was unreachable, so selected-product enrichment was skipped.", "robots_unreachable") };
+      if (availability === "unreachable") return { product: null, gap: gap("robots.txt was unreachable, so selected-product enrichment was skipped.", "robots_unreachable", undefined, "robots") };
       const robots = robotsResult?.policy;
-      if (!robots) return { product: null, gap: gap("robots.txt was unreachable, so selected-product enrichment was skipped.", "robots_unreachable") };
-      if (!robots.allows(new URL(item.sourceUrl).pathname)) return { product: null, gap: gap("robots.txt disallows this selected product page.", "robots_disallowed") };
+      if (!robots) return { product: null, gap: gap("robots.txt was unreachable, so selected-product enrichment was skipped.", "robots_unreachable", undefined, "robots") };
+      if (!robots.allows(new URL(item.sourceUrl).pathname)) return { product: null, gap: gap("robots.txt disallows this selected product page.", "robots_disallowed", undefined, "robots") };
       const fetched = await fetchSameDomain(item.sourceUrl, item.domain, "text/html,application/xhtml+xml");
-      if (!fetched.ok || !/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed") };
+      if (!fetched.ok) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed", fetched.status, "http") };
+      if (!/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed", fetched.status, "content") };
       const extracted = pageExtraction(fetched.text, fetched.url, item.domain);
       const expected = expectedProduct(item);
       addScopedProductPageEvidence(fetched.text, fetched.url, expected, extracted.result.products, extracted.pageTitle);
@@ -401,13 +422,14 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       const identity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle, { allowScopedPageSignal: true });
       if (!identity.accepted) {
         const replacement = observedCatalogReplacement(item, replacementCandidates, extracted.pageTitle, fetched.url);
-        return replacement ? { product: replacement, gap: null } : { product: null, gap: gap(identity.reason, "identity_mismatch") };
+        return replacement ? { product: replacement, gap: null } : { product: null, gap: gap(identity.reason, "identity_mismatch", undefined, "identity") };
       }
       const accepted = identity.products[0];
       const unresolvedAdapterGap = adapterGap && accepted && !hasConfirmedPrice([accepted]) ? adapterGap : "";
-      return { product: accepted ? { ...accepted, id: item.productId } : null, gap: unresolvedAdapterGap ? gap(unresolvedAdapterGap, "adapter_limited") : null };
+      return { product: accepted ? { ...accepted, id: item.productId } : null, gap: unresolvedAdapterGap ? gap(unresolvedAdapterGap, "adapter_limited", undefined, "adapter") : null };
     } catch (error) {
-      return { product: null, gap: gap(error instanceof Error ? `Selected product page could not be fetched: ${error.message}` : "Selected product page could not be fetched.", "fetch_failed") };
+      const failureKind = error instanceof ProductFetchFailure ? error.failureKind : "content";
+      return { product: null, gap: gap(error instanceof Error ? `Selected product page could not be fetched: ${error.message}` : "Selected product page could not be fetched.", "fetch_failed", failureKind === "network" ? 0 : undefined, failureKind) };
     }
   };
 
