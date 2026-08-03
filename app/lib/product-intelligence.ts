@@ -5,6 +5,7 @@ import {
   extractProductIdentifiers,
   parseCanonicalQuantity,
   quantitiesConflict,
+  quantitiesEqual,
   sharedValidGtin,
   type CanonicalProductQuantity,
   type ProductIdentifiers,
@@ -157,7 +158,18 @@ export type ProductEnrichmentTarget = {
   expectedType: ProductRecord["jsonLdType"];
   pairScore: number;
   role: "primary" | "rival";
+  allowCatalogReplacement?: true;
 };
+
+export const CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX = "Previous sitemap identity:";
+
+export function catalogReplacementAuditAttribute(previousName: string, sourceUrl: string) {
+  return `${CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX} ${previousName.replace(/\s+/g, " ").trim().slice(0, 180)} (${sourceUrl.slice(0, 260)})`;
+}
+
+export function isCatalogReplacementProduct(product: ProductRecord) {
+  return product.attributes.some((attribute) => attribute.startsWith(CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX));
+}
 
 type JsonRecord = Record<string, unknown>;
 
@@ -744,7 +756,10 @@ export function selectPreferredProducts(items: ProductRecord[]) {
       ...preferred,
       description: preferred.description || supplemental.description,
       priceSignals: preferred.priceSignals.length ? preferred.priceSignals : supplemental.priceSignals,
-      attributes: preferred.attributes.length ? preferred.attributes : supplemental.attributes,
+      attributes: [...new Set([
+        ...(preferred.attributes.length ? preferred.attributes : supplemental.attributes),
+        ...supplemental.attributes.filter((attribute) => attribute.startsWith(CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX)),
+      ])],
       identifiers: mergeIdentifiers(preferred.identifiers, supplemental.identifiers),
       quantity: preferred.quantity || supplemental.quantity,
       imageUrl: secureImage || preferred.imageUrl || supplemental.imageUrl,
@@ -1242,6 +1257,37 @@ export function selectProductEnrichmentTargets(comparison: ProductComparison, ma
   return selected;
 }
 
+export function planPreliminaryCatalogReconciliation(comparison: ProductComparison, primaryProducts: ProductRecord[], maxPages = 64) {
+  const boundedMax = Math.max(0, Math.min(64, Math.floor(maxPages)));
+  const matchedScoreById = new Map<string, number>();
+  for (const row of comparison.rows) {
+    const realMatches = row.matches.filter((match) => Boolean(match.product));
+    if (realMatches.length) matchedScoreById.set(row.primary.id, Math.max(...realMatches.map((match) => match.score)));
+  }
+  const seenUrls = new Set<string>();
+  const eligible = primaryProducts.flatMap((product) => {
+    if (product.jsonLdType !== "Product" || hasComparablePublicPrice(product)) return [];
+    const sourceUrl = safeProductSource(product);
+    if (!sourceUrl || seenUrls.has(sourceUrl)) return [];
+    seenUrls.add(sourceUrl);
+    return [{ product, sourceUrl, pairScore: matchedScoreById.get(product.id) || 0 }];
+  }).sort((left, right) => Number(right.pairScore > 0) - Number(left.pairScore > 0)
+    || right.pairScore - left.pairScore
+    || left.product.name.localeCompare(right.product.name)
+    || left.sourceUrl.localeCompare(right.sourceUrl));
+  const targets = eligible.slice(0, boundedMax).map(({ product, sourceUrl, pairScore }) => ({
+    domain: product.domain,
+    sourceUrl,
+    productId: product.id,
+    expectedName: product.name,
+    expectedType: "Product" as const,
+    pairScore,
+    role: "primary" as const,
+    allowCatalogReplacement: true as const,
+  }));
+  return { targets, totalEligible: eligible.length, truncated: eligible.length > targets.length };
+}
+
 export function selectFinalProductEnrichmentTargets(comparison: ProductComparison, maxPages = 24): ProductEnrichmentTarget[] {
   const boundedMax = Math.max(0, Math.min(64, Math.floor(maxPages)));
   if (!boundedMax) return [];
@@ -1267,6 +1313,68 @@ export function selectFinalProductEnrichmentTargets(comparison: ProductCompariso
   return selected;
 }
 
+function sameLiveCatalogIdentity(left: ProductRecord, right: ProductRecord) {
+  return Boolean(sharedValidGtin(left.identifiers, right.identifiers))
+    || (left.normalizedName === right.normalizedName
+      && (quantitiesEqual(left.quantity, right.quantity) || (!left.quantity && !right.quantity)));
+}
+
+export function applyPreMatchCatalogEnrichment(catalog: ProductRecord[], enriched: ProductRecord[]) {
+  const freshById = new Map(enriched.map((product) => [product.id, product]));
+  const catalogIds = new Set(catalog.map((product) => product.id));
+  const auditsById = new Map<string, string[]>();
+  const merged: ProductRecord[] = [];
+  const mergeIdentifiers = (fresh: ProductIdentifiers | undefined, base: ProductIdentifiers | undefined) => {
+    if (!fresh && !base) return undefined;
+    return {
+      gtins: [...new Set([...(fresh?.gtins || []), ...(base?.gtins || [])])],
+      sku: fresh?.sku || base?.sku,
+      mpn: fresh?.mpn || base?.mpn,
+      brand: fresh?.brand || base?.brand,
+    } satisfies ProductIdentifiers;
+  };
+
+  for (const base of catalog) {
+    const fresh = freshById.get(base.id);
+    if (!fresh) {
+      merged.push(base);
+      continue;
+    }
+    if (isCatalogReplacementProduct(fresh)) {
+      const existing = catalog.find((candidate) => candidate.id !== base.id && sameLiveCatalogIdentity(candidate, fresh));
+      if (existing) {
+        const audit = fresh.attributes.filter((attribute) => attribute.startsWith(CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX));
+        auditsById.set(existing.id, [...(auditsById.get(existing.id) || []), ...audit]);
+        continue;
+      }
+      merged.push({ ...fresh, id: base.id });
+      continue;
+    }
+    const secureImage = [fresh.imageUrl, base.imageUrl].find((value) => /^https:\/\//i.test(value));
+    merged.push({
+      ...base,
+      ...fresh,
+      id: base.id,
+      description: fresh.description || base.description,
+      category: fresh.category || base.category,
+      priceSignals: fresh.priceSignals.length ? fresh.priceSignals : base.priceSignals,
+      attributes: fresh.attributes.length ? fresh.attributes : base.attributes,
+      identifiers: mergeIdentifiers(fresh.identifiers, base.identifiers),
+      quantity: fresh.quantity || base.quantity,
+      imageUrl: secureImage || fresh.imageUrl || base.imageUrl,
+      claimIds: [...new Set([...base.claimIds, ...fresh.claimIds])],
+    });
+  }
+
+  for (const fresh of enriched) {
+    if (!catalogIds.has(fresh.id)) merged.push(fresh);
+  }
+  return selectPreferredProducts(merged.map((product) => {
+    const audits = auditsById.get(product.id) || [];
+    return audits.length ? { ...product, attributes: [...new Set([...product.attributes, ...audits])] } : product;
+  }));
+}
+
 export function applyFinalProductEnrichment(
   comparison: ProductComparison,
   products: ProductRecord[],
@@ -1284,7 +1392,7 @@ export function applyFinalProductEnrichment(
   const merge = (base: ProductRecord) => {
     const fresh = products.find((product) => product.id === base.id
       || (canonicalHost(product.domain) === canonicalHost(base.domain) && canonicalProductPageUrl(product.sourceUrl) === canonicalProductPageUrl(base.sourceUrl)));
-    if (!fresh) return base;
+    if (!fresh || isCatalogReplacementProduct(fresh)) return base;
     const secureImage = [fresh.imageUrl, base.imageUrl].find((value) => /^https:\/\//i.test(value));
     return {
       ...base,

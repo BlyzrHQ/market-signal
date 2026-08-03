@@ -1,5 +1,5 @@
 import { canonicalDomain, normalizeDomain } from "../../lib/domain.ts";
-import { buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity, type ProductComparison, type ProductRecord } from "../../lib/product-intelligence.ts";
+import { applyPreMatchCatalogEnrichment, buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, planPreliminaryCatalogReconciliation, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity, type ProductComparison, type ProductRecord } from "../../lib/product-intelligence.ts";
 import { sharedRobotsPolicyResolver } from "../../lib/robots-policy.ts";
 import { discoverCompetitors, type DiscoveryCandidate, type DiscoveryResult } from "../../lib/competitor-discovery.ts";
 import { attributableFacebookUrl, type AdIntelligenceResult } from "../../lib/ad-intelligence.ts";
@@ -89,6 +89,7 @@ type DomainCrawl = {
   enrichmentPages?: CrawlPage[];
   priceEnrichment?: { pagesRequested: number; pagesFetched: number; maxPages: number };
   primaryPriceEnrichment?: { pagesRequested: number; pagesFetched: number; maxPages: number };
+  catalogReconciliation?: { pagesRequested: number; pagesFetched: number; maxPages: number; eligibleProducts: number; truncated: boolean };
   siteState?: { status: "parked"; provider: string; evidenceUrl: string; redirectDomain: string } | { status: "unavailable"; attemptedUrl: string; reason: string; observedAt: string };
   homepageFailure?: PublicEndpointFailure;
   homepageAccessDenied?: { status: 403; hosts: string[] };
@@ -103,6 +104,7 @@ const MAX_SITEMAP_DOCUMENTS = 4;
 const MAX_DISCOVERED_SITEMAP_DOCUMENTS = 2;
 const MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES = 16;
 const MAX_PRIMARY_PRODUCT_PRICE_PAGES = 16;
+const MAX_CATALOG_RECONCILIATION_PAGES = 64;
 const MAX_DOCUMENT_BYTES = 1_500_000;
 const MAX_HTML_EXTRACTION_BYTES = 400_000;
 const COMPETITOR_CRAWL_CONCURRENCY = 3;
@@ -488,7 +490,35 @@ function comparisonSourceUrls(results: DomainCrawl[], primaryDomain: string) {
   return required;
 }
 
-async function enrichMatchedProductPages(results: DomainCrawl[], primaryDomain: string) {
+export async function reconcilePreliminaryPrimaryCatalog(results: DomainCrawl[], primaryDomain: string) {
+  const preliminary = buildProductComparison(primaryDomain, results.map((result) => ({ domain: result.domain, products: result.products })), comparisonSourceUrls(results, primaryDomain));
+  const primary = results.find((result) => result.domain === primaryDomain);
+  if (!primary) return results;
+  const plan = planPreliminaryCatalogReconciliation(preliminary, primary.products, MAX_CATALOG_RECONCILIATION_PAGES);
+  const targets = plan.targets;
+  if (!targets.length) return results;
+  const enrichment = await enrichProductTargets(targets, MAX_CATALOG_RECONCILIATION_PAGES);
+  const observedAt = new Date().toISOString();
+  return results.map((result) => result.domain === primaryDomain ? {
+    ...result,
+    products: applyPreMatchCatalogEnrichment(result.products, enrichment.products),
+    gaps: [
+      ...result.gaps,
+      ...enrichment.coverage.gaps.map((gap) => ({ url: gap.url, reason: `Preliminary catalog reconciliation: ${gap.reason}`, observedAt })),
+      ...(plan.truncated ? [{ url: result.homepage?.sourceUrl || `https://${primaryDomain}/`, reason: `Preliminary catalog reconciliation selected ${targets.length} of ${plan.totalEligible} price-less primary products; the remaining catalog was not refreshed in this report.`, observedAt }] : []),
+    ],
+    catalogReconciliation: {
+      pagesRequested: enrichment.coverage.pagesRequested,
+      pagesFetched: enrichment.coverage.pagesFetched,
+      maxPages: MAX_CATALOG_RECONCILIATION_PAGES,
+      eligibleProducts: plan.totalEligible,
+      truncated: plan.truncated,
+    },
+  } : result);
+}
+
+async function enrichMatchedProductPages(inputResults: DomainCrawl[], primaryDomain: string) {
+  const results = await reconcilePreliminaryPrimaryCatalog(inputResults, primaryDomain);
   const comparison = buildProductComparison(primaryDomain, results.map((result) => ({ domain: result.domain, products: result.products })), comparisonSourceUrls(results, primaryDomain));
   const targets = selectProductEnrichmentTargets(comparison, MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES);
   if (!targets.length) return results;
@@ -569,7 +599,7 @@ async function enrichPrimaryProductPrices(result: DomainCrawl) {
   const observedAt = new Date().toISOString();
   return {
     ...result,
-    products: selectPreferredProducts([...result.products, ...enrichment.products]),
+    products: applyPreMatchCatalogEnrichment(result.products, enrichment.products),
     gaps: [
       ...result.gaps,
       ...enrichment.coverage.gaps.map((gap) => ({ url: gap.url, reason: `Primary product price enrichment: ${gap.reason}`, observedAt })),
@@ -591,10 +621,10 @@ function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?
   if (benchmarkInputs.length) blocks.push({ type: "experience-benchmark", id: "experience-benchmark", ...buildExperienceBenchmark(benchmarkInputs.map((result) => ({ domain: result.domain, role: result.role, fetchedAt: result.fetchedAt, pages: result.pages, products: result.products, catalogProductsDiscovered: result.productCoverage.catalogProductsDiscovered }))) });
   for (const result of discovered) blocks.push({ type: "competitor", id: `competitor-${result.domain}`, domain: result.domain, companyName: result.discovery?.companyName, title: result.homepage?.title, description: result.homepage?.description, reason: result.discovery?.reason, marketCategory: result.discovery?.marketCategory, relationship: result.discovery?.relationship, sharedOfferings: result.discovery?.sharedOfferings, categoryAlignment: result.discovery?.categoryAlignment, regionCompatibility: result.discovery?.regionCompatibility, hasProductOverlap: result.discovery?.hasProductOverlap, matchedPrimaryProductName: result.discovery?.provenPrimaryProduct?.name, matchedProductName: result.discovery?.provenRivalProduct?.name, matchedProductUrl: result.discovery?.provenRivalProduct?.sourceUrl || result.discovery?.websiteUrl, searchQuery: result.discovery?.searchQuery, discoverySourceUrl: result.discovery?.sourceUrl, websiteSourceUrl: result.homepage?.sourceUrl, verificationScore: result.discovery?.verificationScore, confidence: result.discovery?.confidence, overlapTerms: result.discovery?.overlapTerms, productCount: result.products.length, prices: result.products.flatMap((product) => product.priceSignals.map((price) => price.raw)).slice(0, 6), provenance: result.discovery?.provenance || "discovered-this-run", rememberedVerifiedAt: result.discovery?.rememberedVerifiedAt || "" });
   for (const result of results) {
-    blocks.push({ type: "coverage", id: `coverage-${result.domain}`, domain: result.domain, role: result.role, pagesRequested: result.coverage.pagesRequested, pagesFetched: result.coverage.pagesFetched, maxPages: result.coverage.maxPages, robotsChecked: result.coverage.robotsChecked, attempts: result.coverage.attempts || 1, primaryPriceEnrichmentPagesRequested: result.primaryPriceEnrichment?.pagesRequested || 0, primaryPriceEnrichmentPagesFetched: result.primaryPriceEnrichment?.pagesFetched || 0, primaryPriceEnrichmentMaxPagesPerReport: MAX_PRIMARY_PRODUCT_PRICE_PAGES, priceEnrichmentPagesRequested: result.priceEnrichment?.pagesRequested || 0, priceEnrichmentPagesFetched: result.priceEnrichment?.pagesFetched || 0, priceEnrichmentMaxPagesPerReport: MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES, gaps: result.gaps });
+    blocks.push({ type: "coverage", id: `coverage-${result.domain}`, domain: result.domain, role: result.role, pagesRequested: result.coverage.pagesRequested, pagesFetched: result.coverage.pagesFetched, maxPages: result.coverage.maxPages, robotsChecked: result.coverage.robotsChecked, attempts: result.coverage.attempts || 1, primaryPriceEnrichmentPagesRequested: result.primaryPriceEnrichment?.pagesRequested || 0, primaryPriceEnrichmentPagesFetched: result.primaryPriceEnrichment?.pagesFetched || 0, primaryPriceEnrichmentMaxPagesPerReport: MAX_PRIMARY_PRODUCT_PRICE_PAGES, catalogReconciliationPagesRequested: result.catalogReconciliation?.pagesRequested || 0, catalogReconciliationPagesFetched: result.catalogReconciliation?.pagesFetched || 0, catalogReconciliationEligibleProducts: result.catalogReconciliation?.eligibleProducts || 0, catalogReconciliationTruncated: result.catalogReconciliation?.truncated || false, catalogReconciliationMaxPagesPerReport: MAX_CATALOG_RECONCILIATION_PAGES, priceEnrichmentPagesRequested: result.priceEnrichment?.pagesRequested || 0, priceEnrichmentPagesFetched: result.priceEnrichment?.pagesFetched || 0, priceEnrichmentMaxPagesPerReport: MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES, gaps: result.gaps });
     if (result.homepage) {
       blocks.push({ type: "company", id: `company-${result.domain}`, domain: result.domain, role: result.role, title: result.homepage.title, description: result.homepage.description, pages: result.pages.map((page) => ({ url: page.sourceUrl, path: page.path, title: page.title, claimIds: page.claims.map((claim) => claim.id) })) });
-      blocks.push({ type: "product-catalog", id: `product-catalog-${result.domain}`, domain: result.domain, role: result.role, products: result.products, scannedPages: result.productCoverage.scannedPages, primaryPriceEnrichmentPagesFetched: result.primaryPriceEnrichment?.pagesFetched || 0, priceEnrichmentPagesFetched: result.priceEnrichment?.pagesFetched || 0, catalogProductsDiscovered: result.productCoverage.catalogProductsDiscovered, thirdPartyReferenced: result.productCoverage.thirdPartyReferenced, coverageNote: `Discovered ${result.productCoverage.catalogProductsDiscovered} product URLs from public sitemaps, fetched ${result.productCoverage.scannedPages} representative public page${result.productCoverage.scannedPages === 1 ? "" : "s"}, fetched ${result.primaryPriceEnrichment?.pagesFetched || 0} primary catalog page${result.primaryPriceEnrichment?.pagesFetched === 1 ? "" : "s"} before matching, and fetched ${result.priceEnrichment?.pagesFetched || 0} matched product page${result.priceEnrichment?.pagesFetched === 1 ? "" : "s"} after competitor pairing.` });
+      blocks.push({ type: "product-catalog", id: `product-catalog-${result.domain}`, domain: result.domain, role: result.role, products: result.products, scannedPages: result.productCoverage.scannedPages, primaryPriceEnrichmentPagesFetched: result.primaryPriceEnrichment?.pagesFetched || 0, catalogReconciliationPagesFetched: result.catalogReconciliation?.pagesFetched || 0, priceEnrichmentPagesFetched: result.priceEnrichment?.pagesFetched || 0, catalogProductsDiscovered: result.productCoverage.catalogProductsDiscovered, thirdPartyReferenced: result.productCoverage.thirdPartyReferenced, coverageNote: `Discovered ${result.productCoverage.catalogProductsDiscovered} product URLs from public sitemaps, fetched ${result.productCoverage.scannedPages} representative public page${result.productCoverage.scannedPages === 1 ? "" : "s"}, fetched ${result.primaryPriceEnrichment?.pagesFetched || 0} primary catalog page${result.primaryPriceEnrichment?.pagesFetched === 1 ? "" : "s"} before discovery, reconciled ${result.catalogReconciliation?.pagesFetched || 0} preliminary-match catalog page${result.catalogReconciliation?.pagesFetched === 1 ? "" : "s"}, and fetched ${result.priceEnrichment?.pagesFetched || 0} final matched product page${result.priceEnrichment?.pagesFetched === 1 ? "" : "s"}.` });
       for (const candidate of result.candidates) blocks.push({ type: "candidate", id: `candidate-${result.domain}-${candidate.domain}`, domain: candidate.domain, reason: candidate.reason, sourceUrl: candidate.sourceUrl, claimIds: candidate.claimIds });
       for (const claim of [...result.pages, ...(result.enrichmentPages || [])].flatMap((page) => page.claims)) blocks.push({ type: "evidence", id: `evidence-${claim.id}`, claimId: claim.id, claimType: claim.claimType, text: claim.text, sourceUrl: claim.sourceUrl, observedAt: claim.observedAt, confidence: claim.confidence });
     }

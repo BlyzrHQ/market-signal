@@ -1,6 +1,6 @@
 import { canonicalDomain, normalizeDomain } from "./domain.ts";
-import { bilingualNormalize, parseCanonicalQuantity } from "./product-normalization.ts";
-import { extractProductsFromHtml, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "./product-intelligence.ts";
+import { bilingualNormalize, bilingualTokens, parseCanonicalQuantity, quantitiesConflict } from "./product-normalization.ts";
+import { CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX, catalogReplacementAuditAttribute, extractProductsFromHtml, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "./product-intelligence.ts";
 import { confirmedProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "./product-page-adapters.ts";
 import { sharedRobotsPolicyResolver } from "./robots-policy.ts";
 
@@ -225,6 +225,63 @@ function expectedProduct(item: ProductEnrichmentTarget): ProductRecord {
   };
 }
 
+function canonicalSelectedPage(value: string) {
+  try {
+    const url = new URL(value);
+    return `${canonicalDomain(url.hostname)}${url.pathname.replace(/\/+$/, "") || "/"}`;
+  } catch { return ""; }
+}
+
+function liveTitleIdentity(pageTitle: string) {
+  return pageTitle.split(/\s+[|–—]\s+/u)[0]?.trim() || pageTitle.trim();
+}
+
+function titleAlignedProduct(product: ProductRecord, pageTitle: string) {
+  const titleIdentity = liveTitleIdentity(pageTitle);
+  const normalizedTitle = bilingualNormalize(titleIdentity.replace(/(?:\.{3}|…)+$/u, ""));
+  const truncatedPrefix = /(?:\.{3}|…)$/u.test(titleIdentity) && normalizedTitle.length >= 12 && product.normalizedName.startsWith(normalizedTitle);
+  const titleTokens = new Set(bilingualTokens(titleIdentity).filter((token) => token.length >= 2));
+  const productTokens = bilingualTokens(product.name).filter((token) => token.length >= 2);
+  const coverage = productTokens.filter((token) => titleTokens.has(token)).length / Math.max(1, productTokens.length);
+  const titleQuantity = parseCanonicalQuantity(titleIdentity) || undefined;
+  return productTokens.length >= 2 && (coverage >= 0.8 || truncatedPrefix) && !quantitiesConflict(titleQuantity, product.quantity);
+}
+
+function observedCatalogReplacement(item: ProductEnrichmentTarget, products: ProductRecord[], pageTitle: string, fetchedUrl: string) {
+  if (item.allowCatalogReplacement !== true || canonicalSelectedPage(item.sourceUrl) !== canonicalSelectedPage(fetchedUrl)) return null;
+  const candidates = products.filter((product) => product.jsonLdType === "Product"
+    && (product.extraction === "json-ld" || product.extraction === "storefront-api")
+    && canonicalSelectedPage(product.sourceUrl) === canonicalSelectedPage(item.sourceUrl)
+    && titleAlignedProduct(product, pageTitle));
+  const groups: ProductRecord[][] = [];
+  for (const candidate of candidates) {
+    const group = groups.find((entries) => validateProductPageIdentity([entries[0]], [candidate], pageTitle).accepted
+      && validateProductPageIdentity([candidate], [entries[0]], pageTitle).accepted);
+    if (group) group.push(candidate);
+    else groups.push([candidate]);
+  }
+  if (groups.length !== 1) return null;
+  const product = [...groups[0]].sort((left, right) =>
+    Number(right.extraction === "storefront-api") - Number(left.extraction === "storefront-api")
+      || Number(right.priceSignals.length > 0) - Number(left.priceSignals.length > 0)
+      || Number(/^https:\/\//i.test(right.imageUrl)) - Number(/^https:\/\//i.test(left.imageUrl))
+      || left.name.localeCompare(right.name))[0];
+  if (!product) return null;
+  const observedAt = product.observedAt || new Date().toISOString();
+  const audit = catalogReplacementAuditAttribute(item.expectedName, item.sourceUrl);
+  return {
+    ...product,
+    id: item.productId,
+    domain: canonicalDomain(item.domain),
+    normalizedName: bilingualNormalize(product.name),
+    attributes: [...new Set([...product.attributes.filter((attribute) => !attribute.startsWith(CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX)), audit])],
+    sourceUrl: item.sourceUrl,
+    observedAt,
+    claimIds: [...new Set([...product.claimIds, `${item.productId}-catalog-replacement-${Date.parse(observedAt) || 0}`])],
+    quantity: parseCanonicalQuantity(product.name) || product.quantity || undefined,
+  } satisfies ProductRecord;
+}
+
 function hasConfirmedPrice(products: ProductRecord[]) {
   return products.some((product) => product.priceSignals.some((signal) => typeof signal.amount === "number" && Boolean(signal.currency)));
 }
@@ -268,6 +325,7 @@ export function selectPrimaryProductPriceTargets(products: ProductRecord[], doma
       expectedType: "Product" as const,
       pairScore: 0,
       role: "primary" as const,
+      allowCatalogReplacement: true as const,
     }));
 }
 
@@ -307,6 +365,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       const expected = expectedProduct(item);
       addScopedProductPageEvidence(fetched.text, fetched.url, expected, extracted.result.products, extracted.pageTitle);
       const initialIdentity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle);
+      const replacementCandidates = [...extracted.result.products];
       let adapterGap = "";
       const adapter = storefrontAdapterRequest(item.sourceUrl);
       if (adapter && (!initialIdentity.accepted || !hasConfirmedPrice(extracted.result.products) || !hasSecureImage(extracted.result.products))) {
@@ -321,10 +380,17 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
               adapterGap = `${adapterLabel} endpoint returned HTTP ${adapterResponse.status} or non-JSON content.`;
             } else {
               const payload = JSON.parse(adapterResponse.text);
+              const observedAt = new Date().toISOString();
               const adapterResult = adapter.kind === "shopify"
-                ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt: new Date().toISOString(), currency: confirmedProductCurrency(fetched.text), expectedQuantity: expected.quantity })
+                ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: confirmedProductCurrency(fetched.text), expectedQuantity: expected.quantity })
                 : parseWooCommerceProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt: new Date().toISOString() });
               if (adapterResult.product) extracted.result.products.push(adapterResult.product);
+              if (item.allowCatalogReplacement === true && !initialIdentity.accepted) {
+                const replacementAdapterResult = adapter.kind === "shopify"
+                  ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: confirmedProductCurrency(fetched.text) })
+                  : adapterResult;
+                if (replacementAdapterResult.product) replacementCandidates.push(replacementAdapterResult.product);
+              }
               adapterGap = adapterResult.gap;
             }
           }
@@ -333,7 +399,10 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
         }
       }
       const identity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle, { allowScopedPageSignal: true });
-      if (!identity.accepted) return { product: null, gap: gap(identity.reason, "identity_mismatch") };
+      if (!identity.accepted) {
+        const replacement = observedCatalogReplacement(item, replacementCandidates, extracted.pageTitle, fetched.url);
+        return replacement ? { product: replacement, gap: null } : { product: null, gap: gap(identity.reason, "identity_mismatch") };
+      }
       const accepted = identity.products[0];
       const unresolvedAdapterGap = adapterGap && accepted && !hasConfirmedPrice([accepted]) ? adapterGap : "";
       return { product: accepted ? { ...accepted, id: item.productId } : null, gap: unresolvedAdapterGap ? gap(unresolvedAdapterGap, "adapter_limited") : null };
@@ -384,5 +453,5 @@ export function publicProductTarget(value: unknown): ProductEnrichmentTarget | n
     sourceUrl = "";
   }
   if (!domain || !sourceUrl || !productId || !expectedName || item.expectedType !== "Product") return null;
-  return { domain, sourceUrl, productId, expectedName, expectedType: "Product", pairScore: typeof item.pairScore === "number" && Number.isFinite(item.pairScore) ? item.pairScore : 0, role: item.role === "rival" ? "rival" : "primary" };
+  return { domain, sourceUrl, productId, expectedName, expectedType: "Product", pairScore: typeof item.pairScore === "number" && Number.isFinite(item.pairScore) ? item.pairScore : 0, role: item.role === "rival" ? "rival" : "primary", ...(item.allowCatalogReplacement === true ? { allowCatalogReplacement: true as const } : {}) };
 }
