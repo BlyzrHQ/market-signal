@@ -14,6 +14,9 @@ import { fetchPublicText } from "../../lib/public-fetch.ts";
 import { claimablePagePricePatterns, enrichProductTargets, selectPrimaryProductPriceTargets } from "../../lib/storefront-product-enrichment.ts";
 import { buildExperienceBenchmark } from "../../lib/experience-benchmark.ts";
 import { hasObservedAddToCartControl } from "../../lib/experience-signals.ts";
+import { EDGE_CRAWL_MARKER, isEdgeRecoveryEligible, recoverCrawlThroughEdge } from "../../lib/edge-crawl-recovery.ts";
+import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../lib/internal-auth.ts";
+import { runtimeEnvironmentValue } from "../../lib/runtime-env.ts";
 
 type ClaimType = "Observed" | "Inferred";
 type Confidence = "High" | "Medium" | "Low";
@@ -88,6 +91,7 @@ type DomainCrawl = {
   primaryPriceEnrichment?: { pagesRequested: number; pagesFetched: number; maxPages: number };
   siteState?: { status: "parked"; provider: string; evidenceUrl: string; redirectDomain: string } | { status: "unavailable"; attemptedUrl: string; reason: string; observedAt: string };
   homepageFailure?: PublicEndpointFailure;
+  homepageAccessDenied?: { status: 403; hosts: string[] };
 };
 
 type ReportBlock = Record<string, unknown> & { type: string; id: string };
@@ -386,7 +390,10 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
     const failedUrl = attemptedAlternateBase?.toString() || base.toString();
     gaps.push({ url: failedUrl, reason: homepageResult.error || `homepage returned HTTP ${homepageResult.status}.`, observedAt: startedAt });
     const noHostResponded = Boolean(submittedHomepageResult.failureKind && homepageResult.failureKind);
-    return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: homepageRequests, pagesFetched: 0, maxPages: maxHtmlPages, robotsChecked: robotsState === "available" }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt, ...(noHostResponded ? { homepageFailure: { kind: homepageResult.failureKind as "network" | "timeout", attemptedUrl: failedUrl, reason: homepageResult.error || "request failed", observedAt: startedAt } } : {}) };
+    const homepageAccessDenied = attemptedAlternateBase && submittedHomepageResult.status === 403 && homepageResult.status === 403
+      ? { status: 403 as const, hosts: [submittedBase.hostname, attemptedAlternateBase.hostname] }
+      : null;
+    return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: homepageRequests, pagesFetched: 0, maxPages: maxHtmlPages, robotsChecked: robotsState === "available" }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt, ...(noHostResponded ? { homepageFailure: { kind: homepageResult.failureKind as "network" | "timeout", attemptedUrl: failedUrl, reason: homepageResult.error || "request failed", observedAt: startedAt } } : {}), ...(homepageAccessDenied ? { homepageAccessDenied } : {}) };
   }
   const homepageHost = new URL(homepageResult.url).hostname.toLowerCase().replace(/^www\./, "");
   if (homepageHost !== domain.replace(/^www\./, "")) {
@@ -614,6 +621,8 @@ function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?
 
 export async function POST(request: Request) {
   try {
+    const edgeRequest = request.headers.get(EDGE_CRAWL_MARKER) === "1";
+    if (edgeRequest && !await hasValidInternalAuthorization(request.headers.get("authorization"))) return unauthorizedInternalResponse();
     const payload = await request.json() as { primary?: unknown; domains?: unknown };
     const rawDomains = Array.isArray(payload.domains) ? payload.domains.filter((domain): domain is string => typeof domain === "string" && Boolean(domain.trim())).map((domain) => canonicalDomain(domain)) : [];
     const domains = [...new Set(rawDomains)].slice(0, MAX_DOMAINS);
@@ -621,6 +630,17 @@ export async function POST(request: Request) {
     const primaryDomain = canonicalDomain(typeof payload.primary === "string" ? payload.primary : domains[0]);
     let submittedResults = await Promise.all(domains.map((domain) => domain === primaryDomain ? crawlPrimaryDomain(domain) : crawlDomain(domain, "submitted-comparison")));
     let primary = submittedResults.find((result) => result.domain === primaryDomain);
+    if (isEdgeRecoveryEligible(primary) && !edgeRequest) {
+      const callbackToken = await runtimeEnvironmentValue("MARKET_SIGNAL_CALLBACK_TOKEN");
+      const recovered = await recoverCrawlThroughEdge(
+        { primary: primaryDomain, domains },
+        { configuredUrl: process.env.MARKET_SIGNAL_EDGE_CRAWL_URL, requestUrl: request.url, callbackToken },
+      );
+      if (recovered) return Response.json(recovered);
+      if (recovered === null && primary) {
+        primary.gaps.push({ url: `https://${primaryDomain}/`, reason: "The configured edge crawl could not return a validated public result.", observedAt: new Date().toISOString() });
+      }
+    }
     if (primary?.siteState?.status === "parked") {
       const alternatives = await discoverDomainAlternatives(primaryDomain, 3);
       const observedAt = primary.fetchedAt;

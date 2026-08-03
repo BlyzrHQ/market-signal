@@ -14,6 +14,7 @@ services:
       PORT: 3000
       MARKET_SIGNAL_SQLITE_PATH: /data/market-signal.sqlite
       MARKET_SIGNAL_BACKUP_DIR: /backups
+      MARKET_SIGNAL_EDGE_CRAWL_URL: https://market-signal.abdulla617931.chatgpt.site/api/crawl
     expose:
       - "3000"
     volumes:
