@@ -212,7 +212,75 @@ test("does not follow a selected product redirect off-domain", async () => {
     const result = await enrichProductTargets([target()], 6);
     assert.equal(result.coverage.pagesFetched, 0);
     assert.match(result.coverage.gaps[0].reason, /redirected off the product domain/i);
+    assert.equal(result.coverage.gaps[0].code, "fetch_failed");
+    assert.equal(result.coverage.gaps[0].failureKind, "redirect");
+    assert.equal(result.coverage.gaps[0].httpStatus, undefined);
     assert.deepEqual(calls, ["https://shop.test/robots.txt", "https://shop.test/products/maamoul-pistachio"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("preserves observed non-success HTTP statuses without reading their bodies", async (t) => {
+  for (const status of [404, 410, 500, 503]) {
+    await t.test(String(status), async () => {
+      resetSharedRobotsPolicyResolverForTests();
+      const originalFetch = globalThis.fetch;
+      let bodyRead = false;
+      globalThis.fetch = async (input) => {
+        if (String(input).endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+        return {
+          ok: false,
+          status,
+          headers: new Headers({ "content-type": "text/html" }),
+          arrayBuffer: async () => { bodyRead = true; throw new Error("body stream failed"); },
+        };
+      };
+      try {
+        const result = await enrichProductTargets([target()], 1);
+        assert.equal(bodyRead, false);
+        assert.equal(result.coverage.gaps[0].code, "fetch_failed");
+        assert.equal(result.coverage.gaps[0].failureKind, "http");
+        assert.equal(result.coverage.gaps[0].httpStatus, status);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  }
+});
+
+test("classifies a successful response body-read failure as content, not network", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    if (String(input).endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return {
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "text/html" }),
+      arrayBuffer: async () => { throw new Error("body stream failed"); },
+    };
+  };
+  try {
+    const result = await enrichProductTargets([target()], 1);
+    assert.equal(result.coverage.gaps[0].code, "fetch_failed");
+    assert.equal(result.coverage.gaps[0].failureKind, "content");
+    assert.equal(result.coverage.gaps[0].httpStatus, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("reserves HTTP status zero for a pre-response network rejection", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    if (String(input).endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    throw new Error("connection refused");
+  };
+  try {
+    const result = await enrichProductTargets([target()], 1);
+    assert.equal(result.coverage.gaps[0].code, "fetch_failed");
+    assert.equal(result.coverage.gaps[0].failureKind, "network");
+    assert.equal(result.coverage.gaps[0].httpStatus, 0);
   } finally {
     globalThis.fetch = originalFetch;
   }
