@@ -169,6 +169,7 @@ test("dark routes fill the viewport and keep responsive width bounded", () => {
   assert.doesNotMatch(css, /\.report-dashboard-sidebar \{[^}]*height: 100vh[^}]*overflow-y: auto/);
   assert.match(css, /@media \(min-width: 1024px\) \{ \.workspace-tabs \{ position: sticky;[^}]*top: 24px;[^}]*align-self: stretch/);
   assert.match(css, /\.workspace-panel \{ width: min\(100%,1140px\)/);
+  assert.match(css, /#panel-products\.workspace-panel \{ width: 100%; \}/);
   assert.match(css, /\.product-comparison-table th \{ position: sticky;[^}]*top: 64px/);
   assert.match(css, /\.comparison-main-row \{ scroll-margin-top: 76px/);
   assert.match(css, /@media \(min-width: 1181px\) \{[\s\S]*\.comparison-main-row \{ scroll-margin-top: 118px/);
