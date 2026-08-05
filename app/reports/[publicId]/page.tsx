@@ -4,9 +4,10 @@ import Link from "next/link";
 import { KeyboardEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { ProductDesignLab } from "../../components/product-design-lab";
 import { ExperienceBenchmark } from "../../components/experience-benchmark";
+import { reportCoverage, type ReportCoverageEvent } from "../../lib/report-coverage";
 
 type Block = { type: string; id: string } & Record<string, unknown>;
-type ReportEvent = { idempotencyKey: string; phase: string; status: string; message: string; metadata?: Record<string, unknown> };
+type ReportEvent = ReportCoverageEvent;
 type View = "overview" | "competitors" | "products" | "ads" | "evidence";
 type StoredPayload = { ok: boolean; error?: string; report?: { run: { primaryDomain: string; locale: "en" | "ar"; status: string; createdAt: string; updatedAt: string; errorMessage: string }; events: ReportEvent[]; document: { document?: { version: "1"; generatedAt: string; blocks: Block[] }; marketBrief?: Record<string, unknown> } | null; documentSchemaVersion: number; primaryProducts?: { authoritative: boolean; totalCount: number; products: Array<Record<string, unknown>>; truncated: boolean } } };
 
@@ -37,26 +38,6 @@ function slug(value: unknown) { return display(value, "item").toLowerCase().repl
 function viewFromLocation(views: View[] = VIEWS): View { const value = new URLSearchParams(window.location.search).get("view"); return views.includes(value as View) ? value as View : views[0] || "overview"; }
 function viewHref(view: View, anchor = "") { return `?view=${view}${anchor ? `#${anchor}` : ""}`; }
 function statusTone(status: string) { return status === "verified-active" ? "observed" : status === "access-limited" ? "limited" : status === "no-verified-result" ? "unavailable" : "inferred"; }
-function reportCoverage(status: string, events: ReportEvent[], ar: boolean) {
-  if (status !== "limited") return {
-    label: ar ? "جاهز" : "Ready",
-    title: ar ? "اكتمل التقرير" : "Report ready",
-    detail: ar ? "اكتملت الفحوص العامة المخطط لها لهذا التقرير." : "The planned public-source checks completed for this report.",
-  };
-  const limited = events.filter((item) => item.idempotencyKey.endsWith("-limited") || item.metadata?.limited === true || /coverage limitation/i.test(item.message));
-  const phases = new Set(limited.map((item) => item.phase));
-  const matching = phases.has("matching");
-  const enrichment = phases.has("enrichment");
-  const competitors = phases.has("competitors") || phases.has("brief");
-  const detail = matching
-    ? (ar ? "لم يكتمل تقييم بعض المنتجات المختارة ضمن المهلة المحددة. المقارنات الظاهرة موثقة ويمكن استخدامها، لكن قد توجد مطابقات إضافية." : "Some selected products were not fully assessed within the bounded run. Visible comparisons are evidence-backed and usable, but additional matches may exist.")
-    : enrichment
-      ? (ar ? "تعذر إعادة قراءة بعض صفحات المنتجات للأسعار أو الصور. بقيت النتائج الموثقة متاحة، وقد تكون بعض التفاصيل ناقصة." : "Some product pages could not be re-read for prices or images. Verified results remain usable, while some details may be missing.")
-      : competitors
-        ? (ar ? "اكتمل التقرير بالنتائج الموثقة، لكن اكتشاف المنافسين أو ملخص السوق لم يغطِّ كل المصادر المخطط لها." : "The report contains verified findings, but competitor discovery or the market brief did not cover every planned source.")
-        : (ar ? "اكتملت الأجزاء الرئيسية، لكن فحصاً واحداً أو أكثر لم يغطِّ كل المصادر المخطط لها." : "The main analysis completed, but one or more checks did not cover every planned source.");
-  return { label: ar ? "تغطية جزئية" : "Partial coverage", title: ar ? "النتائج جاهزة مع بعض النواقص" : "Results ready, with some gaps", detail };
-}
 function scrollToReportHash() {
   const raw = window.location.hash.slice(1); if (!raw) return;
   let id = raw; try { id = decodeURIComponent(raw); } catch { /* Keep a malformed but harmless literal fragment. */ }

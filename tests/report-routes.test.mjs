@@ -66,9 +66,7 @@ test("saved reports use a persistent dashboard shell without the old report hero
   assert.match(report, /className="report-dashboard-sidebar"/);
   assert.match(report, /className="dashboard-brand"/);
   assert.ok(report.includes('className={`dashboard-report-identity ${reportStatus === "limited" ? "partial" : "ready"}`}'));
-  assert.match(report, /Partial coverage/);
-  assert.match(report, /Results ready, with some gaps/);
-  assert.match(report, /Some selected products were not fully assessed within the bounded run/);
+  assert.match(report, /reportCoverage\(reportStatus, reportEvents, ar\)/);
   assert.match(report, /className="report-coverage-notice"/);
   assert.match(report, /className="report-dashboard-main"/);
   assert.doesNotMatch(report, /item === "ads" && activeAds/);

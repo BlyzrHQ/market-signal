@@ -13,8 +13,9 @@ without a useful hierarchy.
 - Present terminal `limited` reports as **Partial coverage**.
 - Keep this state distinct from failure: the report remains usable and all
   visible findings remain tied to saved public evidence.
-- Derive the explanation from persisted report events, prioritising product
-  matching, enrichment, competitor discovery, market brief, then other phases.
+- Derive the explanation from persisted report events and distinguish terminal
+  crawl, unavailable product input, matching, enrichment, ad, and fact-storage
+  limitations. Never imply that a skipped phase produced usable findings.
 - Redesign the sidebar card around report scope, domain, readiness, limitation,
   and freshness.
 - Repeat a concise coverage notice in the report canvas and keep a compact
@@ -30,4 +31,3 @@ without a useful hierarchy.
 - The mobile header keeps the coverage status visible.
 - Existing report navigation and product data are unchanged.
 - Build, lint, report-route tests, strict review, and live browser QA pass.
-
