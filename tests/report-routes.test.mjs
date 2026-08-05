@@ -65,13 +65,19 @@ test("saved reports expose deep-linkable accessible intelligence tabs", () => {
 test("saved reports use a persistent dashboard shell without the old report hero", () => {
   assert.match(report, /className="report-dashboard-sidebar"/);
   assert.match(report, /className="dashboard-brand"/);
-  assert.match(report, /className="dashboard-report-identity"/);
+  assert.ok(report.includes('className={`dashboard-report-identity ${reportStatus === "limited" ? "partial" : "ready"}`}'));
+  assert.match(report, /Partial coverage/);
+  assert.match(report, /Results ready, with some gaps/);
+  assert.match(report, /Some selected products were not fully assessed within the bounded run/);
+  assert.match(report, /className="report-coverage-notice"/);
   assert.match(report, /className="report-dashboard-main"/);
   assert.doesNotMatch(report, /item === "ads" && activeAds/);
   assert.doesNotMatch(report, /item === "evidence" && <b>/);
   assert.doesNotMatch(report, /stored-report-hero/);
   assert.doesNotMatch(css, /\.stored-report-hero/);
-  assert.match(css, /\.dashboard-view-title span,\.report-route-meta span \{ display: none; \}[\s\S]*\.report-route-meta time \{ font-size: 7px; \}/);
+  assert.match(css, /\.dashboard-view-title span \{ display: none; \}[\s\S]*\.report-route-meta span \{ display: inline-flex;[^}]*\}[\s\S]*\.report-route-meta time \{ display: none; \}/);
+  assert.match(css, /\.dashboard-report-identity\.partial/);
+  assert.match(css, /\.report-coverage-notice/);
 });
 
 test("saved product and ad views preserve truth boundaries and source links", () => {

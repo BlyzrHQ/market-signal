@@ -6,8 +6,9 @@ import { ProductDesignLab } from "../../components/product-design-lab";
 import { ExperienceBenchmark } from "../../components/experience-benchmark";
 
 type Block = { type: string; id: string } & Record<string, unknown>;
+type ReportEvent = { idempotencyKey: string; phase: string; status: string; message: string; metadata?: Record<string, unknown> };
 type View = "overview" | "competitors" | "products" | "ads" | "evidence";
-type StoredPayload = { ok: boolean; error?: string; report?: { run: { primaryDomain: string; locale: "en" | "ar"; status: string; createdAt: string; updatedAt: string; errorMessage: string }; document: { document?: { version: "1"; generatedAt: string; blocks: Block[] }; marketBrief?: Record<string, unknown> } | null; documentSchemaVersion: number; primaryProducts?: { authoritative: boolean; totalCount: number; products: Array<Record<string, unknown>>; truncated: boolean } } };
+type StoredPayload = { ok: boolean; error?: string; report?: { run: { primaryDomain: string; locale: "en" | "ar"; status: string; createdAt: string; updatedAt: string; errorMessage: string }; events: ReportEvent[]; document: { document?: { version: "1"; generatedAt: string; blocks: Block[] }; marketBrief?: Record<string, unknown> } | null; documentSchemaVersion: number; primaryProducts?: { authoritative: boolean; totalCount: number; products: Array<Record<string, unknown>>; truncated: boolean } } };
 
 const VIEWS: View[] = ["competitors", "products", "overview"];
 const VIEW_LABELS: Record<View, { en: string; ar: string }> = {
@@ -36,6 +37,26 @@ function slug(value: unknown) { return display(value, "item").toLowerCase().repl
 function viewFromLocation(views: View[] = VIEWS): View { const value = new URLSearchParams(window.location.search).get("view"); return views.includes(value as View) ? value as View : views[0] || "overview"; }
 function viewHref(view: View, anchor = "") { return `?view=${view}${anchor ? `#${anchor}` : ""}`; }
 function statusTone(status: string) { return status === "verified-active" ? "observed" : status === "access-limited" ? "limited" : status === "no-verified-result" ? "unavailable" : "inferred"; }
+function reportCoverage(status: string, events: ReportEvent[], ar: boolean) {
+  if (status !== "limited") return {
+    label: ar ? "جاهز" : "Ready",
+    title: ar ? "اكتمل التقرير" : "Report ready",
+    detail: ar ? "اكتملت الفحوص العامة المخطط لها لهذا التقرير." : "The planned public-source checks completed for this report.",
+  };
+  const limited = events.filter((item) => item.idempotencyKey.endsWith("-limited") || item.metadata?.limited === true || /coverage limitation/i.test(item.message));
+  const phases = new Set(limited.map((item) => item.phase));
+  const matching = phases.has("matching");
+  const enrichment = phases.has("enrichment");
+  const competitors = phases.has("competitors") || phases.has("brief");
+  const detail = matching
+    ? (ar ? "لم يكتمل تقييم بعض المنتجات المختارة ضمن المهلة المحددة. المقارنات الظاهرة موثقة ويمكن استخدامها، لكن قد توجد مطابقات إضافية." : "Some selected products were not fully assessed within the bounded run. Visible comparisons are evidence-backed and usable, but additional matches may exist.")
+    : enrichment
+      ? (ar ? "تعذر إعادة قراءة بعض صفحات المنتجات للأسعار أو الصور. بقيت النتائج الموثقة متاحة، وقد تكون بعض التفاصيل ناقصة." : "Some product pages could not be re-read for prices or images. Verified results remain usable, while some details may be missing.")
+      : competitors
+        ? (ar ? "اكتمل التقرير بالنتائج الموثقة، لكن اكتشاف المنافسين أو ملخص السوق لم يغطِّ كل المصادر المخطط لها." : "The report contains verified findings, but competitor discovery or the market brief did not cover every planned source.")
+        : (ar ? "اكتملت الأجزاء الرئيسية، لكن فحصاً واحداً أو أكثر لم يغطِّ كل المصادر المخطط لها." : "The main analysis completed, but one or more checks did not cover every planned source.");
+  return { label: ar ? "تغطية جزئية" : "Partial coverage", title: ar ? "النتائج جاهزة مع بعض النواقص" : "Results ready, with some gaps", detail };
+}
 function scrollToReportHash() {
   const raw = window.location.hash.slice(1); if (!raw) return;
   let id = raw; try { id = decodeURIComponent(raw); } catch { /* Keep a malformed but harmless literal fragment. */ }
@@ -79,7 +100,7 @@ function AdCreativeCard({ concept, ar }: { concept: Record<string, unknown>; ar:
   </article>;
 }
 
-function ReportWorkspace({ blocks, primaryProducts, primaryDomain, observedAt, reportStatus, ar, onToggleLocale }: { blocks: Block[]; primaryProducts?: { authoritative: boolean; totalCount: number; products: Array<Record<string, unknown>>; truncated: boolean }; primaryDomain: string; observedAt: string; reportStatus: string; ar: boolean; onToggleLocale: () => void }) {
+function ReportWorkspace({ blocks, primaryProducts, primaryDomain, observedAt, reportStatus, reportEvents, ar, onToggleLocale }: { blocks: Block[]; primaryProducts?: { authoritative: boolean; totalCount: number; products: Array<Record<string, unknown>>; truncated: boolean }; primaryDomain: string; observedAt: string; reportStatus: string; reportEvents: ReportEvent[]; ar: boolean; onToggleLocale: () => void }) {
   const domainStatus = blocks.find((block) => block.type === "domain-status" && ["parked", "unavailable"].includes(display(block.status).toLowerCase()));
   const domainState = display(domainStatus?.status).toLowerCase();
   const terminalDomain = Boolean(domainStatus);
@@ -135,6 +156,7 @@ function ReportWorkspace({ blocks, primaryProducts, primaryDomain, observedAt, r
   const limitedAdChecks = adPlatforms.filter((platform) => display(platform.status) === "access-limited").length;
   const officialAdSearches = adPlatforms.filter((platform) => safeUrl(platform.searchUrl)).length;
   const adRegion = display(adBlock?.regionCode, display(profile?.region, ar ? "السوق المحدد" : "selected market"));
+  const coverageStatus = reportCoverage(reportStatus, reportEvents, ar);
   const productAnchor = (domain: unknown) => `rival-${slug(domain)}`;
   const competitorAnchor = (domain: unknown) => `competitor-${slug(domain)}`;
   const adAnchor = (domain: unknown) => `ad-${slug(domain)}`;
@@ -143,14 +165,21 @@ function ReportWorkspace({ blocks, primaryProducts, primaryDomain, observedAt, r
   return <div className="intelligence-workspace report-dashboard-shell" onClick={onWorkspaceClick}>
     <aside className="report-dashboard-sidebar">
       <Link className="dashboard-brand" href="/">Market Signal</Link>
-      <div className="dashboard-report-identity"><span>{reportStatus.toUpperCase()}</span><strong dir="auto">{primaryDomain}</strong><small>{ar ? "آخر تحديث" : "Updated"} {new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</small></div>
+      <section className={`dashboard-report-identity ${reportStatus === "limited" ? "partial" : "ready"}`} aria-label={ar ? "حالة تغطية التقرير" : "Report coverage status"}>
+        <div><span>{ar ? "نطاق التقرير" : "REPORT SCOPE"}</span><b>{coverageStatus.label}</b></div>
+        <strong dir="auto"><i aria-hidden="true" />{primaryDomain}</strong>
+        <p>{coverageStatus.title}</p>
+        <small>{coverageStatus.detail}</small>
+        <time dateTime={observedAt}>{ar ? "حُدث" : "Updated"} {new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</time>
+      </section>
       <nav className="workspace-tabs" role="tablist" aria-orientation={compactNav ? "horizontal" : "vertical"} aria-label={ar ? "أقسام التقرير" : "Report sections"}>
         {activeViews.map((item, index) => <button key={item} ref={(node) => { tabs.current[index] = node; }} id={`tab-${item}`} type="button" role="tab" aria-selected={view === item} aria-controls={`panel-${item}`} tabIndex={view === item ? 0 : -1} onClick={() => selectView(item)} onKeyDown={(event) => onTabKey(event, index)}>{VIEW_LABELS[item][ar ? "ar" : "en"]}{item === "competitors" && <b>{competitors.length}</b>}{item === "products" && <b>{battles.length}</b>}</button>)}
       </nav>
     </aside>
     <div className="report-dashboard-main">
-      <header className="report-route-header"><div className="dashboard-view-title"><span>{ar ? "معلومات السوق" : "MARKET INTELLIGENCE"}</span><b>{VIEW_LABELS[view][ar ? "ar" : "en"]}</b></div><div className="report-route-meta"><span>{reportStatus.toUpperCase()}</span><time>{ar ? "لوحظ" : "Observed"} {new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</time></div><div className="report-route-actions"><button type="button" onClick={onToggleLocale} aria-label={ar ? "Switch to English" : "التبديل إلى العربية"}>{ar ? "EN" : "ع"}</button><Link href="/">{ar ? "تقرير جديد" : "New report"}</Link></div></header>
+      <header className="report-route-header"><div className="dashboard-view-title"><span>{ar ? "معلومات السوق" : "MARKET INTELLIGENCE"}</span><b>{VIEW_LABELS[view][ar ? "ar" : "en"]}</b></div><div className={`report-route-meta ${reportStatus === "limited" ? "partial" : "ready"}`} title={coverageStatus.detail}><span>{coverageStatus.label}</span><time>{ar ? "لوحظ" : "Observed"} {new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</time></div><div className="report-route-actions"><button type="button" onClick={onToggleLocale} aria-label={ar ? "Switch to English" : "التبديل إلى العربية"}>{ar ? "EN" : "ع"}</button><Link href="/">{ar ? "تقرير جديد" : "New report"}</Link></div></header>
       <section className="workspace-panel" id={`panel-${view}`} role="tabpanel" aria-labelledby={`tab-${view}`} tabIndex={0}>
+      {reportStatus === "limited" && <aside className="report-coverage-notice" role="status"><div><span>{coverageStatus.label}</span><strong>{coverageStatus.title}</strong></div><p>{coverageStatus.detail}</p></aside>}
       {view === "overview" && <>
         {terminalDomain && <header className="panel-intro"><div><span>{ar ? "حالة النطاق" : "DOMAIN STATUS"}</span><h2>{parked ? (ar ? "هذا النطاق معروض للبيع" : "This domain is parked, not an active company site") : (ar ? "تعذر الوصول إلى موقع عام على هذا النطاق" : "No public website response was available for this domain")}</h2><p>{display(domainStatus?.explanation, parked ? (ar ? "يتجه النطاق إلى خدمة عامة لبيع النطاقات، لذلك لم تُشغّل مراحل المنافسين والمنتجات والإعلانات." : "The submitted domain redirects to a public domain-for-sale service. Competitor, product, and advertising analysis did not run.") : (ar ? "لم يعد العنوان العام باستجابة شبكة بعد محاولتين محدودتين، لذلك لم يبدأ تحليل السوق." : "The public HTTPS address returned no network response after two bounded attempts, so market analysis did not start."))}</p></div><time>{ar ? "لوحظ" : "Observed"}<b>{new Date(observedAt).toLocaleString(ar ? "ar" : "en")}</b></time></header>}
         {terminalDomain && <div className="parked-domain-state"><div><span className="truth-pill limited">{ar ? "تقرير محدود" : "LIMITED REPORT"}</span><strong>{ar ? "لم نفحص المنافسين أو المنتجات أو الإعلانات" : "Competitors, products, and ads were not checked"}</strong><p>{ar ? "هذه ليست نتيجة صفرية. تم تخطي تلك المراحل لأن نطاق الشركة لم يكن متاحاً للتحليل." : parked ? "This is not a zero-result report. Those phases were intentionally skipped because there is no attributable company storefront at the submitted domain." : "This is not a zero-result report. Those phases were intentionally skipped because the submitted address did not return a public website response."}</p><div className="entity-links">{parked && safeUrl(domainStatus?.evidenceUrl) && <a href={safeUrl(domainStatus?.evidenceUrl)} target="_blank" rel="noreferrer">{ar ? "افتح دليل النطاق ↗" : "Open parking evidence ↗"}</a>}{unavailableDomain && safeUrl(domainStatus?.attemptedUrl) && <a href={safeUrl(domainStatus?.attemptedUrl)} target="_blank" rel="noreferrer">{ar ? "افتح العنوان الذي تمت محاولته ↗" : "Open attempted address ↗"}</a>}<Link href="/">{ar ? "تحقق من النطاق أو حاول مرة أخرى" : "Check the domain or try again"}</Link></div></div>{parked && domainAlternatives.length > 0 && <section><span>{ar ? "نطاقات محتملة — الهوية غير متحققة" : "POSSIBLE DOMAINS — IDENTITY NOT VERIFIED"}</span><p>{ar ? "استخدم أحدها فقط إذا أكدت أنه يخص شركتك." : "Use one only if you confirm it belongs to your company."}</p>{domainAlternatives.map((alternative) => <a href={safeUrl(alternative.sourceUrl)} target="_blank" rel="noreferrer" key={display(alternative.domain)}><strong>{display(alternative.domain)}</strong><small>{display(alternative.reason, "Unverified name-related search result")}</small></a>)}</section>}</div>}
@@ -196,5 +225,5 @@ export default function StoredReportPage({ params }: { params: Promise<{ publicI
   if (report && !document && ["failed", "interrupted"].includes(report.run.status)) return <main className="stored-report-state" lang={ar ? "ar" : "en"} dir={dir}><Link href="/">Market Signal</Link><h1>{ar ? "توقف هذا التقرير" : "This report stopped"}</h1><p>{report.run.errorMessage || (ar ? "ابدأ تقريراً جديداً للمحاولة مرة أخرى." : "Start a fresh report to try again.")}</p></main>;
   if (!report || !document) return <main className="stored-report-state"><div className="route-spinner" /><p>Opening the saved market report…</p></main>;
   if (report.documentSchemaVersion !== 1) return <main className="stored-report-state" lang={ar ? "ar" : "en"} dir={dir}><Link href="/">Market Signal</Link><h1>{ar ? "نسخة التقرير غير مدعومة" : "Unsupported report version"}</h1></main>;
-  return <main className="stored-report-page" lang={ar ? "ar" : "en"} dir={dir}><ReportWorkspace blocks={document.blocks} primaryProducts={report.primaryProducts} primaryDomain={report.run.primaryDomain} observedAt={report.run.updatedAt} reportStatus={report.run.status} ar={ar} onToggleLocale={() => setLocaleOverride(ar ? "en" : "ar")} /></main>;
+  return <main className="stored-report-page" lang={ar ? "ar" : "en"} dir={dir}><ReportWorkspace blocks={document.blocks} primaryProducts={report.primaryProducts} primaryDomain={report.run.primaryDomain} observedAt={report.run.updatedAt} reportStatus={report.run.status} reportEvents={report.events || []} ar={ar} onToggleLocale={() => setLocaleOverride(ar ? "en" : "ar")} /></main>;
 }
