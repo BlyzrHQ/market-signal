@@ -14,6 +14,14 @@ function responseError(response: Response, label: string) {
   return new Error(`${label} returned an unexpected service page instead of report data. Refresh this page, then run the scan again.`);
 }
 
+export function jsonResponseErrorMessage(error: unknown, label: string) {
+  const message = error instanceof Error ? error.message.trim() : "";
+  if (!message || /failed to fetch|fetch failed|networkerror|network request failed|load failed|unexpected (?:end|token).*json/i.test(message)) {
+    return `${label} was temporarily interrupted before the result returned. Try again in a moment.`;
+  }
+  return message;
+}
+
 export async function readJsonResponse<T>(response: Response, label: string): Promise<T> {
   const contentType = response.headers.get("content-type") || "";
   const body = await response.text();

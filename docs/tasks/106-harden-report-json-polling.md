@@ -8,7 +8,8 @@ A live `myjam.co.uk` run exposed the browser-native error `Unexpected end of JSO
 
 - Route loading-screen and saved-report reads through `readJsonResponse`.
 - Never expose native JSON parser messages to a customer.
-- Keep polling after a transient malformed, empty, HTML, or interrupted response so a live run can recover without a refresh.
+- Keep polling after a transient malformed, empty, HTML, network, throttling, or server response so a live run can recover without a refresh.
+- Stop polling permanent client errors such as expired sessions and missing reports.
 - Preserve terminal report handling and durable report redirects.
 
 ## Acceptance

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { readJsonResponse } from "../../../lib/json-response";
+import { jsonResponseErrorMessage, readJsonResponse } from "../../../lib/json-response";
 
 type Event = { sequence: number; idempotencyKey: string; message: string };
 type Run = { status: string; primaryDomain: string; errorMessage: string; locale: "en" | "ar" };
@@ -23,11 +23,17 @@ export default function PersistedLoadingPage({ params }: { params: Promise<{ pub
     let timer = 0;
     Promise.resolve(params).then(({ publicId }) => {
       const poll = async () => {
+        let retryable = true;
         try {
           const response = await fetch(`/api/reports/${publicId}`, { cache: "no-store" });
-          const body = await readJsonResponse<{ ok: boolean; error?: string; report: { run: Run; events?: Event[]; document?: unknown } }>(response, "Report progress");
+          retryable = response.ok || response.status === 408 || response.status === 429 || response.status >= 500;
+          const body = await readJsonResponse<{ ok: boolean; error?: string; report?: { run?: Run; events?: Event[]; document?: unknown } }>(response, "Report progress");
           if (!current) return;
-          if (!response.ok || !body.ok) throw new Error(body.error || "The report run could not be opened.");
+          if (!response.ok || !body.ok) {
+            retryable = response.status === 408 || response.status === 429 || response.status >= 500;
+            throw new Error(body.error || "The report run could not be opened.");
+          }
+          if (!body.report?.run) throw new Error("Report progress returned incomplete report data. Run the scan again.");
           setError("");
           setRun(body.report.run);
           setEvents(body.report.events || []);
@@ -35,8 +41,8 @@ export default function PersistedLoadingPage({ params }: { params: Promise<{ pub
           else if (!["failed", "interrupted"].includes(body.report.run.status)) timer = window.setTimeout(poll, 1800);
         } catch (cause) {
           if (!current) return;
-          setError(cause instanceof Error ? cause.message : "The report run could not be opened.");
-          timer = window.setTimeout(poll, 2500);
+          setError(jsonResponseErrorMessage(cause, "Report progress"));
+          if (retryable) timer = window.setTimeout(poll, 2500);
         }
       };
       void poll();

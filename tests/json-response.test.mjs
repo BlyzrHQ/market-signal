@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { postJson, readJsonResponse } from "../app/lib/json-response.ts";
+import { jsonResponseErrorMessage, postJson, readJsonResponse } from "../app/lib/json-response.ts";
 
 test("reads a valid JSON API response", async () => {
   const payload = await readJsonResponse(new Response(JSON.stringify({ ok: true, rivals: 2 }), {
@@ -54,6 +54,12 @@ test("does not expose the native JSON parser error for malformed data", async ()
       return true;
     },
   );
+});
+
+test("turns native fetch failures into customer-safe guidance", () => {
+  const message = jsonResponseErrorMessage(new TypeError("Failed to fetch"), "Report progress");
+  assert.match(message, /temporarily interrupted.*Try again/i);
+  assert.doesNotMatch(message, /Failed to fetch/i);
 });
 
 test("posts with explicit JSON and same-origin session headers", async () => {

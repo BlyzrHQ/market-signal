@@ -25,7 +25,9 @@ test("reopened loading routes poll persisted events and redirect only with a doc
   assert.match(loading, /fetch\(`\/api\/reports\/\$\{publicId\}`/);
   assert.match(loading, /readJsonResponse<.*>\(response, "Report progress"\)/);
   assert.doesNotMatch(loading, /response\.json\(\)/);
-  assert.match(loading, /timer = window\.setTimeout\(poll, 2500\)/);
+  assert.match(loading, /retryable = response\.status === 408 \|\| response\.status === 429 \|\| response\.status >= 500/);
+  assert.match(loading, /if \(retryable\) timer = window\.setTimeout\(poll, 2500\)/);
+  assert.match(loading, /if \(!body\.report\?\.run\) throw new Error\("Report progress returned incomplete report data/);
   assert.match(loading, /\["complete", "limited"\]\.includes\(body\.report\.run\.status\) && body\.report\.document/);
   assert.match(loading, /eventMessage\(events\.at\(-1\), ar\)/);
   assert.match(loading, /\["failed", "interrupted"\]/);
@@ -34,6 +36,7 @@ test("reopened loading routes poll persisted events and redirect only with a doc
 test("completed report route reconstructs the evidence renderer from D1", () => {
   assert.match(report, /fetch\(`\/api\/reports\/\$\{publicId\}`/);
   assert.match(report, /readJsonResponse<StoredPayload>\(response, "Saved report"\)/);
+  assert.match(report, /jsonResponseErrorMessage\(cause, "Saved report"\)/);
   assert.doesNotMatch(report, /response\.json\(\)/);
   assert.match(report, /<ReportWorkspace/);
   assert.match(report, /documentSchemaVersion !== 1/);
