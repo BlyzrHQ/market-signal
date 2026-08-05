@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { readJsonResponse } from "../../../lib/json-response";
 
 type Event = { sequence: number; idempotencyKey: string; message: string };
 type Run = { status: string; primaryDomain: string; errorMessage: string; locale: "en" | "ar" };
@@ -24,14 +25,19 @@ export default function PersistedLoadingPage({ params }: { params: Promise<{ pub
       const poll = async () => {
         try {
           const response = await fetch(`/api/reports/${publicId}`, { cache: "no-store" });
-          const body = await response.json();
+          const body = await readJsonResponse<{ ok: boolean; error?: string; report: { run: Run; events?: Event[]; document?: unknown } }>(response, "Report progress");
           if (!current) return;
           if (!response.ok || !body.ok) throw new Error(body.error || "The report run could not be opened.");
+          setError("");
           setRun(body.report.run);
           setEvents(body.report.events || []);
           if (["complete", "limited"].includes(body.report.run.status) && body.report.document) window.location.replace(`/reports/${publicId}`);
           else if (!["failed", "interrupted"].includes(body.report.run.status)) timer = window.setTimeout(poll, 1800);
-        } catch (cause) { if (current) setError(cause instanceof Error ? cause.message : "The report run could not be opened."); }
+        } catch (cause) {
+          if (!current) return;
+          setError(cause instanceof Error ? cause.message : "The report run could not be opened.");
+          timer = window.setTimeout(poll, 2500);
+        }
       };
       void poll();
     });
