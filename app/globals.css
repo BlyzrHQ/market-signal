@@ -206,6 +206,7 @@ body { background: #07110f; color: #eaf4ef; }
 .workspace-tabs button:focus-visible { position: relative; z-index: 2; outline: 2px solid #9ce9c4; outline-offset: -3px; }
 @media (min-width: 1024px) { .workspace-tabs { position: sticky; z-index: 10; top: 24px; align-self: stretch; } }
 .workspace-panel { width: min(100%,1140px); min-width: 0; min-height: calc(100vh - 64px); border: 0; border-radius: 0; padding: clamp(24px,3vw,40px); background: #f0f3ef; color: #15241e; box-shadow: none; }
+#panel-products.workspace-panel { width: 100%; }
 .workspace-panel:focus { outline: none; }
 .report-coverage-notice { display: grid; grid-template-columns: minmax(180px,.55fr) minmax(0,1fr); gap: 22px; align-items: center; margin-bottom: 22px; border: 1px solid #dfc98f; border-inline-start: 4px solid #cf9b36; border-radius: 12px; padding: 15px 17px; background: linear-gradient(100deg,#fff8e7,#fffdf7); color: #4e432d; }
 .report-coverage-notice > div { display: grid; gap: 5px; }
