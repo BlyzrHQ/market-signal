@@ -103,6 +103,10 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /Find my competitors/);
   assert.match(page, /KEEPS WORKING IF YOU CLOSE THE TAB/);
   assert.match(page, /Three pillars, one report/);
+  assert.match(page, /See where you stand/);
+  assert.match(page, /: "Benchmark"/);
+  assert.match(page, /experience signals/);
+  assert.doesNotMatch(page, /Watch how they show up|: "Ads"|advertising signals|إشارات الإعلانات/);
   assert.match(page, /dir=\{ar \? "rtl" : "ltr"\}/);
   assert.match(savedReport, /<ProductDesignLab comparison=\{comparison\} battles=\{battles\}/);
   assert.match(productLab, /<PricePosition comparisonValue=\{row\.decision\.priceComparison\}/);
