@@ -149,6 +149,7 @@ function mockPort(overrides = {}) {
 
 test("payload contract accepts only a canonical, exact, versioned payload", () => {
   assert.deepEqual(parseReportOrchestrationPayload(payload), payload);
+  assert.deepEqual(parseReportOrchestrationPayload({ contractVersion: "2", publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, reportAttempt: 1 }), { ...payload, productPlan: "starter", productLimit: 20 });
   for (const invalid of [
     { ...payload, primaryDomain: "https://shop.example" },
     { ...payload, primaryDomain: "Shop.example" },
