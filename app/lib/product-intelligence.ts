@@ -39,6 +39,25 @@ export type ProductRecord = {
   quantity?: CanonicalProductQuantity;
 };
 
+const ISO_CURRENCIES = new Set<string>((() => {
+  try {
+    return (Intl as typeof Intl & { supportedValuesOf(key: "currency"): string[] }).supportedValuesOf("currency");
+  } catch {
+    return ["AED", "AUD", "CAD", "CHF", "CNY", "EGP", "EUR", "GBP", "INR", "JOD", "KWD", "OMR", "QAR", "SAR", "USD"];
+  }
+})());
+
+export function hasValidObservedRivalPrice(product: ProductRecord) {
+  return product.priceSignals.some((signal) => {
+    const currency = String(signal.currency || "").trim().toUpperCase();
+    return typeof signal.amount === "number"
+      && Number.isFinite(signal.amount)
+      && signal.amount > 0
+      && Boolean(String(signal.raw || "").trim())
+      && ISO_CURRENCIES.has(currency);
+  });
+}
+
 export type ProductExtractionResult = {
   products: ProductRecord[];
   thirdPartyReferenced: ProductRecord[];
@@ -130,6 +149,10 @@ export type ProductComparison = {
     primaryProductsSynchronized?: number;
     competitorProductsSynchronized?: number;
     candidateSlotsByDomain?: Record<string, number>;
+    publication?: {
+      suppressedAcceptedPairs: number;
+      reasons: Record<"missing-valid-rival-price", number>;
+    };
   };
   enrichment?: {
     pagesRequested: number;

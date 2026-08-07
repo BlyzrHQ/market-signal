@@ -1,5 +1,7 @@
 import { dispatchReportJob, ReportDispatchError } from "../../lib/report-dispatch.ts";
 import { createReportRunResult, markReportDispatched, markReportDispatchFailed, reportStorageDiagnosticCode, type ReportCreateDiagnostic } from "../../lib/report-store.ts";
+import { resolveProductEntitlement, type ProductPlan } from "../../lib/product-entitlements.ts";
+import { runtimeEnvironmentValue } from "../../lib/runtime-env.ts";
 
 type CreatedReport = {
   id: string;
@@ -11,6 +13,8 @@ type CreatedReport = {
   attemptCount: number;
   createdAt: string;
   expiresAt: string;
+  productPlan: ProductPlan;
+  productLimit: number;
 };
 
 type CreationBoundaryDiagnostic = "create-not-callable" | "create-rejected" | "create-malformed" | "create-access-failed";
@@ -20,7 +24,7 @@ type CreationBoundaryResult =
   | { kind: "boundary-failed"; diagnosticCode: CreationBoundaryDiagnostic };
 
 const PUBLIC_REPORT_ID = /^[a-f0-9]{32}$/;
-const REPORT_CREATE_DIAGNOSTIC = /^(?:invalid-domain|storage-unavailable|database-(?:import-failed|binding-missing)|schema-statement-(?:[1-9]|[12]\d|3[01])-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api)|run-create-unclassified)$/;
+const REPORT_CREATE_DIAGNOSTIC = /^(?:invalid-domain|storage-unavailable|database-(?:import-failed|binding-missing)|schema-statement-(?:[1-9]|[12]\d|3[0-4])-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api)|run-create-unclassified)$/;
 
 async function consumeReportCreation(create: unknown, input: { primaryDomain: string; locale: "en" | "ar" }): Promise<CreationBoundaryResult> {
   if (typeof create !== "function") return { kind: "boundary-failed", diagnosticCode: "create-not-callable" };
@@ -80,6 +84,8 @@ async function consumeReportCreation(create: unknown, input: { primaryDomain: st
         attemptCount: report.attemptCount,
         createdAt: report.createdAt,
         expiresAt: report.expiresAt,
+        productPlan: ["starter", "solo", "growth", "agency"].includes(String(report.productPlan)) ? report.productPlan as ProductPlan : "starter",
+        productLimit: Number.isInteger(report.productLimit) && Number(report.productLimit) > 0 && Number(report.productLimit) <= 1_000 ? Number(report.productLimit) : 20,
       },
     };
   } catch {
@@ -96,7 +102,13 @@ type ReportCreationDependencies = {
 
 function defaultDependencies(): ReportCreationDependencies {
   return {
-    create: (input: { primaryDomain: string; locale?: "en" | "ar" }) => createReportRunResult(input),
+    create: async (input: { primaryDomain: string; locale?: "en" | "ar" }) => {
+      const entitlement = resolveProductEntitlement(input.primaryDomain, {
+        defaultPlan: await runtimeEnvironmentValue("MARKET_SIGNAL_DEFAULT_PLAN"),
+        registryJson: await runtimeEnvironmentValue("MARKET_SIGNAL_PLAN_REGISTRY_JSON"),
+      });
+      return createReportRunResult({ ...input, entitlement });
+    },
     dispatch: (report) => dispatchReportJob(report),
     markDispatched: (publicId, runId) => markReportDispatched(publicId, runId),
     markDispatchFailed: (publicId) => markReportDispatchFailed(publicId),

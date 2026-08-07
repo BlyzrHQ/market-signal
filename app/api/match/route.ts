@@ -3,12 +3,13 @@ import { canonicalDomain, normalizeDomain } from "../../lib/domain.ts";
 import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../lib/internal-auth.ts";
 import type { ProductRecord } from "../../lib/product-intelligence.ts";
 import { canonicalGtin, parseCanonicalQuantity, type ProductIdentifiers } from "../../lib/product-normalization.ts";
-import { loadReportMatchBatchCheckpoints, saveReportMatchBatchCheckpoint } from "../../lib/report-store.ts";
+import { loadReportMatchBatchCheckpoints, loadReportProductEntitlement, saveReportMatchBatchCheckpoint } from "../../lib/report-store.ts";
 
 const MAX_CATALOGS = 7;
 const MAX_PRIMARY_PRODUCTS = 1_000;
 const MAX_RIVAL_PRODUCTS = 600;
-const DEFAULT_PRODUCT_ANALYSIS_LIMIT = 60;
+const DEFAULT_PRODUCT_ANALYSIS_LIMIT = 20;
+const PLAN_PRODUCT_LIMITS = new Set([20, 50, 500, 1_000]);
 
 function text(value: unknown, limit: number) {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
@@ -104,7 +105,7 @@ export function parseCatalogs(value: unknown, primaryDomain = "") {
 
 export function productAnalysisLimit(value?: string) {
   const parsed = Number.parseInt(String(value || ""), 10);
-  return Number.isFinite(parsed) ? Math.min(MAX_PRIMARY_PRODUCTS, Math.max(1, parsed)) : DEFAULT_PRODUCT_ANALYSIS_LIMIT;
+  return Number.isInteger(parsed) && PLAN_PRODUCT_LIMITS.has(parsed) ? parsed : DEFAULT_PRODUCT_ANALYSIS_LIMIT;
 }
 
 export function productAnalysisBudgetMs(limit: number) {
@@ -115,19 +116,21 @@ type MatchServices = {
   build: typeof buildAIProductComparison;
   loadCheckpoints: typeof loadReportMatchBatchCheckpoints;
   saveCheckpoint: typeof saveReportMatchBatchCheckpoint;
+  loadEntitlement: typeof loadReportProductEntitlement;
 };
 
 const liveServices: MatchServices = {
   build: buildAIProductComparison,
   loadCheckpoints: loadReportMatchBatchCheckpoints,
   saveCheckpoint: saveReportMatchBatchCheckpoint,
+  loadEntitlement: loadReportProductEntitlement,
 };
 
-export function createMatchHandler(services: MatchServices = liveServices, expectedToken?: string, configuredLimit = process.env.MARKET_SIGNAL_PRODUCT_ANALYSIS_LIMIT) {
+export function createMatchHandler(services: MatchServices = liveServices, expectedToken?: string) {
   return async function matchHandler(request: Request) {
     if (!await hasValidInternalAuthorization(request.headers.get("authorization"), expectedToken)) return unauthorizedInternalResponse();
     try {
-      const body = await request.json() as { publicId?: unknown; reportAttempt?: unknown; primaryDomain?: unknown; catalogs?: unknown };
+      const body = await request.json() as { publicId?: unknown; reportAttempt?: unknown; primaryDomain?: unknown; productLimit?: unknown; catalogs?: unknown };
       const publicId = text(body.publicId, 32);
       const reportAttempt = Number(body.reportAttempt);
       const primaryDomain = canonicalDomain(text(body.primaryDomain, 300));
@@ -135,7 +138,9 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
       const hasReportAttempt = Boolean(publicId || body.reportAttempt !== undefined);
       if (hasReportAttempt && (!/^[a-f0-9]{32}$/.test(publicId) || !Number.isInteger(reportAttempt) || reportAttempt < 1)) return Response.json({ ok: false, error: "A complete active report attempt is required for checkpointed matching." }, { status: 400 });
       if (!primaryDomain || !catalogs.some((catalog) => catalog.domain === primaryDomain && catalog.products.length)) return Response.json({ ok: false, error: "A crawled primary product catalog is required." }, { status: 400 });
-      const maxPrimaryProducts = productAnalysisLimit(configuredLimit);
+      const entitlement = hasReportAttempt ? await services.loadEntitlement(publicId, reportAttempt) : null;
+      const maxPrimaryProducts = entitlement?.productLimit || DEFAULT_PRODUCT_ANALYSIS_LIMIT;
+      if (hasReportAttempt && Number(body.productLimit) !== maxPrimaryProducts) return Response.json({ ok: false, error: "The report product limit does not match its persisted entitlement." }, { status: 409 });
       const checkpointOptions = hasReportAttempt ? {
         loadJudgeBatchCheckpoint: async (key: JudgeBatchCheckpointKey) => {
           const checkpoints = await services.loadCheckpoints(publicId, { attemptNumber: reportAttempt, batchIndex: key.batchIndex });

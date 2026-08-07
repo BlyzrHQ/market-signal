@@ -22,11 +22,13 @@ import { createWorkerApiManifest } from "../src/shared/worker-api-contract.ts";
 import { AI_ACTION_PLANNER_LIMITS, deterministicProductActionResult } from "../app/lib/ai-action-planner.ts";
 
 const payload = {
-  contractVersion: "2",
+  contractVersion: "3",
   publicId: "a".repeat(32),
   primaryDomain: "shop.example",
   locale: "en",
   reportAttempt: 1,
+  productPlan: "starter",
+  productLimit: 20,
 };
 const recoveryPayload = { ...payload, reportAttempt: 2 };
 
@@ -53,7 +55,7 @@ function product(domain = "shop.example", id = "p1") {
 
 function comparison({ withPair = false } = {}) {
   const primary = product();
-  const rival = product("rival.example", "r1");
+  const rival = { ...product("rival.example", "r1"), priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }] };
   return {
     primaryDomain: "shop.example",
     comparisonDomains: ["rival.example"],
@@ -147,6 +149,7 @@ function mockPort(overrides = {}) {
 
 test("payload contract accepts only a canonical, exact, versioned payload", () => {
   assert.deepEqual(parseReportOrchestrationPayload(payload), payload);
+  assert.deepEqual(parseReportOrchestrationPayload({ contractVersion: "2", publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, reportAttempt: 1 }), { ...payload, productPlan: "starter", productLimit: 20 });
   for (const invalid of [
     { ...payload, primaryDomain: "https://shop.example" },
     { ...payload, primaryDomain: "Shop.example" },
@@ -155,11 +158,16 @@ test("payload contract accepts only a canonical, exact, versioned payload", () =
     { ...payload, callbackUrl: "https://attacker.example" },
     { ...payload, contractVersion: "1" },
     { ...payload, reportAttempt: 0 },
+    { ...payload, productPlan: "agency", productLimit: 20 },
+    { ...payload, productPlan: "unlimited", productLimit: 1_000 },
   ]) assert.throws(() => parseReportOrchestrationPayload(invalid), PermanentOrchestrationError);
 });
 
 test("successful orchestration persists ordered heartbeats and a complete document", async () => {
-  const port = mockPort();
+  const port = mockPort({ async match(input) {
+    assert.equal(input.productLimit, 20);
+    return { ok: true, comparison: comparison() };
+  } });
   const dates = ["2026-07-20T10:00:00.000Z", "2026-07-20T10:01:00.000Z"];
   const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port, () => new Date(dates.shift()));
 

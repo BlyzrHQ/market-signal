@@ -6,6 +6,7 @@ import { publicHttpUrl } from "./public-url.ts";
 import { officialAdRecordUrl } from "./ad-intelligence.ts";
 import { DETERMINISTIC_EVALUATOR_VERSION, DETERMINISTIC_RUBRIC_VERSION, profileDeterministicEvaluation } from "./report-evaluator.ts";
 import { compactTerminalReportDocument, REPORT_SNAPSHOT_HARD_BYTES } from "../../src/shared/report-document-compaction.ts";
+import { PRODUCT_PLAN_LIMITS, type ProductEntitlement, type ProductPlan } from "./product-entitlements.ts";
 
 export type ReportRunStatus = "queued" | "running" | "complete" | "limited" | "failed" | "interrupted";
 export type ReportPhase = "queued" | "crawl" | "competitors" | "brief" | "products" | "matching" | "enrichment" | "actions" | "ads" | "persistence" | "complete" | "failed" | "interrupted";
@@ -27,6 +28,8 @@ export type StoredReportRun = {
   expiresAt: string;
   errorCode: string;
   errorMessage: string;
+  productPlan: ProductPlan;
+  productLimit: number;
 };
 
 export type StoredReportEvent = {
@@ -139,7 +142,7 @@ const STATUSES = new Set<ReportRunStatus>(["queued", "running", "complete", "lim
 const TERMINAL_REPORT_STATUSES = new Set<ReportRunStatus>(["complete", "limited", "failed", "interrupted"]);
 const schemaInitialization = new WeakMap<object, Promise<void>>();
 const emittedStorageDiagnostics = new Set<string>();
-const REPORT_STORAGE_DIAGNOSTIC = /^(?:database-(?:import-failed|binding-missing)|schema-statement-(?:[1-9]|[12]\d|3[0-3])-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api))$/;
+const REPORT_STORAGE_DIAGNOSTIC = /^(?:database-(?:import-failed|binding-missing)|schema-statement-(?:[1-9]|[12]\d|3[0-4])-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api))$/;
 
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS report_runs (id text PRIMARY KEY NOT NULL, public_id text NOT NULL, primary_domain text NOT NULL, locale text DEFAULT 'en' NOT NULL, status text NOT NULL, current_phase text NOT NULL, attempt_count integer DEFAULT 1 NOT NULL, created_at text NOT NULL, updated_at text NOT NULL, heartbeat_at text NOT NULL, expires_at text NOT NULL, error_code text DEFAULT '' NOT NULL, error_message text DEFAULT '' NOT NULL)`,
@@ -175,6 +178,7 @@ const SCHEMA_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS report_quality_signals_stage_severity_observed_idx ON report_quality_signals (stage, severity, observed_at)`,
   `CREATE TABLE IF NOT EXISTS report_purge_audits (id text PRIMARY KEY NOT NULL, cutoff text NOT NULL, heartbeat_guard text NOT NULL, runs_deleted integer NOT NULL, quality_signals_deleted integer NOT NULL, evaluations_deleted integer NOT NULL, ads_deleted integer NOT NULL, matches_deleted integer NOT NULL, products_deleted integer NOT NULL, companies_deleted integer NOT NULL, fact_chunks_deleted integer NOT NULL, fact_manifests_deleted integer NOT NULL, documents_deleted integer NOT NULL, events_deleted integer NOT NULL, observed_at text NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS report_purge_audits_observed_idx ON report_purge_audits (observed_at)`,
+  `CREATE TABLE IF NOT EXISTS report_product_entitlements (run_id text PRIMARY KEY NOT NULL, plan_tier text NOT NULL, product_limit integer NOT NULL, resolved_at text NOT NULL)`,
 ];
 
 async function getDatabase(): Promise<D1DatabaseLike | null> {
@@ -313,6 +317,7 @@ function requiredFactFields(kind: ReportFactKind, item: ReturnType<typeof canoni
 export const compactReportDocument = compactTerminalReportDocument;
 
 function rowRun(row: Record<string, unknown>): StoredReportRun {
+  const productPlan = Object.hasOwn(PRODUCT_PLAN_LIMITS, String(row.plan_tier || "")) ? String(row.plan_tier) as ProductPlan : "starter";
   return {
     id: String(row.id || ""),
     publicId: String(row.public_id || ""),
@@ -327,6 +332,8 @@ function rowRun(row: Record<string, unknown>): StoredReportRun {
     expiresAt: String(row.expires_at || ""),
     errorCode: String(row.error_code || ""),
     errorMessage: String(row.error_message || ""),
+    productPlan,
+    productLimit: PRODUCT_PLAN_LIMITS[productPlan],
   };
 }
 
@@ -397,7 +404,10 @@ async function ensureSchema(database: D1DatabaseLike) {
 
 async function findRun(database: D1DatabaseLike, id: string) {
   const result = await database.prepare(`SELECT * FROM report_runs WHERE ${PUBLIC_ID_PATTERN.test(id) ? "public_id" : "id"} = ? LIMIT 1`).bind(id).all<Record<string, unknown>>();
-  return result.results?.[0] ? rowRun(result.results[0]) : null;
+  const row = result.results?.[0];
+  if (!row) return null;
+  const entitlement = await database.prepare(`SELECT plan_tier, product_limit FROM report_product_entitlements WHERE run_id = ? LIMIT 1`).bind(String(row.id || "")).all<Record<string, unknown>>();
+  return rowRun({ ...row, ...(entitlement.results?.[0] || {}) });
 }
 
 function rowMatchBatchCheckpoint(row: Record<string, unknown>): ReportMatchBatchCheckpoint {
@@ -436,6 +446,17 @@ export async function loadReportMatchBatchCheckpoints(publicReportId: string, in
   return (rows.results || []).map(rowMatchBatchCheckpoint);
 }
 
+export async function loadReportProductEntitlement(publicReportId: string, attemptNumber: number, databaseOverride?: D1DatabaseLike | null): Promise<ProductEntitlement> {
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error(STORAGE_UNAVAILABLE_MESSAGE);
+  if (!PUBLIC_ID_PATTERN.test(publicReportId) || !Number.isInteger(attemptNumber) || attemptNumber < 1) throw new Error("Invalid report entitlement identity.");
+  await ensureSchema(database);
+  const run = await findRun(database, publicReportId);
+  if (!run) throw new Error("Report not found.");
+  if (run.attemptCount !== attemptNumber) throw new Error("Report product entitlement attempt is stale.");
+  return { plan: run.productPlan, productLimit: run.productLimit };
+}
+
 export async function saveReportMatchBatchCheckpoint(publicReportId: string, input: ReportMatchBatchCheckpointInput, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
   const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
   if (!database) throw new Error(STORAGE_UNAVAILABLE_MESSAGE);
@@ -464,7 +485,7 @@ export async function saveReportMatchBatchCheckpoint(publicReportId: string, inp
   return { checkpoint: rowMatchBatchCheckpoint(existing), replayed };
 }
 
-export async function createReportRun(input: { primaryDomain: string; locale?: string }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+export async function createReportRun(input: { primaryDomain: string; locale?: string; entitlement?: ProductEntitlement }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
   const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
   if (!database) throw new Error(STORAGE_UNAVAILABLE_MESSAGE);
   const primaryDomain = canonicalDomain(input.primaryDomain);
@@ -474,21 +495,24 @@ export async function createReportRun(input: { primaryDomain: string; locale?: s
   const shareId = publicId();
   const observedAt = now.toISOString();
   const expiresAt = addDays(now, REPORT_RETENTION_DAYS);
+  const productPlan = input.entitlement?.plan && Object.hasOwn(PRODUCT_PLAN_LIMITS, input.entitlement.plan) ? input.entitlement.plan : "starter";
+  const productLimit = PRODUCT_PLAN_LIMITS[productPlan];
   await ensureSchema(database);
   try {
     await database.batch([
       database.prepare(`INSERT INTO report_runs (id, public_id, primary_domain, locale, status, current_phase, attempt_count, created_at, updated_at, heartbeat_at, expires_at, error_code, error_message) VALUES (?, ?, ?, ?, 'queued', 'queued', 1, ?, ?, ?, ?, '', '')`).bind(id, shareId, primaryDomain, locale, observedAt, observedAt, observedAt, expiresAt),
-      database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) VALUES (?, 1, 'run-created', 'queued', 'queued', 'Report queued for public-source collection.', '{}', ?)`).bind(id, observedAt),
+      database.prepare(`INSERT INTO report_product_entitlements (run_id, plan_tier, product_limit, resolved_at) VALUES (?, ?, ?, ?)`).bind(id, productPlan, productLimit, observedAt),
+      database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) VALUES (?, 1, 'run-created', 'queued', 'queued', 'Report queued for public-source collection.', ?, ?)`).bind(id, JSON.stringify({ productPlan, productLimit }), observedAt),
     ]);
   } catch (error) {
     const diagnosticCode = `run-create-batch-${batchFailureClass(error)}`;
     logStorageDiagnostic(diagnosticCode);
     throw new ReportStorageError(diagnosticCode);
   }
-  return { id, publicId: shareId, primaryDomain, locale, status: "queued" as const, currentPhase: "queued" as const, attemptCount: 1, createdAt: observedAt, expiresAt };
+  return { id, publicId: shareId, primaryDomain, locale, status: "queued" as const, currentPhase: "queued" as const, attemptCount: 1, createdAt: observedAt, expiresAt, productPlan, productLimit };
 }
 
-export async function createReportRunResult(input: { primaryDomain: string; locale?: string }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+export async function createReportRunResult(input: { primaryDomain: string; locale?: string; entitlement?: ProductEntitlement }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
   try {
     return { ok: true as const, report: await createReportRun(input, now, databaseOverride) };
   } catch (error) {
@@ -1035,6 +1059,7 @@ export async function purgeExpiredReports(now = new Date(), databaseOverride?: D
     guardedDelete("report_fact_chunks"),
     guardedDelete("report_fact_manifests"),
     guardedDelete("report_match_batch_checkpoints"),
+    guardedDelete("report_product_entitlements"),
     guardedDelete("report_documents"),
     guardedDelete("report_events"),
     database.prepare(`DELETE FROM report_runs WHERE id IN (${eligibleRuns})`).bind(...eligible()),

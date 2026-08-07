@@ -2,6 +2,7 @@ import { auth, tasks } from "@trigger.dev/sdk";
 import type { marketSignalReportOrchestration } from "../../src/trigger/report-orchestration.ts";
 import { REPORT_ORCHESTRATION_CONTRACT_VERSION, type ReportOrchestrationPayload } from "../../src/shared/report-orchestration-contract.ts";
 import { runtimeEnvironmentValue } from "./runtime-env.ts";
+import type { ProductPlan } from "./product-entitlements.ts";
 
 export const REPORT_TASK_ID = "market-signal-report-orchestration" as const;
 export const REPORT_DISPATCH_IDEMPOTENCY_TTL = "24h" as const;
@@ -11,6 +12,8 @@ export type DispatchableReport = {
   primaryDomain: string;
   locale: "en" | "ar";
   attemptCount: number;
+  productPlan?: ProductPlan;
+  productLimit?: number;
 };
 
 type TriggerHandle = { id: string };
@@ -43,6 +46,8 @@ export async function dispatchReportJob(report: DispatchableReport, options: { s
     primaryDomain: report.primaryDomain,
     locale: report.locale,
     reportAttempt: report.attemptCount,
+    productPlan: report.productPlan || "starter",
+    productLimit: report.productLimit || 20,
   };
   const triggerOptions = {
     idempotencyKey: reportDispatchIdempotencyKey(report),

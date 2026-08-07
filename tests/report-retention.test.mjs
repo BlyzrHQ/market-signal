@@ -14,7 +14,7 @@ import { createReportRetentionHttpPort } from "../src/trigger/report-retention-h
 const NOW = new Date("2026-07-31T12:00:00.000Z");
 const OLD = new Date("2025-01-01T00:00:00.000Z");
 const TOKEN = "retention_callback_token_that_is_long_enough";
-const TABLES = ["report_quality_signals", "report_evaluations", "report_ads", "report_matches", "report_products", "report_companies", "report_fact_chunks", "report_fact_manifests", "report_match_batch_checkpoints", "report_documents", "report_events", "report_runs"];
+const TABLES = ["report_quality_signals", "report_evaluations", "report_ads", "report_matches", "report_products", "report_companies", "report_fact_chunks", "report_fact_manifests", "report_match_batch_checkpoints", "report_product_entitlements", "report_documents", "report_events", "report_runs"];
 
 async function databaseFixture(t) {
   const directory = await mkdtemp(join(tmpdir(), "market-signal-retention-"));
