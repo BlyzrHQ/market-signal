@@ -438,7 +438,7 @@ test("runs company discovery only after product searches return no attributable 
     assert.equal(calls.slice(0, firstCompanyCall).every((lane) => lane === "product"), true);
     assert.deepEqual(new Set(calls.slice(firstCompanyCall)), new Set(["entity", "category"]));
     assert.deepEqual(result.candidates.map((candidate) => candidate.domain), ["fallback.example"]);
-    assert.match(result.gaps.join(" "), /product searches returned no attributable seller/i);
+    assert.match(result.gaps.join(" "), /product searches completed with no attributable seller/i);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;

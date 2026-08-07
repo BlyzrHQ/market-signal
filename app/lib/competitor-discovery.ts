@@ -40,7 +40,7 @@ export type DiscoveryResult = {
   category: string;
   region: string;
   businessType: BusinessProfile["businessType"];
-  strategy: "product-first" | "company-fallback" | "company-first";
+  strategy: "product-first" | "company-fallback" | "company-first" | "not-run";
   queries: string[];
   candidates: DiscoveryCandidate[];
   gaps: string[];
@@ -471,7 +471,7 @@ export async function discoverCompetitors(profile: DiscoveryProfile): Promise<Di
   const apiKey = process.env.OPENAI_API_KEY;
   const model = process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini";
   const business = inferBusinessProfile(profile);
-  if (!apiKey) return { available: false, provider: "unavailable", model, category: business.category, region: business.region, businessType: business.businessType, strategy: business.businessType === "ecommerce" ? "product-first" : "company-first", queries: [], candidates: [], gaps: ["Web discovery is not configured."], gap: "Web discovery is not configured. A search-capable provider is required before competitors can be discovered automatically." };
+  if (!apiKey) return { available: false, provider: "unavailable", model, category: business.category, region: business.region, businessType: business.businessType, strategy: "not-run", queries: [], candidates: [], gaps: ["Web discovery is not configured."], gap: "Web discovery is not configured. A search-capable provider is required before competitors can be discovered automatically." };
 
   const endpoint = `${(process.env.OPENAI_RESPONSES_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "")}/responses`;
   const anchors = business.businessType === "ecommerce" ? productSearchAnchors(business.offerings, MAX_PRODUCT_SEARCHES, business.brandName) : [];
@@ -486,8 +486,9 @@ export async function discoverCompetitors(profile: DiscoveryProfile): Promise<Di
     : productCandidates.length
       ? "product-first"
       : "company-fallback";
+  const productSearchesCompleted = productResults.every((result) => !result.gap);
   const fallbackGap = strategy === "company-fallback"
-    ? [anchors.length ? "Product searches returned no attributable seller, so company/category discovery ran as a fallback; every ecommerce lead still requires current product overlap before inclusion." : "No attributable ecommerce product was available for search, so company/category discovery ran as a fallback; every ecommerce lead still requires current product overlap before inclusion."]
+    ? [anchors.length ? (productSearchesCompleted ? "Product searches completed with no attributable seller, so company/category discovery ran as a fallback; every ecommerce lead still requires current product overlap before inclusion." : "Product search did not produce an attributable seller because one or more searches failed or returned no usable product page, so company/category discovery ran as a fallback; every ecommerce lead still requires current product overlap before inclusion.") : "No attributable ecommerce product was available for search, so company/category discovery ran as a fallback; every ecommerce lead still requires current product overlap before inclusion."]
     : [];
   const settled = productCandidates.length ? productResults : [...productResults, ...companyResults];
   const candidates = mergeCandidates(settled.flatMap((result) => result.candidates));

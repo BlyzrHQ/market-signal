@@ -26,12 +26,12 @@ For ecommerce reports, discover competitors from sellers of comparable products 
 
 ## Review state
 
-Claude/Fable architecture review was requested before implementation but could not start because the local Claude OAuth session had expired. This is not recorded as a model review or approval.
+Claude/Fable architecture review was requested before implementation but could not start because the local Claude OAuth session had expired. After authentication was restored, verified Claude Fable 5 reviewed the exact PR patch and returned `FABLE_GATE: BLOCK`. It found that the discovery-exception path reset ecommerce to `unknown`, allowing remembered sellers to bypass product-overlap verification, and that the route wiring lacked a regression test. The route now derives an immutable policy from the primary crawl before discovery, uses it after discovery failure and during all remembered/fallback verification, and has a route-level regression proving a stale remembered seller is rejected and selected for forgetting. Fable also requested more precise fallback wording; completed-empty searches are now distinguished from failed/incomplete product searches. A strict re-review remains required.
 
 ## Validation
 
 - Focused product-discovery and verification tests: 38/38 passed.
-- Repository test gate: 525/525 passed after the final amendment.
+- Repository test gate after the Fable blocker fixes: 526/526 passed.
 - Production build and lint passed; lint retained two pre-existing `<img>` optimization warnings and no errors.
 - Real public-product probe on 2026-08-07: the deterministic evidence filter accepted `anteplie.co.uk/products/traditional-turkish-square-pistachio-baklava` for a Pistachio Baklava anchor and `cateringsupply.co.uk/products/walnut-baklava-1kg` for a Walnut Baklava 1kg anchor, while rejecting a Reddit discussion URL. This validates source attribution and product-detail filtering, not the undeployed end-to-end report.
 - End-to-end production report validation remains pending review, merge, and deployment.

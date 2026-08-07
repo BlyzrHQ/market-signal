@@ -121,7 +121,31 @@ function firstPartyRegionSource(page: CrawlPage): FirstPartyRegionSource {
     : "first-party-inferred";
 }
 
-function verifyDiscoveredCompetitor(primary: DomainCrawl, candidate: DomainCrawl, discovery: DiscoveryCandidate, targetMarket: VerificationMarket, requireProductOverlap = false) {
+function discoveryInputForPrimary(primary: DomainCrawl) {
+  if (!primary.homepage) throw new Error("Primary homepage is required before competitor discovery.");
+  return {
+    domain: primary.domain,
+    title: primary.homepage.title,
+    description: primary.homepage.description,
+    region: primary.homepage.region,
+    language: primary.homepage.language,
+    products: primary.products,
+    pages: primary.pages.map((page) => ({ title: page.title, description: page.description, path: page.path, sourceUrl: page.sourceUrl, headings: page.headings })),
+  };
+}
+
+export function resolvePrimaryDiscoveryPolicy(primary: DomainCrawl) {
+  const input = discoveryInputForPrimary(primary);
+  const business = inferBusinessProfile(input);
+  return {
+    input,
+    businessType: business.businessType,
+    intendedStrategy: business.businessType === "ecommerce" ? "product-first" as const : "company-first" as const,
+    requireProductOverlap: business.businessType === "ecommerce",
+  };
+}
+
+export function verifyDiscoveredCompetitor(primary: DomainCrawl, candidate: DomainCrawl, discovery: DiscoveryCandidate, targetMarket: VerificationMarket, requireProductOverlap = false) {
   if (!primary.homepage || !candidate.homepage) return {
     ...candidate,
     discovery: {
@@ -154,6 +178,10 @@ function verifyDiscoveredCompetitor(primary: DomainCrawl, candidate: DomainCrawl
     { requireProductOverlap },
   );
   return { ...candidate, discovery: { ...discovery, ...verification } };
+}
+
+export function rememberedReverificationFailures(candidates: MemoryCandidate[], results: Array<DomainCrawl | null>) {
+  return candidates.filter((candidate, index) => candidate.provenance === "remembered-reverified" && !results[index]?.discovery?.accepted);
 }
 
 function productPathPriority(path: string) {
@@ -760,12 +788,13 @@ export async function POST(request: Request) {
     };
     primary = await enrichPrimaryProductPrices(primary, productRecoveryOptions);
     submittedResults = submittedResults.map((result) => result.domain === primaryDomain ? primary! : result);
+    const discoveryPolicy = resolvePrimaryDiscoveryPolicy(primary);
     let discovery: DiscoveryResult;
     try {
-      discovery = await discoverCompetitors({ domain: primary.domain, title: primary.homepage.title, description: primary.homepage.description, region: primary.homepage.region, language: primary.homepage.language, products: primary.products, pages: primary.pages.map((page) => ({ title: page.title, description: page.description, path: page.path, sourceUrl: page.sourceUrl, headings: page.headings })) });
+      discovery = await discoverCompetitors(discoveryPolicy.input);
     } catch (error) {
       const gap = error instanceof Error ? error.message : "Web competitor discovery failed.";
-      discovery = { available: false, provider: "unavailable", model: process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini", category: "", region: primary.homepage.region, businessType: "unknown", strategy: "company-first", queries: [], candidates: [], gaps: [gap], gap };
+      discovery = { available: false, provider: "unavailable", model: process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini", category: "", region: primary.homepage.region, businessType: discoveryPolicy.businessType, strategy: discoveryPolicy.intendedStrategy, queries: [], candidates: [], gaps: [gap], gap };
     }
     const memory = await loadRememberedCompetitors(primary.domain);
     const investigationCandidates = mergeRememberedCandidates(
@@ -778,10 +807,10 @@ export async function POST(request: Request) {
       gaps: memory.gap ? [...discovery.gaps, memory.gap] : discovery.gaps,
     };
     const verificationMarket = resolveVerificationMarket(discovery.region, primary.homepage.region, firstPartyRegionSource(primary.homepage));
-    const investigatedSettled = await settleWithConcurrency(investigationCandidates, COMPETITOR_CRAWL_CONCURRENCY, async (candidate) => verifyDiscoveredCompetitor(primary, await crawlDomain(candidate.domain, "discovered-competitor", candidate.matchedProductUrls?.length ? candidate.matchedProductUrls : [candidate.matchedProductUrl || candidate.websiteUrl]), candidate, verificationMarket, discovery.businessType === "ecommerce"));
+    const investigatedSettled = await settleWithConcurrency(investigationCandidates, COMPETITOR_CRAWL_CONCURRENCY, async (candidate) => verifyDiscoveredCompetitor(primary, await crawlDomain(candidate.domain, "discovered-competitor", candidate.matchedProductUrls?.length ? candidate.matchedProductUrls : [candidate.matchedProductUrl || candidate.websiteUrl]), candidate, verificationMarket, discoveryPolicy.requireProductOverlap));
     const discoveredResults = investigatedSettled.map((result) => result.status === "fulfilled" ? result.value : null);
     const confirmed: DomainCrawl[] = discoveredResults.filter((result): result is NonNullable<typeof result> => Boolean(result?.homepage && result.discovery?.accepted)).sort((left, right) => compareVerifiedCompetitors(left.discovery!, right.discovery!));
-    const rememberedFailures = investigationCandidates.filter((candidate, index) => candidate.provenance === "remembered-reverified" && !discoveredResults[index]?.discovery?.accepted);
+    const rememberedFailures = rememberedReverificationFailures(investigationCandidates, discoveredResults);
     const forgotten = await forgetRememberedCompetitors(primary.domain, rememberedFailures.map((candidate) => candidate.domain));
     const remembered = await rememberVerifiedCompetitors(primary.domain, confirmed.map((result) => ({ candidate: result.discovery as MemoryCandidate, verificationScore: result.discovery!.verificationScore })));
     if ((!forgotten.available && rememberedFailures.length) || (!remembered.available && confirmed.length)) {
