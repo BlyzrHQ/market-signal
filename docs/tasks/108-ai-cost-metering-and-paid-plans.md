@@ -145,10 +145,10 @@ public guarantees:
 | Edition | Monthly price | Customer-facing allowance | Internal variable-COGS ceiling |
 | --- | ---: | --- | ---: |
 | Self-hosted | Free | Unlimited by Market Signal; bring infrastructure and provider keys | USD 0 hosted spend |
-| Starter | USD 8 | 5 completed runs; up to 20 products analyzed/report (100/month); 1 monitored domain; manual refreshes; 1 seat | USD 1.20 / 120 SCU |
-| Solo | USD 29 | 10 runs; up to 60 products analyzed/report (600/month); 3 monitored domains; monthly scheduling; 1 seat | USD 4.35 / 435 SCU |
-| Growth | USD 79 | 40 runs; up to 60 products analyzed/report (2,400/month); 10 monitored domains; weekly scheduling; 3 seats; exports and sharing | USD 11.85 / 1,185 SCU |
-| Agency | USD 199 | 120 runs; up to 60 products analyzed/report (7,200/month); 30 monitored domains; flexible scheduling; 10 seats; client workspaces and branded exports | USD 29.85 / 2,985 SCU |
+| Starter | USD 8 | 5 completed runs; up to 20 products analyzed/report (100/month at full use); 1 monitored domain; manual refreshes; 1 seat | USD 1.20 / 120 SCU |
+| Solo | USD 29 | 10 runs; up to 50 products analyzed/report (500/month at full use); 3 monitored domains; monthly scheduling; 1 seat | USD 4.35 / 435 SCU |
+| Growth | USD 79 | 40 runs; up to 500 products analyzed/report (20,000/month at full use); 10 monitored domains; weekly scheduling; 3 seats; exports and sharing | USD 11.85 / 1,185 SCU |
+| Agency | USD 199 | 120 runs; up to 1,000 products analyzed/report (120,000/month at full use); 30 monitored domains; flexible scheduling; 10 seats; client workspaces and branded exports | USD 29.85 / 2,985 SCU |
 
 Every scheduled refresh consumes one included report run. Scheduling frequency
 is a capability, not a promise of unmetered refreshes. Top-ups are prepaid and
@@ -166,11 +166,13 @@ require an upgrade rather than cheap unlimited overages. Starter must be
 removed, repriced, or reduced if measured p95 cost exceeds USD 0.24 per
 completed run or USD 1.20 for the monthly allowance.
 
-The product allowances are also beta hypotheses. Starter deliberately analyzes
-the top 20 selected primary products per report; higher plans match the current
-bounded capability of 60. Products beyond the per-report cap remain visible as
-catalog coverage, but are not silently marked as compared. A future deep-catalog
-add-on must be priced from measured incremental embedding and judgment cost.
+The product allowances are also beta hypotheses. Starter analyzes up to 20
+selected primary products per report and Solo up to 50, both within the current
+bounded capability of 60. Growth's 500 and Agency's 1,000 are launch
+requirements for a deep-catalog pipeline; they are not supported by the current
+implementation and cannot be advertised or sold until that pipeline and its
+cost/quality evidence pass. Products beyond a working per-report cap remain
+visible as catalog coverage, but are not silently marked as compared.
 Before a run starts, show the estimated catalog count, the plan's per-report
 analysis cap, and how products will be selected. Prefer explicit customer
 selection; otherwise use documented observable catalog-priority signals and
@@ -186,9 +188,12 @@ The 15% ceilings target at least 85% gross margin before fixed infrastructure,
 support, payment fees, refunds, and taxes. They are safety budgets, not evidence
 that the proposed report allowances are profitable.
 
-Agency is the sharpest utilization risk: its USD 29.85 ceiling permits roughly
-USD 0.25 per fully used report and USD 0.004 per fully used product allowance.
-Its limits cannot become permanent until real p95 telemetry supports both the
+Growth and Agency are sharp utilization risks. At full stated use, Growth's USD
+11.85 ceiling permits about USD 0.0006 per product analyzed, while Agency's USD
+29.85 ceiling permits about USD 0.00025. Those are ceilings across all model,
+search, crawl, and recovery cost, not only matching. The quantities cannot
+become permanent until a deep-catalog benchmark demonstrates that the p95
+monthly customer mix—not an assumed low-utilization average—passes both the
 cost ceiling and report-quality gate.
 
 ## Quota release gate
@@ -285,6 +290,13 @@ Each item is a separate focused task and PR.
   required “products analyzed” wording, pre-run count visibility, no guarantee
   of a successful match, single-count semantics, explicit excluded-product
   coverage, and an Agency utilization warning. Those conditions are included.
+- On 2026-08-07, the requested per-report targets were revised to 20 products
+  for Starter, 50 for Solo, 500 for Growth, and 1,000 for Agency. Another Fable
+  review attempt failed with the same expired-OAuth error. Codex therefore
+  recorded the quantities without overriding them, passed them as commercial
+  targets, and blocked advertising Growth or Agency until the current 60-product
+  cap is replaced by a bounded deep-catalog pipeline that passes the stated p95
+  cost and quality gates.
 - This PR must remain unmerged until the required Fable 5 review can run and
   returns a strict PASS.
 
