@@ -403,8 +403,15 @@ function safeJudgeGroups(groups: CandidateGroup[]) {
   }));
 }
 
-function judgeBatchKey(model: string, groups: CandidateGroup[], batchIndex: number, batchCount: number): JudgeBatchCheckpointKey {
-  const hashPayload = JSON.stringify({ model, promptVersion: PROMPT_VERSION, batchIndex, batchCount, groups: safeJudgeGroups(groups) });
+export function judgeBatchKey(model: string, groups: CandidateGroup[], batchIndex: number, batchCount: number): JudgeBatchCheckpointKey {
+  // Retrieval scores come from embeddings and may drift slightly between retries.
+  // They help the judge, but product identity—not a nondeterministic ranking score—
+  // must determine whether a durable checkpoint can be replayed.
+  const checkpointGroups = groups.map((group) => ({
+    primary: safeProduct(group.primary),
+    candidates: group.candidates.map((candidate) => safeProduct(candidate.product)),
+  }));
+  const hashPayload = JSON.stringify({ model, promptVersion: PROMPT_VERSION, batchIndex, batchCount, groups: checkpointGroups });
   return {
     batchHash: createHash("sha256").update(hashPayload).digest("hex"),
     batchIndex,

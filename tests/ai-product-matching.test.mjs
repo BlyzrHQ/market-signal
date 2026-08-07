@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildAIProductComparison } from "../app/lib/ai-product-matching.ts";
+import { buildAIProductComparison, judgeBatchKey } from "../app/lib/ai-product-matching.ts";
 
 function product(id, domain, name, options = {}) {
   return {
@@ -626,6 +626,20 @@ test("assesses 1000 selected products in bounded judge batches after one catalog
   assert.equal(comparison.matching?.totalJudgeBatches, 40);
   assert.equal(comparison.matching?.judgeCalls, 40);
   assert.ok(judgePairCounts.every((count) => count <= 25));
+});
+
+test("checkpoint identity ignores nondeterministic retrieval-score drift", () => {
+  const primary = product("checkpoint-primary", "shop.test", "Sidr Honey 500g");
+  const rival = product("checkpoint-rival", "rival.test", "Sidr Honey 500g");
+  const group = (retrievalScore) => [{
+    primary,
+    candidates: [{ product: rival, lexicalScore: 0.9, lexicalEligible: true, semanticScore: retrievalScore, identitySignal: true, retrievalScore }],
+  }];
+
+  const first = judgeBatchKey("test-model", group(0.81231), 0, 1);
+  const retry = judgeBatchKey("test-model", group(0.81239), 0, 1);
+
+  assert.equal(retry.batchHash, first.batchHash);
 });
 
 test("replays complete deterministic judge checkpoints without another judge call", async () => {

@@ -130,7 +130,8 @@ content, bounded by byte size, and purged with their report.
 - TypeScript typecheck: passed.
 - Sites build and VPS build assertion: passed.
 - ESLint: zero errors; two pre-existing `img` performance warnings remain.
-- Full test suite: 533/533 passed.
+- Full test suite after merging the product-first discovery baseline and the
+  final review fix: 538/538 passed.
 - Synthetic deep-catalog test: 1,000 selected primary products, one embedding
   pass, bounded 25-pair judge requests, and checkpoint replay with zero new
   judge calls.
@@ -138,9 +139,11 @@ content, bounded by byte size, and purged with their report.
   product sitemaps yielded 1,001 unique public product URLs; 1,000 included a
   sitemap image. The authenticated match route truthfully retains at most
   1,000 primary products for analysis.
-- Strict Fable review attempt: blocked before review because the installed
-  Claude session's OAuth credential expired and could not refresh. The PR must
-  remain draft and unmerged until verified Fable 5 returns PASS.
+- Verified Fable 5 review found that embedding-derived retrieval-score drift
+  could change a checkpoint hash across retries. The hash now uses stable
+  product evidence only while the score remains available to the judge; a
+  focused regression test proves score drift does not change checkpoint
+  identity. Final full validation and re-review remain required before merge.
 - The fallback strict review initially blocked release on retry heartbeats,
   checkpoint batch-count binding, and a soft judge-pair ceiling. All three were
   corrected and covered by tests; this fallback review does not replace Fable.

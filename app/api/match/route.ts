@@ -102,7 +102,7 @@ export function parseCatalogs(value: unknown, primaryDomain = "") {
   });
 }
 
-export function productAnalysisLimit(value = process.env.MARKET_SIGNAL_PRODUCT_ANALYSIS_LIMIT) {
+export function productAnalysisLimit(value?: string) {
   const parsed = Number.parseInt(String(value || ""), 10);
   return Number.isFinite(parsed) ? Math.min(MAX_PRIMARY_PRODUCTS, Math.max(1, parsed)) : DEFAULT_PRODUCT_ANALYSIS_LIMIT;
 }
@@ -123,7 +123,7 @@ const liveServices: MatchServices = {
   saveCheckpoint: saveReportMatchBatchCheckpoint,
 };
 
-export function createMatchHandler(services: MatchServices = liveServices, expectedToken?: string, configuredLimit?: string) {
+export function createMatchHandler(services: MatchServices = liveServices, expectedToken?: string, configuredLimit = process.env.MARKET_SIGNAL_PRODUCT_ANALYSIS_LIMIT) {
   return async function matchHandler(request: Request) {
     if (!await hasValidInternalAuthorization(request.headers.get("authorization"), expectedToken)) return unauthorizedInternalResponse();
     try {
