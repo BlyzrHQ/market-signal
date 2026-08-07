@@ -53,9 +53,26 @@ support, and payroll costs are not SCU; they remain part of the broader gross
 margin model.
 
 SCU is not a currency, token resale, or the customer's invoice unit. Customers
-buy an understandable outcome: report runs, monitored domains, refreshes,
-seats, exports, and workspace capabilities. SCU is visible only in internal
-operations and, optionally, a detailed workspace usage page.
+buy an understandable outcome: report runs, primary products assessed,
+monitored domains, refreshes, seats, exports, and workspace capabilities. SCU
+is visible only in internal operations and, optionally, a detailed workspace
+usage page.
+
+### Product assessment unit
+
+Product count is a separate customer-facing usage dimension because retrieval,
+embedding, and judgment cost grows with catalog size. One **product assessed**
+means one primary-company product received a usable comparison assessment in a
+saved report. A `no_match` verdict still counts because the product was
+analyzed; merely discovering or crawling a catalog record does not.
+
+Count a primary product at most once per report. Multiple rival candidates,
+judge calls, retries, embeddings, and fallbacks do not multiply customer usage.
+They remain internal SCU drivers. “Products assessed” does not promise that a
+close rival exists or that a comparison will be accepted for every product.
+The pricing page calls this **products analyzed**, defined as products from the
+customer's catalog that Market Signal searches for and evaluates against
+potential rivals. Never call the allowance “product matches.”
 
 ## Cost ledger
 
@@ -66,6 +83,8 @@ event must contain:
 - provider, model, operation/stage, processing tier, region, and status;
 - input, cached-input, and output tokens;
 - tool name and tool-call count;
+- primary products selected and successfully assessed, catalog records
+  embedded, candidate pairs retrieved, and candidate pairs judged;
 - provider quantity and unit for non-token services;
 - immutable pricing-version identifier and currency;
 - raw provider cost in micro-USD;
@@ -126,10 +145,10 @@ public guarantees:
 | Edition | Monthly price | Customer-facing allowance | Internal variable-COGS ceiling |
 | --- | ---: | --- | ---: |
 | Self-hosted | Free | Unlimited by Market Signal; bring infrastructure and provider keys | USD 0 hosted spend |
-| Starter | USD 8 | 5 completed report/refresh runs, 1 monitored domain, manual refreshes, 1 seat | USD 1.20 / 120 SCU |
-| Solo | USD 29 | 10 report/refresh runs, 3 monitored domains, monthly scheduling, 1 seat | USD 4.35 / 435 SCU |
-| Growth | USD 79 | 40 report/refresh runs, 10 monitored domains, weekly scheduling, 3 seats, exports and sharing | USD 11.85 / 1,185 SCU |
-| Agency | USD 199 | 120 report/refresh runs, 30 monitored domains, flexible scheduling, 10 seats, client workspaces and branded exports | USD 29.85 / 2,985 SCU |
+| Starter | USD 8 | 5 completed runs; up to 20 products analyzed/report (100/month); 1 monitored domain; manual refreshes; 1 seat | USD 1.20 / 120 SCU |
+| Solo | USD 29 | 10 runs; up to 60 products analyzed/report (600/month); 3 monitored domains; monthly scheduling; 1 seat | USD 4.35 / 435 SCU |
+| Growth | USD 79 | 40 runs; up to 60 products analyzed/report (2,400/month); 10 monitored domains; weekly scheduling; 3 seats; exports and sharing | USD 11.85 / 1,185 SCU |
+| Agency | USD 199 | 120 runs; up to 60 products analyzed/report (7,200/month); 30 monitored domains; flexible scheduling; 10 seats; client workspaces and branded exports | USD 29.85 / 2,985 SCU |
 
 Every scheduled refresh consumes one included report run. Scheduling frequency
 is a capability, not a promise of unmetered refreshes. Top-ups are prepaid and
@@ -147,9 +166,30 @@ require an upgrade rather than cheap unlimited overages. Starter must be
 removed, repriced, or reduced if measured p95 cost exceeds USD 0.24 per
 completed run or USD 1.20 for the monthly allowance.
 
+The product allowances are also beta hypotheses. Starter deliberately analyzes
+the top 20 selected primary products per report; higher plans match the current
+bounded capability of 60. Products beyond the per-report cap remain visible as
+catalog coverage, but are not silently marked as compared. A future deep-catalog
+add-on must be priced from measured incremental embedding and judgment cost.
+Before a run starts, show the estimated catalog count, the plan's per-report
+analysis cap, and how products will be selected. Prefer explicit customer
+selection; otherwise use documented observable catalog-priority signals and
+show which products were excluded. Failed reports consume neither runs nor
+product allowance. An explicit rerun consumes a new run and counts the products
+successfully assessed in that saved report.
+
+The clearest Starter headline is: **5 reports per month, with up to 20 of your
+products analyzed in each report.** Keep the 100-product monthly maximum in the
+detailed limits rather than making it a third headline quota.
+
 The 15% ceilings target at least 85% gross margin before fixed infrastructure,
 support, payment fees, refunds, and taxes. They are safety budgets, not evidence
 that the proposed report allowances are profitable.
+
+Agency is the sharpest utilization risk: its USD 29.85 ceiling permits roughly
+USD 0.25 per fully used report and USD 0.004 per fully used product allowance.
+Its limits cannot become permanent until real p95 telemetry supports both the
+cost ceiling and report-quality gate.
 
 ## Quota release gate
 
@@ -162,8 +202,9 @@ The launch dataset must report:
 
 - raw and customer-eligible cost by report and stage;
 - p50, p90, p95, and maximum cost and latency;
-- search/tool calls, model tokens, products embedded, candidate pairs judged,
-  actions drafted, retries, failures, and cache savings;
+- search/tool calls, model tokens, primary products selected and successfully
+  assessed, products embedded, candidate pairs retrieved and judged, actions
+  drafted, retries, failures, and cache savings;
 - cost per accepted useful product match;
 - report-quality evaluator score alongside cost; and
 - simulated monthly cost for the intended customer mixes in each plan.
@@ -237,6 +278,13 @@ Each item is a separate focused task and PR.
   adding Starter before Solo, with a strict USD 0.24 p95 per-run ceiling,
   self-service feature boundaries, and abuse controls. It blocked presenting
   five runs as a permanent guarantee before metering verifies that ceiling.
+- Fable authentication was attempted again for the product-count meter and
+  returned the same expired-OAuth error. The proposal therefore remains behind
+  the same strict Fable merge gate.
+- A labelled Codex fallback reviewer passed the product meter for beta only. It
+  required “products analyzed” wording, pre-run count visibility, no guarantee
+  of a successful match, single-count semantics, explicit excluded-product
+  coverage, and an Agency utilization warning. Those conditions are included.
 - This PR must remain unmerged until the required Fable 5 review can run and
   returns a strict PASS.
 
