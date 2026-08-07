@@ -3,9 +3,31 @@ import { parkingProvider } from "../../app/lib/domain-recovery.ts";
 import { PermanentOrchestrationError } from "../shared/report-orchestration-contract.ts";
 import { parseWorkerApiManifest, WorkerApiContractError } from "../shared/worker-api-contract.ts";
 import { compactTerminalReportDocument, encodedJsonBytes, REPORT_CALLBACK_ENVELOPE_BYTES } from "../shared/report-document-compaction.ts";
+import { Agent, fetch as undiciFetch } from "undici";
 
 type FetchLike = typeof fetch;
 const MAX_ACCEPTED_ERROR_BODY_BYTES = 1_000_000;
+
+// Node's built-in fetch gives up while waiting for response headers after five
+// minutes, independently of a longer AbortSignal. Agency matching is allowed
+// 12 minutes, so keep Undici above the 750-second operation deadline while
+// Caddy remains the outermost 780-second boundary.
+export const ORCHESTRATION_FETCH_TIMEOUT_MS = 760_000;
+
+export function createOrchestrationFetch(timeoutMs = ORCHESTRATION_FETCH_TIMEOUT_MS) {
+  const boundedTimeout = Math.max(1_000, Math.floor(timeoutMs));
+  const dispatcher = new Agent({ headersTimeout: boundedTimeout, bodyTimeout: boundedTimeout });
+  const fetchImpl = (async (input: Parameters<FetchLike>[0], init?: Parameters<FetchLike>[1]) => {
+    return await undiciFetch(input as Parameters<typeof undiciFetch>[0], {
+      ...(init as Parameters<typeof undiciFetch>[1]),
+      dispatcher,
+    }) as unknown as Response;
+  }) as FetchLike & { close: () => Promise<void> };
+  fetchImpl.close = async () => { await dispatcher.close(); };
+  return fetchImpl;
+}
+
+const orchestrationFetch = createOrchestrationFetch();
 
 const PATHS = {
   capabilities: "/api/internal/capabilities",
@@ -206,7 +228,7 @@ function requiredObject<T>(value: unknown, operation: string): T {
 export function createReportOrchestrationHttpPort(configuration: { appOrigin: string; callbackToken: string; fetchImpl?: FetchLike }): ReportOrchestrationPort {
   const appOrigin = origin(configuration.appOrigin);
   const token = callbackToken(configuration.callbackToken);
-  const fetchImpl = configuration.fetchImpl || fetch;
+  const fetchImpl = configuration.fetchImpl || orchestrationFetch;
   const call = (path: string, operation: string, timeoutMs: number, body?: unknown) => requestJson(fetchImpl, new URL(path, appOrigin).toString(), token, operation, timeoutMs, body);
 
   return {
