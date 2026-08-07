@@ -126,6 +126,7 @@ public guarantees:
 | Edition | Monthly price | Customer-facing allowance | Internal variable-COGS ceiling |
 | --- | ---: | --- | ---: |
 | Self-hosted | Free | Unlimited by Market Signal; bring infrastructure and provider keys | USD 0 hosted spend |
+| Starter | USD 8 | 5 completed report/refresh runs, 1 monitored domain, manual refreshes, 1 seat | USD 1.20 / 120 SCU |
 | Solo | USD 29 | 10 report/refresh runs, 3 monitored domains, monthly scheduling, 1 seat | USD 4.35 / 435 SCU |
 | Growth | USD 79 | 40 report/refresh runs, 10 monitored domains, weekly scheduling, 3 seats, exports and sharing | USD 11.85 / 1,185 SCU |
 | Agency | USD 199 | 120 report/refresh runs, 30 monitored domains, flexible scheduling, 10 seats, client workspaces and branded exports | USD 29.85 / 2,985 SCU |
@@ -134,6 +135,17 @@ Every scheduled refresh consumes one included report run. Scheduling frequency
 is a capability, not a promise of unmetered refreshes. Top-ups are prepaid and
 explicit; there are no surprise overage invoices. Annual billing is two months
 free after monthly retention and cost are understood.
+
+Starter is intentionally an easy paid entry point, not a free trial. Its five
+runs are consumed only by usable completed reports. It remains separate from
+Solo so the upgrade path does not jump directly from USD 8 to USD 79. Because
+payment fees and support are proportionally significant at this price, Starter
+is self-service, has standard processing priority, and has no scheduled
+monitoring, API, teams, or premium connectors. Enforce account-cycling,
+concurrency, crawl-page, competitor, retry, and AI-spend controls. Extra runs
+require an upgrade rather than cheap unlimited overages. Starter must be
+removed, repriced, or reduced if measured p95 cost exceeds USD 0.24 per
+completed run or USD 1.20 for the monthly allowance.
 
 The 15% ceilings target at least 85% gross margin before fixed infrastructure,
 support, payment fees, refunds, and taxes. They are safety budgets, not evidence
@@ -220,6 +232,11 @@ Each item is a separate focused task and PR.
   required all-provider cost coverage, logical-operation charging, hidden-work
   exclusion, per-report budgets, and p95 cost/quality gates. Those requirements
   are incorporated above.
+- On 2026-08-07, Fable authentication remained expired during review of the
+  USD 8 Starter revision. A clearly labelled Codex fallback reviewer passed
+  adding Starter before Solo, with a strict USD 0.24 p95 per-run ceiling,
+  self-service feature boundaries, and abuse controls. It blocked presenting
+  five runs as a permanent guarantee before metering verifies that ceiling.
 - This PR must remain unmerged until the required Fable 5 review can run and
   returns a strict PASS.
 
