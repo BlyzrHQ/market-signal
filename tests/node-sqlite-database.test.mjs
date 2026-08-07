@@ -36,6 +36,7 @@ test("Node SQLite preserves reports and competitor memory after reopening", asyn
   try {
     database = await NodeSqliteDatabase.open(databasePath);
     const created = await createReportRun({ primaryDomain: "myjam.co.uk", entitlement: { plan: "agency", productLimit: 1_000 } }, new Date("2026-07-27T00:00:00.000Z"), database);
+    await database.prepare("UPDATE report_product_entitlements SET product_limit = 20 WHERE run_id = ?").bind(created.id).run();
     await appendReportEvent(created.publicId, {
       idempotencyKey: "crawl-started",
       phase: "crawl",

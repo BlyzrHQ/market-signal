@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import {
   composeProductMatchAttempts,
   hasProductMatchCoverageDefect,
+  publishPricedProductComparison,
   shouldRetryProductMatch,
   upsertProductComparisonBlock,
 } from "../app/lib/product-match-lifecycle.ts";
+import { applyFinalProductEnrichment } from "../app/lib/product-intelligence.ts";
 
 function product(id, domain = "shop.test") {
   return {
@@ -185,4 +187,17 @@ test("the composed attempt count records a failed transport request before a suc
   const ai = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1")], accepted: 0 });
   const result = composeProductMatchAttempts(null, [ai], 2);
   assert.equal(result.matching.attempts, 2);
+});
+
+test("the final publication gate removes a rival whose enrichment replaces its price with an invalid signal", () => {
+  const candidate = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "r1")], accepted: 1 });
+  candidate.rows[0].matches[0].product.priceSignals = [{ raw: "GBP 8", currency: "GBP", amount: 8 }];
+  const invalidFresh = { ...candidate.rows[0].matches[0].product, priceSignals: [{ raw: "GBP 0", currency: "GBP", amount: 0 }], observedAt: "2026-08-07T00:00:00.000Z" };
+  const enriched = applyFinalProductEnrichment(candidate, [invalidFresh], { pagesRequested: 1, pagesFetched: 1, maxPages: 64, gaps: [] });
+  const published = publishPricedProductComparison(enriched);
+
+  assert.equal(enriched.rows[0].matches[0].product.priceSignals[0].amount, 0);
+  assert.equal(published.rows[0].matches[0].product, null);
+  assert.equal(published.coverage.assignedPairCount, 0);
+  assert.equal(published.matching.publication.suppressedAcceptedPairs, 1);
 });

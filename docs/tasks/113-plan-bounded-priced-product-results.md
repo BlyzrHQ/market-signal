@@ -22,12 +22,14 @@ persisted with the report run and remains fixed across worker retries.
 
 ## Publication rule
 
-- Matching may assess any candidate needed within the entitled budget.
+- Matching may assess any candidate needed within the entitled budget, and
+  selected pages receive the existing price/image enrichment fallbacks first.
 - An accepted pair is published and persisted only when the rival product has
   a finite positive numeric amount and a supported ISO currency observed from
   its public product evidence.
 - Missing, zero, negative, non-numeric, or unsupported-currency rival prices
-  suppress the pair rather than producing a misleading comparison row.
+  suppress the pair after enrichment rather than producing a misleading
+  comparison row.
 - Coverage records the number and reason for suppressed accepted pairs.
 
 ## Acceptance checks
@@ -46,7 +48,7 @@ persisted with the report run and remains fixed across worker retries.
 ## Validation evidence
 
 - Typecheck and production builds passed.
-- Full automated suite: 544/544 tests passed.
+- Full automated suite: 545/545 tests passed.
 - ESLint: zero errors; two pre-existing `img` performance warnings remain.
 - Diff whitespace check passed.
 - Real production validation remains pending the dependency merge, strict

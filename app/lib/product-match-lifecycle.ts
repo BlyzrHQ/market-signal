@@ -1,4 +1,4 @@
-import type { ProductComparison } from "./product-intelligence.ts";
+import { hasValidObservedRivalPrice, type ProductComparison } from "./product-intelligence.ts";
 
 export type ProductMatchLifecycle = "idle" | "matching" | "retrying" | "complete" | "limited";
 
@@ -115,4 +115,27 @@ export function upsertProductComparisonBlock<T extends ReportDocument>(document:
   const block: ReportBlock = { type: "product-comparison", id: "product-comparison", ...comparison };
   const found = document.blocks.some((item) => item.type === "product-comparison");
   return { ...document, blocks: found ? document.blocks.map((item) => item.type === "product-comparison" ? block : item) : [...document.blocks, block] } as T;
+}
+
+export function publishPricedProductComparison(comparison: ProductComparison): ProductComparison {
+  let suppressedAcceptedPairs = 0;
+  const rows = comparison.rows.map((row) => ({
+    ...row,
+    matches: row.matches.map((match) => {
+      if (!match.product || hasValidObservedRivalPrice(match.product)) return match;
+      suppressedAcceptedPairs += 1;
+      return { ...match, product: null, score: 0, confidence: null, sharedTerms: [], claimIds: row.primary.claimIds, decision: null, assessment: undefined };
+    }),
+  }));
+  const assignedPairCount = rows.reduce((sum, row) => sum + row.matches.filter((match) => match.product).length, 0);
+  const verifiedPairCount = rows.reduce((sum, row) => sum + row.matches.filter((match) => match.product && match.confidence === "Medium").length, 0);
+  return {
+    ...comparison,
+    rows,
+    coverage: { ...comparison.coverage, assignedPairCount, verifiedPairCount },
+    matching: comparison.matching ? {
+      ...comparison.matching,
+      publication: { suppressedAcceptedPairs, reasons: { "missing-valid-rival-price": suppressedAcceptedPairs } },
+    } : comparison.matching,
+  };
 }

@@ -55,7 +55,7 @@ function product(domain = "shop.example", id = "p1") {
 
 function comparison({ withPair = false } = {}) {
   const primary = product();
-  const rival = product("rival.example", "r1");
+  const rival = { ...product("rival.example", "r1"), priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }] };
   return {
     primaryDomain: "shop.example",
     comparisonDomains: ["rival.example"],

@@ -1,6 +1,7 @@
 import {
   composeProductMatchAttempts,
   hasProductMatchCoverageDefect,
+  publishPricedProductComparison,
   shouldRetryProductMatch,
   upsertProductComparisonBlock,
 } from "../../app/lib/product-match-lifecycle.ts";
@@ -256,6 +257,7 @@ export async function orchestrateReport(
           await port.appendEvent(payload.publicId, event("enrichment-limited", "enrichment", "Selected product enrichment ended with a visible coverage gap."));
         }
       }
+      comparison = publishPricedProductComparison(comparison);
       const actionInputs = collectProductActionInputs(comparison);
       if (actionInputs.length) {
         await port.appendEvent(payload.publicId, event("actions-started", "actions", "Drafting evidence-grounded next moves for the accepted product pairs.", { pairs: actionInputs.length }));
