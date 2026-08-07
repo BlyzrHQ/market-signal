@@ -654,6 +654,7 @@ test("replays complete deterministic judge checkpoints without another judge cal
     if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, index % 2] })) });
     judgeCalls += 1;
     const request = JSON.parse(body.input[1].content);
+    assert.ok(request.groups.every((group) => group.candidates.every((candidate) => !("retrievalScore" in candidate))));
     return response({ output_text: JSON.stringify({ assessments: request.groups.flatMap((group) => group.candidates.map((candidate) => ({
       primaryId: group.primary.id,
       candidateId: candidate.id,

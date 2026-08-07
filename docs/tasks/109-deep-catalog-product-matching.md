@@ -141,9 +141,10 @@ content, bounded by byte size, and purged with their report.
   1,000 primary products for analysis.
 - Verified Fable 5 review found that embedding-derived retrieval-score drift
   could change a checkpoint hash across retries. The hash now uses stable
-  product evidence only while the score remains available to the judge; a
-  focused regression test proves score drift does not change checkpoint
-  identity. Final full validation and re-review remain required before merge.
+  product evidence only, and the nondeterministic score is also excluded from
+  the judge payload while remaining available for candidate ranking. A focused
+  regression test proves score drift does not change checkpoint identity.
+  Final full validation and re-review remain required before merge.
 - The fallback strict review initially blocked release on retry heartbeats,
   checkpoint batch-count binding, and a soft judge-pair ceiling. All three were
   corrected and covered by tests; this fallback review does not replace Fable.

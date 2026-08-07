@@ -396,10 +396,10 @@ function safeProduct(product: ProductRecord) {
 function safeJudgeGroups(groups: CandidateGroup[]) {
   return groups.map((group) => ({
     primary: safeProduct(group.primary),
-    candidates: group.candidates.map((candidate) => ({
-      ...safeProduct(candidate.product),
-      retrievalScore: Number(candidate.retrievalScore.toFixed(4)),
-    })),
+    // Retrieval scores rank candidates before judging. They are deliberately
+    // excluded from the classification payload so embedding drift cannot alter
+    // either the judge input or its durable checkpoint identity.
+    candidates: group.candidates.map((candidate) => safeProduct(candidate.product)),
   }));
 }
 
@@ -407,11 +407,7 @@ export function judgeBatchKey(model: string, groups: CandidateGroup[], batchInde
   // Retrieval scores come from embeddings and may drift slightly between retries.
   // They help the judge, but product identity—not a nondeterministic ranking score—
   // must determine whether a durable checkpoint can be replayed.
-  const checkpointGroups = groups.map((group) => ({
-    primary: safeProduct(group.primary),
-    candidates: group.candidates.map((candidate) => safeProduct(candidate.product)),
-  }));
-  const hashPayload = JSON.stringify({ model, promptVersion: PROMPT_VERSION, batchIndex, batchCount, groups: checkpointGroups });
+  const hashPayload = JSON.stringify({ model, promptVersion: PROMPT_VERSION, batchIndex, batchCount, groups: safeJudgeGroups(groups) });
   return {
     batchHash: createHash("sha256").update(hashPayload).digest("hex"),
     batchIndex,
