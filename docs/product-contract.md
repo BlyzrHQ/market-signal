@@ -31,11 +31,19 @@ Enter a company domain and receive an evidence-backed competitive intelligence r
 - The first monitoring channels are Meta, Google, and TikTok.
 - Competitors are selected automatically in v1; there is no manual approval step.
 - The first report may show estimated spend ranges, but never exact spend, and every estimate carries confidence and methodology.
-- The free experience allows one report per browser or email with optional email capture; it is not gated by an account.
+- Hosted report generation requires an active paid workspace. Public marketing
+  pages may explain or preview the product, but do not grant unmetered live
+  reports.
 - English is the launch language; regional and language inference is visible and overridable.
 - Paid data providers are deferred, but remain an explicit budget-dependent option.
-- The business model is a free trial followed by subscription tiers.
-- The first release needs a dashboard/report surface, exports, recommendations, and alerts, while keeping sign-up friction low.
+- The hosted business model is paid-only subscription tiers; there is no
+  permanently free hosted plan. A free self-hosted/open-source edition uses the
+  operator's own infrastructure and provider credentials.
+- Hosted allowances are expressed as report runs, monitored domains, refresh
+  cadence, seats, and capabilities. Internal provider cost units are an
+  operational margin control, not the customer's invoice unit.
+- The paid release needs a dashboard/report surface, exports, recommendations,
+  alerts, account/workspace access, and clear usage visibility.
 
 ## Evidence and trust requirements
 

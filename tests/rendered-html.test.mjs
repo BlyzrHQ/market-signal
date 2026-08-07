@@ -22,7 +22,12 @@ test("server-renders the Market Signal product shell", async () => {
   const html = await response.text();
   assert.match(html, /<title>Market Signal — Know where your market is moving<\/title>/i);
   assert.match(html, /Know where your market is moving/);
-  assert.match(html, /One free report/);
+  assert.match(html, /Beta access/);
+  assert.match(html, /no charge while usage is measured/);
+  assert.match(html, /Launch pricing/);
+  assert.match(html, /Self-hosted edition/);
+  assert.match(html, /GitHub private preview/);
+  assert.match(html, /\$8/);
   assert.match(html, /public signals only/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/i);
 });
