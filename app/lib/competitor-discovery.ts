@@ -40,6 +40,7 @@ export type DiscoveryResult = {
   category: string;
   region: string;
   businessType: BusinessProfile["businessType"];
+  strategy: "product-first" | "company-fallback" | "company-first";
   queries: string[];
   candidates: DiscoveryCandidate[];
   gaps: string[];
@@ -350,20 +351,18 @@ function mergeCandidates(candidates: DiscoveryCandidate[]) {
       mentionCount: evidence.length,
       matchedPrimaryProductName: current.matchedPrimaryProductName || candidate.matchedPrimaryProductName,
       matchedProductUrl: current.matchedProductUrl || candidate.matchedProductUrl,
-      matchedPrimaryProductNames: [...new Set([...(current.matchedPrimaryProductNames || (current.matchedPrimaryProductName ? [current.matchedPrimaryProductName] : [])), ...(candidate.matchedPrimaryProductNames || (candidate.matchedPrimaryProductName ? [candidate.matchedPrimaryProductName] : []))])].slice(0, 3),
-      matchedProductUrls: [...new Set([...(current.matchedProductUrls || (current.matchedProductUrl ? [current.matchedProductUrl] : [])), ...(candidate.matchedProductUrls || (candidate.matchedProductUrl ? [candidate.matchedProductUrl] : []))])].slice(0, 2),
+      matchedPrimaryProductNames: [...new Set([...(current.matchedPrimaryProductNames || (current.matchedPrimaryProductName ? [current.matchedPrimaryProductName] : [])), ...(candidate.matchedPrimaryProductNames || (candidate.matchedPrimaryProductName ? [candidate.matchedPrimaryProductName] : []))])].slice(0, MAX_PRODUCT_SEARCHES),
+      matchedProductUrls: [...new Set([...(current.matchedProductUrls || (current.matchedProductUrl ? [current.matchedProductUrl] : [])), ...(candidate.matchedProductUrls || (candidate.matchedProductUrl ? [candidate.matchedProductUrl] : []))])].slice(0, MAX_PRODUCT_SEARCHES),
     });
   }
-  const ranked = [...merged.values()].sort((left, right) => Number(right.relationship === "direct") - Number(left.relationship === "direct") || right.mentionCount - left.mentionCount || left.domain.localeCompare(right.domain));
-  const entityBacked = ranked.filter((candidate) => candidate.relationship === "direct" && candidate.evidence.some((item) => item.method === "entity-search" || item.method === "category-search")).slice(0, 2);
-  const productBacked = ranked.filter((candidate) => candidate.matchedProductUrl && !entityBacked.some((reserved) => reserved.domain === candidate.domain)).slice(0, 4);
-  const selected = [...entityBacked, ...productBacked];
-  for (const candidate of ranked) {
-    if (selected.some((item) => item.domain === candidate.domain)) continue;
-    selected.push(candidate);
-    if (selected.length === MAX_CANDIDATES) break;
-  }
-  return selected.slice(0, MAX_CANDIDATES).sort((left, right) => Number(right.relationship === "direct") - Number(left.relationship === "direct") || Number(Boolean(left.matchedProductUrl)) - Number(Boolean(right.matchedProductUrl)) || right.mentionCount - left.mentionCount || left.domain.localeCompare(right.domain));
+  const productCoverage = (candidate: DiscoveryCandidate) => new Set(candidate.matchedPrimaryProductNames || (candidate.matchedPrimaryProductName ? [candidate.matchedPrimaryProductName] : [])).size;
+  return [...merged.values()].sort((left, right) =>
+    Number(Boolean(right.matchedProductUrl)) - Number(Boolean(left.matchedProductUrl))
+      || productCoverage(right) - productCoverage(left)
+      || right.mentionCount - left.mentionCount
+      || Number(right.relationship === "direct") - Number(left.relationship === "direct")
+      || left.domain.localeCompare(right.domain),
+  ).slice(0, MAX_CANDIDATES);
 }
 
 function representativeProducts(products: ProductRecord[]) {
@@ -472,21 +471,31 @@ export async function discoverCompetitors(profile: DiscoveryProfile): Promise<Di
   const apiKey = process.env.OPENAI_API_KEY;
   const model = process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini";
   const business = inferBusinessProfile(profile);
-  if (!apiKey) return { available: false, provider: "unavailable", model, category: business.category, region: business.region, businessType: business.businessType, queries: [], candidates: [], gaps: ["Web discovery is not configured."], gap: "Web discovery is not configured. A search-capable provider is required before competitors can be discovered automatically." };
+  if (!apiKey) return { available: false, provider: "unavailable", model, category: business.category, region: business.region, businessType: business.businessType, strategy: business.businessType === "ecommerce" ? "product-first" : "company-first", queries: [], candidates: [], gaps: ["Web discovery is not configured."], gap: "Web discovery is not configured. A search-capable provider is required before competitors can be discovered automatically." };
 
   const endpoint = `${(process.env.OPENAI_RESPONSES_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "")}/responses`;
-  const baseLanes: SearchLane[] = ["entity", "category"];
   const anchors = business.businessType === "ecommerce" ? productSearchAnchors(business.offerings, MAX_PRODUCT_SEARCHES, business.brandName) : [];
-  const settled = await Promise.all([
-    ...baseLanes.map((lane) => runLane(endpoint, apiKey, model, lane, business, profile)),
-    ...anchors.map((anchor) => runLane(endpoint, apiKey, model, "product", { ...business, offerings: [anchor] }, { ...profile, products: [anchor] })),
-  ]);
+  const productResults = await Promise.all(anchors.map((anchor) => runLane(endpoint, apiKey, model, "product", { ...business, offerings: [anchor] }, { ...profile, products: [anchor] })));
+  const productCandidates = mergeCandidates(productResults.flatMap((result) => result.candidates));
+  const needsCompanyDiscovery = business.businessType !== "ecommerce" || productCandidates.length === 0;
+  const companyResults = needsCompanyDiscovery
+    ? await Promise.all((["entity", "category"] as SearchLane[]).map((lane) => runLane(endpoint, apiKey, model, lane, business, profile)))
+    : [];
+  const strategy: DiscoveryResult["strategy"] = business.businessType !== "ecommerce"
+    ? "company-first"
+    : productCandidates.length
+      ? "product-first"
+      : "company-fallback";
+  const fallbackGap = strategy === "company-fallback"
+    ? [anchors.length ? "Product searches returned no attributable seller, so company/category discovery ran as a fallback; every ecommerce lead still requires current product overlap before inclusion." : "No attributable ecommerce product was available for search, so company/category discovery ran as a fallback; every ecommerce lead still requires current product overlap before inclusion."]
+    : [];
+  const settled = productCandidates.length ? productResults : [...productResults, ...companyResults];
   const candidates = mergeCandidates(settled.flatMap((result) => result.candidates));
   const queries = [...new Set(settled.flatMap((result) => result.queries))].slice(0, 16);
-  const gaps = settled.flatMap((result) => result.gap ? [result.gap] : []);
+  const gaps = [...fallbackGap, ...settled.flatMap((result) => result.gap ? [result.gap] : [])];
   const completed = settled.filter((result) => !result.gap || result.candidates.length > 0);
   const category = business.category;
   const region = completed.find((result) => result.region && result.region !== business.region)?.region || business.region;
-  const gap = candidates.length ? undefined : gaps[0] || "Entity and category searches completed, but no attributable company candidate was returned.";
-  return { available: completed.length > 0, provider: "openai-web-search", model, category, region, businessType: business.businessType, queries, candidates, gaps, ...(gap ? { gap } : {}) };
+  const gap = candidates.length ? undefined : gaps[0] || "Product and fallback searches completed, but no attributable seller candidate was returned.";
+  return { available: completed.length > 0, provider: "openai-web-search", model, category, region, businessType: business.businessType, strategy, queries, candidates, gaps, ...(gap ? { gap } : {}) };
 }
