@@ -88,6 +88,7 @@ export function verifyCompetitorEntity(
   candidate: VerificationSite,
   discovery: DiscoveryCandidate,
   targetMarket: VerificationMarket = resolveVerificationMarket("", primary.region, primary.regionEvidenceSource),
+  options: { requireProductOverlap?: boolean } = {},
 ): CompetitorVerification {
   const primaryTerms = siteTerms(primary);
   const candidateTerms = siteTerms(candidate);
@@ -127,7 +128,7 @@ export function verifyCompetitorEntity(
   const relationshipScore = discovery.relationship === "direct" ? 8 : 3;
   const regionScore = primaryRegion && candidateRegion ? (regionCompatibility ? 10 : 0) : 5;
   const verificationScore = Math.min(100, categoryScore + productScore + evidenceScore + relationshipScore + regionScore);
-  const accepted = categoryAlignment && regionCompatibility && verificationScore >= 50;
+  const accepted = categoryAlignment && regionCompatibility && verificationScore >= 50 && (!options.requireProductOverlap || hasProductOverlap);
   const confidence = verificationScore >= 78 && hasProductOverlap ? "High" : verificationScore >= 55 ? "Medium" : "Low";
 
   return {

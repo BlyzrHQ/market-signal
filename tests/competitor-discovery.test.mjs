@@ -122,21 +122,23 @@ test("retains a visible lane gap instead of exposing an upstream JSON parser err
   }
 });
 
-test("retains successful entity candidates when other discovery lanes fail", async () => {
+test("retains a successful company fallback after product searches return no sellers", async () => {
   const previousKey = process.env.OPENAI_API_KEY;
   const previousFetch = globalThis.fetch;
   process.env.OPENAI_API_KEY = "test-only";
-  let call = 0;
-  globalThis.fetch = async () => {
-    call += 1;
-    if (call !== 1) return new Response("<!DOCTYPE html><title>Gateway error</title>", { status: 200, headers: { "content-type": "text/html" } });
+  globalThis.fetch = async (_url, init) => {
+    const request = JSON.parse(init.body);
+    const input = JSON.parse(request.input[1].content);
+    if (input.lane === "product") return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: [], candidates: [] }) }] }] });
+    if (input.lane === "category") return new Response("<!DOCTYPE html><title>Gateway error</title>", { status: 200, headers: { "content-type": "text/html" } });
     return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: ["MyJam alternatives UK"], candidates: [{ domain: "rival.example", companyName: "Rival", reason: "Same grocery market", searchQuery: "MyJam alternatives UK", websiteUrl: "https://rival.example/", evidenceUrl: "https://rival.example/", evidenceTitle: "Rival halal grocery", marketCategory: "Halal grocery", relationship: "direct", sharedOfferings: ["halal grocery"], matchedPrimaryProductName: "", matchedProductUrl: "" }] }) }] }] });
   };
   try {
     const result = await discoverCompetitors(profile);
     assert.equal(result.available, true);
+    assert.equal(result.strategy, "company-fallback");
     assert.deepEqual(result.candidates.map((candidate) => candidate.domain), ["rival.example"]);
-    assert.equal(result.gaps.length, 3);
+    assert.ok(result.gaps.length >= 2);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
@@ -290,7 +292,7 @@ test("keeps deterministic source order when a small catalog has no recurring fam
   assert.deepEqual(productSearchAnchors(products, 3).map((item) => item.name), products.map((item) => item.name));
 });
 
-test("retains product-backed candidates when company lanes time out", async () => {
+test("does not run company lanes when product-backed candidates exist", async () => {
   const previousKey = process.env.OPENAI_API_KEY;
   const previousFetch = globalThis.fetch;
   process.env.OPENAI_API_KEY = "test-only";
@@ -310,7 +312,8 @@ test("retains product-backed candidates when company lanes time out", async () =
   try {
     const result = await discoverCompetitors(searchProfile);
     assert.deepEqual(result.candidates.map((candidate) => candidate.domain), ["rival.example"]);
-    assert.equal(result.gaps.filter((gap) => /timed out/i.test(gap)).length, 2);
+    assert.equal(result.strategy, "product-first");
+    assert.equal(result.gaps.filter((gap) => /timed out/i.test(gap)).length, 0);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
@@ -373,7 +376,7 @@ test("rejects two-token overlap when it covers too little of the anchor product"
   assert.deepEqual(candidatesFromSearchEvidence(payload, longProfile), []);
 });
 
-test("reserves two investigations for entity competitors while retaining four product-backed sellers", async () => {
+test("uses product-backed sellers without spending competitor slots on company-first results", async () => {
   const previousKey = process.env.OPENAI_API_KEY;
   const previousFetch = globalThis.fetch;
   process.env.OPENAI_API_KEY = "test-only";
@@ -397,14 +400,76 @@ test("reserves two investigations for entity competitors while retaining four pr
         { type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: [`UK buy ${name}`], candidates: [] }) }] },
       ] });
     }
-    const entities = [1, 2, 3].map((index) => ({ domain: `entity-${index}.example`, companyName: `Entity ${index}`, reason: "Same grocery market", searchQuery: "halal grocery competitors UK", websiteUrl: `https://entity-${index}.example/`, evidenceUrl: `https://entity-${index}.example/`, evidenceTitle: `Entity ${index} halal grocery`, marketCategory: "Halal grocery", relationship: "direct", sharedOfferings: ["halal grocery"], matchedPrimaryProductName: "", matchedProductUrl: "" }));
-    return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: ["halal grocery competitors UK"], candidates: entities }) }] }] });
+    throw new Error("company-first discovery must not run after product sellers were found");
   };
   try {
     const result = await discoverCompetitors(searchProfile);
-    assert.equal(result.candidates.length, 6);
-    assert.deepEqual(result.candidates.slice(0, 2).map((candidate) => candidate.domain), ["entity-1.example", "entity-2.example"]);
-    assert.equal(result.candidates.filter((candidate) => candidate.evidenceMethod === "search-source" && candidate.matchedProductUrl).length, 4);
+    assert.equal(result.strategy, "product-first");
+    assert.equal(result.candidates.length, 4);
+    assert.equal(result.candidates.every((candidate) => candidate.evidenceMethod === "search-source" && candidate.matchedProductUrl), true);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
+test("runs company discovery only after product searches return no attributable sellers", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  const calls = [];
+  const searchProfile = { ...profile, products: [
+    product("Pistachio Baklava", "https://myjam.co.uk/products/pistachio-baklava"),
+    product("Walnut Baklava", "https://myjam.co.uk/products/walnut-baklava"),
+  ] };
+  globalThis.fetch = async (_url, init) => {
+    const request = JSON.parse(init.body);
+    const input = JSON.parse(request.input[1].content);
+    calls.push(input.lane);
+    if (input.lane === "product") return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Baklava", region: "United Kingdom", queries: ["Pistachio Baklava UK"], candidates: [] }) }] }] });
+    const candidate = { domain: "fallback.example", companyName: "Fallback", reason: "Same grocery market", searchQuery: "baklava competitors UK", websiteUrl: "https://fallback.example/", evidenceUrl: "https://fallback.example/", evidenceTitle: "Fallback baklava shop", marketCategory: "Baklava", relationship: "direct", sharedOfferings: ["baklava"], matchedPrimaryProductName: "", matchedProductUrl: "" };
+    return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Baklava", region: "United Kingdom", queries: ["baklava competitors UK"], candidates: [candidate] }) }] }] });
+  };
+  try {
+    const result = await discoverCompetitors(searchProfile);
+    assert.equal(result.strategy, "company-fallback");
+    const firstCompanyCall = calls.findIndex((lane) => lane !== "product");
+    assert.ok(firstCompanyCall > 0);
+    assert.equal(calls.slice(0, firstCompanyCall).every((lane) => lane === "product"), true);
+    assert.deepEqual(new Set(calls.slice(firstCompanyCall)), new Set(["entity", "category"]));
+    assert.deepEqual(result.candidates.map((candidate) => candidate.domain), ["fallback.example"]);
+    assert.match(result.gaps.join(" "), /product searches completed with no attributable seller/i);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
+test("groups several matched products under one seller and ranks broader overlap first", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  const searchProfile = { ...profile, products: [
+    product("Pistachio Baklava", "https://myjam.co.uk/products/pistachio-baklava"),
+    product("Walnut Baklava", "https://myjam.co.uk/products/walnut-baklava"),
+  ] };
+  globalThis.fetch = async (_url, init) => {
+    const request = JSON.parse(init.body);
+    const input = JSON.parse(request.input[1].content);
+    const name = input.profile.offerings[0].name;
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const sources = [{ title: `${name} | Broad Seller`, url: `https://broad.example/products/${slug}` }];
+    if (name.includes("Pistachio")) sources.push({ title: `${name} | Narrow Seller`, url: `https://narrow.example/products/${slug}` });
+    return Response.json({ output: [
+      { type: "web_search_call", action: { query: `UK buy ${name}`, sources } },
+      { type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Baklava", region: "United Kingdom", queries: [`UK buy ${name}`], candidates: [] }) }] },
+    ] });
+  };
+  try {
+    const result = await discoverCompetitors(searchProfile);
+    assert.deepEqual(result.candidates.map((candidate) => candidate.domain), ["broad.example", "narrow.example"]);
+    assert.deepEqual(result.candidates[0].matchedPrimaryProductNames, ["Pistachio Baklava", "Walnut Baklava"]);
+    assert.equal(result.candidates[0].matchedProductUrls.length, 2);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;

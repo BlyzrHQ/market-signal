@@ -57,6 +57,19 @@ test("accepts a company-level rival from its own category evidence without a mat
   assert.equal(result.hasProductOverlap, false);
 });
 
+test("requires observed product overlap when product-led ecommerce discovery requests it", () => {
+  const result = verifyCompetitorEntity(
+    site("myjam.co.uk", "MyJam cultural grocery marketplace", "Halal meat and cultural groceries delivered across the UK", "United Kingdom (inferred)"),
+    site("rival.example", "Rival halal grocery delivery", "Order halal meat and international groceries online", "United Kingdom (inferred)"),
+    discovery(),
+    resolveVerificationMarket("United Kingdom", "United Kingdom"),
+    { requireProductOverlap: true },
+  );
+  assert.equal(result.categoryAlignment, true);
+  assert.equal(result.hasProductOverlap, false);
+  assert.equal(result.accepted, false);
+});
+
 test("rejects an accessory seller that does not describe itself as the same core category", () => {
   const result = verifyCompetitorEntity(
     site("camera.example", "Professional cameras", "Cameras and lenses for creators", "United States (inferred)"),
