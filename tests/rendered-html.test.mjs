@@ -25,7 +25,8 @@ test("server-renders the Market Signal product shell", async () => {
   assert.match(html, /Beta access/);
   assert.match(html, /no charge while usage is measured/);
   assert.match(html, /Launch pricing/);
-  assert.match(html, /Self-host for free/);
+  assert.match(html, /Self-hosted edition/);
+  assert.match(html, /GitHub private preview/);
   assert.match(html, /\$8/);
   assert.match(html, /public signals only/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/i);

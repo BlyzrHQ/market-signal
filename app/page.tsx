@@ -56,8 +56,8 @@ export default function Home() {
           <a href="#pillars">{ar ? "ما الذي ستحصل عليه" : "What you get"}</a>
           <a href="#method">{ar ? "منهجنا" : "Our method"}</a>
           <a className="header-pricing-link" href="#pricing">{ar ? "الخطط والأسعار" : "Plans & pricing"}</a>
-          <a className="github-button" href="https://github.com/BlyzrHQ/market-signal" target="_blank" rel="noreferrer" aria-label={ar ? "افتح مستودع Market Signal على GitHub" : "Open the Market Signal repository on GitHub"}>
-            <span aria-hidden="true">⌘</span>{ar ? "مفتوح المصدر" : "GitHub"}
+          <a className="github-button" href="https://github.com/BlyzrHQ/market-signal" target="_blank" rel="noreferrer" aria-label={ar ? "افتح المعاينة الخاصة لمستودع Market Signal على GitHub" : "Open the private preview of the Market Signal repository on GitHub"}>
+            <span aria-hidden="true">⌘</span>GitHub
           </a>
           <button className="language-switch" type="button" onClick={() => setLocale(ar ? "en" : "ar")} aria-label={ar ? "Switch to English" : "التبديل إلى العربية"}>
             <span aria-hidden="true">{ar ? "EN" : "ع"}</span>{ar ? "English" : "العربية"}
@@ -81,7 +81,7 @@ export default function Home() {
           </form>
           <div className="hero-links" aria-label={ar ? "الخطط والمصدر" : "Plans and source code"}>
             <a className="hero-pricing-button" href="#pricing">{ar ? "شاهد الخطط ابتداءً من 8$" : "See plans from $8"}<span aria-hidden="true">↓</span></a>
-            <a className="hero-github-link" href="https://github.com/BlyzrHQ/market-signal" target="_blank" rel="noreferrer">{ar ? "استضفه بنفسك على GitHub" : "Self-host from GitHub"}<span aria-hidden="true">↗</span></a>
+            <a className="hero-github-link" href="https://github.com/BlyzrHQ/market-signal" target="_blank" rel="noreferrer">{ar ? "معاينة GitHub الخاصة" : "GitHub private preview"}<span aria-hidden="true">↗</span></a>
           </div>
           <div className="trusted-row"><span>{ar ? "مصمم للفرق التي تحتاج إلى سياق واضح" : "Built for teams that need the market explained"}</span><span className="trusted-line" /><span>STARTUPS</span><span>AGENCIES</span><span>ECOMMERCE</span></div>
         </div>
@@ -127,9 +127,9 @@ export default function Home() {
           </div>
 
           <div className="self-hosted-plan">
-            <div><span>{ar ? "مفتوح المصدر" : "Open source"}</span><strong>{ar ? "الاستضافة الذاتية مجانية" : "Self-host for free"}</strong></div>
-            <p>{ar ? "شغّل النواة الكاملة ببنيتك ومفاتيح مزودي الخدمة الخاصة بك. لا تفرض Market Signal حدوداً على الاستخدام الذاتي." : "Run the complete core with your own infrastructure and provider keys. Market Signal does not impose hosted-plan limits on your installation."}</p>
-            <a className="open-source-cta" href="https://github.com/BlyzrHQ/market-signal" target="_blank" rel="noreferrer">{ar ? "افتح المشروع على GitHub ↗" : "Open on GitHub ↗"}</a>
+            <div><span>{ar ? "إصدار المصدر مخطط" : "Source release planned"}</span><strong>{ar ? "إصدار للاستضافة الذاتية" : "Self-hosted edition"}</strong></div>
+            <p>{ar ? "المستودع الآن في معاينة خاصة. سنفتحه للجمهور بعد اختيار الترخيص ومراجعة الأمان؛ وحتى ذلك الحين لا ندّعي أنه إصدار مفتوح المصدر متاح." : "The repository is in private preview. It will open publicly after licensing and security review; until then, we do not claim the source release is publicly available."}</p>
+            <a className="open-source-cta" href="https://github.com/BlyzrHQ/market-signal" target="_blank" rel="noreferrer">{ar ? "معاينة خاصة على GitHub ↗" : "Private preview on GitHub ↗"}</a>
           </div>
 
           <div className="pricing-grid">
@@ -146,7 +146,7 @@ export default function Home() {
               <h3>Solo</h3><div className="plan-price"><strong>$29</strong><span>{ar ? "/ شهر" : "/ month"}</span></div>
               <p>{ar ? "لمن يتابع عدة منافسين ويحتاج مساحة أكبر للمنتجات." : "For an operator tracking a broader catalog and several market rivals."}</p>
               <ul><li><b>10</b> {ar ? "تقارير مكتملة شهرياً" : "completed reports / month"}</li><li><b>50</b> {ar ? "منتجاً يتم تحليله في التقرير" : "products analyzed / report"}</li><li><b>3</b> {ar ? "نطاقات مراقبة ومقعد واحد" : "monitored domains · 1 seat"}</li><li>{ar ? "جدولة شهرية" : "Monthly scheduling"}</li></ul>
-              <a className="plan-cta secondary" href="#top">{ar ? "اطلب الوصول المبكر" : "Request early access"}</a>
+              <a className="plan-cta secondary" href="#top">{ar ? "جرّب تقرير النسخة التجريبية" : "Try a beta report"}</a>
             </article>
 
             <article className="pricing-card future">
@@ -154,7 +154,7 @@ export default function Home() {
               <h3>Growth</h3><div className="plan-price"><strong>$79</strong><span>{ar ? "/ شهر" : "/ month"}</span></div>
               <p>{ar ? "لفريق يحتاج مراقبة أسبوعية وتغطية كتالوج أعمق." : "For a team that needs weekly monitoring and deeper catalog coverage."}</p>
               <ul><li><b>40</b> {ar ? "تقريراً مكتملاً شهرياً" : "completed reports / month"}</li><li><b>500</b> {ar ? "منتج يتم تحليله في التقرير" : "products analyzed / report"}</li><li><b>10</b> {ar ? "نطاقات مراقبة و3 مقاعد" : "monitored domains · 3 seats"}</li><li>{ar ? "تصدير ومشاركة وجدولة أسبوعية" : "Exports, sharing, weekly scheduling"}</li></ul>
-              <a className="plan-cta secondary" href="#top">{ar ? "انضم إلى قائمة الانتظار" : "Join the waitlist"}</a>
+              <span className="plan-cta disabled" aria-disabled="true">{ar ? "غير متاح بعد" : "Not available yet"}</span>
             </article>
 
             <article className="pricing-card future">
@@ -162,7 +162,7 @@ export default function Home() {
               <h3>Agency</h3><div className="plan-price"><strong>$199</strong><span>{ar ? "/ شهر" : "/ month"}</span></div>
               <p>{ar ? "للوكالات التي تدير أسواقاً وتقارير متعددة للعملاء." : "For agencies managing multiple client markets and report workspaces."}</p>
               <ul><li><b>120</b> {ar ? "تقريراً مكتملاً شهرياً" : "completed reports / month"}</li><li><b>1,000</b> {ar ? "منتج يتم تحليله في التقرير" : "products analyzed / report"}</li><li><b>30</b> {ar ? "نطاق مراقبة و10 مقاعد" : "monitored domains · 10 seats"}</li><li>{ar ? "مساحات عملاء وتصدير بعلامتك" : "Client workspaces and branded exports"}</li></ul>
-              <a className="plan-cta secondary" href="#top">{ar ? "انضم إلى قائمة الانتظار" : "Join the waitlist"}</a>
+              <span className="plan-cta disabled" aria-disabled="true">{ar ? "غير متاح بعد" : "Not available yet"}</span>
             </article>
           </div>
 
