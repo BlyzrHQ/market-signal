@@ -9,6 +9,12 @@ test("landing pricing exposes honest hosted and self-hosted plan targets", async
   ]);
   assert.match(page, /href="#pricing"/);
   assert.match(page, /id="pricing"/);
+  assert.match(page, /See plans from \$8/);
+  assert.match(page, /map your products first/i);
+  assert.match(page, /publish only comparisons backed by a public rival price/i);
+  assert.ok((page.match(/https:\/\/github\.com\/BlyzrHQ\/market-signal/g) || []).length >= 3);
+  assert.match(page, /Open the Market Signal repository on GitHub/);
+  assert.match(page, /target="_blank" rel="noreferrer"/);
   assert.match(page, /Self-host for free/);
   assert.match(page, /<strong>\$8<\/strong>/);
   assert.match(page, /<b>5<\/b>[\s\S]*completed reports \/ month/);
@@ -21,4 +27,6 @@ test("landing pricing exposes honest hosted and self-hosted plan targets", async
   assert.doesNotMatch(page, /products matched \/ report|Buy now|Checkout/);
   assert.match(styles, /\.pricing-grid \{[^}]*repeat\(4,minmax\(0,1fr\)\)/);
   assert.match(styles, /\.pricing-card \{[^}]*min-width: 0/);
+  assert.match(styles, /\.hero-links \{[^}]*flex-wrap: wrap/);
+  assert.match(styles, /@media \(max-width: 700px\)[^{]*\{[\s\S]*\.header-nav \.header-pricing-link \{ display: inline-flex; \}/);
 });

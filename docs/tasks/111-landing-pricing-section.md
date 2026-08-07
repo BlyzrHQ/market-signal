@@ -22,3 +22,6 @@ Add a clear pricing section to the main landing page using the measured-cost hyp
 4. No card claims active checkout, unlimited hosted usage, or currently unsupported 500/1,000-product processing.
 5. Desktop, tablet, and mobile layouts have no horizontal overflow.
 6. Source tests, rendered HTML, build, lint, and responsive browser checks pass before review.
+7. Pricing is visible from the first viewport through a dedicated hero action, including on mobile.
+8. The landing page includes a clear GitHub action for the self-hosted open-source edition.
+9. The landing copy describes the product-first discovery flow and the priced-rival publication rule.

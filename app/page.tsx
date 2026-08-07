@@ -55,7 +55,10 @@ export default function Home() {
         <nav className="header-nav" aria-label={ar ? "التنقل الرئيسي" : "Primary navigation"}>
           <a href="#pillars">{ar ? "ما الذي ستحصل عليه" : "What you get"}</a>
           <a href="#method">{ar ? "منهجنا" : "Our method"}</a>
-          <a href="#pricing">{ar ? "الأسعار" : "Pricing"}</a>
+          <a className="header-pricing-link" href="#pricing">{ar ? "الخطط والأسعار" : "Plans & pricing"}</a>
+          <a className="github-button" href="https://github.com/BlyzrHQ/market-signal" target="_blank" rel="noreferrer" aria-label={ar ? "افتح مستودع Market Signal على GitHub" : "Open the Market Signal repository on GitHub"}>
+            <span aria-hidden="true">⌘</span>{ar ? "مفتوح المصدر" : "GitHub"}
+          </a>
           <button className="language-switch" type="button" onClick={() => setLocale(ar ? "en" : "ar")} aria-label={ar ? "Switch to English" : "التبديل إلى العربية"}>
             <span aria-hidden="true">{ar ? "EN" : "ع"}</span>{ar ? "English" : "العربية"}
           </button>
@@ -66,7 +69,7 @@ export default function Home() {
         <div className="hero-copy">
           <div className="eyebrow"><span className="pulse-dot" /> {ar ? "معلومات تنافسية مبنية على أدلة عامة" : "Competitive intelligence built from public evidence"}</div>
           <h1>{ar ? <>اعرف إلى أين يتحرك سوقك <em>قبل أن يسبقك.</em></> : <>Know where your market is moving <em>before it moves you.</em></>}</h1>
-          <p className="hero-lede">{ar ? "أدخل نطاقاً واحداً. سنجد المنافسين، ونزامن المنتجات والأسعار والصور العامة، ونقارن تجربة موقعك بالسوق، ثم نحفظ كل نتيجة في تقرير يمكنك الرجوع إليه." : "Enter one domain. We find the rivals, synchronize public products, prices, and images, benchmark your experience against the market, and save every result in a report you can revisit."}</p>
+          <p className="hero-lede">{ar ? "أدخل نطاقاً واحداً. نرسم خريطة منتجاتك أولاً، ثم نستخدمها لاكتشاف المنافسين الحقيقيين وننشر فقط المقارنات المدعومة بسعر منافس عام، مع حفظ كل نتيجة في تقرير يمكنك الرجوع إليه." : "Enter one domain. We map your products first, use them to discover real competitors, and publish only comparisons backed by a public rival price—then save everything in a report you can revisit."}</p>
           <form className="domain-form" onSubmit={analyze}>
             <label htmlFor="domain">{ar ? "نطاق شركتك أو رابط الموقع" : "Your company domain or URL"}</label>
             <div className="input-row">
@@ -76,6 +79,10 @@ export default function Home() {
             <div className="form-note"><span className="lock">◇</span> {ar ? "وصول تجريبي · دون رسوم أثناء قياس الاستخدام · إشارات عامة فقط" : "Beta access · no charge while usage is measured · public signals only"}</div>
             {analysisError && <div className="analysis-error" role="alert">{analysisError}</div>}
           </form>
+          <div className="hero-links" aria-label={ar ? "الخطط والمصدر" : "Plans and source code"}>
+            <a className="hero-pricing-button" href="#pricing">{ar ? "شاهد الخطط ابتداءً من 8$" : "See plans from $8"}<span aria-hidden="true">↓</span></a>
+            <a className="hero-github-link" href="https://github.com/BlyzrHQ/market-signal" target="_blank" rel="noreferrer">{ar ? "استضفه بنفسك على GitHub" : "Self-host from GitHub"}<span aria-hidden="true">↗</span></a>
+          </div>
           <div className="trusted-row"><span>{ar ? "مصمم للفرق التي تحتاج إلى سياق واضح" : "Built for teams that need the market explained"}</span><span className="trusted-line" /><span>STARTUPS</span><span>AGENCIES</span><span>ECOMMERCE</span></div>
         </div>
 
@@ -85,9 +92,9 @@ export default function Home() {
             <div className="preview-kicker">{ar ? "يستمر حتى إذا أغلقت الصفحة" : "KEEPS WORKING IF YOU CLOSE THE TAB"}</div>
             <div className="preview-title">{ar ? <>تقرير دائم، وليس <strong>نتيجة مؤقتة.</strong></> : <>A persistent report, not <strong>a one-time response.</strong></>}</div>
             <div className="method-preview-list">
-              <div><b>01</b><span>{ar ? "نزحف موقعك ونستخرج كتالوج المنتجات القابل للإسناد." : "Crawl your site and extract the attributable product catalog."}</span></div>
-              <div><b>02</b><span>{ar ? "نكتشف المنافسين الحقيقيين ونفحص كتالوجاتهم العامة." : "Discover real competitors and inspect their public catalogs."}</span></div>
-              <div><b>03</b><span>{ar ? "نطابق المنتجات ونقارن الأسعار ونوضح فجوات الأدلة." : "Match products, compare prices, and expose evidence gaps."}</span></div>
+              <div><b>01</b><span>{ar ? "نزحف موقعك ونبني كتالوج منتجاتك أولاً." : "Crawl your site and build your product catalog first."}</span></div>
+              <div><b>02</b><span>{ar ? "نبحث بكل منتج عن المنافسين الذين يبيعون بدائل حقيقية." : "Use each product to discover rivals selling real alternatives."}</span></div>
+              <div><b>03</b><span>{ar ? "ننشر المقارنة فقط عندما نجد سعراً عاماً صالحاً للمنافس." : "Publish a comparison only when a valid public rival price is found."}</span></div>
             </div>
             <div className="preview-foot"><span><b>LIVE</b> {ar ? "تقدم محفوظ" : "saved progress"}</span><span><b>PUBLIC</b> {ar ? "مصادر مرتبطة" : "linked sources"}</span><span><b>NO</b> {ar ? "بيانات مؤقتة" : "fixture results"}</span></div>
           </div>
@@ -122,7 +129,7 @@ export default function Home() {
           <div className="self-hosted-plan">
             <div><span>{ar ? "مفتوح المصدر" : "Open source"}</span><strong>{ar ? "الاستضافة الذاتية مجانية" : "Self-host for free"}</strong></div>
             <p>{ar ? "شغّل النواة الكاملة ببنيتك ومفاتيح مزودي الخدمة الخاصة بك. لا تفرض Market Signal حدوداً على الاستخدام الذاتي." : "Run the complete core with your own infrastructure and provider keys. Market Signal does not impose hosted-plan limits on your installation."}</p>
-            <a href="https://github.com/BlyzrHQ/market-signal">{ar ? "عرض المستودع ↗" : "View repository ↗"}</a>
+            <a className="open-source-cta" href="https://github.com/BlyzrHQ/market-signal" target="_blank" rel="noreferrer">{ar ? "افتح المشروع على GitHub ↗" : "Open on GitHub ↗"}</a>
           </div>
 
           <div className="pricing-grid">
