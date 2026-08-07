@@ -30,6 +30,7 @@
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "react-server-dom-webpack": "19.2.6",
+    "undici": "7.29.0",
     "vinext": "0.0.50",
     "vite": "8.0.13"
   },

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import test from "node:test";
 
 import {
@@ -11,8 +12,10 @@ import {
 } from "../src/trigger/report-orchestration-core.ts";
 import {
   OPERATION_BUDGETS_MS,
+  ORCHESTRATION_FETCH_TIMEOUT_MS,
   OrchestrationHttpError,
   WORST_CASE_CRITICAL_PATH_MS,
+  createOrchestrationFetch,
   createReportOrchestrationHttpPort,
   isRetryableHttpStatus,
 } from "../src/trigger/report-orchestration-http.ts";
@@ -558,8 +561,36 @@ test("stored run identity drift hard-fails before any mutation", async () => {
 test("all operation deadlines keep a two-minute margin below the stale marker", () => {
   assert.equal(MAX_OPERATION_TIMEOUT_MS, 780_000);
   for (const timeout of Object.values(OPERATION_BUDGETS_MS)) assert.ok(timeout <= MAX_OPERATION_TIMEOUT_MS);
+  assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS > OPERATION_BUDGETS_MS.match, "Undici must not preempt the match operation deadline");
+  assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS < MAX_OPERATION_TIMEOUT_MS, "the worker deadline must remain inside the outer edge window");
   assert.equal(WORST_CASE_CRITICAL_PATH_MS, 2_075_000);
   assert.ok(WORST_CASE_CRITICAL_PATH_MS <= 2_100_000, "critical path must preserve a two-minute task-ceiling margin");
+});
+
+test("the managed orchestration fetch controls the response-header deadline", async () => {
+  const server = createServer((_request, response) => {
+    setTimeout(() => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end('{"ok":true}');
+    }, 2_500);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const url = `http://127.0.0.1:${address.port}/slow-headers`;
+  const shortFetch = createOrchestrationFetch(1_000);
+  const patientFetch = createOrchestrationFetch(5_000);
+  try {
+    const [response] = await Promise.all([
+      patientFetch(url),
+      assert.rejects(shortFetch(url), /fetch failed/i),
+    ]);
+    assert.deepEqual(await response.json(), { ok: true });
+  } finally {
+    await shortFetch.close();
+    await patientFetch.close();
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
 });
 
 test("the retry loop shares one total operation deadline instead of doubling it", async () => {
