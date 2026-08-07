@@ -54,7 +54,7 @@ export interface ReportOrchestrationPort {
   crawl(input: { primary: string; domains: string[] }): Promise<CrawlOutcome>;
   brief(input: { primary: string; domains: string[] }): Promise<unknown>;
   ads(input: unknown): Promise<{ ok: true; block: JsonBlock }>;
-  match(input: { publicId: string; reportAttempt: number; primaryDomain: string; catalogs: Array<{ domain: string; products: ProductRecord[] }> }): Promise<{ ok: true; comparison: ProductComparison }>;
+  match(input: { publicId: string; reportAttempt: number; primaryDomain: string; productLimit: number; catalogs: Array<{ domain: string; products: ProductRecord[] }> }): Promise<{ ok: true; comparison: ProductComparison }>;
   enrich(input: { targets: unknown[] }): Promise<{ ok: true; products: ProductRecord[]; coverage: NonNullable<ProductComparison["enrichment"]> }>;
   actions(input: { inputs: ProductActionInput[] }): Promise<{ ok: true; result: ProductActionPlanningResult }>;
   persistFactChunk(publicId: string, input: ReportFactChunkInput): Promise<void>;
@@ -227,7 +227,7 @@ export async function orchestrateReport(
     let transportFailed = false;
     try {
       requestCount += 1;
-      const first = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, primaryDomain: crawl.primaryDomain, catalogs });
+      const first = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, primaryDomain: crawl.primaryDomain, productLimit: payload.productLimit, catalogs });
       attempts.push(first.comparison);
     } catch {
       transportFailed = true;
@@ -236,7 +236,7 @@ export async function orchestrateReport(
       try {
         await port.appendEvent(payload.publicId, event("matching-retry-started", "matching", "Resuming only incomplete product judge batches from durable checkpoints."));
         requestCount += 1;
-        const retry = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, primaryDomain: crawl.primaryDomain, catalogs });
+        const retry = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, primaryDomain: crawl.primaryDomain, productLimit: payload.productLimit, catalogs });
         attempts.push(retry.comparison);
       } catch { /* the bounded second application attempt remains a visible gap */ }
     }

@@ -130,6 +130,10 @@ export type ProductComparison = {
     primaryProductsSynchronized?: number;
     competitorProductsSynchronized?: number;
     candidateSlotsByDomain?: Record<string, number>;
+    publication?: {
+      suppressedAcceptedPairs: number;
+      reasons: Record<"missing-valid-rival-price", number>;
+    };
   };
   enrichment?: {
     pagesRequested: number;
