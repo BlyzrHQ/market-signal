@@ -11,7 +11,10 @@
 	reverse_proxy app:3000 {
 		transport http {
 			dial_timeout 10s
-			response_header_timeout 330s
+			# Agency matching has a 12-minute application budget and the worker
+			# allows 12.5 minutes for transport. Keep the edge above both so Caddy
+			# does not turn a still-valid match response into a retryable 504.
+			response_header_timeout 780s
 		}
 	}
 
