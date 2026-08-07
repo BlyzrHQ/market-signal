@@ -24,16 +24,17 @@ export const OPERATION_BUDGETS_MS = {
   crawl: 300_000,
   brief: 90_000,
   ads: 90_000,
-  match: 90_000,
+  match: 750_000,
   enrich: 120_000,
   actions: 35_000,
 } as const;
 
 // read + preflight + crawl-start + crawl + crawl-complete + longest parallel lane
-// (matching-start + two match calls + enrichment-start + enrichment +
+// (matching-start + two bounded match calls, where the second replays durable
+// judge checkpoints and only requests missing work, + enrichment-start + enrichment +
 // enrichment-complete + actions-start + actions + actions-complete +
 // matching-complete) + final save.
-export const WORST_CASE_CRITICAL_PATH_MS = (OPERATION_BUDGETS_MS.report * 10)
+export const WORST_CASE_CRITICAL_PATH_MS = (OPERATION_BUDGETS_MS.report * 11)
   + OPERATION_BUDGETS_MS.preflight
   + OPERATION_BUDGETS_MS.crawl
   + (OPERATION_BUDGETS_MS.match * 2)

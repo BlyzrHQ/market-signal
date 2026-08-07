@@ -8,7 +8,7 @@ const MAX_ATTEMPTS = 2;
 
 export const marketSignalReportOrchestration = task({
   id: "market-signal-report-orchestration",
-  maxDuration: 900,
+  maxDuration: 2_220,
   retry: {
     maxAttempts: MAX_ATTEMPTS,
     minTimeoutInMs: 2_000,

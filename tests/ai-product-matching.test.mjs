@@ -442,6 +442,7 @@ test("candidate retrieval performs an exact semantic scan across the bounded cat
 test("a complete group is salvaged when another group is incomplete in the same judge response", async () => {
   const primaries = [product("p1", "shop.test", "Sidr Honey 500g"), product("p2", "shop.test", "Olive Oil 1L")];
   const rivals = [product("r1", "rival.test", "Sidr Honey 500g"), product("r2", "rival.test", "Olive Oil 1L")];
+  let savedCheckpoints = 0;
   const fetch = async (url, init) => {
     const body = JSON.parse(init.body);
     if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((text, index) => ({ index, embedding: /honey/i.test(text) ? [1, 0] : [0, 1] })) });
@@ -460,11 +461,12 @@ test("a complete group is salvaged when another group is incomplete in the same 
   const comparison = await buildAIProductComparison("shop.test", [
     { domain: "shop.test", products: primaries },
     { domain: "rival.test", products: rivals },
-  ], {}, { apiKey: "test", fetch, maxPrimaryProducts: 2 });
+  ], {}, { apiKey: "test", fetch, maxPrimaryProducts: 2, saveJudgeBatchCheckpoint: async () => { savedCheckpoints += 1; } });
 
   assert.equal(comparison.matching?.method, "ai-hybrid");
   assert.equal(comparison.matching?.primaryProductsAssessed, 1);
   assert.equal(comparison.coverage.assignedPairCount, 1);
+  assert.equal(savedCheckpoints, 0);
   assert.equal(comparison.rows.find((row) => row.primary.id === primaries[1].id)?.matches[0].product, null);
   assert.match(comparison.matching?.gaps.join(" ") || "", /incomplete/i);
 });
@@ -581,4 +583,154 @@ test("synchronizes complete catalogs before selecting the strongest groups for A
   assert.equal(comparison.matching?.competitorProductsSynchronized, 100);
   assert.ok(comparison.matching?.selectedPrimaryIds?.includes("p79"));
   assert.equal(comparison.rows.find((row) => row.primary.id === "p79")?.matches[0].product?.id, "r99");
+});
+
+test("assesses 1000 selected products in bounded judge batches after one catalog embedding pass", async () => {
+  const primaryProducts = Array.from({ length: 1_000 }, (_, index) => product(`deep-p${index}`, "shop.test", `Catalog Item ${index}`));
+  const rival = product("deep-r1", "rival.test", "Catalog Item");
+  const embeddingProductIds = [];
+  const judgePairCounts = [];
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) {
+      embeddingProductIds.push(...body.input.map((text) => text.match(/^name: (.+)$/m)?.[1] || ""));
+      return response({ data: body.input.map((_, index) => ({ index, embedding: [1, 0] })) });
+    }
+    const request = JSON.parse(body.input[1].content);
+    judgePairCounts.push(request.groups.reduce((sum, group) => sum + group.candidates.length, 0));
+    return response({ output_text: JSON.stringify({ assessments: request.groups.flatMap((group) => group.candidates.map((candidate) => ({
+      primaryId: group.primary.id,
+      candidateId: candidate.id,
+      verdict: "no_match",
+      confidence: 0.99,
+      reason: "Different products.",
+      contradiction: "",
+    }))) }) });
+  };
+
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: primaryProducts },
+    { domain: "rival.test", products: [rival] },
+  ], {}, {
+    apiKey: "test",
+    fetch,
+    maxPrimaryProducts: 1_000,
+    primaryProductsPerJudgeCall: 50,
+    maxPairsPerJudgeCall: 50,
+    totalBudgetMs: 120_000,
+  });
+
+  assert.equal(new Set(embeddingProductIds).size, 1_001);
+  assert.equal(embeddingProductIds.length, 1_001);
+  assert.equal(comparison.matching?.primaryProductsAssessed, 1_000);
+  assert.equal(comparison.matching?.totalJudgeBatches, 40);
+  assert.equal(comparison.matching?.judgeCalls, 40);
+  assert.ok(judgePairCounts.every((count) => count <= 25));
+});
+
+test("replays complete deterministic judge checkpoints without another judge call", async () => {
+  const primaries = Array.from({ length: 4 }, (_, index) => product(`checkpoint-p${index}`, "shop.test", `Checkpoint Item ${index}`));
+  const rivals = primaries.map((_, index) => product(`checkpoint-r${index}`, "rival.test", `Checkpoint Item ${index}`));
+  const checkpoints = new Map();
+  const loadedKeys = [];
+  const savedKeys = [];
+  let judgeCalls = 0;
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, index % 2] })) });
+    judgeCalls += 1;
+    const request = JSON.parse(body.input[1].content);
+    return response({ output_text: JSON.stringify({ assessments: request.groups.flatMap((group) => group.candidates.map((candidate) => ({
+      primaryId: group.primary.id,
+      candidateId: candidate.id,
+      verdict: "no_match",
+      confidence: 0.99,
+      reason: "Different products.",
+      contradiction: "",
+    }))) }) });
+  };
+  const options = {
+    apiKey: "test",
+    fetch,
+    maxPrimaryProducts: 4,
+    maxCandidatesPerPrimary: 1,
+    primaryProductsPerJudgeCall: 2,
+    maxPairsPerJudgeCall: 2,
+    loadJudgeBatchCheckpoint: async (key) => {
+      loadedKeys.push(structuredClone(key));
+      return checkpoints.get(key.batchHash) ?? null;
+    },
+    saveJudgeBatchCheckpoint: async (key, checkpoint) => {
+      assert.doesNotThrow(() => JSON.stringify({ key, checkpoint }));
+      savedKeys.push(structuredClone(key));
+      checkpoints.set(key.batchHash, checkpoint);
+    },
+  };
+
+  const first = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: primaries },
+    { domain: "rival.test", products: rivals },
+  ], {}, options);
+  const callsAfterFirstRun = judgeCalls;
+  const second = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: primaries },
+    { domain: "rival.test", products: rivals },
+  ], {}, options);
+
+  assert.equal(first.matching?.totalJudgeBatches, 2);
+  assert.equal(first.matching?.savedJudgeCheckpoints, 2);
+  assert.equal(first.matching?.reusedJudgeCheckpoints, 0);
+  assert.equal(callsAfterFirstRun, 2);
+  assert.equal(judgeCalls, callsAfterFirstRun);
+  assert.equal(second.matching?.judgeCalls, 0);
+  assert.equal(second.matching?.reusedJudgeCheckpoints, 2);
+  assert.equal(second.matching?.savedJudgeCheckpoints, 0);
+  assert.deepEqual(savedKeys.map((key) => [key.batchIndex, key.batchCount]).sort((left, right) => left[0] - right[0]), [[0, 2], [1, 2]]);
+  const firstLoadByIndex = new Map(loadedKeys.slice(0, 2).map((key) => [key.batchIndex, key.batchHash]));
+  const replayLoadByIndex = new Map(loadedKeys.slice(2).map((key) => [key.batchIndex, key.batchHash]));
+  assert.deepEqual(replayLoadByIndex, firstLoadByIndex);
+});
+
+test("rejects malformed judge checkpoints and replaces them only with a complete live result", async () => {
+  const primary = product("malformed-p1", "shop.test", "Sidr Honey 500g");
+  const rival = product("malformed-r1", "rival.test", "Sidr Honey 500g");
+  let judgeCalls = 0;
+  let savedCheckpoint = null;
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, 0] })) });
+    judgeCalls += 1;
+    return response({ output_text: JSON.stringify({ assessments: [{
+      primaryId: primary.id,
+      candidateId: rival.id,
+      verdict: "same_product",
+      confidence: 0.98,
+      reason: "Same observed offer.",
+      contradiction: "",
+    }] }) });
+  };
+
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [primary] },
+    { domain: "rival.test", products: [rival] },
+  ], {}, {
+    apiKey: "test",
+    fetch,
+    loadJudgeBatchCheckpoint: async (key) => ({
+      version: 1,
+      batchHash: key.batchHash,
+      batchIndex: key.batchIndex,
+      batchCount: key.batchCount + 1,
+      model: key.model,
+      promptVersion: key.promptVersion,
+      assessments: [{ primaryId: primary.id, candidateId: rival.id, verdict: "same_product", confidence: 0.98, reason: "Same observed offer.", contradiction: "" }],
+    }),
+    saveJudgeBatchCheckpoint: async (_key, checkpoint) => { savedCheckpoint = checkpoint; },
+  });
+
+  assert.equal(judgeCalls, 1);
+  assert.equal(comparison.matching?.reusedJudgeCheckpoints, 0);
+  assert.equal(comparison.matching?.savedJudgeCheckpoints, 1);
+  assert.equal(savedCheckpoint?.assessments[0].candidateId, rival.id);
+  assert.equal(comparison.rows[0].matches[0].product?.id, rival.id);
 });

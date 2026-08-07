@@ -548,10 +548,10 @@ test("stored run identity drift hard-fails before any mutation", async () => {
 });
 
 test("all operation deadlines keep a two-minute margin below the stale marker", () => {
-  assert.equal(MAX_OPERATION_TIMEOUT_MS, 480_000);
+  assert.equal(MAX_OPERATION_TIMEOUT_MS, 780_000);
   for (const timeout of Object.values(OPERATION_BUDGETS_MS)) assert.ok(timeout <= MAX_OPERATION_TIMEOUT_MS);
-  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 745_000);
-  assert.ok(WORST_CASE_CRITICAL_PATH_MS <= 780_000, "critical path must preserve a two-minute task-ceiling margin");
+  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 2_075_000);
+  assert.ok(WORST_CASE_CRITICAL_PATH_MS <= 2_100_000, "critical path must preserve a two-minute task-ceiling margin");
 });
 
 test("the retry loop shares one total operation deadline instead of doubling it", async () => {
@@ -574,6 +574,21 @@ test("the retry loop shares one total operation deadline instead of doubling it"
   } finally {
     Date.now = originalNow;
   }
+});
+
+test("a second match attempt refreshes the report heartbeat before another long operation", async () => {
+  let calls = 0;
+  const port = mockPort({
+    async match() {
+      calls += 1;
+      if (calls === 1) throw new Error("temporary match transport failure");
+      return { ok: true, comparison: comparison({ withPair: true }) };
+    },
+    async enrich() { return { ok: true, products: [], coverage: { pagesRequested: 2, pagesFetched: 0, maxPages: 64, gaps: [] } }; },
+  });
+  await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
+  assert.equal(calls, 2);
+  assert.ok(port.events.some((item) => item.idempotencyKey === "matching-retry-started"));
 });
 
 test("selected enrichment is applied and an enrichment failure remains visibly limited", async () => {

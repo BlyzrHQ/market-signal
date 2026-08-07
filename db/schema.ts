@@ -146,6 +146,20 @@ export const reportFactManifests = sqliteTable("report_fact_manifests", {
   completedAt: text("completed_at").notNull(),
 });
 
+export const reportMatchBatchCheckpoints = sqliteTable("report_match_batch_checkpoints", {
+  runId: text("run_id").notNull(),
+  attemptNumber: integer("attempt_number").notNull(),
+  batchIndex: integer("batch_index").notNull(),
+  inputHash: text("input_hash").notNull(),
+  resultJson: text("result_json").notNull(),
+  resultHash: text("result_hash").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.runId, table.attemptNumber, table.batchIndex] }),
+  index("report_match_batch_checkpoints_run_attempt_idx").on(table.runId, table.attemptNumber, table.batchIndex),
+]);
+
 export const reportEvaluations = sqliteTable("report_evaluations", {
   id: text("id").primaryKey(),
   runId: text("run_id").notNull(),

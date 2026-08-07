@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { appendReportEvent, compactReportDocument, createReportRun, createReportRunResult, getStoredReport, markReportDispatched, MAX_REPORT_DOCUMENT_BYTES, recoverInterruptedReport, reportStorageDiagnosticCode, ReportStorageError, saveReportDocument } from "../app/lib/report-store.ts";
+import { appendReportEvent, compactReportDocument, createReportRun, createReportRunResult, getStoredReport, loadReportMatchBatchCheckpoints, markReportDispatched, MAX_REPORT_DOCUMENT_BYTES, MAX_REPORT_MATCH_BATCH_RESULT_BYTES, recoverInterruptedReport, reportStorageDiagnosticCode, ReportStorageError, saveReportDocument, saveReportMatchBatchCheckpoint } from "../app/lib/report-store.ts";
 
 class FakeStatement {
   constructor(database, query) { this.database = database; this.query = query; this.values = []; }
@@ -70,6 +70,75 @@ class FakeDatabase {
     return statements.map(() => ({}));
   }
 }
+
+class CheckpointStatement {
+  constructor(database, query) { this.database = database; this.query = query; this.values = []; }
+  bind(...values) { this.values = values; return this; }
+  async all() {
+    if (this.query.startsWith("SELECT * FROM report_runs")) {
+      const key = this.values[0];
+      return { results: this.database.runs.filter((run) => run.public_id === key || run.id === key).slice(0, 1) };
+    }
+    if (this.query.includes("FROM report_match_batch_checkpoints")) {
+      const [runId, attemptNumber, batchIndex] = this.values;
+      return { results: this.database.checkpoints.filter((row) => row.run_id === runId && row.attempt_number === attemptNumber && (batchIndex === undefined || row.batch_index === batchIndex)).sort((left, right) => left.batch_index - right.batch_index) };
+    }
+    return { results: [] };
+  }
+  async run() {
+    this.database.queries.push(this.query);
+    if (this.query.startsWith("INSERT INTO report_match_batch_checkpoints")) {
+      const v = this.values;
+      const run = this.database.runs.find((row) => row.id === v[8] && row.attempt_count === v[9] && !["complete", "limited", "failed", "interrupted"].includes(row.status));
+      const existing = this.database.checkpoints.find((row) => row.run_id === v[0] && row.attempt_number === v[1] && row.batch_index === v[2]);
+      if (run && !existing) this.database.checkpoints.push({ run_id: v[0], attempt_number: v[1], batch_index: v[2], input_hash: v[3], result_json: v[4], result_hash: v[5], created_at: v[6], updated_at: v[7] });
+    }
+    return {};
+  }
+}
+
+class CheckpointDatabase {
+  constructor(status = "running", attemptCount = 1) {
+    this.publicId = "a".repeat(32);
+    this.runs = [{ id: "run-checkpoint", public_id: this.publicId, primary_domain: "example.com", locale: "en", status, current_phase: "matching", attempt_count: attemptCount, created_at: "2026-08-07T00:00:00.000Z", updated_at: "2026-08-07T00:00:00.000Z", heartbeat_at: "2026-08-07T00:00:00.000Z", expires_at: "2026-11-07T00:00:00.000Z", error_code: "", error_message: "" }];
+    this.checkpoints = [];
+    this.queries = [];
+  }
+  prepare(query) { return new CheckpointStatement(this, query); }
+  async batch() { throw new Error("checkpoint tests do not use database batches"); }
+}
+
+test("match batch checkpoints persist bounded canonical results and replay idempotently", async () => {
+  const database = new CheckpointDatabase();
+  const inputHash = "1".repeat(64);
+  const first = await saveReportMatchBatchCheckpoint(database.publicId, { attemptNumber: 1, batchIndex: 0, inputHash, result: { matches: [{ score: 0.9, id: "p-1" }], usage: { output: 12, input: 34 } } }, new Date("2026-08-07T00:01:00.000Z"), database);
+  assert.equal(first.replayed, false);
+  assert.match(first.checkpoint.resultHash, /^[a-f0-9]{64}$/);
+
+  const replay = await saveReportMatchBatchCheckpoint(database.publicId, { attemptNumber: 1, batchIndex: 0, inputHash, result: { usage: { input: 34, output: 12 }, matches: [{ id: "p-1", score: 0.9 }] } }, new Date("2026-08-07T00:02:00.000Z"), database);
+  assert.equal(replay.replayed, true);
+  assert.equal(database.checkpoints.length, 1);
+  const loaded = await loadReportMatchBatchCheckpoints(database.publicId, { attemptNumber: 1, batchIndex: 0 }, database);
+  assert.equal(loaded.length, 1);
+  assert.deepEqual(loaded[0].result, { matches: [{ id: "p-1", score: 0.9 }], usage: { input: 34, output: 12 } });
+});
+
+test("match batch checkpoints reject conflicts, invalid hashes, stale attempts, terminal reports, and oversized results", async () => {
+  const database = new CheckpointDatabase();
+  const inputHash = "2".repeat(64);
+  await saveReportMatchBatchCheckpoint(database.publicId, { attemptNumber: 1, batchIndex: 4, inputHash, result: { accepted: ["p-1"] } }, new Date(), database);
+  await assert.rejects(() => saveReportMatchBatchCheckpoint(database.publicId, { attemptNumber: 1, batchIndex: 4, inputHash, result: { accepted: ["p-2"] } }, new Date(), database), /conflicts/);
+  await assert.rejects(() => saveReportMatchBatchCheckpoint(database.publicId, { attemptNumber: 1, batchIndex: 4, inputHash: "3".repeat(64), result: { accepted: ["p-1"] } }, new Date(), database), /conflicts/);
+  await assert.rejects(() => saveReportMatchBatchCheckpoint(database.publicId, { attemptNumber: 1, batchIndex: 5, inputHash, result: {}, resultHash: "4".repeat(64) }, new Date(), database), /does not match/);
+  await assert.rejects(() => saveReportMatchBatchCheckpoint(database.publicId, { attemptNumber: 1, batchIndex: 5, inputHash, result: { value: "x".repeat(MAX_REPORT_MATCH_BATCH_RESULT_BYTES) } }, new Date(), database), /too large/);
+
+  database.runs[0].attempt_count = 2;
+  await assert.rejects(() => loadReportMatchBatchCheckpoints(database.publicId, { attemptNumber: 1 }, database), /stale/);
+  await assert.rejects(() => saveReportMatchBatchCheckpoint(database.publicId, { attemptNumber: 1, batchIndex: 5, inputHash, result: {} }, new Date(), database), /stale/);
+  database.runs[0].status = "complete";
+  await assert.rejects(() => loadReportMatchBatchCheckpoints(database.publicId, { attemptNumber: 2 }, database), /terminal report/);
+  await assert.rejects(() => saveReportMatchBatchCheckpoint(database.publicId, { attemptNumber: 2, batchIndex: 5, inputHash, result: {} }, new Date(), database), /terminal report/);
+});
 
 test("report runs persist ordered idempotent events and a reloadable document", async () => {
   const database = new FakeDatabase();
@@ -206,7 +275,7 @@ test("runtime schema materializes every declared report artifact table", async (
   const database = new FakeDatabase();
   await createReportRun({ primaryDomain: "example.com" }, new Date(), database);
   const schema = database.queries.join("\n");
-  for (const table of ["report_runs", "report_events", "report_documents", "report_companies", "report_products", "report_matches", "report_ads", "report_evaluations", "report_quality_signals", "report_purge_audits"]) assert.match(schema, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
+  for (const table of ["report_runs", "report_events", "report_documents", "report_companies", "report_products", "report_matches", "report_ads", "report_match_batch_checkpoints", "report_evaluations", "report_quality_signals", "report_purge_audits"]) assert.match(schema, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
 });
 
 test("database acquisition diagnostics are closed and deduplicated", async () => {
