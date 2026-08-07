@@ -318,7 +318,6 @@ export const compactReportDocument = compactTerminalReportDocument;
 
 function rowRun(row: Record<string, unknown>): StoredReportRun {
   const productPlan = Object.hasOwn(PRODUCT_PLAN_LIMITS, String(row.plan_tier || "")) ? String(row.plan_tier) as ProductPlan : "starter";
-  const storedLimit = Number(row.product_limit);
   return {
     id: String(row.id || ""),
     publicId: String(row.public_id || ""),
@@ -334,7 +333,7 @@ function rowRun(row: Record<string, unknown>): StoredReportRun {
     errorCode: String(row.error_code || ""),
     errorMessage: String(row.error_message || ""),
     productPlan,
-    productLimit: Number.isInteger(storedLimit) && storedLimit > 0 && storedLimit <= 1_000 ? storedLimit : PRODUCT_PLAN_LIMITS[productPlan],
+    productLimit: PRODUCT_PLAN_LIMITS[productPlan],
   };
 }
 

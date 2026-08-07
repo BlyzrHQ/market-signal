@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildAIProductComparison, hasValidObservedRivalPrice, judgeBatchKey } from "../app/lib/ai-product-matching.ts";
+import { buildAIProductComparison, judgeBatchKey } from "../app/lib/ai-product-matching.ts";
+import { hasValidObservedRivalPrice } from "../app/lib/product-intelligence.ts";
+import { publishPricedProductComparison } from "../app/lib/product-match-lifecycle.ts";
 
 function product(id, domain, name, options = {}) {
   return {
@@ -40,7 +42,7 @@ test("publishes only rival products with a finite positive observed ISO price", 
   assert.equal(hasValidObservedRivalPrice(product("rival", "rival.test", "Honey")), false);
 });
 
-test("suppresses an AI-accepted pair without a rival price and records the reason", async () => {
+test("the final publication gate suppresses an AI-accepted pair without a rival price", async () => {
   const primary = product("p-unpriced", "shop.test", "Sidr Honey 500g");
   const rival = product("r-unpriced", "rival.test", "Sidr Honey 500g");
   const fetch = async (url, init) => {
@@ -50,9 +52,11 @@ test("suppresses an AI-accepted pair without a rival price and records the reaso
   };
   const comparison = await buildAIProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "rival.test", products: [rival] }], {}, { apiKey: "test", fetch });
 
-  assert.equal(comparison.rows[0].matches[0].product, null);
-  assert.equal(comparison.coverage.assignedPairCount, 0);
-  assert.deepEqual(comparison.matching?.publication, { suppressedAcceptedPairs: 1, reasons: { "missing-valid-rival-price": 1 } });
+  assert.equal(comparison.rows[0].matches[0].product?.id, rival.id);
+  const published = publishPricedProductComparison(comparison);
+  assert.equal(published.rows[0].matches[0].product, null);
+  assert.equal(published.coverage.assignedPairCount, 0);
+  assert.deepEqual(published.matching?.publication, { suppressedAcceptedPairs: 1, reasons: { "missing-valid-rival-price": 1 } });
 });
 
 test("falls back honestly without an API key", async () => {

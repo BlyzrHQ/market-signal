@@ -393,25 +393,6 @@ function safeProduct(product: ProductRecord) {
   };
 }
 
-const ISO_CURRENCIES = new Set<string>((() => {
-  try {
-    return (Intl as typeof Intl & { supportedValuesOf(key: "currency"): string[] }).supportedValuesOf("currency");
-  } catch {
-    return ["AED", "AUD", "CAD", "CHF", "CNY", "EGP", "EUR", "GBP", "INR", "JOD", "KWD", "OMR", "QAR", "SAR", "USD"];
-  }
-})());
-
-export function hasValidObservedRivalPrice(product: ProductRecord) {
-  return product.priceSignals.some((signal) => {
-    const currency = String(signal.currency || "").trim().toUpperCase();
-    return typeof signal.amount === "number"
-      && Number.isFinite(signal.amount)
-      && signal.amount > 0
-      && Boolean(String(signal.raw || "").trim())
-      && ISO_CURRENCIES.has(currency);
-  });
-}
-
 function safeJudgeGroups(groups: CandidateGroup[]) {
   return groups.map((group) => ({
     primary: safeProduct(group.primary),
@@ -733,11 +714,9 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   });
   if (!successfulPrimaryIds.size) return { ...withoutUnassessedMatches(fallback), matching: { ...matchingBase, method: "lexical-fallback", available: false, retrievalPairsScored: retrieved.scoredPairs, judgeCalls, embeddingCalls, reusedJudgeCheckpoints, savedJudgeCheckpoints, durationMs: Date.now() - startedAt, selectedPrimaryIds: primaryProducts.map((product) => product.id), gaps: gaps.length ? gaps : ["AI product judging returned no usable assessments; no product pair was accepted."] } };
 
-  const acceptedProposals = sanitized.filter((item): item is typeof item & { verdict: "same_product" | "close_substitute" } => (item.verdict === "same_product" || item.verdict === "close_substitute")
+  const proposals = sanitized.filter((item): item is typeof item & { verdict: "same_product" | "close_substitute" } => (item.verdict === "same_product" || item.verdict === "close_substitute")
       && isUsefulAssignment(item.primary, item.candidate.product, item.confidence))
     .sort((left, right) => Number(right.verdict === "same_product") - Number(left.verdict === "same_product") || right.confidence - left.confidence || right.candidate.retrievalScore - left.candidate.retrievalScore || left.candidate.product.id.localeCompare(right.candidate.product.id));
-  const suppressedAcceptedPairs = acceptedProposals.filter((proposal) => !hasValidObservedRivalPrice(proposal.candidate.product)).length;
-  const proposals = acceptedProposals.filter((proposal) => hasValidObservedRivalPrice(proposal.candidate.product));
   const assignments = new Map<string, typeof proposals[number]>();
   const usedRivals = new Set<string>();
   for (const proposal of proposals) {
@@ -816,10 +795,6 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
       primaryProductsSynchronized: matchingBase.primaryProductsSynchronized,
       competitorProductsSynchronized: matchingBase.competitorProductsSynchronized,
       candidateSlotsByDomain: matchingBase.candidateSlotsByDomain,
-      publication: {
-        suppressedAcceptedPairs,
-        reasons: { "missing-valid-rival-price": suppressedAcceptedPairs },
-      },
     },
   };
 }
