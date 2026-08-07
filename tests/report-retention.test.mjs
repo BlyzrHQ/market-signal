@@ -14,7 +14,7 @@ import { createReportRetentionHttpPort } from "../src/trigger/report-retention-h
 const NOW = new Date("2026-07-31T12:00:00.000Z");
 const OLD = new Date("2025-01-01T00:00:00.000Z");
 const TOKEN = "retention_callback_token_that_is_long_enough";
-const TABLES = ["report_quality_signals", "report_evaluations", "report_ads", "report_matches", "report_products", "report_companies", "report_fact_chunks", "report_fact_manifests", "report_documents", "report_events", "report_runs"];
+const TABLES = ["report_quality_signals", "report_evaluations", "report_ads", "report_matches", "report_products", "report_companies", "report_fact_chunks", "report_fact_manifests", "report_match_batch_checkpoints", "report_documents", "report_events", "report_runs"];
 
 async function databaseFixture(t) {
   const directory = await mkdtemp(join(tmpdir(), "market-signal-retention-"));
@@ -41,6 +41,7 @@ async function seedCompleteReport(database, suffix, createdAt = OLD) {
     database.prepare("INSERT INTO report_ads (id, run_id, domain, platform, status, evidence_json, observed_at) VALUES (?, ?, ?, 'Meta', 'verified-active', '{}', ?)").bind(`ad-${suffix}`, id, `${suffix}.example`, observed),
     database.prepare("INSERT INTO report_fact_chunks (run_id, manifest_id, attempt_number, kind, chunk_index, chunk_count, item_count, content_hash, created_at) VALUES (?, ?, 1, 'products', 0, 1, 1, ?, ?)").bind(id, `manifest-${suffix}`, `hash-${suffix}`, observed),
     database.prepare("INSERT INTO report_fact_manifests (run_id, manifest_id, attempt_number, manifest_hash, company_count, product_count, match_count, ad_count, status, lock_owner, locked_at, completed_at) VALUES (?, ?, 1, ?, 1, 1, 1, 1, 'complete', '', '', ?)").bind(id, `manifest-${suffix}`, `manifest-hash-${suffix}`, observed),
+    database.prepare("INSERT INTO report_match_batch_checkpoints (run_id, attempt_number, batch_index, input_hash, result_json, result_hash, created_at, updated_at) VALUES (?, 1, 0, ?, '{}', ?, ?, ?)").bind(id, "a".repeat(64), "b".repeat(64), observed, observed),
     database.prepare("INSERT INTO report_evaluations (id, run_id, evaluation_type, input_hash, fact_manifest_hash, evaluator_version, rubric_version, status, rating_basis, created_at) VALUES (?, ?, 'report', ?, ?, 'v1', 'r1', 'deterministic', 'deterministic_only', ?)").bind(`evaluation-${suffix}`, id, `input-${suffix}`, `manifest-hash-${suffix}`, observed),
     database.prepare("INSERT INTO report_quality_signals (id, evaluation_id, run_id, primary_domain, stage, issue_key, severity, evidence_json, observed_at) VALUES (?, ?, ?, ?, 'crawl', ?, 'medium', '{}', ?)").bind(`signal-${suffix}`, `evaluation-${suffix}`, id, `${suffix}.example`, `issue-${suffix}`, observed),
   ]);

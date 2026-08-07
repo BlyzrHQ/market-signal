@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseCatalogs } from "../app/api/match/route.ts";
+import { createMatchHandler, parseCatalogs, productAnalysisBudgetMs, productAnalysisLimit } from "../app/api/match/route.ts";
 
 test("AI matching input keeps a broad but bounded first-party catalog", () => {
   const products = Array.from({ length: 605 }, (_, index) => ({
@@ -29,6 +29,66 @@ test("AI matching input keeps a broad but bounded first-party catalog", () => {
   assert.equal(catalogs[0].products.length, 600);
   assert.equal(catalogs[0].products[0].imageUrl, "https://cdn.shopify.com/public-product.jpg");
   assert.ok(catalogs[0].products.every((product) => new URL(product.sourceUrl).hostname === "shop.test"));
+});
+
+test("AI matching keeps up to 1,000 first-party products while rival catalogs remain bounded", () => {
+  const product = (index, domain) => ({ name: `Product ${index}`, sourceUrl: `https://${domain}/products/${index}` });
+  const primary = Array.from({ length: 1_010 }, (_, index) => product(index, "shop.test"));
+  const rival = Array.from({ length: 700 }, (_, index) => product(index, "rival.test"));
+  const catalogs = parseCatalogs([
+    { domain: "shop.test", products: primary },
+    { domain: "rival.test", products: rival },
+  ], "shop.test");
+
+  assert.equal(catalogs[0].products.length, 1_000);
+  assert.equal(catalogs[1].products.length, 600);
+});
+
+test("product analysis limits are server-controlled, clamped, and receive scaled budgets", () => {
+  assert.equal(productAnalysisLimit(undefined), 60);
+  assert.equal(productAnalysisLimit("0"), 1);
+  assert.equal(productAnalysisLimit("500"), 500);
+  assert.equal(productAnalysisLimit("5000"), 1_000);
+  assert.equal(productAnalysisBudgetMs(60), 45_000);
+  assert.equal(productAnalysisBudgetMs(500), 360_000);
+  assert.equal(productAnalysisBudgetMs(1_000), 720_000);
+});
+
+test("authenticated matching binds durable judge checkpoints to the active report attempt", async () => {
+  const token = "test-callback-token-that-is-at-least-32-characters";
+  const saved = [];
+  let receivedOptions;
+  const handler = createMatchHandler({
+    async build(_domain, _catalogs, options) {
+      receivedOptions = options;
+      const key = { batchIndex: 3, batchCount: 5, batchHash: "a".repeat(64), model: "test", promptVersion: "v1", primaryIds: ["p1"], candidatePairCount: 1 };
+      assert.deepEqual(await options.loadJudgeBatchCheckpoint(key), { version: 1 });
+      await options.saveJudgeBatchCheckpoint(key, { version: 1 });
+      return { type: "product-comparison", id: "products", rows: [] };
+    },
+    async loadCheckpoints(publicId, input) {
+      assert.equal(publicId, "b".repeat(32));
+      assert.deepEqual(input, { attemptNumber: 2, batchIndex: 3 });
+      return [{ inputHash: "a".repeat(64), result: { version: 1 } }];
+    },
+    async saveCheckpoint(publicId, input) {
+      saved.push({ publicId, input });
+      return { replayed: false };
+    },
+  }, token, "1000");
+  const response = await handler(new Request("https://signal.test/api/match", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, primaryDomain: "shop.test", catalogs: [{ domain: "shop.test", products: [{ name: "Honey", sourceUrl: "https://shop.test/products/honey" }] }] }),
+  }));
+
+  assert.equal(response.status, 200);
+  assert.equal(receivedOptions.maxPrimaryProducts, 1_000);
+  assert.equal(receivedOptions.totalBudgetMs, 720_000);
+  assert.equal(saved[0].publicId, "b".repeat(32));
+  assert.equal(saved[0].input.attemptNumber, 2);
+  assert.equal(saved[0].input.batchIndex, 3);
+  assert.equal(saved[0].input.inputHash, "a".repeat(64));
 });
 
 test("AI matching keeps public HTTPS CDN images but rejects unsafe image URLs", () => {

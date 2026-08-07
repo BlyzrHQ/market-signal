@@ -864,12 +864,12 @@ test("keeps malformed sitemap path escapes safe and deterministic", () => {
   assert.equal(extractProductsFromSitemap(sitemap, "shop.example", "2026-07-15T00:00:00.000Z")[0].name, "raw honey %ZZ 500g");
 });
 
-test("keeps a single public sitemap broad but bounded at six hundred products", () => {
-  const entries = Array.from({ length: 605 }, (_, index) => `<url><loc>https://shop.example/products/catalog-item-${index}</loc></url>`).join("");
+test("keeps a single public sitemap broad but bounded at one thousand products", () => {
+  const entries = Array.from({ length: 1_005 }, (_, index) => `<url><loc>https://shop.example/products/catalog-item-${index}</loc></url>`).join("");
   const products = extractProductsFromSitemap(`<urlset>${entries}</urlset>`, "shop.example", "2026-07-15T00:00:00.000Z");
 
-  assert.equal(products.length, 600);
-  assert.equal(products.at(-1).name, "catalog item 599");
+  assert.equal(products.length, 1_000);
+  assert.equal(products.at(-1).name, "catalog item 999");
 });
 
 test("final match enrichment fetches the exact AI-selected pair when secure images are missing", () => {

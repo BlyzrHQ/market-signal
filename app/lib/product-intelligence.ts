@@ -119,6 +119,9 @@ export type ProductComparison = {
     retrievalPairsScored: number;
     judgeCalls: number;
     embeddingCalls: number;
+    totalJudgeBatches?: number;
+    reusedJudgeCheckpoints?: number;
+    savedJudgeCheckpoints?: number;
     durationMs: number;
     gaps: string[];
     selectedPrimaryIds?: string[];
@@ -711,7 +714,7 @@ export function extractProductsFromSitemap(document: string, domain: string, obs
       claimIds: [`${id}-sitemap-observed`],
       quantity: parseCanonicalQuantity(name) || undefined,
     });
-    if (products.length >= 600) break;
+    if (products.length >= 1_000) break;
   }
   return selectPreferredProducts(products);
 }
@@ -1131,14 +1134,16 @@ export function productDecision(primary: ProductRecord, candidate: ProductRecord
 
 export function buildProductComparison(primaryDomain: string, catalogs: Array<{ domain: string; products: ProductRecord[] }>, requiredSourceUrls: Record<string, string[]> = {}): ProductComparison {
   const canonicalPrimary = canonicalHost(primaryDomain);
-  const maxProductsPerCatalog = 600;
+  const maxPrimaryProducts = 1_000;
+  const maxRivalProducts = 600;
   const rowLimit = 80;
   const minimumCoverageRows = 16;
   const maxUnmatchedProductsPerDomain = 24;
   const rank = (product: ProductRecord) => Number(product.confidence === "High") * 4 + Number(product.priceSignals.length > 0) * 2 + Number(product.extraction === "json-ld" || product.extraction === "storefront-api");
   const selectForComparison = (domain: string, products: ProductRecord[]) => {
     const required = new Set((requiredSourceUrls[canonicalHost(domain)] || []).map((url) => url.split("#")[0]));
-    return [...products].sort((left, right) => Number(required.has(right.sourceUrl.split("#")[0])) - Number(required.has(left.sourceUrl.split("#")[0])) || rank(right) - rank(left) || left.id.localeCompare(right.id)).slice(0, maxProductsPerCatalog);
+    const limit = canonicalHost(domain) === canonicalPrimary ? maxPrimaryProducts : maxRivalProducts;
+    return [...products].sort((left, right) => Number(required.has(right.sourceUrl.split("#")[0])) - Number(required.has(left.sourceUrl.split("#")[0])) || rank(right) - rank(left) || left.id.localeCompare(right.id)).slice(0, limit);
   };
   const collapsePrimaryFamilies = (products: ProductRecord[]) => {
     const selected = new Map<string, ProductRecord>();

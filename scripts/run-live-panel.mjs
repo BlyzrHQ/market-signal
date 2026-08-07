@@ -4,11 +4,13 @@ import { assertContract } from "./contract-validation.mjs";
 
 const siteUrl = (process.env.MARKET_SIGNAL_SITE_URL || "https://market-signal.abdulla617931.chatgpt.site").replace(/\/$/, "");
 const authorization = process.env.MARKET_SIGNAL_SITES_AUTH;
+const callbackToken = process.env.MARKET_SIGNAL_CALLBACK_TOKEN;
 const sitesVersion = Number(process.env.MARKET_SIGNAL_SITES_VERSION || 38);
 const deployedCommit = process.env.MARKET_SIGNAL_DEPLOYED_COMMIT || "82c4f782af299661f8d3eb3059e8da3346f74af9";
 const outputPath = process.env.MARKET_SIGNAL_PANEL_OUTPUT || `docs/tasks/024-live-panel-v${sitesVersion}.json`;
 
 if (!authorization) throw new Error("MARKET_SIGNAL_SITES_AUTH is required.");
+if (!callbackToken) throw new Error("MARKET_SIGNAL_CALLBACK_TOKEN is required for the internal matching route.");
 
 const domains = [
   "myjam.co.uk",
@@ -62,6 +64,7 @@ async function post(path, body) {
       headers: {
         "content-type": "application/json",
         "OAI-Sites-Authorization": `Bearer ${authorization}`,
+        "Authorization": `Bearer ${callbackToken}`,
       },
       body: JSON.stringify(body),
       signal: controller.signal,

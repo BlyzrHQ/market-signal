@@ -28,7 +28,7 @@ import { buildReportFactBundle } from "../shared/report-facts.ts";
 import { compactTerminalReportDocument } from "../shared/report-document-compaction.ts";
 import type { ReportFactChunkInput, ReportFactManifestInput } from "../../app/lib/report-store.ts";
 
-export const MAX_OPERATION_TIMEOUT_MS = 8 * 60 * 1000;
+export const MAX_OPERATION_TIMEOUT_MS = 13 * 60 * 1000;
 
 type RunStatus = "queued" | "running" | "complete" | "limited" | "failed" | "interrupted";
 type ReportEvent = { idempotencyKey: string; phase: string; status: RunStatus; message: string; metadata?: Record<string, unknown> };
@@ -54,7 +54,7 @@ export interface ReportOrchestrationPort {
   crawl(input: { primary: string; domains: string[] }): Promise<CrawlOutcome>;
   brief(input: { primary: string; domains: string[] }): Promise<unknown>;
   ads(input: unknown): Promise<{ ok: true; block: JsonBlock }>;
-  match(input: { primaryDomain: string; catalogs: Array<{ domain: string; products: ProductRecord[] }> }): Promise<{ ok: true; comparison: ProductComparison }>;
+  match(input: { publicId: string; reportAttempt: number; primaryDomain: string; catalogs: Array<{ domain: string; products: ProductRecord[] }> }): Promise<{ ok: true; comparison: ProductComparison }>;
   enrich(input: { targets: unknown[] }): Promise<{ ok: true; products: ProductRecord[]; coverage: NonNullable<ProductComparison["enrichment"]> }>;
   actions(input: { inputs: ProductActionInput[] }): Promise<{ ok: true; result: ProductActionPlanningResult }>;
   persistFactChunk(publicId: string, input: ReportFactChunkInput): Promise<void>;
@@ -227,15 +227,16 @@ export async function orchestrateReport(
     let transportFailed = false;
     try {
       requestCount += 1;
-      const first = await port.match({ primaryDomain: crawl.primaryDomain, catalogs });
+      const first = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, primaryDomain: crawl.primaryDomain, catalogs });
       attempts.push(first.comparison);
     } catch {
       transportFailed = true;
     }
     if (shouldRetryProductMatch(attempts[0], transportFailed)) {
       try {
+        await port.appendEvent(payload.publicId, event("matching-retry-started", "matching", "Resuming only incomplete product judge batches from durable checkpoints."));
         requestCount += 1;
-        const retry = await port.match({ primaryDomain: crawl.primaryDomain, catalogs });
+        const retry = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, primaryDomain: crawl.primaryDomain, catalogs });
         attempts.push(retry.comparison);
       } catch { /* the bounded second application attempt remains a visible gap */ }
     }

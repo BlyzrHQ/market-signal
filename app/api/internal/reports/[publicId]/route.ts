@@ -5,6 +5,8 @@ import {
   markReportDispatched,
   markReportDispatchFailed,
   recoverInterruptedReport,
+  loadReportMatchBatchCheckpoints,
+  saveReportMatchBatchCheckpoint,
   saveReportFactChunk,
   finalizeReportFactManifest,
   saveReportDocument,
@@ -24,6 +26,8 @@ type InternalReportStore = {
   save(publicId: string, document: unknown, options: Parameters<typeof saveReportDocument>[2]): Promise<unknown>;
   saveFactChunk(publicId: string, input: Parameters<typeof saveReportFactChunk>[1]): Promise<unknown>;
   finalizeFacts(publicId: string, input: Parameters<typeof finalizeReportFactManifest>[1]): Promise<unknown>;
+  loadMatchBatchCheckpoints(publicId: string, input: Parameters<typeof loadReportMatchBatchCheckpoints>[1]): Promise<unknown>;
+  saveMatchBatchCheckpoint(publicId: string, input: Parameters<typeof saveReportMatchBatchCheckpoint>[1]): Promise<unknown>;
 };
 type InternalRecoveryServices = {
   recover: typeof recoverInterruptedReport;
@@ -38,6 +42,8 @@ const liveStore: InternalReportStore = {
   save: (id, document, options) => saveReportDocument(id, document, options),
   saveFactChunk: (id, input) => saveReportFactChunk(id, input),
   finalizeFacts: (id, input) => finalizeReportFactManifest(id, input),
+  loadMatchBatchCheckpoints: (id, input) => loadReportMatchBatchCheckpoints(id, input),
+  saveMatchBatchCheckpoint: (id, input) => saveReportMatchBatchCheckpoint(id, input),
 };
 const liveRecovery: InternalRecoveryServices = {
   recover: recoverInterruptedReport,
@@ -156,6 +162,23 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
         const attemptNumber = Number(body.attemptNumber);
         if (!Number.isInteger(attemptNumber) || attemptNumber < 1) return Response.json({ ok: false, error: "Invalid report callback attempt." }, { status: 400 });
         if (attemptNumber !== report.run.attemptCount) return Response.json({ ok: false, error: "The report callback attempt is stale." }, { status: 409 });
+        if (body.action === "match-batch-checkpoints-load") {
+          if (["complete", "limited", "failed", "interrupted"].includes(report.run.status)) return Response.json({ ok: false, error: "A terminal report cannot load report match batch checkpoints." }, { status: 409 });
+          const batchIndex = body.batchIndex === undefined ? undefined : Number(body.batchIndex);
+          const checkpoints = await store.loadMatchBatchCheckpoints(id, { attemptNumber, batchIndex });
+          return Response.json({ ok: true, checkpoints }, { headers: { "Cache-Control": "no-store" } });
+        }
+        if (body.action === "match-batch-checkpoint-save") {
+          if (["complete", "limited", "failed", "interrupted"].includes(report.run.status)) return Response.json({ ok: false, error: "A terminal report cannot accept report match batch checkpoints." }, { status: 409 });
+          const saved = await store.saveMatchBatchCheckpoint(id, {
+            attemptNumber,
+            batchIndex: Number(body.batchIndex),
+            inputHash: clean(body.inputHash, 64),
+            result: body.result,
+            resultHash: body.resultHash === undefined ? undefined : clean(body.resultHash, 64),
+          });
+          return Response.json({ ok: true, ...saved as Record<string, unknown> });
+        }
         if (body.action === "event") {
           const key = clean(body.idempotencyKey, 120);
           const existing = report.events.find((item) => item.idempotencyKey === key);

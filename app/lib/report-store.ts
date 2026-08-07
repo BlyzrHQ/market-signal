@@ -93,6 +93,24 @@ export type ReportFactManifestInput = {
   counts: Record<ReportFactKind, number>;
 };
 
+export type ReportMatchBatchCheckpoint = {
+  attemptNumber: number;
+  batchIndex: number;
+  inputHash: string;
+  result: unknown;
+  resultHash: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ReportMatchBatchCheckpointInput = {
+  attemptNumber: number;
+  batchIndex: number;
+  inputHash: string;
+  result: unknown;
+  resultHash?: string;
+};
+
 export type ReportCreateDiagnostic =
   | "invalid-domain"
   | "storage-unavailable"
@@ -104,19 +122,24 @@ export type ReportCreateDiagnostic =
 
 const REPORT_SCHEMA_VERSION = 1;
 const REPORT_RETENTION_DAYS = 90;
-const STALE_RUN_MS = 10 * 60 * 1000;
+// The largest authenticated worker operation is a 12.5-minute deep-catalog
+// match. Keep the stale guard above that deadline so report polling cannot
+// interrupt a healthy matcher between phase heartbeats.
+const STALE_RUN_MS = 15 * 60 * 1000;
 const QUEUED_DISPATCH_TIMEOUT_MS = 60 * 60 * 1000;
 export const MAX_REPORT_DOCUMENT_BYTES = REPORT_SNAPSHOT_HARD_BYTES;
 const MAX_REPORT_FACT_CHUNKS = 1_000;
 const MAX_REPORT_FACT_CHUNK_BYTES = 1_000_000;
+export const MAX_REPORT_MATCH_BATCH_RESULT_BYTES = 512_000;
 const INVALID_DOMAIN_MESSAGE = "A valid public domain is required.";
 const STORAGE_UNAVAILABLE_MESSAGE = "Persistent report storage is unavailable.";
 const PUBLIC_ID_PATTERN = /^[a-f0-9]{32}$/;
 const PHASES = new Set<ReportPhase>(["queued", "crawl", "competitors", "brief", "products", "matching", "enrichment", "actions", "ads", "persistence", "complete", "failed", "interrupted"]);
 const STATUSES = new Set<ReportRunStatus>(["queued", "running", "complete", "limited", "failed", "interrupted"]);
+const TERMINAL_REPORT_STATUSES = new Set<ReportRunStatus>(["complete", "limited", "failed", "interrupted"]);
 const schemaInitialization = new WeakMap<object, Promise<void>>();
 const emittedStorageDiagnostics = new Set<string>();
-const REPORT_STORAGE_DIAGNOSTIC = /^(?:database-(?:import-failed|binding-missing)|schema-statement-(?:[1-9]|[12]\d|3[01])-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api))$/;
+const REPORT_STORAGE_DIAGNOSTIC = /^(?:database-(?:import-failed|binding-missing)|schema-statement-(?:[1-9]|[12]\d|3[0-3])-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api))$/;
 
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS report_runs (id text PRIMARY KEY NOT NULL, public_id text NOT NULL, primary_domain text NOT NULL, locale text DEFAULT 'en' NOT NULL, status text NOT NULL, current_phase text NOT NULL, attempt_count integer DEFAULT 1 NOT NULL, created_at text NOT NULL, updated_at text NOT NULL, heartbeat_at text NOT NULL, expires_at text NOT NULL, error_code text DEFAULT '' NOT NULL, error_message text DEFAULT '' NOT NULL)`,
@@ -139,6 +162,8 @@ const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS report_fact_chunks (run_id text NOT NULL, manifest_id text NOT NULL, attempt_number integer NOT NULL, kind text NOT NULL, chunk_index integer NOT NULL, chunk_count integer NOT NULL, item_count integer NOT NULL, content_hash text NOT NULL, created_at text NOT NULL, PRIMARY KEY (run_id, manifest_id, kind, chunk_index))`,
   `CREATE INDEX IF NOT EXISTS report_fact_chunks_run_manifest_idx ON report_fact_chunks (run_id, manifest_id)`,
   `CREATE TABLE IF NOT EXISTS report_fact_manifests (run_id text PRIMARY KEY NOT NULL, manifest_id text NOT NULL, attempt_number integer NOT NULL, manifest_hash text NOT NULL, company_count integer NOT NULL, product_count integer NOT NULL, match_count integer NOT NULL, ad_count integer NOT NULL, status text NOT NULL, lock_owner text NOT NULL, locked_at text NOT NULL, completed_at text NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS report_match_batch_checkpoints (run_id text NOT NULL, attempt_number integer NOT NULL, batch_index integer NOT NULL, input_hash text NOT NULL, result_json text NOT NULL, result_hash text NOT NULL, created_at text NOT NULL, updated_at text NOT NULL, PRIMARY KEY (run_id, attempt_number, batch_index))`,
+  `CREATE INDEX IF NOT EXISTS report_match_batch_checkpoints_run_attempt_idx ON report_match_batch_checkpoints (run_id, attempt_number, batch_index)`,
   `CREATE TABLE IF NOT EXISTS report_evaluations (id text PRIMARY KEY NOT NULL, run_id text NOT NULL, evaluation_type text NOT NULL, input_hash text NOT NULL, fact_manifest_hash text DEFAULT '' NOT NULL, evaluator_version text NOT NULL, rubric_version text NOT NULL, status text NOT NULL, rating_basis text NOT NULL, overall_score integer, user_value_score integer, evidence_integrity_score integer, evidence_yield_score integer, presentation_score integer, deterministic_score integer, grade text, deterministic_json text DEFAULT '{}' NOT NULL, agent_json text DEFAULT '{}' NOT NULL, findings_json text DEFAULT '[]' NOT NULL, proposals_json text DEFAULT '[]' NOT NULL, model text DEFAULT '' NOT NULL, prompt_version text DEFAULT '' NOT NULL, pricing_version text DEFAULT '' NOT NULL, cost_microusd integer DEFAULT 0 NOT NULL, input_tokens integer DEFAULT 0 NOT NULL, output_tokens integer DEFAULT 0 NOT NULL, error_code text DEFAULT '' NOT NULL, dispatch_attempts integer DEFAULT 0 NOT NULL, created_at text NOT NULL, started_at text DEFAULT '' NOT NULL, completed_at text DEFAULT '' NOT NULL)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS report_evaluations_identity_uidx ON report_evaluations (run_id, input_hash, evaluator_version, evaluation_type)`,
   `CREATE INDEX IF NOT EXISTS report_evaluations_run_completed_idx ON report_evaluations (run_id, completed_at)`,
@@ -234,6 +259,27 @@ function safeMetadata(value: unknown) {
   const json = JSON.stringify(value);
   if (new TextEncoder().encode(json).byteLength > 8_000) throw new Error("Report event metadata is too large.");
   return JSON.parse(json) as Record<string, unknown>;
+}
+
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableJsonValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, item]) => [key, stableJsonValue(item)]));
+}
+
+function boundedCheckpointResult(value: unknown) {
+  let transportJson: string;
+  try {
+    transportJson = JSON.stringify(value);
+  } catch {
+    throw new Error("Report match batch checkpoint result must be valid JSON.");
+  }
+  if (transportJson === undefined) throw new Error("Report match batch checkpoint result must be valid JSON.");
+  const resultJson = JSON.stringify(stableJsonValue(JSON.parse(transportJson)));
+  if (new TextEncoder().encode(resultJson).byteLength > MAX_REPORT_MATCH_BATCH_RESULT_BYTES) throw new Error("Report match batch checkpoint result is too large.");
+  return resultJson;
 }
 
 function safeUrl(value: unknown, allowEmpty = true) {
@@ -352,6 +398,70 @@ async function ensureSchema(database: D1DatabaseLike) {
 async function findRun(database: D1DatabaseLike, id: string) {
   const result = await database.prepare(`SELECT * FROM report_runs WHERE ${PUBLIC_ID_PATTERN.test(id) ? "public_id" : "id"} = ? LIMIT 1`).bind(id).all<Record<string, unknown>>();
   return result.results?.[0] ? rowRun(result.results[0]) : null;
+}
+
+function rowMatchBatchCheckpoint(row: Record<string, unknown>): ReportMatchBatchCheckpoint {
+  let result: unknown;
+  try { result = JSON.parse(String(row.result_json)); } catch { throw new Error("Persisted report match batch checkpoint is invalid."); }
+  return {
+    attemptNumber: Number(row.attempt_number),
+    batchIndex: Number(row.batch_index),
+    inputHash: String(row.input_hash || ""),
+    result,
+    resultHash: String(row.result_hash || ""),
+    createdAt: String(row.created_at || ""),
+    updatedAt: String(row.updated_at || ""),
+  };
+}
+
+function validateMatchBatchCheckpointIdentity(attemptNumber: number, batchIndex: number, inputHash?: string) {
+  if (!Number.isInteger(attemptNumber) || attemptNumber < 1) throw new Error("Invalid report match batch checkpoint attempt.");
+  if (!Number.isInteger(batchIndex) || batchIndex < 0 || batchIndex >= MAX_REPORT_FACT_CHUNKS) throw new Error("Invalid report match batch checkpoint index.");
+  if (inputHash !== undefined && !/^[a-f0-9]{64}$/.test(inputHash)) throw new Error("Invalid report match batch checkpoint input hash.");
+}
+
+export async function loadReportMatchBatchCheckpoints(publicReportId: string, input: { attemptNumber: number; batchIndex?: number }, databaseOverride?: D1DatabaseLike | null) {
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error(STORAGE_UNAVAILABLE_MESSAGE);
+  if (!PUBLIC_ID_PATTERN.test(publicReportId)) throw new Error("Invalid report id.");
+  validateMatchBatchCheckpointIdentity(input.attemptNumber, input.batchIndex ?? 0);
+  await ensureSchema(database);
+  const run = await findRun(database, publicReportId);
+  if (!run) throw new Error("Report not found.");
+  if (input.attemptNumber !== run.attemptCount) throw new Error("Report match batch checkpoint attempt is stale.");
+  if (TERMINAL_REPORT_STATUSES.has(run.status)) throw new Error("A terminal report cannot load report match batch checkpoints.");
+  const byBatch = input.batchIndex === undefined ? "" : " AND batch_index = ?";
+  const bindings = input.batchIndex === undefined ? [run.id, input.attemptNumber] : [run.id, input.attemptNumber, input.batchIndex];
+  const rows = await database.prepare(`SELECT attempt_number, batch_index, input_hash, result_json, result_hash, created_at, updated_at FROM report_match_batch_checkpoints WHERE run_id = ? AND attempt_number = ?${byBatch} ORDER BY batch_index ASC`).bind(...bindings).all<Record<string, unknown>>();
+  return (rows.results || []).map(rowMatchBatchCheckpoint);
+}
+
+export async function saveReportMatchBatchCheckpoint(publicReportId: string, input: ReportMatchBatchCheckpointInput, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error(STORAGE_UNAVAILABLE_MESSAGE);
+  if (!PUBLIC_ID_PATTERN.test(publicReportId)) throw new Error("Invalid report id.");
+  validateMatchBatchCheckpointIdentity(input.attemptNumber, input.batchIndex, input.inputHash);
+  if (!Number.isFinite(now.getTime())) throw new Error("A valid report match batch checkpoint timestamp is required.");
+  const resultJson = boundedCheckpointResult(input.result);
+  const resultHash = await sha256Text(resultJson);
+  if (input.resultHash !== undefined && input.resultHash !== resultHash) throw new Error("Report match batch checkpoint result hash does not match its content.");
+  await ensureSchema(database);
+  const run = await findRun(database, publicReportId);
+  if (!run) throw new Error("Report not found.");
+  if (input.attemptNumber !== run.attemptCount) throw new Error("Report match batch checkpoint attempt is stale.");
+  if (TERMINAL_REPORT_STATUSES.has(run.status)) throw new Error("A terminal report cannot accept report match batch checkpoints.");
+
+  const select = () => database.prepare(`SELECT attempt_number, batch_index, input_hash, result_json, result_hash, created_at, updated_at FROM report_match_batch_checkpoints WHERE run_id = ? AND attempt_number = ? AND batch_index = ? LIMIT 1`).bind(run.id, input.attemptNumber, input.batchIndex).all<Record<string, unknown>>();
+  let existing = (await select()).results?.[0];
+  const replayed = Boolean(existing);
+  if (!existing) {
+    const observedAt = now.toISOString();
+    await database.prepare(`INSERT INTO report_match_batch_checkpoints (run_id, attempt_number, batch_index, input_hash, result_json, result_hash, created_at, updated_at) SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND attempt_count = ? AND status NOT IN ('complete', 'limited', 'failed', 'interrupted')) ON CONFLICT(run_id, attempt_number, batch_index) DO NOTHING`).bind(run.id, input.attemptNumber, input.batchIndex, input.inputHash, resultJson, resultHash, observedAt, observedAt, run.id, input.attemptNumber).run();
+    existing = (await select()).results?.[0];
+  }
+  if (!existing) throw new Error("Report match batch checkpoint attempt is stale or terminal.");
+  if (String(existing.input_hash) !== input.inputHash || String(existing.result_hash) !== resultHash || String(existing.result_json) !== resultJson) throw new Error("Report match batch checkpoint replay conflicts with persisted content.");
+  return { checkpoint: rowMatchBatchCheckpoint(existing), replayed };
 }
 
 export async function createReportRun(input: { primaryDomain: string; locale?: string }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
@@ -924,6 +1034,7 @@ export async function purgeExpiredReports(now = new Date(), databaseOverride?: D
     guardedDelete("report_companies"),
     guardedDelete("report_fact_chunks"),
     guardedDelete("report_fact_manifests"),
+    guardedDelete("report_match_batch_checkpoints"),
     guardedDelete("report_documents"),
     guardedDelete("report_events"),
     database.prepare(`DELETE FROM report_runs WHERE id IN (${eligibleRuns})`).bind(...eligible()),
