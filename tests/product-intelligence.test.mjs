@@ -879,8 +879,8 @@ test("final match enrichment fetches the exact AI-selected pair when secure imag
   comparison.rows[0].matches[0].assessment = { method: "ai-hybrid", claimType: "Inferred", verdict: "same_product", confidence: 0.94, model: "gpt-5.4-mini", promptVersion: "test", reasons: ["same tea"], contradictions: [], normalizedCategory: "tea", normalizedVariant: "lemon ginger", normalizedSize: "", primarySourceUrl: primary.sourceUrl, rivalSourceUrl: rival.sourceUrl };
   const targets = selectFinalProductEnrichmentTargets(comparison, 24);
   assert.deepEqual(targets.map((target) => [target.role, target.productId, target.expectedName]), [
-    ["primary", primary.id, primary.name],
     ["rival", rival.id, rival.name],
+    ["primary", primary.id, primary.name],
   ]);
 });
 
@@ -910,6 +910,19 @@ test("final match enrichment can cover both sides of twenty-nine selected rows",
   assert.equal(targets.length, 58);
   assert.equal(targets.filter((target) => target.role === "primary").length, 29);
   assert.equal(targets.filter((target) => target.role === "rival").length, 29);
+});
+
+test("final enrichment gives every product family its strongest rival before primary presentation gaps", () => {
+  const rows = Array.from({ length: 70 }, (_, index) => {
+    const primary = { ...product(`primary-${index}`, "shop.test", `Product ${index} 500g`), jsonLdType: "Product", sourceUrl: `https://shop.test/products/product-${index}` };
+    const rival = { ...product(`rival-${index}`, "rival.test", `Product ${index} 500g`), jsonLdType: "Product", sourceUrl: `https://rival.test/products/product-${index}` };
+    return { primary, matches: [{ domain: "rival.test", product: rival, score: 0.9, confidence: "Medium", sharedTerms: ["product"], claimIds: [], decision: null, assessment: { method: "ai-hybrid", claimType: "Inferred", verdict: "same_product", confidence: 0.95, model: "gpt-5.4-mini", promptVersion: "test", reasons: ["same item"], contradictions: [], normalizedCategory: "grocery", normalizedVariant: "", normalizedSize: "500g", primarySourceUrl: primary.sourceUrl, rivalSourceUrl: rival.sourceUrl } }] };
+  });
+  const comparison = { primaryDomain: "shop.test", comparisonDomains: ["rival.test"], rows, unmatched: [], coverage: { primaryProductsAvailable: 70, primaryProductsScanned: 70, primaryProductFamiliesCompared: 70, competitorProductsAvailable: 70, competitorProductsScanned: 70, assignedPairCount: 70, verifiedPairCount: 70, rowsReturned: 70, rowLimit: 70, truncated: false } };
+  const targets = selectFinalProductEnrichmentTargets(comparison, 80);
+  assert.equal(targets.length, 80);
+  assert.equal(targets.slice(0, 70).every((target) => target.role === "rival"), true);
+  assert.equal(targets.slice(70).every((target) => target.role === "primary"), true);
 });
 
 test("final enrichment updates the selected pair and recomputes its price decision", () => {

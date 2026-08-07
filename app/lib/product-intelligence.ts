@@ -158,6 +158,10 @@ export type ProductComparison = {
     pagesRequested: number;
     pagesFetched: number;
     maxPages: number;
+    pagesEligible?: number;
+    pagesTruncated?: boolean;
+    batchCount?: number;
+    failedBatchCount?: number;
     gaps: Array<{ url: string; reason: string; productId?: string; role?: "primary" | "rival"; code?: string }>;
     edgeRecovery?: { recovered: number; requested: number; provider: string; observedAt: string };
   };
@@ -1316,29 +1320,42 @@ export function planPreliminaryCatalogReconciliation(comparison: ProductComparis
   return { targets, totalEligible: eligible.length, truncated: eligible.length > targets.length };
 }
 
-export function selectFinalProductEnrichmentTargets(comparison: ProductComparison, maxPages = 24): ProductEnrichmentTarget[] {
-  const boundedMax = Math.max(0, Math.min(64, Math.floor(maxPages)));
-  if (!boundedMax) return [];
-  const selected: ProductEnrichmentTarget[] = [];
+export function planFinalProductEnrichmentTargets(comparison: ProductComparison, maxPages = 24) {
+  const boundedMax = Math.max(0, Math.min(1_000, Math.floor(maxPages)));
+  const eligible: ProductEnrichmentTarget[] = [];
   const seenUrls = new Set<string>();
   const add = (product: ProductRecord, role: ProductEnrichmentTarget["role"], pairScore: number) => {
-    if (selected.length >= boundedMax || product.jsonLdType !== "Product") return;
+    if (product.jsonLdType !== "Product") return;
     const sourceUrl = safeProductSource(product);
     const needsPrice = !hasComparablePublicPrice(product);
     const needsSecureImage = !/^https:\/\//i.test(product.imageUrl);
     if (!sourceUrl || (!needsPrice && !needsSecureImage) || seenUrls.has(sourceUrl)) return;
     seenUrls.add(sourceUrl);
-    selected.push({ domain: product.domain, sourceUrl, productId: product.id, expectedName: product.name, expectedType: product.jsonLdType, pairScore, role });
+    eligible.push({ domain: product.domain, sourceUrl, productId: product.id, expectedName: product.name, expectedType: product.jsonLdType, pairScore, role });
   };
+
+  // A valid rival price is the publication gate. Give every primary family its
+  // strongest rival lookup before spending the remaining budget on secondary
+  // rivals or primary-side presentation details.
   for (const row of comparison.rows) {
-    for (const match of row.matches) {
-      if (!match.product || match.confidence !== "Medium") continue;
-      add(row.primary, "primary", match.score);
-      add(match.product, "rival", match.score);
-      if (selected.length >= boundedMax) return selected;
-    }
+    const strongest = row.matches.find((match) => match.product && match.confidence === "Medium");
+    if (strongest?.product) add(strongest.product, "rival", strongest.score);
   }
-  return selected;
+  for (const row of comparison.rows) {
+    const accepted = row.matches.filter((match) => match.product && match.confidence === "Medium");
+    for (const match of accepted.slice(1)) if (match.product) add(match.product, "rival", match.score);
+  }
+  for (const row of comparison.rows) {
+    const strongest = row.matches.find((match) => match.product && match.confidence === "Medium");
+    if (strongest) add(row.primary, "primary", strongest.score);
+  }
+
+  const targets = eligible.slice(0, boundedMax);
+  return { targets, totalEligible: eligible.length, truncated: eligible.length > targets.length };
+}
+
+export function selectFinalProductEnrichmentTargets(comparison: ProductComparison, maxPages = 24): ProductEnrichmentTarget[] {
+  return planFinalProductEnrichmentTargets(comparison, maxPages).targets;
 }
 
 function sameLiveCatalogIdentity(left: ProductRecord, right: ProductRecord) {
