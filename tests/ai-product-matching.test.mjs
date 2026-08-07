@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildAIProductComparison, judgeBatchKey } from "../app/lib/ai-product-matching.ts";
+import { buildAIProductComparison, hasValidObservedRivalPrice, judgeBatchKey } from "../app/lib/ai-product-matching.ts";
 
 function product(id, domain, name, options = {}) {
   return {
@@ -28,6 +28,32 @@ function product(id, domain, name, options = {}) {
 function response(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
+
+test("publishes only rival products with a finite positive observed ISO price", () => {
+  const priced = (price) => product("rival", "rival.test", "Honey", { price });
+  assert.equal(hasValidObservedRivalPrice(priced({ raw: "GBP 8.00", currency: "GBP", amount: 8 })), true);
+  assert.equal(hasValidObservedRivalPrice(priced({ raw: "", currency: "GBP", amount: 8 })), false);
+  assert.equal(hasValidObservedRivalPrice(priced({ raw: "GBP 0", currency: "GBP", amount: 0 })), false);
+  assert.equal(hasValidObservedRivalPrice(priced({ raw: "GBP -1", currency: "GBP", amount: -1 })), false);
+  assert.equal(hasValidObservedRivalPrice(priced({ raw: "8", currency: "ZZZ", amount: 8 })), false);
+  assert.equal(hasValidObservedRivalPrice(priced({ raw: "GBP 8", currency: "GBP", amount: Number.NaN })), false);
+  assert.equal(hasValidObservedRivalPrice(product("rival", "rival.test", "Honey")), false);
+});
+
+test("suppresses an AI-accepted pair without a rival price and records the reason", async () => {
+  const primary = product("p-unpriced", "shop.test", "Sidr Honey 500g");
+  const rival = product("r-unpriced", "rival.test", "Sidr Honey 500g");
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, 0] })) });
+    return response({ output_text: JSON.stringify({ assessments: [{ primaryId: primary.id, candidateId: rival.id, verdict: "same_product", confidence: 0.99, reason: "Same product.", contradiction: "" }] }) });
+  };
+  const comparison = await buildAIProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "rival.test", products: [rival] }], {}, { apiKey: "test", fetch });
+
+  assert.equal(comparison.rows[0].matches[0].product, null);
+  assert.equal(comparison.coverage.assignedPairCount, 0);
+  assert.deepEqual(comparison.matching?.publication, { suppressedAcceptedPairs: 1, reasons: { "missing-valid-rival-price": 1 } });
+});
 
 test("falls back honestly without an API key", async () => {
   let calls = 0;
@@ -65,7 +91,7 @@ test("an incomplete Responses API output is visible and never exposes a fallback
 
 test("embedding retrieval gives a cross-language pair to the structured judge", async () => {
   const primary = product("p-ar", "shop.test", "عسل سدر فاخر 500 جرام", { description: "عسل يمني طبيعي" });
-  const rival = product("r-en", "rival.test", "Premium Yemeni Sidr Honey 500g", { description: "Pure raw sidr honey" });
+  const rival = product("r-en", "rival.test", "Premium Yemeni Sidr Honey 500g", { description: "Pure raw sidr honey", price: { raw: "GBP 8", currency: "GBP", amount: 8 } });
   const noise = product("r-noise", "rival.test", "Olive Oil Gift Set", { description: "Cold pressed olive oil" });
   const calls = [];
   const fetch = async (url, init) => {
@@ -120,7 +146,7 @@ test("bilingual quantity retrieval reaches the judge when embeddings are unavail
   const quantity = { kind: "mass", amount: 500, unit: "g" };
   const identifiers = { gtins: [], brand: "Sidr House" };
   const primary = product("p-ar-quantity", "shop.test", "\u0639\u0633\u0644 \u0633\u062f\u0631 \u0665\u0660\u0660 \u062c\u0631\u0627\u0645", { quantity, identifiers });
-  const rival = product("r-en-quantity", "rival.test", "Premium Sidr Honey 500g", { quantity, identifiers });
+  const rival = product("r-en-quantity", "rival.test", "Premium Sidr Honey 500g", { quantity, identifiers, price: { raw: "GBP 8", currency: "GBP", amount: 8 } });
   const noise = product("r-noise-quantity", "rival.test", "Olive Oil 1L", { quantity: { kind: "volume", amount: 1000, unit: "ml" } });
   let judgedCandidates = [];
   const fetch = async (url, init) => {
@@ -331,7 +357,7 @@ test("deterministic veto rejects an AI same-product service mismatch", async () 
 
 test("a service-typed subscription box can match a product-typed box substitute", async () => {
   const primary = product("p1", "shop.test", "Fruit and Veg Box", { jsonLdType: "Service", category: "produce box subscription" });
-  const rival = product("r1", "rival.test", "Organic Fruit & Veg Box", { jsonLdType: "Product", category: "produce box" });
+  const rival = product("r1", "rival.test", "Organic Fruit & Veg Box", { jsonLdType: "Product", category: "produce box", price: { raw: "GBP 20", currency: "GBP", amount: 20 } });
   const fetch = async (url, init) => {
     const body = JSON.parse(init.body);
     if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, 0] })) });
@@ -441,7 +467,7 @@ test("candidate retrieval performs an exact semantic scan across the bounded cat
 
 test("a complete group is salvaged when another group is incomplete in the same judge response", async () => {
   const primaries = [product("p1", "shop.test", "Sidr Honey 500g"), product("p2", "shop.test", "Olive Oil 1L")];
-  const rivals = [product("r1", "rival.test", "Sidr Honey 500g"), product("r2", "rival.test", "Olive Oil 1L")];
+  const rivals = [product("r1", "rival.test", "Sidr Honey 500g", { price: { raw: "GBP 8", currency: "GBP", amount: 8 } }), product("r2", "rival.test", "Olive Oil 1L", { price: { raw: "GBP 9", currency: "GBP", amount: 9 } })];
   let savedCheckpoints = 0;
   const fetch = async (url, init) => {
     const body = JSON.parse(init.body);
@@ -550,6 +576,7 @@ test("synchronizes complete catalogs before selecting the strongest groups for A
     `r${index}`,
     "rival.test",
     index === 99 ? "Organic Sidr Honey 500g" : `Different imported item ${index}`,
+    index === 99 ? { price: { raw: "GBP 8", currency: "GBP", amount: 8 } } : {},
   ));
   const fetch = async (url, init) => {
     const body = JSON.parse(init.body);
@@ -708,7 +735,7 @@ test("replays complete deterministic judge checkpoints without another judge cal
 
 test("rejects malformed judge checkpoints and replaces them only with a complete live result", async () => {
   const primary = product("malformed-p1", "shop.test", "Sidr Honey 500g");
-  const rival = product("malformed-r1", "rival.test", "Sidr Honey 500g");
+  const rival = product("malformed-r1", "rival.test", "Sidr Honey 500g", { price: { raw: "GBP 8", currency: "GBP", amount: 8 } });
   let judgeCalls = 0;
   let savedCheckpoint = null;
   const fetch = async (url, init) => {

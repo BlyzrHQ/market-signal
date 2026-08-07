@@ -22,11 +22,13 @@ import { createWorkerApiManifest } from "../src/shared/worker-api-contract.ts";
 import { AI_ACTION_PLANNER_LIMITS, deterministicProductActionResult } from "../app/lib/ai-action-planner.ts";
 
 const payload = {
-  contractVersion: "2",
+  contractVersion: "3",
   publicId: "a".repeat(32),
   primaryDomain: "shop.example",
   locale: "en",
   reportAttempt: 1,
+  productPlan: "starter",
+  productLimit: 20,
 };
 const recoveryPayload = { ...payload, reportAttempt: 2 };
 
@@ -155,11 +157,16 @@ test("payload contract accepts only a canonical, exact, versioned payload", () =
     { ...payload, callbackUrl: "https://attacker.example" },
     { ...payload, contractVersion: "1" },
     { ...payload, reportAttempt: 0 },
+    { ...payload, productPlan: "agency", productLimit: 20 },
+    { ...payload, productPlan: "unlimited", productLimit: 1_000 },
   ]) assert.throws(() => parseReportOrchestrationPayload(invalid), PermanentOrchestrationError);
 });
 
 test("successful orchestration persists ordered heartbeats and a complete document", async () => {
-  const port = mockPort();
+  const port = mockPort({ async match(input) {
+    assert.equal(input.productLimit, 20);
+    return { ok: true, comparison: comparison() };
+  } });
   const dates = ["2026-07-20T10:00:00.000Z", "2026-07-20T10:01:00.000Z"];
   const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port, () => new Date(dates.shift()));
 

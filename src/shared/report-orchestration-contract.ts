@@ -1,4 +1,4 @@
-export const REPORT_ORCHESTRATION_CONTRACT_VERSION = "2" as const;
+export const REPORT_ORCHESTRATION_CONTRACT_VERSION = "3" as const;
 
 export type ReportOrchestrationPayload = {
   contractVersion: typeof REPORT_ORCHESTRATION_CONTRACT_VERSION;
@@ -6,6 +6,8 @@ export type ReportOrchestrationPayload = {
   primaryDomain: string;
   locale: "en" | "ar";
   reportAttempt: number;
+  productPlan: "starter" | "solo" | "growth" | "agency";
+  productLimit: number;
 };
 
 export type ReportOrchestrationSummary = {
@@ -21,7 +23,8 @@ export type ReportOrchestrationSummary = {
 
 const PUBLIC_ID_PATTERN = /^[a-f0-9]{32}$/;
 const DOMAIN_PATTERN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
-const KEYS = ["contractVersion", "locale", "primaryDomain", "publicId", "reportAttempt"].sort();
+const PLAN_LIMITS = { starter: 20, solo: 50, growth: 500, agency: 1_000 } as const;
+const KEYS = ["contractVersion", "locale", "primaryDomain", "productLimit", "productPlan", "publicId", "reportAttempt"].sort();
 
 export class PermanentOrchestrationError extends Error {
   constructor(message: string) {
@@ -41,5 +44,7 @@ export function parseReportOrchestrationPayload(value: unknown): ReportOrchestra
   }
   if (input.locale !== "en" && input.locale !== "ar") throw new PermanentOrchestrationError("Unsupported report locale.");
   if (!Number.isInteger(input.reportAttempt) || Number(input.reportAttempt) < 1) throw new PermanentOrchestrationError("Invalid report attempt.");
+  if (!(typeof input.productPlan === "string" && input.productPlan in PLAN_LIMITS)) throw new PermanentOrchestrationError("Invalid product plan.");
+  if (input.productLimit !== PLAN_LIMITS[input.productPlan as keyof typeof PLAN_LIMITS]) throw new PermanentOrchestrationError("Product limit does not match the persisted plan.");
   return input as ReportOrchestrationPayload;
 }

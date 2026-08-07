@@ -55,8 +55,8 @@ test("report dispatch deduplicates one attempt and creates a distinct recovery r
   assert.equal(first.runId, duplicate.runId);
   assert.notEqual(first.runId, recovery.runId);
   assert.deepEqual(payloads.map((payload) => payload.reportAttempt), [1, 1, 2]);
-  assert.equal(reportDispatchIdempotencyKey(initial), `${PUBLIC_ID}:2:1`);
-  assert.equal(reportDispatchIdempotencyKey({ ...initial, attemptCount: 2 }), `${PUBLIC_ID}:2:2`);
+  assert.equal(reportDispatchIdempotencyKey(initial), `${PUBLIC_ID}:3:1`);
+  assert.equal(reportDispatchIdempotencyKey({ ...initial, attemptCount: 2 }), `${PUBLIC_ID}:3:2`);
 });
 
 test("report dispatch diagnostics distinguish missing credentials without exposing their value", async () => {
@@ -136,6 +136,24 @@ test("report creation returns 202 only after dispatch and records a sanitized fa
   ]);
 });
 
+test("public report creation never forwards client-supplied plan controls", async () => {
+  let creationInput;
+  const created = { id: "internal", publicId: PUBLIC_ID, primaryDomain: "myjam.co.uk", locale: "en", status: "queued", currentPhase: "queued", attemptCount: 1, createdAt: "now", expiresAt: "later", productPlan: "starter", productLimit: 20 };
+  const response = await createPersistentReport(new Request("https://example.test/api/reports?plan=agency", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-market-signal-plan": "agency" },
+    body: JSON.stringify({ primaryDomain: "myjam.co.uk", plan: "agency", productLimit: 1_000 }),
+  }), {
+    create: async (input) => { creationInput = input; return { ok: true, report: created }; },
+    dispatch: async () => ({ runId: "run_plancontrol", idempotencyKey: `${PUBLIC_ID}:3:1` }),
+    markDispatched: async () => {},
+    markDispatchFailed: async () => {},
+  });
+
+  assert.equal(response.status, 202);
+  assert.deepEqual(creationInput, { primaryDomain: "myjam.co.uk", locale: "en" });
+});
+
 test("report creation consumes cross-module results through a closed route boundary", async () => {
   const created = { id: "internal", publicId: PUBLIC_ID, primaryDomain: "myjam.co.uk", locale: "en", status: "queued", currentPhase: "queued", attemptCount: 1, createdAt: "now", expiresAt: "later" };
   const originalConsoleError = console.error;
@@ -170,7 +188,7 @@ test("report creation consumes cross-module results through a closed route bound
     Object.defineProperty(hostileExtra, "privateValue", { get() { throw new Error("must not be read"); } });
     const accepted = await run(async () => ({ ok: true, report: hostileExtra, ignored: new Proxy({}, { get() { throw new Error("must not be read"); } }) }));
     assert.equal(accepted.status, 202);
-    assert.deepEqual((await accepted.json()).report, created);
+    assert.deepEqual((await accepted.json()).report, { ...created, productPlan: "starter", productLimit: 20 });
 
     const known = await run(async () => ({ ok: false, diagnosticCode: "run-create-batch-schema-mismatch" }));
     assert.equal(known.status, 503);
@@ -228,9 +246,9 @@ test("authenticated recovery increments the attempt, dispatches it, and safely r
   assert.equal((await replay.json()).replayed, true);
   assert.deepEqual(calls, [
     ["recover", 2],
-    ["dispatch", `${PUBLIC_ID}:2:2`],
+    ["dispatch", `${PUBLIC_ID}:3:2`],
     ["record", "run_recovered2"],
-    ["dispatch", `${PUBLIC_ID}:2:2`],
+    ["dispatch", `${PUBLIC_ID}:3:2`],
     ["record", "run_recovered2"],
   ]);
 });
@@ -365,5 +383,7 @@ test("the browser only creates and observes a durable job; public report URLs ar
   assert.doesNotMatch(publicRoute, /export const (?:POST|PATCH)|export async function (?:POST|PATCH)/);
   assert.match(internalRoute, /hasValidInternalAuthorization/);
   assert.match(internalRoute, /replayed: true/);
-  assert.match(await readFile(new URL("../app/api/reports/route.ts", import.meta.url), "utf8"), /create:\s*\(input:[^)]+\)\s*=>\s*createReportRunResult\(input\)/);
+  const createRoute = await readFile(new URL("../app/api/reports/route.ts", import.meta.url), "utf8");
+  assert.match(createRoute, /resolveProductEntitlement/);
+  assert.match(createRoute, /createReportRunResult\(\{ \.\.\.input, entitlement \}\)/);
 });

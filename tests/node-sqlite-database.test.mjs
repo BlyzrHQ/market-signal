@@ -35,7 +35,7 @@ test("Node SQLite preserves reports and competitor memory after reopening", asyn
   let database;
   try {
     database = await NodeSqliteDatabase.open(databasePath);
-    const created = await createReportRun({ primaryDomain: "myjam.co.uk" }, new Date("2026-07-27T00:00:00.000Z"), database);
+    const created = await createReportRun({ primaryDomain: "myjam.co.uk", entitlement: { plan: "agency", productLimit: 1_000 } }, new Date("2026-07-27T00:00:00.000Z"), database);
     await appendReportEvent(created.publicId, {
       idempotencyKey: "crawl-started",
       phase: "crawl",
@@ -73,6 +73,8 @@ test("Node SQLite preserves reports and competitor memory after reopening", asyn
     database = await NodeSqliteDatabase.open(databasePath);
     const report = await getStoredReport(created.publicId, new Date("2026-07-27T00:03:00.000Z"), database);
     assert.equal(report.run.status, "complete");
+    assert.equal(report.run.productPlan, "agency");
+    assert.equal(report.run.productLimit, 1_000);
     assert.equal(report.events.filter((event) => event.idempotencyKey === "crawl-started").length, 1);
     assert.equal(report.events.at(-1).idempotencyKey, "report-saved");
     assert.equal(report.document.blocks[0].title, "Saved on the VPS");

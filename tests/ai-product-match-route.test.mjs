@@ -45,10 +45,12 @@ test("AI matching keeps up to 1,000 first-party products while rival catalogs re
 });
 
 test("product analysis limits are server-controlled, clamped, and receive scaled budgets", () => {
-  assert.equal(productAnalysisLimit(undefined), 60);
-  assert.equal(productAnalysisLimit("0"), 1);
+  assert.equal(productAnalysisLimit(undefined), 20);
+  assert.equal(productAnalysisLimit("0"), 20);
+  assert.equal(productAnalysisLimit("50"), 50);
   assert.equal(productAnalysisLimit("500"), 500);
-  assert.equal(productAnalysisLimit("5000"), 1_000);
+  assert.equal(productAnalysisLimit("1000"), 1_000);
+  assert.equal(productAnalysisLimit("5000"), 20);
   assert.equal(productAnalysisBudgetMs(60), 45_000);
   assert.equal(productAnalysisBudgetMs(500), 360_000);
   assert.equal(productAnalysisBudgetMs(1_000), 720_000);
@@ -75,11 +77,16 @@ test("authenticated matching binds durable judge checkpoints to the active repor
       saved.push({ publicId, input });
       return { replayed: false };
     },
-  }, token, "1000");
+    async loadEntitlement(publicId, attemptNumber) {
+      assert.equal(publicId, "b".repeat(32));
+      assert.equal(attemptNumber, 2);
+      return { plan: "agency", productLimit: 1_000 };
+    },
+  }, token);
   const response = await handler(new Request("https://signal.test/api/match", {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, primaryDomain: "shop.test", catalogs: [{ domain: "shop.test", products: [{ name: "Honey", sourceUrl: "https://shop.test/products/honey" }] }] }),
+    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, primaryDomain: "shop.test", productLimit: 1_000, catalogs: [{ domain: "shop.test", products: [{ name: "Honey", sourceUrl: "https://shop.test/products/honey" }] }] }),
   }));
 
   assert.equal(response.status, 200);
@@ -88,6 +95,13 @@ test("authenticated matching binds durable judge checkpoints to the active repor
   assert.equal(saved[0].publicId, "b".repeat(32));
   assert.equal(saved[0].input.attemptNumber, 2);
   assert.equal(saved[0].input.batchIndex, 3);
+
+  const mismatch = await handler(new Request("https://signal.test/api/match", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, primaryDomain: "shop.test", productLimit: 50, catalogs: [{ domain: "shop.test", products: [{ name: "Honey", sourceUrl: "https://shop.test/products/honey" }] }] }),
+  }));
+  assert.equal(mismatch.status, 409);
   assert.equal(saved[0].input.inputHash, "a".repeat(64));
 });
 

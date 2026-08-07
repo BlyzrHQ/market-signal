@@ -34,6 +34,13 @@ export const reportRuns = sqliteTable("report_runs", {
   index("report_runs_expiry_idx").on(table.expiresAt),
 ]);
 
+export const reportProductEntitlements = sqliteTable("report_product_entitlements", {
+  runId: text("run_id").primaryKey(),
+  planTier: text("plan_tier").notNull(),
+  productLimit: integer("product_limit").notNull(),
+  resolvedAt: text("resolved_at").notNull(),
+});
+
 export const reportEvents = sqliteTable("report_events", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   runId: text("run_id").notNull(),
