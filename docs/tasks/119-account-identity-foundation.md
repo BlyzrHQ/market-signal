@@ -79,3 +79,6 @@ hosted billing provider, not an identity dependency.
   it also removed Rolldown's platform binding. The replacement performs a
   no-save uninstall of only `drizzle-kit`, asserts its absence, and imports
   Better Auth, better-sqlite3, Drizzle ORM, and Vite during the image build.
+- A final clean-worktree production install at commit `34445ef` retained the
+  active Rolldown platform binding and all four required runtime imports while
+  excluding `drizzle-kit`; the disposable worktree was then removed.
