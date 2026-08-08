@@ -1,4 +1,4 @@
-import type { ReportOrchestrationPort } from "./report-orchestration-core.ts";
+import { MAX_FINAL_ENRICHMENT_BATCH_WAVES, type ReportOrchestrationPort } from "./report-orchestration-core.ts";
 import { parkingProvider } from "../../app/lib/domain-recovery.ts";
 import { PermanentOrchestrationError } from "../shared/report-orchestration-contract.ts";
 import { parseWorkerApiManifest, WorkerApiContractError } from "../shared/worker-api-contract.ts";
@@ -53,14 +53,15 @@ export const OPERATION_BUDGETS_MS = {
 
 // read + preflight + crawl-start + crawl + crawl-complete + longest parallel lane
 // (matching-start + two bounded match calls, where the second replays durable
-// judge checkpoints and only requests missing work, + enrichment-start + enrichment +
+// judge checkpoints and only requests missing work, + enrichment-start + bounded
+// enrichment batch waves +
 // enrichment-complete + actions-start + actions + actions-complete +
 // matching-complete) + final save.
-export const WORST_CASE_CRITICAL_PATH_MS = (OPERATION_BUDGETS_MS.report * 11)
+export const WORST_CASE_CRITICAL_PATH_MS = (OPERATION_BUDGETS_MS.report * (11 + MAX_FINAL_ENRICHMENT_BATCH_WAVES))
   + OPERATION_BUDGETS_MS.preflight
   + OPERATION_BUDGETS_MS.crawl
   + (OPERATION_BUDGETS_MS.match * 2)
-  + OPERATION_BUDGETS_MS.enrich
+  + (OPERATION_BUDGETS_MS.enrich * MAX_FINAL_ENRICHMENT_BATCH_WAVES)
   + OPERATION_BUDGETS_MS.actions;
 
 export class OrchestrationHttpError extends Error {

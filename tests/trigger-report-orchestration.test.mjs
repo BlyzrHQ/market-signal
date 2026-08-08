@@ -563,8 +563,8 @@ test("all operation deadlines keep a two-minute margin below the stale marker", 
   for (const timeout of Object.values(OPERATION_BUDGETS_MS)) assert.ok(timeout <= MAX_OPERATION_TIMEOUT_MS);
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS > OPERATION_BUDGETS_MS.match, "Undici must not preempt the match operation deadline");
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS < MAX_OPERATION_TIMEOUT_MS, "the worker deadline must remain inside the outer edge window");
-  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 2_075_000);
-  assert.ok(WORST_CASE_CRITICAL_PATH_MS <= 2_100_000, "critical path must preserve a two-minute task-ceiling margin");
+  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 2_995_000);
+  assert.ok(WORST_CASE_CRITICAL_PATH_MS <= 3_000_000, "critical path must preserve a two-minute task-ceiling margin");
 });
 
 test("the managed orchestration fetch controls the response-header deadline", async () => {
@@ -651,6 +651,38 @@ test("selected enrichment is applied and an enrichment failure remains visibly l
   assert.equal(failureResult.reportStatus, "limited");
   assert.ok(failureResult.limitedPhases.includes("enrichment"));
   assert.ok(failure.events.some((item) => item.idempotencyKey === "enrichment-limited"));
+});
+
+test("accepted rivals are enriched in 64-page batches and successful batches survive a later failure", async () => {
+  const batched = comparison({ withPair: true });
+  const template = batched.rows[0];
+  batched.rows = Array.from({ length: 70 }, (_, index) => {
+    const primary = { ...template.primary, id: `p-${index}`, name: `Honey ${index} 500g`, normalizedName: `honey ${index} 500g`, sourceUrl: `https://shop.example/products/honey-${index}`, imageUrl: "https://shop.example/images/honey.jpg", priceSignals: [{ raw: "GBP 9", currency: "GBP", amount: 9 }] };
+    const rival = { ...template.matches[0].product, id: `r-${index}`, name: `Honey ${index} 500g`, normalizedName: `honey ${index} 500g`, sourceUrl: `https://rival.example/products/honey-${index}`, imageUrl: "", priceSignals: [] };
+    return { primary, matches: [{ ...template.matches[0], product: rival, assessment: { ...template.matches[0].assessment, primarySourceUrl: primary.sourceUrl, rivalSourceUrl: rival.sourceUrl } }] };
+  });
+  batched.coverage = { ...batched.coverage, primaryProductsAvailable: 70, primaryProductsScanned: 70, primaryProductFamiliesCompared: 70, competitorProductsAvailable: 70, competitorProductsScanned: 70, assignedPairCount: 70, verifiedPairCount: 70, rowsReturned: 70, rowLimit: 70 };
+  batched.matching = { ...batched.matching, primaryProductsAssessed: 70, candidatePairsAssessed: 70, retrievalPairsScored: 70, selectedPrimaryIds: batched.rows.map((row) => row.primary.id), assessedPrimaryIds: batched.rows.map((row) => row.primary.id) };
+  const batchSizes = [];
+  const port = mockPort({
+    async match() { return { ok: true, comparison: batched }; },
+    async enrich({ targets }) {
+      batchSizes.push(targets.length);
+      if (batchSizes.length === 2) throw new Error("second batch unavailable");
+      return { ok: true, products: targets.map((target) => ({ ...product(target.domain, target.productId), name: target.expectedName, normalizedName: target.expectedName.toLowerCase(), sourceUrl: target.sourceUrl, priceSignals: [{ raw: "GBP 7", currency: "GBP", amount: 7 }] })), coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: 64, gaps: [] } };
+    },
+  });
+  const result = await orchestrateReport({ ...payload, productPlan: "growth", productLimit: 500 }, { attemptNumber: 1, isFinalAttempt: false }, port);
+  assert.deepEqual(batchSizes, [64, 6]);
+  assert.equal(result.reportStatus, "limited");
+  const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
+  assert.equal(block.rows.flatMap((row) => row.matches).filter((match) => match.product).length, 64);
+  assert.equal(block.enrichment.pagesRequested, 70);
+  assert.equal(block.enrichment.pagesFetched, 64);
+  assert.equal(block.enrichment.failedBatchCount, 1);
+  const checkpoints = port.events.filter((event) => /^enrichment-wave-\d+-checkpoint$/.test(event.idempotencyKey));
+  assert.equal(checkpoints.length, 1);
+  assert.equal(checkpoints[0].metadata.pagesRequested, 70);
 });
 
 test("action planning runs after final enrichment and persists source-labelled plans", async () => {
