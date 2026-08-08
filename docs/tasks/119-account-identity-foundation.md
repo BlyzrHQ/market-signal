@@ -70,3 +70,8 @@ hosted billing provider, not an identity dependency.
   install now omits optional peers and asserts that `drizzle-kit` is absent,
   while workspace reconciliation restores a missing owner membership. Fresh
   fallback re-review and runtime-tree verification are required before merge.
+- The corrected production install was reproduced in a detached clean worktree
+  with npm 10's exact omit flags: Better Auth, better-sqlite3, and Drizzle ORM
+  remained installed while `node_modules/drizzle-kit` was absent. The probe
+  worktree was removed afterward. The full suite still passes 559 tests, the
+  VPS build passes, and lint has zero errors (two pre-existing image warnings).
