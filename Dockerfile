@@ -25,7 +25,10 @@ RUN apt-get update \
     && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin market-signal
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev \
+RUN npm ci --omit=dev --omit=peer \
+    && npm uninstall --no-save --omit=dev --omit=peer drizzle-kit \
+    && test ! -d node_modules/drizzle-kit \
+    && node --input-type=module -e "await import('better-auth'); await import('better-sqlite3'); await import('drizzle-orm'); await import('vite')" \
     && npm cache clean --force
 COPY --from=build --chown=10001:10001 /app/dist ./dist
 COPY --from=build --chown=10001:10001 /app/public ./public

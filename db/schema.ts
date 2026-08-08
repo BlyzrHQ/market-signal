@@ -1,5 +1,77 @@
 import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
+export const accountUsers = sqliteTable("user", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  email: text("email").notNull().unique(),
+  emailVerified: integer("emailVerified", { mode: "boolean" }).notNull(),
+  image: text("image"),
+  createdAt: text("createdAt").notNull(),
+  updatedAt: text("updatedAt").notNull(),
+});
+
+export const accountSessions = sqliteTable("session", {
+  id: text("id").primaryKey(),
+  expiresAt: text("expiresAt").notNull(),
+  token: text("token").notNull().unique(),
+  createdAt: text("createdAt").notNull(),
+  updatedAt: text("updatedAt").notNull(),
+  ipAddress: text("ipAddress"),
+  userAgent: text("userAgent"),
+  userId: text("userId").notNull().references(() => accountUsers.id, { onDelete: "cascade" }),
+}, (table) => [
+  index("session_userId_idx").on(table.userId),
+]);
+
+export const accountProviders = sqliteTable("account", {
+  id: text("id").primaryKey(),
+  accountId: text("accountId").notNull(),
+  providerId: text("providerId").notNull(),
+  userId: text("userId").notNull().references(() => accountUsers.id, { onDelete: "cascade" }),
+  accessToken: text("accessToken"),
+  refreshToken: text("refreshToken"),
+  idToken: text("idToken"),
+  accessTokenExpiresAt: text("accessTokenExpiresAt"),
+  refreshTokenExpiresAt: text("refreshTokenExpiresAt"),
+  scope: text("scope"),
+  password: text("password"),
+  createdAt: text("createdAt").notNull(),
+  updatedAt: text("updatedAt").notNull(),
+}, (table) => [
+  index("account_userId_idx").on(table.userId),
+]);
+
+export const accountVerifications = sqliteTable("verification", {
+  id: text("id").primaryKey(),
+  identifier: text("identifier").notNull(),
+  value: text("value").notNull(),
+  expiresAt: text("expiresAt").notNull(),
+  createdAt: text("createdAt").notNull(),
+  updatedAt: text("updatedAt").notNull(),
+}, (table) => [
+  index("verification_identifier_idx").on(table.identifier),
+]);
+
+export const workspaces = sqliteTable("workspaces", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  slug: text("slug").notNull().unique(),
+  kind: text("kind").notNull().default("personal"),
+  personalOwnerUserId: text("personal_owner_user_id").unique().references(() => accountUsers.id, { onDelete: "cascade" }),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const workspaceMembers = sqliteTable("workspace_members", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => accountUsers.id, { onDelete: "cascade" }),
+  role: text("role").notNull().default("owner"),
+  createdAt: text("created_at").notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.workspaceId, table.userId] }),
+  index("workspace_members_user_idx").on(table.userId),
+]);
+
 export const verifiedCompetitors = sqliteTable("verified_competitors", {
   primaryDomain: text("primary_domain").notNull(),
   competitorDomain: text("competitor_domain").notNull(),

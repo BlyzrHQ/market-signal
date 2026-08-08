@@ -43,6 +43,13 @@
       "when": 1786121006566,
       "tag": "0005_minor_switch",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1786222336187,
+      "tag": "0006_left_lilandra",
+      "breakpoints": true
     }
   ]
 }

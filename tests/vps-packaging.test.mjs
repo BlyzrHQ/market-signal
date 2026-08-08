@@ -166,6 +166,7 @@ test("repeatable VPS preflight permits only SSH, Caddy, and DHCP listeners", () 
 
 test("runtime dependencies required by vinext are installed in production", () => {
   const manifest = JSON.parse(read("package.json"));
+  const dockerfile = read("Dockerfile");
   for (const name of [
     "vinext",
     "vite",
@@ -176,6 +177,12 @@ test("runtime dependencies required by vinext are installed in production", () =
     assert.ok(manifest.dependencies[name], `${name} must be a runtime dependency`);
     assert.equal(manifest.devDependencies[name], undefined);
   }
+  assert.match(dockerfile, /npm ci --omit=dev --omit=peer/);
+  assert.match(dockerfile, /npm uninstall --no-save --omit=dev --omit=peer drizzle-kit/);
+  assert.match(dockerfile, /test ! -d node_modules\/drizzle-kit/);
+  assert.match(dockerfile, /await import\('vite'\)/);
+  assert.equal(manifest.devDependencies["drizzle-kit"], "0.31.10");
+  assert.equal(manifest.dependencies["drizzle-kit"], undefined);
 });
 
 test("example environment contains placeholders rather than credential values", () => {
