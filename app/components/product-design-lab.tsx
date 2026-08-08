@@ -3,6 +3,7 @@
 import { KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { PricePosition } from "./price-position";
 import { formatPriceClaim, resolvePriceClaim } from "../lib/price-claims";
+import { jsonResponseErrorMessage, readJsonResponse } from "../lib/json-response";
 
 export type ProductBattle = {
   primary: Record<string, unknown>;
@@ -16,6 +17,8 @@ type ProductDesignLabProps = {
   comparison?: Record<string, unknown>;
   battles: ProductBattle[];
   primaryProducts?: { authoritative: boolean; totalCount: number; products: Array<Record<string, unknown>>; truncated: boolean };
+  publicId: string;
+  authoritativeMatchTotal?: number;
   primaryDomain: string;
   observedAt: string;
   ar: boolean;
@@ -30,6 +33,7 @@ const LAYOUT_LABELS: Record<ProductLayout, { en: string; ar: string }> = {
 
 function object(value: unknown) { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function list(value: unknown) { return Array.isArray(value) ? value : []; }
+function numeric(value: unknown) { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : 0; }
 function repairEncoding(value: string) {
   if (!/(?:Ãƒ|Ã‚|Ã˜|Ã™|Ã¢)/.test(value)) return value;
   try {
@@ -142,13 +146,46 @@ function ProductTableDetails({ row, observedAt, ar }: { row: ProductRow; observe
   </details>;
 }
 
-export function ProductDesignLab({ comparison, battles, primaryProducts, primaryDomain, observedAt, ar }: ProductDesignLabProps) {
+type MatchPagePayload = { ok: boolean; error?: string; errorCode?: string; page?: { authoritative: true; manifestHash: string; totalCount: number; directPriceCount: number; items: ProductBattle[]; nextCursor: string | null } };
+
+export function ProductDesignLab({ comparison, battles, primaryProducts, publicId, authoritativeMatchTotal, primaryDomain, observedAt, ar }: ProductDesignLabProps) {
   const [layout, setLayout] = useState<ProductLayout>("table");
   const [shareStatus, setShareStatus] = useState("");
   const [shareFallback, setShareFallback] = useState("");
+  const [authoritativeBattles, setAuthoritativeBattles] = useState<ProductBattle[] | null>(null);
+  const [matchTotal, setMatchTotal] = useState(authoritativeMatchTotal || battles.length);
+  const [directPriceTotal, setDirectPriceTotal] = useState<number | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [matchLoadState, setMatchLoadState] = useState<"loading" | "ready" | "fallback" | "more" | "exporting">("loading");
+  const [matchLoadMessage, setMatchLoadMessage] = useState("");
   const layoutTabs = useRef<Array<HTMLButtonElement | null>>([]);
-  const rows = useMemo(() => battles.map((battle) => prepareRow(battle, ar)), [battles, ar]);
+  const displayedBattles = authoritativeBattles ?? battles;
+  const rows = useMemo(() => displayedBattles.map((battle) => prepareRow(battle, ar)), [displayedBattles, ar]);
   const catalogProducts = primaryProducts?.authoritative ? primaryProducts.products : [];
+  const assessedProducts = numeric(object(comparison?.matching).primaryProductsAssessed) || list(comparison?.rows).length;
+
+  const fetchMatchPage = async (cursor?: string) => {
+    const query = new URLSearchParams({ limit: "100" });
+    if (cursor) query.set("cursor", cursor);
+    const response = await fetch(`/api/reports/${publicId}/matches?${query}`, { headers: { accept: "application/json" } });
+    const body = await readJsonResponse<MatchPagePayload>(response, "Saved report matches");
+    if (!response.ok || !body.ok || !body.page?.authoritative) throw Object.assign(new Error(body.error || "The complete saved matches are unavailable."), { fallback: body.errorCode === "facts-unavailable" || response.status === 409 });
+    return body.page;
+  };
+
+  useEffect(() => {
+    let current = true;
+    fetchMatchPage().then((page) => {
+      if (!current) return;
+      setAuthoritativeBattles(page.items); setMatchTotal(page.totalCount); setDirectPriceTotal(page.directPriceCount); setNextCursor(page.nextCursor); setMatchLoadState("ready");
+    }).catch((cause) => {
+      if (!current) return;
+      setMatchLoadState("fallback"); setMatchLoadMessage(jsonResponseErrorMessage(cause, "The compact saved comparison remains available."));
+    });
+    return () => { current = false; };
+  // The public report id identifies an immutable completed fact manifest.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publicId]);
 
   useEffect(() => {
     const sync = () => {
@@ -181,9 +218,34 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, primary
     } catch (error) { if (error instanceof DOMException && error.name === "AbortError") { setShareStatus(ar ? "تم إلغاء المشاركة" : "Share canceled"); return; } }
     if (await copyText(url)) setShareStatus(ar ? "تم نسخ الرابط" : "Link copied"); else { setShareStatus(ar ? "انسخ الرابط أدناه" : "Copy the link below"); setShareFallback(url); }
   };
-  const exportCsv = () => {
+  const loadMoreMatches = async () => {
+    if (!nextCursor || matchLoadState === "more" || matchLoadState === "exporting") return;
+    setMatchLoadState("more"); setMatchLoadMessage("");
+    try {
+      const page = await fetchMatchPage(nextCursor);
+      setAuthoritativeBattles((current) => [...(current || []), ...page.items]); setNextCursor(page.nextCursor); setMatchTotal(page.totalCount); setDirectPriceTotal(page.directPriceCount); setMatchLoadState("ready");
+    } catch (cause) {
+      setMatchLoadState("ready"); setMatchLoadMessage(jsonResponseErrorMessage(cause, "More saved matches could not be loaded."));
+    }
+  };
+  const exportCsv = async () => {
+    let exportBattles = authoritativeBattles ?? battles;
+    let cursor = nextCursor;
+    if (authoritativeBattles && cursor) {
+      setMatchLoadState("exporting"); setMatchLoadMessage("");
+      try {
+        while (cursor) {
+          const page = await fetchMatchPage(cursor);
+          exportBattles = [...exportBattles, ...page.items]; cursor = page.nextCursor;
+        }
+        setAuthoritativeBattles(exportBattles); setNextCursor(null); setMatchLoadState("ready");
+      } catch (cause) {
+        setMatchLoadState("ready"); setMatchLoadMessage(jsonResponseErrorMessage(cause, "The complete CSV could not be prepared.")); return;
+      }
+    }
+    const exportRows = exportBattles.map((battle) => prepareRow(battle, ar));
     const headers = ["your_product", "your_price_raw", "your_price_amount", "your_currency", "rival_domain", "rival_product", "rival_price_raw", "rival_price_amount", "rival_currency", "price_status", "price_signal", "suggested_action", "suggested_action_source", "match_status", "confidence", "observed_at", "your_source", "rival_source"];
-    const data = rows.map((row) => [display(row.battle.primary.name), row.primaryDisplay, row.priceClaim.primary?.amount ?? "", row.priceClaim.primary?.currency ?? "", row.domain, display(row.battle.rival.name), row.rivalDisplay, row.priceClaim.rival?.amount ?? "", row.priceClaim.rival?.currency ?? "", row.priceStatus, row.priceSignal, row.fullAction, row.actionSource, `${row.matchStatus}-${row.claimType}`, row.confidence, observedAt, row.primarySource, row.rivalSource]);
+    const data = exportRows.map((row) => [display(row.battle.primary.name), row.primaryDisplay, row.priceClaim.primary?.amount ?? "", row.priceClaim.primary?.currency ?? "", row.domain, display(row.battle.rival.name), row.rivalDisplay, row.priceClaim.rival?.amount ?? "", row.priceClaim.rival?.currency ?? "", row.priceStatus, row.priceSignal, row.fullAction, row.actionSource, `${row.matchStatus}-${row.claimType}`, row.confidence, observedAt, row.primarySource, row.rivalSource]);
     const csv = `\uFEFF${[headers, ...data].map((line) => line.map(csvCell).join(",")).join("\r\n")}`;
     const href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })); const anchor = document.createElement("a"); anchor.href = href; anchor.download = `${slug(primaryDomain)}-product-comparison.csv`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(href), 0);
   };
@@ -196,11 +258,13 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, primary
 
   return <>
     <header className="panel-intro compact product-lab-intro"><div><span>{ar ? "مقارنة منتج بمنتج" : "PRODUCT VS PRODUCT"}</span><h2>{ar ? "اختر الطريقة الأسهل لرؤية المنافسة" : "Choose the clearest way to see the competition"}</h2><p>{ar ? "ثلاث طرق عرض، ونفس البيانات العامة المحفوظة." : "Three views, one saved set of public evidence."}</p></div></header>
-    <div className="panel-metrics"><div><strong>{rows.length}</strong><span>{ar ? "مطابقات مقبولة" : "accepted matches"}</span></div><div><strong>{rows.filter((row) => row.priceClaim.kind === "direct").length}</strong><span>{ar ? "فروق سعر مباشرة" : "direct price deltas"}</span></div><div><strong>{list(comparison?.rows).length}</strong><span>{ar ? "منتجاتك التي تم تقييمها" : "your products assessed"}</span></div></div>
+    <div className="panel-metrics"><div><strong>{authoritativeBattles ? matchTotal : rows.length}</strong><span>{ar ? "مطابقات مقبولة محفوظة" : "accepted matches saved"}</span></div><div><strong>{directPriceTotal ?? rows.filter((row) => row.priceClaim.kind === "direct").length}</strong><span>{ar ? "فروق سعر مباشرة" : "direct price deltas"}</span></div><div><strong>{assessedProducts}</strong><span>{ar ? "منتجاتك التي تم تقييمها فعلياً" : "your products actually assessed"}</span></div></div>
+    <div className={`product-result-coverage ${matchLoadState === "fallback" ? "limited" : "ready"}`} role="status" aria-live="polite"><span>{matchLoadState === "loading" ? (ar ? "جارٍ تحميل النتائج الكاملة…" : "Loading complete saved results…") : authoritativeBattles ? (ar ? `نعرض ${rows.length} من ${matchTotal} مطابقة محفوظة عبر ${assessedProducts} منتجاً تم تقييمه.` : `Showing ${rows.length} of ${matchTotal} saved matches across ${assessedProducts} products actually assessed.`) : (ar ? `نعرض لقطة مضغوطة من ${rows.length} مطابقة.` : `Showing a compact snapshot of ${rows.length} matches.`)}</span>{matchLoadMessage && <small>{matchLoadMessage}</small>}</div>
     <div className="product-layout-toolbar">
       <div className="product-layout-tabs" role="tablist" aria-label={ar ? "طرق عرض مقارنة المنتجات" : "Product comparison layouts"}>{LAYOUTS.map((item, index) => <button id={`product-layout-tab-${item}`} key={item} ref={(node) => { layoutTabs.current[index] = node; }} type="button" role="tab" aria-selected={layout === item} aria-controls={`product-layout-${item}`} tabIndex={layout === item ? 0 : -1} onClick={() => selectLayout(item)} onKeyDown={(event) => onLayoutKey(event, index)}><span>{String(index + 1).padStart(2, "0")}</span>{LAYOUT_LABELS[item][ar ? "ar" : "en"]}</button>)}</div>
-      <div className="product-lab-actions"><button type="button" onClick={exportCsv}>{ar ? "تصدير CSV" : "Export CSV"}</button><button type="button" onClick={shareReport}>{ar ? "مشاركة" : "Share"}</button></div>
+      <div className="product-lab-actions"><button type="button" onClick={exportCsv} disabled={matchLoadState === "loading" || matchLoadState === "more" || matchLoadState === "exporting"}>{matchLoadState === "exporting" ? (ar ? "جارٍ تجهيز كل النتائج…" : "Preparing all results…") : (ar ? "تصدير CSV" : "Export CSV")}</button><button type="button" onClick={shareReport}>{ar ? "مشاركة" : "Share"}</button></div>
     </div>
+    {authoritativeBattles && nextCursor && <div className="product-load-more"><button type="button" onClick={loadMoreMatches} disabled={matchLoadState === "more" || matchLoadState === "exporting"}>{matchLoadState === "more" ? (ar ? "جارٍ التحميل…" : "Loading…") : (ar ? `تحميل المزيد (${matchTotal - rows.length} متبقية)` : `Load more (${matchTotal - rows.length} remaining)`)}</button></div>}
     {(shareStatus || shareFallback) && <div className="product-share-status" role="status" aria-live="polite"><span>{shareStatus}</span>{shareFallback && <input value={shareFallback} readOnly onFocus={(event) => event.currentTarget.select()} aria-label={ar ? "رابط التقرير" : "Report link"} />}</div>}
 
     {layout === "table" && <section id="product-layout-table" role="tabpanel" aria-labelledby="product-layout-tab-table" className="product-layout-panel product-table-layout">

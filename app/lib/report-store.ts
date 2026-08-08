@@ -58,6 +58,20 @@ export type StoredPrimaryProducts = {
   truncated: boolean;
 };
 
+export type StoredReportMatchPage = {
+  authoritative: true;
+  manifestHash: string;
+  totalCount: number;
+  directPriceCount: number;
+  items: Array<{
+    primary: Record<string, unknown>;
+    rival: Record<string, unknown>;
+    match: Record<string, unknown>;
+    key: string;
+  }>;
+  nextCursor: string | null;
+};
+
 export type StoredReportEvaluation = {
   id: string;
   runId: string;
@@ -137,6 +151,8 @@ export const MAX_REPORT_MATCH_BATCH_RESULT_BYTES = 512_000;
 const INVALID_DOMAIN_MESSAGE = "A valid public domain is required.";
 const STORAGE_UNAVAILABLE_MESSAGE = "Persistent report storage is unavailable.";
 const PUBLIC_ID_PATTERN = /^[a-f0-9]{32}$/;
+const MATCH_ID_PATTERN = /^[a-f0-9]{64}$/;
+const MAX_PUBLIC_MATCH_PAGE_SIZE = 100;
 const PHASES = new Set<ReportPhase>(["queued", "crawl", "competitors", "brief", "products", "matching", "enrichment", "actions", "ads", "persistence", "complete", "failed", "interrupted"]);
 const STATUSES = new Set<ReportRunStatus>(["queued", "running", "complete", "limited", "failed", "interrupted"]);
 const TERMINAL_REPORT_STATUSES = new Set<ReportRunStatus>(["complete", "limited", "failed", "interrupted"]);
@@ -160,6 +176,7 @@ const SCHEMA_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS report_products_run_domain_idx ON report_products (run_id, domain)`,
   `CREATE TABLE IF NOT EXISTS report_matches (id text PRIMARY KEY NOT NULL, run_id text NOT NULL, primary_product_id text NOT NULL, rival_product_id text NOT NULL, rival_domain text NOT NULL, verdict text NOT NULL, confidence text NOT NULL, claim_type text NOT NULL, model text DEFAULT '' NOT NULL, prompt_version text DEFAULT '' NOT NULL, evidence_json text NOT NULL, observed_at text NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS report_matches_run_rival_idx ON report_matches (run_id, rival_domain)`,
+  `CREATE INDEX IF NOT EXISTS report_matches_run_rival_id_idx ON report_matches (run_id, rival_domain, id)`,
   `CREATE TABLE IF NOT EXISTS report_ads (id text PRIMARY KEY NOT NULL, run_id text NOT NULL, domain text NOT NULL, platform text NOT NULL, status text NOT NULL, evidence_json text NOT NULL, observed_at text NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS report_ads_run_domain_idx ON report_ads (run_id, domain)`,
   `CREATE TABLE IF NOT EXISTS report_fact_chunks (run_id text NOT NULL, manifest_id text NOT NULL, attempt_number integer NOT NULL, kind text NOT NULL, chunk_index integer NOT NULL, chunk_count integer NOT NULL, item_count integer NOT NULL, content_hash text NOT NULL, created_at text NOT NULL, PRIMARY KEY (run_id, manifest_id, kind, chunk_index))`,
@@ -408,6 +425,106 @@ async function findRun(database: D1DatabaseLike, id: string) {
   if (!row) return null;
   const entitlement = await database.prepare(`SELECT plan_tier, product_limit FROM report_product_entitlements WHERE run_id = ? LIMIT 1`).bind(String(row.id || "")).all<Record<string, unknown>>();
   return rowRun({ ...row, ...(entitlement.results?.[0] || {}) });
+}
+
+function matchCursor(value: string) {
+  if (!value) return null;
+  const separator = value.indexOf("~");
+  if (separator <= 0 || separator !== value.lastIndexOf("~")) throw new Error("Invalid report match cursor.");
+  const domain = canonicalDomain(value.slice(0, separator));
+  const id = value.slice(separator + 1);
+  if (!domain || !MATCH_ID_PATTERN.test(id)) throw new Error("Invalid report match cursor.");
+  return { domain, id };
+}
+
+function matchProduct(row: Record<string, unknown>, prefix: "primary" | "rival") {
+  const metadata = parsedRecord(row[`${prefix}_metadata_json`]);
+  return {
+    id: String(row[`${prefix}_product_id`] || ""),
+    domain: String(row[`${prefix}_domain`] || ""),
+    name: String(row[`${prefix}_name`] || ""),
+    normalizedName: String(row[`${prefix}_normalized_name`] || ""),
+    sourceUrl: String(row[`${prefix}_source_url`] || ""),
+    imageUrl: String(row[`${prefix}_image_url`] || ""),
+    priceSignals: parsedRecords(row[`${prefix}_price_json`]),
+    observedAt: String(row[`${prefix}_observed_at`] || ""),
+    ...metadata,
+  };
+}
+
+function matchPageItem(row: Record<string, unknown>) {
+  const evidence = parsedRecord(row.evidence_json);
+  const confidence = Number(row.confidence);
+  const rivalDomain = String(row.rival_domain || "");
+  const id = String(row.match_id || "");
+  return {
+    primary: matchProduct(row, "primary"),
+    rival: matchProduct(row, "rival"),
+    match: {
+      domain: rivalDomain,
+      score: typeof evidence.score === "number" && Number.isFinite(evidence.score) ? evidence.score : null,
+      confidence: String(row.confidence || ""),
+      sharedTerms: Array.isArray(evidence.sharedTerms) ? evidence.sharedTerms : [],
+      claimIds: Array.isArray(evidence.claimIds) ? evidence.claimIds : [],
+      assessment: {
+        method: row.model ? "ai-hybrid" : "",
+        claimType: String(row.claim_type || ""),
+        verdict: String(row.verdict || ""),
+        confidence: Number.isFinite(confidence) ? confidence : null,
+        model: String(row.model || ""),
+        promptVersion: String(row.prompt_version || ""),
+        reasons: Array.isArray(evidence.reasons) ? evidence.reasons : [],
+        contradictions: Array.isArray(evidence.contradictions) ? evidence.contradictions : [],
+        normalizedCategory: String(evidence.normalizedCategory || ""),
+        normalizedVariant: String(evidence.normalizedVariant || ""),
+        normalizedSize: String(evidence.normalizedSize || ""),
+        primarySourceUrl: String(evidence.primarySourceUrl || ""),
+        rivalSourceUrl: String(evidence.rivalSourceUrl || ""),
+      },
+      decision: evidence.decision && typeof evidence.decision === "object" && !Array.isArray(evidence.decision) ? evidence.decision : {},
+    },
+    key: id,
+  };
+}
+
+export async function loadStoredReportMatchPage(publicReportId: string, input: { cursor?: string; limit?: number } = {}, databaseOverride?: D1DatabaseLike | null): Promise<StoredReportMatchPage> {
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error(STORAGE_UNAVAILABLE_MESSAGE);
+  if (!PUBLIC_ID_PATTERN.test(publicReportId)) throw new Error("Invalid report id.");
+  const limit = input.limit === undefined ? MAX_PUBLIC_MATCH_PAGE_SIZE : Math.floor(input.limit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_PUBLIC_MATCH_PAGE_SIZE) throw new Error("Invalid report match page size.");
+  const cursor = matchCursor(input.cursor || "");
+  await ensureSchema(database);
+  const run = await findRun(database, publicReportId);
+  if (!run) throw new Error("Report not found.");
+  const manifestResult = await database.prepare(`SELECT manifest_hash, attempt_number, match_count, status FROM report_fact_manifests WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>();
+  const manifest = manifestResult.results?.[0];
+  if (!manifest || manifest.status !== "complete" || Number(manifest.attempt_number) !== run.attemptCount) throw new Error("Authoritative report match facts are unavailable.");
+  const cursorCondition = cursor ? " AND (matches.rival_domain > ? OR (matches.rival_domain = ? AND matches.id > ?))" : "";
+  const bindings: unknown[] = [run.primaryDomain, run.id];
+  if (cursor) bindings.push(cursor.domain, cursor.domain, cursor.id);
+  bindings.push(limit + 1);
+  const rows = await database.prepare(`SELECT
+      matches.id AS match_id, matches.verdict, matches.confidence, matches.claim_type, matches.model, matches.prompt_version, matches.evidence_json,
+      primary_products.product_id AS primary_product_id, primary_products.domain AS primary_domain, primary_products.name AS primary_name, primary_products.normalized_name AS primary_normalized_name, primary_products.source_url AS primary_source_url, primary_products.image_url AS primary_image_url, primary_products.price_json AS primary_price_json, primary_products.metadata_json AS primary_metadata_json, primary_products.observed_at AS primary_observed_at,
+      rival_products.product_id AS rival_product_id, rival_products.domain AS rival_domain, rival_products.name AS rival_name, rival_products.normalized_name AS rival_normalized_name, rival_products.source_url AS rival_source_url, rival_products.image_url AS rival_image_url, rival_products.price_json AS rival_price_json, rival_products.metadata_json AS rival_metadata_json, rival_products.observed_at AS rival_observed_at
+    FROM report_matches AS matches
+    JOIN report_products AS primary_products ON primary_products.run_id = matches.run_id AND primary_products.domain = ? AND primary_products.product_id = matches.primary_product_id
+    JOIN report_products AS rival_products ON rival_products.run_id = matches.run_id AND rival_products.domain = matches.rival_domain AND rival_products.product_id = matches.rival_product_id
+    WHERE matches.run_id = ?${cursorCondition}
+    ORDER BY matches.rival_domain ASC, matches.id ASC
+    LIMIT ?`).bind(...bindings).all<Record<string, unknown>>();
+  const selected = (rows.results || []).slice(0, limit);
+  const direct = await database.prepare(`SELECT COUNT(*) AS count FROM report_matches WHERE run_id = ? AND COALESCE(json_extract(evidence_json, '$.decision.priceComparison.primaryRaw'), '') <> '' AND COALESCE(json_extract(evidence_json, '$.decision.priceComparison.rivalRaw'), '') <> ''`).bind(run.id).all<Record<string, unknown>>();
+  const last = selected.at(-1);
+  return {
+    authoritative: true,
+    manifestHash: String(manifest.manifest_hash || ""),
+    totalCount: Number(manifest.match_count || 0),
+    directPriceCount: Number(direct.results?.[0]?.count || 0),
+    items: selected.map(matchPageItem),
+    nextCursor: (rows.results || []).length > limit && last ? `${String(last.rival_domain)}~${String(last.match_id)}` : null,
+  };
 }
 
 function rowMatchBatchCheckpoint(row: Record<string, unknown>): ReportMatchBatchCheckpoint {
