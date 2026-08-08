@@ -1337,17 +1337,21 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
   // A valid rival price is the publication gate. Give every primary family its
   // strongest rival lookup before spending the remaining budget on secondary
   // rivals or primary-side presentation details.
-  for (const row of comparison.rows) {
-    const strongest = row.matches.find((match) => match.product && match.confidence === "Medium");
+  const acceptedByRow = comparison.rows.map((row) => ({
+    row,
+    accepted: row.matches.filter((match) => match.product && match.confidence === "Medium").sort((left, right) => right.score - left.score
+      || left.domain.localeCompare(right.domain)
+      || (left.product?.id || "").localeCompare(right.product?.id || "")),
+  }));
+  for (const { accepted } of acceptedByRow) {
+    const strongest = accepted[0];
     if (strongest?.product) add(strongest.product, "rival", strongest.score);
   }
-  for (const row of comparison.rows) {
-    const accepted = row.matches.filter((match) => match.product && match.confidence === "Medium");
+  for (const { accepted } of acceptedByRow) {
     for (const match of accepted.slice(1)) if (match.product) add(match.product, "rival", match.score);
   }
-  for (const row of comparison.rows) {
-    const strongest = row.matches.find((match) => match.product && match.confidence === "Medium");
-    if (strongest) add(row.primary, "primary", strongest.score);
+  for (const { row, accepted } of acceptedByRow) {
+    if (accepted[0]) add(row.primary, "primary", accepted[0].score);
   }
 
   const targets = eligible.slice(0, boundedMax);
