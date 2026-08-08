@@ -43,6 +43,13 @@
       "when": 1786121006566,
       "tag": "0005_minor_switch",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1786220885574,
+      "tag": "0006_steady_darkstar",
+      "breakpoints": true
     }
   ]
 }

@@ -9,6 +9,12 @@
 	}
 
 	reverse_proxy app:3000 {
+		# ChatGPT Sites injects these headers at a trusted edge. They are not an
+		# identity boundary on the public VPS and must never reach the app.
+		header_up -oai-authenticated-user-email
+		header_up -oai-authenticated-user-full-name
+		header_up -oai-authenticated-user-full-name-encoding
+
 		transport http {
 			dial_timeout 10s
 			# Agency matching has a 12-minute application budget and the worker

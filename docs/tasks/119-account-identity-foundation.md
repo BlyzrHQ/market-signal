@@ -1,0 +1,61 @@
+# Task 119 - Account identity foundation
+
+## Problem
+
+The VPS deployment has no application-owned user identity or report ownership.
+The legacy ChatGPT Sites helper trusts identity headers that are not an
+authorization boundary on a public VPS, while paid plans require durable users,
+sessions, workspaces, and an eventual workspace-to-Stripe-customer mapping.
+
+## Goal
+
+Establish a credential-free, self-hostable identity foundation before adding
+Stripe Checkout or accepting real customer credentials.
+
+## Scope
+
+- Prove Better Auth can run through the vinext route layer using the persistent
+  Node SQLite database.
+- Add the generated Better Auth core tables plus Market Signal workspace and
+  membership tables to the reviewed Drizzle schema and migrations.
+- Create one personal workspace for a newly authenticated user through an
+  idempotent server-side hook.
+- Keep providers disabled until their credentials and delivery adapters exist.
+- Reject legacy ChatGPT identity headers on the VPS and strip them at Caddy.
+- Keep all secrets in environment variables and add placeholders only.
+- Omit optional peer tooling such as `drizzle-kit` from the production image.
+- Do not add Stripe, paid entitlements, report ownership, or quota charging in
+  this task.
+
+## Acceptance criteria
+
+1. The auth handler mounts at `/api/auth/*` using standard Request/Response
+   semantics and fails closed when required server configuration is missing.
+2. SQLite stores users, accounts, sessions, verification records, workspaces,
+   and workspace memberships with uniqueness and foreign-key constraints.
+3. Personal-workspace creation is idempotent under repeated callbacks.
+4. Directly supplied `oai-authenticated-user-*` headers cannot establish a VPS
+   identity and Caddy removes them before proxying.
+5. No provider, Stripe, or email credential is committed or required to build.
+6. Focused tests, the full build/test/lint suite, strict Fable 5 review, merge,
+   deployment, and a live unauthenticated route check pass.
+
+## Architecture decision
+
+Verified Claude Fable 5 (`claude-fable-5`) approved an application-owned,
+SQLite-backed session and workspace boundary with billing scoped to workspaces.
+Codex selected Better Auth over a hand-rolled magic-link implementation because
+it preserves the open-source/self-hosted requirement while reducing custom
+authentication and session-security code. Stripe remains a later optional
+hosted billing provider, not an identity dependency.
+
+## Validation
+
+- `node --test tests/account-auth.test.mjs`: 5 passed.
+- `npm test`: 558 passed, 0 failed.
+- `npm run build:vps`: passed; vinext emitted `/api/auth/:all+`.
+- `npm run lint`: 0 errors, 2 pre-existing `no-img-element` warnings.
+- Dependency audit: Better Auth's optional `drizzle-kit` peer inherits the
+  repository's existing advisory chain; the runtime image omits peer tooling.
+- Strict Fable 5 review: pending; substantive review calls timed out without a
+  verdict, so the PR must remain unmerged until a verified PASS is returned.
