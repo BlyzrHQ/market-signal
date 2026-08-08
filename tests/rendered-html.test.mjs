@@ -21,14 +21,17 @@ test("server-renders the Market Signal product shell", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>Market Signal — Know where your market is moving<\/title>/i);
-  assert.match(html, /Know where your market is moving/);
+  assert.match(html, /Enter your domain/);
+  assert.match(html, /See the market behind every product/);
   assert.match(html, /Beta access/);
-  assert.match(html, /no charge while usage is measured/);
-  assert.match(html, /Launch pricing/);
-  assert.match(html, /Self-hosted edition/);
-  assert.match(html, /GitHub private preview/);
-  assert.match(html, /\$8/);
-  assert.match(html, /public signals only/);
+  assert.match(html, /Proof, not promises/);
+  assert.match(html, /documented snapshot from a public MyJam run/i);
+  assert.match(html, /limited coverage, observed 8 August 2026/i);
+  assert.match(html, /1,001 products found/);
+  assert.match(html, /PRICED MATCHES/);
+  assert.match(html, /282 total/);
+  assert.match(html, /public sources only/);
+  assert.doesNotMatch(html, /Launch pricing|Self-hosted edition/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/i);
 });
 
@@ -105,12 +108,13 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /window\.location\.assign\(`\/reports\/\$\{created\.report\.publicId\}\/loading`\)/);
   assert.doesNotMatch(page, /["'`]\/api\/(?:crawl|report|ads|match|enrich-products)["'`]/);
   assert.doesNotMatch(page, /action: "(?:event|document)"/);
-  assert.match(page, /Find my competitors/);
-  assert.match(page, /KEEPS WORKING IF YOU CLOSE THE TAB/);
-  assert.match(page, /Three pillars, one report/);
-  assert.match(page, /See where you stand/);
-  assert.match(page, /: "Benchmark"/);
-  assert.match(page, /experience signals/);
+  assert.match(page, /Map my market/);
+  assert.match(page, /Animated example of a recorded MyJam report run/);
+  assert.match(page, /Proof, not promises/);
+  assert.match(page, /Product catalog/);
+  assert.match(page, /Only comparisons with a public rival price/);
+  assert.match(page, /"\/pricing"/);
+  assert.match(page, /"\/how-it-works"/);
   assert.doesNotMatch(page, /Watch how they show up|: "Ads"|advertising signals|إشارات الإعلانات/);
   assert.match(page, /dir=\{ar \? "rtl" : "ltr"\}/);
   assert.match(savedReport, /<ProductDesignLab comparison=\{comparison\} battles=\{battles\}/);
