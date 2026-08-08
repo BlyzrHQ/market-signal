@@ -5,6 +5,8 @@ import { join } from "node:path";
 import test from "node:test";
 
 import Database from "better-sqlite3";
+import { eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/better-sqlite3";
 import {
   accountAuthConfigFromEnvironment,
   accountAuthHandler,
@@ -16,6 +18,7 @@ import {
   chatGPTUserFromHeaders,
   mayTrustChatGPTIdentityHeaders,
 } from "../app/lib/chatgpt-identity.ts";
+import { accountUsers } from "../db/schema.ts";
 
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), "market-signal-auth-"));
@@ -91,6 +94,35 @@ test("account schema and personal workspace creation are durable and idempotent"
   }
 });
 
+test("a committed user without a workspace is repaired before session creation", async () => {
+  const { directory, databasePath } = await fixture();
+  let auth;
+  try {
+    auth = await createAccountAuth({
+      baseURL: "https://signal.example.test",
+      databasePath,
+      secret: "a-second-secure-test-secret-with-at-least-32-characters",
+    });
+    const database = auth.options.database;
+    const now = new Date().toISOString();
+    database.prepare(`
+      INSERT INTO "user" (id, name, email, emailVerified, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run("stranded-user", "Recovery User", "recovery@example.test", 1, now, now);
+    assert.equal(database.prepare("SELECT count(*) AS total FROM workspaces").get().total, 0);
+
+    const context = await auth.$context;
+    await context.internalAdapter.createSession("stranded-user");
+    await context.internalAdapter.createSession("stranded-user");
+    assert.equal(database.prepare("SELECT count(*) AS total FROM session").get().total, 2);
+    assert.equal(database.prepare("SELECT count(*) AS total FROM workspaces").get().total, 1);
+    assert.equal(database.prepare("SELECT count(*) AS total FROM workspace_members").get().total, 1);
+  } finally {
+    auth?.options.database.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("Better Auth serves its standard session endpoint over Request and Response", async () => {
   const { directory, databasePath } = await fixture();
   let auth;
@@ -103,6 +135,26 @@ test("Better Auth serves its standard session endpoint over Request and Response
     const response = await auth.handler(new Request("https://signal.example.test/api/auth/get-session"));
     assert.equal(response.status, 200);
     assert.equal(await response.json(), null);
+
+    const observedAt = new Date("2026-08-08T12:00:00.000Z");
+    const context = await auth.$context;
+    await context.internalAdapter.createUser({
+      id: "better-auth-user",
+      name: "Better Auth User",
+      email: "better-auth@example.test",
+      emailVerified: true,
+      createdAt: observedAt,
+      updatedAt: observedAt,
+    });
+    const raw = auth.options.database
+      .prepare('SELECT typeof("createdAt") AS storageType, "createdAt" FROM "user" WHERE id = ?')
+      .get("better-auth-user");
+    assert.deepEqual(raw, { storageType: "text", createdAt: observedAt.toISOString() });
+    const [drizzleUser] = await drizzle(auth.options.database)
+      .select()
+      .from(accountUsers)
+      .where(eq(accountUsers.id, "better-auth-user"));
+    assert.equal(drizzleUser.createdAt, observedAt.toISOString());
   } finally {
     auth?.options.database.close();
     await rm(directory, { recursive: true, force: true });
@@ -117,6 +169,10 @@ test("VPS requests cannot authenticate through user-supplied ChatGPT headers", a
   });
   assert.equal(mayTrustChatGPTIdentityHeaders({ MARKET_SIGNAL_DEPLOY_TARGET: "node", MARKET_SIGNAL_TRUST_CHATGPT_AUTH_HEADERS: "true" }), false);
   assert.equal(chatGPTUserFromHeaders(headers, { MARKET_SIGNAL_DEPLOY_TARGET: "node", MARKET_SIGNAL_TRUST_CHATGPT_AUTH_HEADERS: "true" }), null);
+  for (const target of [undefined, "site", "cloudflare", "future-target"]) {
+    assert.equal(mayTrustChatGPTIdentityHeaders({ MARKET_SIGNAL_DEPLOY_TARGET: target, MARKET_SIGNAL_TRUST_CHATGPT_AUTH_HEADERS: "true" }), false);
+  }
+  assert.equal(mayTrustChatGPTIdentityHeaders({ MARKET_SIGNAL_DEPLOY_TARGET: "sites", MARKET_SIGNAL_TRUST_CHATGPT_AUTH_HEADERS: "true" }), true);
 
   const caddy = await readFile(new URL("../deploy/vps/Caddyfile", import.meta.url), "utf8");
   for (const header of [

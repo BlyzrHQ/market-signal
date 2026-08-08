@@ -41,7 +41,7 @@ export function mayTrustChatGPTIdentityHeaders(
   environment: ChatGPTIdentityEnvironment,
 ): boolean {
   return (
-    environment.MARKET_SIGNAL_DEPLOY_TARGET !== "node" &&
+    environment.MARKET_SIGNAL_DEPLOY_TARGET === "sites" &&
     environment.MARKET_SIGNAL_TRUST_CHATGPT_AUTH_HEADERS === "true"
   );
 }

@@ -51,11 +51,12 @@ hosted billing provider, not an identity dependency.
 
 ## Validation
 
-- `node --test tests/account-auth.test.mjs`: 5 passed.
-- `npm test`: 558 passed, 0 failed.
+- `node --test tests/account-auth.test.mjs`: 6 passed.
+- `npm test`: 559 passed, 0 failed.
 - `npm run build:vps`: passed; vinext emitted `/api/auth/:all+`.
 - `npm run lint`: 0 errors, 2 pre-existing `no-img-element` warnings.
 - Dependency audit: Better Auth's optional `drizzle-kit` peer inherits the
   repository's existing advisory chain; the runtime image omits peer tooling.
-- Strict Fable 5 review: pending; substantive review calls timed out without a
-  verdict, so the PR must remain unmerged until a verified PASS is returned.
+- Fallback strict review found three blockers: stranded-user recovery, SQLite
+  timestamp representation, and fail-open legacy-header target matching. All
+  three are fixed with regressions; strict Fable 5 re-review remains pending.

@@ -113,6 +113,13 @@ export async function createAccountAuth(config: AccountAuthConfig) {
           },
         },
       },
+      session: {
+        create: {
+          before: async (session) => {
+            ensurePersonalWorkspaceForUserId(database, session.userId);
+          },
+        },
+      },
     },
   });
 }
@@ -125,15 +132,15 @@ export function ensureAccountSchema(database: Database.Database): void {
       "email" text NOT NULL UNIQUE,
       "emailVerified" integer NOT NULL,
       "image" text,
-      "createdAt" integer NOT NULL,
-      "updatedAt" integer NOT NULL
+      "createdAt" text NOT NULL,
+      "updatedAt" text NOT NULL
     );
     CREATE TABLE IF NOT EXISTS "session" (
       "id" text PRIMARY KEY NOT NULL,
-      "expiresAt" integer NOT NULL,
+      "expiresAt" text NOT NULL,
       "token" text NOT NULL UNIQUE,
-      "createdAt" integer NOT NULL,
-      "updatedAt" integer NOT NULL,
+      "createdAt" text NOT NULL,
+      "updatedAt" text NOT NULL,
       "ipAddress" text,
       "userAgent" text,
       "userId" text NOT NULL REFERENCES "user"("id") ON DELETE CASCADE
@@ -147,21 +154,21 @@ export function ensureAccountSchema(database: Database.Database): void {
       "accessToken" text,
       "refreshToken" text,
       "idToken" text,
-      "accessTokenExpiresAt" integer,
-      "refreshTokenExpiresAt" integer,
+      "accessTokenExpiresAt" text,
+      "refreshTokenExpiresAt" text,
       "scope" text,
       "password" text,
-      "createdAt" integer NOT NULL,
-      "updatedAt" integer NOT NULL
+      "createdAt" text NOT NULL,
+      "updatedAt" text NOT NULL
     );
     CREATE INDEX IF NOT EXISTS "account_userId_idx" ON "account"("userId");
     CREATE TABLE IF NOT EXISTS "verification" (
       "id" text PRIMARY KEY NOT NULL,
       "identifier" text NOT NULL,
       "value" text NOT NULL,
-      "expiresAt" integer NOT NULL,
-      "createdAt" integer NOT NULL,
-      "updatedAt" integer NOT NULL
+      "expiresAt" text NOT NULL,
+      "createdAt" text NOT NULL,
+      "updatedAt" text NOT NULL
     );
     CREATE INDEX IF NOT EXISTS "verification_identifier_idx" ON "verification"("identifier");
     CREATE TABLE IF NOT EXISTS "workspaces" (
@@ -217,6 +224,17 @@ export function ensurePersonalWorkspace(
   });
 
   return create.immediate();
+}
+
+export function ensurePersonalWorkspaceForUserId(
+  database: Database.Database,
+  userId: string,
+): string {
+  const user = database
+    .prepare('SELECT id, name FROM "user" WHERE id = ?')
+    .get(userId) as AccountUser | undefined;
+  if (!user) throw new Error("Cannot create a workspace for an unknown user.");
+  return ensurePersonalWorkspace(database, user);
 }
 
 async function getAccountAuth(config: AccountAuthConfig) {
