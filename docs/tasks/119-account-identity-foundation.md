@@ -59,4 +59,6 @@ hosted billing provider, not an identity dependency.
   repository's existing advisory chain; the runtime image omits peer tooling.
 - Fallback strict review found three blockers: stranded-user recovery, SQLite
   timestamp representation, and fail-open legacy-header target matching. All
-  three are fixed with regressions; strict Fable 5 re-review remains pending.
+  three are fixed with regressions, and the fallback re-review returned PASS.
+- Strict Fable 5 re-review remains pending because Claude reported its session
+  limit, resetting at 01:30 Africa/Cairo; this task must remain unmerged.
