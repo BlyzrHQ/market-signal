@@ -50,6 +50,20 @@
       "when": 1786222336187,
       "tag": "0006_left_lilandra",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1786228057235,
+      "tag": "0007_demonic_the_executioner",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1786228536637,
+      "tag": "0008_nervous_crusher_hogan",
+      "breakpoints": true
     }
   ]
 }

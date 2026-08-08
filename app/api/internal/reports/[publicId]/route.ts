@@ -10,12 +10,15 @@ import {
   saveReportFactChunk,
   finalizeReportFactManifest,
   saveReportDocument,
+  beginReportEvaluationDispatch,
+  markReportEvaluationDispatchFailed,
   type ReportPhase,
   type ReportRunStatus,
   type StoredReportEvent,
 } from "../../../../lib/report-store.ts";
 import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../../../lib/internal-auth.ts";
 import { dispatchReportJob } from "../../../../lib/report-dispatch.ts";
+import { dispatchReportEvaluation, reportEvaluationPilotEnabled } from "../../../../lib/report-evaluation-dispatch.ts";
 
 type RouteContext = { params: Promise<{ publicId: string }> | { publicId: string } };
 const MAX_INTERNAL_CALLBACK_BODY_BYTES = 1_500_000;
@@ -23,7 +26,7 @@ type StoredReport = NonNullable<Awaited<ReturnType<typeof getStoredReport>>>;
 type InternalReportStore = {
   get(publicId: string): Promise<StoredReport | null>;
   append(publicId: string, input: Parameters<typeof appendReportEvent>[1]): Promise<unknown>;
-  save(publicId: string, document: unknown, options: Parameters<typeof saveReportDocument>[2]): Promise<unknown>;
+  save(publicId: string, document: unknown, options: Parameters<typeof saveReportDocument>[2]): ReturnType<typeof saveReportDocument>;
   saveFactChunk(publicId: string, input: Parameters<typeof saveReportFactChunk>[1]): Promise<unknown>;
   finalizeFacts(publicId: string, input: Parameters<typeof finalizeReportFactManifest>[1]): Promise<unknown>;
   loadMatchBatchCheckpoints(publicId: string, input: Parameters<typeof loadReportMatchBatchCheckpoints>[1]): Promise<unknown>;
@@ -234,6 +237,16 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
             status: body.status === "limited" ? "limited" : "complete",
             observedAt: typeof body.observedAt === "string" ? body.observedAt : undefined,
           });
+          if (saved.evaluation?.status === "deterministic" && await reportEvaluationPilotEnabled()) {
+            let payload: Awaited<ReturnType<typeof beginReportEvaluationDispatch>> | null = null;
+            try {
+              payload = await beginReportEvaluationDispatch(saved.evaluation.id);
+              await dispatchReportEvaluation(payload);
+            } catch {
+              if (payload) await markReportEvaluationDispatchFailed(payload.evaluationId, payload.dispatchAttempt).catch(() => undefined);
+              console.error("report evaluation dispatch failed", { stage: "evaluation-dispatch", diagnosticCode: "evaluation-dispatch-failed" });
+            }
+          }
           return Response.json({ ok: true, saved, replayed: false });
         }
         return Response.json({ ok: false, error: "Unknown report persistence action." }, { status: 400 });
