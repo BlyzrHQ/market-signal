@@ -198,7 +198,6 @@ export function ensurePersonalWorkspace(
   const existing = database
     .prepare("SELECT id FROM workspaces WHERE personal_owner_user_id = ?")
     .get(user.id) as { id: string } | undefined;
-  if (existing) return existing.id;
 
   const workspaceId = randomUUID();
   const now = new Date().toISOString();
@@ -207,6 +206,14 @@ export function ensurePersonalWorkspace(
   const workspaceName = `${user.name.trim() || "Personal"}'s workspace`;
 
   const create = database.transaction(() => {
+    if (existing) {
+      database.prepare(`
+        INSERT OR IGNORE INTO workspace_members
+          (workspace_id, user_id, role, created_at)
+        VALUES (?, ?, 'owner', ?)
+      `).run(existing.id, user.id, now);
+      return existing.id;
+    }
     database.prepare(`
       INSERT OR IGNORE INTO workspaces
         (id, name, slug, kind, personal_owner_user_id, created_at, updated_at)

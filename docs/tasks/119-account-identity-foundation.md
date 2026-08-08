@@ -62,3 +62,11 @@ hosted billing provider, not an identity dependency.
   three are fixed with regressions, and the fallback re-review returned PASS.
 - Strict Fable 5 re-review remains pending because Claude reported its session
   limit, resetting at 01:30 Africa/Cairo; this task must remain unmerged.
+- On 2026-08-09T00:41:48+03:00, a new verified Fable attempt returned the same
+  session-limit message. Task 083 therefore activated the two-reviewer high-risk
+  fallback. Both fresh reviewers blocked the production package because npm
+  retained Better Auth's optional `drizzle-kit` peer; one also found that an
+  existing workspace with a missing membership was not repaired. The runtime
+  install now omits optional peers and asserts that `drizzle-kit` is absent,
+  while workspace reconciliation restores a missing owner membership. Fresh
+  fallback re-review and runtime-tree verification are required before merge.

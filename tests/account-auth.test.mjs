@@ -88,6 +88,12 @@ test("account schema and personal workspace creation are durable and idempotent"
       database.prepare("SELECT role, user_id AS userId FROM workspace_members").get(),
       { role: "owner", userId: "user-1" },
     );
+
+    database.prepare("DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?").run(first, "user-1");
+    assert.equal(database.prepare("SELECT count(*) AS total FROM workspace_members").get().total, 0);
+    assert.equal(ensurePersonalWorkspace(database, { id: "user-1", name: "Amina" }), first);
+    assert.equal(database.prepare("SELECT count(*) AS total FROM workspaces").get().total, 1);
+    assert.equal(database.prepare("SELECT count(*) AS total FROM workspace_members").get().total, 1);
   } finally {
     database.close();
     await rm(directory, { recursive: true, force: true });
