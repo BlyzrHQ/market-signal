@@ -12,27 +12,35 @@ test("landing proves the product and moves supporting pages to dedicated routes"
   ]);
 
   assert.match(home, /Proof, not promises/);
-  assert.match(home, /Real output from the public MyJam report/);
-  assert.match(home, /7fb305987e9a439abcbb352ee7302b26/);
+  assert.match(home, /documented snapshot from a public MyJam run/i);
+  assert.match(home, /limited coverage, observed 8 August 2026/i);
+  assert.doesNotMatch(home, /7fb305987e9a439abcbb352ee7302b26/);
   assert.match(home, /1,001 products found/);
-  assert.match(home, /282 verified pairs/);
+  assert.match(home, /282 priced, AI-assessed matches/);
+  assert.match(home, /AI-assessed close substitute/);
   assert.match(home, /24shopping\.shop/);
   assert.match(home, /bakkali\.app/);
   assert.match(home, /Only comparisons with a public rival price/);
   assert.match(home, /role="tablist"/);
-  assert.match(home, /window\.setInterval/);
-  assert.match(home, /prefers-reduced-motion: reduce/);
-  assert.match(home, /href="\/pricing"/);
-  assert.match(home, /href="\/how-it-works"/);
+  assert.doesNotMatch(home, /window\.setInterval/);
+  assert.match(home, /EXAMPLE WORKFLOW/);
+  assert.match(home, /RECORDED MYJAM RUN/);
+  assert.match(home, /tabIndex=\{view === item \? 0 : -1\}/);
+  assert.match(home, /aria-controls=\{`proof-panel-/);
+  assert.match(home, /ArrowLeft/);
+  assert.match(home, /"\/pricing"/);
+  assert.match(home, /"\/how-it-works"/);
   assert.doesNotMatch(home, /standalone-pricing|Launch pricing targets/);
 
   assert.match(pricing, /price: "\$8"/);
-  assert.match(pricing, /5 reports \/ month/);
-  assert.match(pricing, /20 products \/ report/);
-  assert.match(pricing, /50 products \/ report/);
-  assert.match(pricing, /500 products \/ report/);
-  assert.match(pricing, /1,000 products \/ report/);
-  assert.equal((pricing.match(/Coming soon/g) || []).length, 2);
+  assert.match(pricing, /reports: "5"/);
+  assert.match(pricing, /products: "20"/);
+  assert.match(pricing, /products: "50"/);
+  assert.match(pricing, /products: "500"/);
+  assert.match(pricing, /products: "1,000"/);
+  assert.match(pricing, /price: "\$79"/);
+  assert.match(pricing, /price: "\$199"/);
+  assert.match(pricing, /Self-hosted edition/);
   assert.match(pricing, /billing is not active yet/i);
   assert.doesNotMatch(pricing, /products matched \/ report|Buy now|Checkout/);
 
@@ -43,4 +51,5 @@ test("landing proves the product and moves supporting pages to dedicated routes"
   assert.match(styles, /\.proof-browser/);
   assert.match(styles, /@keyframes systemFloat/);
   assert.match(styles, /@media\(prefers-reduced-motion:reduce\)/);
+  assert.match(styles, /var\(--font-geist-sans\)/);
 });

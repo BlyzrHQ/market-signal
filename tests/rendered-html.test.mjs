@@ -25,7 +25,8 @@ test("server-renders the Market Signal product shell", async () => {
   assert.match(html, /See the market behind every product/);
   assert.match(html, /Beta access/);
   assert.match(html, /Proof, not promises/);
-  assert.match(html, /Real output from the public MyJam report/);
+  assert.match(html, /documented snapshot from a public MyJam run/i);
+  assert.match(html, /limited coverage, observed 8 August 2026/i);
   assert.match(html, /1,001 products found/);
   assert.match(html, /PRICED MATCHES/);
   assert.match(html, /282 total/);
@@ -108,12 +109,12 @@ test("real-data route and product metadata are present", async () => {
   assert.doesNotMatch(page, /["'`]\/api\/(?:crawl|report|ads|match|enrich-products)["'`]/);
   assert.doesNotMatch(page, /action: "(?:event|document)"/);
   assert.match(page, /Map my market/);
-  assert.match(page, /Animated product workflow preview/);
+  assert.match(page, /Animated example of a recorded MyJam report run/);
   assert.match(page, /Proof, not promises/);
   assert.match(page, /Product catalog/);
   assert.match(page, /Only comparisons with a public rival price/);
-  assert.match(page, /href="\/pricing"/);
-  assert.match(page, /href="\/how-it-works"/);
+  assert.match(page, /"\/pricing"/);
+  assert.match(page, /"\/how-it-works"/);
   assert.doesNotMatch(page, /Watch how they show up|: "Ads"|advertising signals|إشارات الإعلانات/);
   assert.match(page, /dir=\{ar \? "rtl" : "ltr"\}/);
   assert.match(savedReport, /<ProductDesignLab comparison=\{comparison\} battles=\{battles\}/);

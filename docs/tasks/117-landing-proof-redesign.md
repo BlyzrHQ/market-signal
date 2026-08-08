@@ -22,6 +22,7 @@ Replace the text-heavy landing page with a concise product-led experience that p
 ## Acceptance
 
 - Landing page contains only the hero, proof showcase, final CTA, and footer.
-- Dashboard, competitor, and catalog proof can be selected manually and rotate automatically when motion is allowed.
+- Dashboard, competitor, and catalog proof are manually selectable with keyboard-complete tabs; no content changes automatically.
+- The MyJam snapshot states its observation date, limited coverage, observed-price boundary, and AI-assessed product-identity boundary.
 - Pricing and how-it-works pages are independently addressable.
 - Build, typecheck, lint, focused tests, visual review, and strict reviewer gate pass before merge.

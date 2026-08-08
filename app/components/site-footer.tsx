@@ -16,13 +16,13 @@ export function SiteFooter({ locale = "en" }: { locale?: "en" | "ar" }) {
         <div>
           <strong>{ar ? "المنتج" : "Product"}</strong>
           <Link href="/#proof">{ar ? "تقرير نموذجي" : "Report proof"}</Link>
-          <Link href="/how-it-works">{ar ? "كيف يعمل" : "How it works"}</Link>
-          <Link href="/pricing">{ar ? "الأسعار" : "Pricing"}</Link>
+          <Link href={ar ? "/how-it-works?lang=ar" : "/how-it-works"}>{ar ? "كيف يعمل" : "How it works"}</Link>
+          <Link href={ar ? "/pricing?lang=ar" : "/pricing"}>{ar ? "الأسعار" : "Pricing"}</Link>
         </div>
         <div>
           <strong>{ar ? "المصادر" : "Resources"}</strong>
           <a href="https://github.com/BlyzrHQ/market-signal" target="_blank" rel="noreferrer">GitHub ↗</a>
-          <Link href="/reports/7fb305987e9a439abcbb352ee7302b26?view=products&layout=table">{ar ? "تقرير MyJam" : "MyJam report"}</Link>
+          <a href="https://myjam.co.uk" target="_blank" rel="noreferrer">{ar ? "كتالوج MyJam المصدر" : "MyJam source catalog"} ↗</a>
         </div>
         <div>
           <strong>{ar ? "ابدأ" : "Get started"}</strong>
