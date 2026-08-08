@@ -6,7 +6,7 @@ export function SiteFooter({ locale = "en" }: { locale?: "en" | "ar" }) {
     <footer className="landing-footer">
       <div className="shell landing-footer-grid">
         <div className="footer-brand-block">
-          <Link className="brand" href="/" aria-label="Market Signal home">
+          <Link className="brand" href={ar ? "/?lang=ar" : "/"} aria-label="Market Signal home">
             <span className="brand-mark"><i /><i /><i /></span>
             <span>Market Signal</span>
           </Link>
@@ -15,7 +15,7 @@ export function SiteFooter({ locale = "en" }: { locale?: "en" | "ar" }) {
         </div>
         <div>
           <strong>{ar ? "المنتج" : "Product"}</strong>
-          <Link href="/#proof">{ar ? "تقرير نموذجي" : "Report proof"}</Link>
+          <Link href={ar ? "/?lang=ar#proof" : "/#proof"}>{ar ? "تقرير نموذجي" : "Report proof"}</Link>
           <Link href={ar ? "/how-it-works?lang=ar" : "/how-it-works"}>{ar ? "كيف يعمل" : "How it works"}</Link>
           <Link href={ar ? "/pricing?lang=ar" : "/pricing"}>{ar ? "الأسعار" : "Pricing"}</Link>
         </div>
@@ -26,7 +26,7 @@ export function SiteFooter({ locale = "en" }: { locale?: "en" | "ar" }) {
         </div>
         <div>
           <strong>{ar ? "ابدأ" : "Get started"}</strong>
-          <Link className="footer-cta" href="/#top">{ar ? "حلّل نطاقك" : "Analyze your domain"} →</Link>
+          <Link className="footer-cta" href={ar ? "/?lang=ar#top" : "/#top"}>{ar ? "حلّل نطاقك" : "Analyze your domain"} →</Link>
           <small>{ar ? "مصادر عامة فقط. كل نتيجة مرتبطة بدليل." : "Public sources only. Every result stays tied to evidence."}</small>
         </div>
       </div>

@@ -974,6 +974,7 @@ body { background: #07110f; color: #eaf4ef; }
 .landing-v2 .catalog-product a { display:block; flex:0 0 auto; width:50px; height:50px; }
 .landing-v2 .catalog-product img { width:50px; height:50px; border:1px solid #d8e0dc; border-radius:8px; object-fit:cover; }
 .landing-v2 .catalog-product strong { font-size:11px; }
+.landing-v2 .catalog-rival-link,.landing-v2 .catalog-rival-price { color:#176d4d; font-size:11px; font-weight:750; }
 .standalone-pricing article>strong small { color:#849c91; font-size:10px; font-weight:500; letter-spacing:0; }
 .standalone-pricing ul { font-size:10px; }.standalone-pricing li b { color:#f4fbf8; }
 .standalone-page>.self-hosted-plan { margin-block:18px 30px; color:#edf7f2; }

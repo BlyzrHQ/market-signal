@@ -15,8 +15,8 @@ Replace the text-heavy landing page with a concise product-led experience that p
 
 ## Product truth
 
-- The proof module is labelled with its real report and links to that report.
-- The workflow animation is explicitly described as a product walkthrough, not a live customer run.
+- The proof module is a dated, limited-coverage snapshot with durable links to both primary and rival public product pages; it does not depend on the retained report URL.
+- The workflow animation is explicitly described as a recorded MyJam example, not a live customer run.
 - Counts and product comparisons come from report `7fb305987e9a439abcbb352ee7302b26` observed on 2026-08-08.
 
 ## Acceptance

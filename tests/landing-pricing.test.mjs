@@ -18,6 +18,8 @@ test("landing proves the product and moves supporting pages to dedicated routes"
   assert.match(home, /1,001 products found/);
   assert.match(home, /282 priced, AI-assessed matches/);
   assert.match(home, /AI-assessed close substitute/);
+  assert.match(home, /rivalSource: "https:\/\/bakkali\.app\/products\/castania-mixed-kernels-450g"/);
+  assert.match(home, /arSignal: "المنافس أقل بـ 3\.25£"/);
   assert.match(home, /24shopping\.shop/);
   assert.match(home, /bakkali\.app/);
   assert.match(home, /Only comparisons with a public rival price/);
