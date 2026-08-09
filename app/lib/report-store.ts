@@ -130,6 +130,17 @@ export type StoredReportEvaluation = {
   completedAt: string;
 };
 
+export class ReportEvaluationStateError extends Error {
+  readonly code: string;
+  readonly httpStatus: 404 | 409;
+  constructor(code: string, message: string, httpStatus: 404 | 409) {
+    super(message);
+    this.name = "ReportEvaluationStateError";
+    this.code = code;
+    this.httpStatus = httpStatus;
+  }
+}
+
 export type ReportFactKind = "companies" | "products" | "matches" | "ads";
 export type ReportFactChunkInput = {
   attemptNumber?: number;
@@ -485,7 +496,7 @@ async function initializeSchema(database: D1DatabaseLike) {
     if (names.has(name)) continue;
     await database.prepare(statement).run();
   }
-  await database.prepare(`UPDATE report_evaluations SET deterministic_at = CASE WHEN deterministic_at = '' AND status IN ('deterministic', 'rubric_unavailable', 'failed') THEN COALESCE(NULLIF(completed_at, ''), created_at) ELSE deterministic_at END, usage_status = CASE WHEN usage_status = '' THEN 'not_called' ELSE usage_status END`).run();
+  await database.prepare(`UPDATE report_evaluations SET deterministic_at = CASE WHEN deterministic_at = '' AND status IN ('deterministic', 'rubric_unavailable', 'failed') THEN COALESCE(NULLIF(completed_at, ''), created_at) ELSE deterministic_at END, usage_status = CASE WHEN usage_status IN ('', 'not_called') AND (COALESCE(cost_microusd, 0) > 0 OR COALESCE(input_tokens, 0) > 0 OR COALESCE(output_tokens, 0) > 0) THEN 'known' WHEN usage_status = '' THEN 'not_called' ELSE usage_status END`).run();
 }
 
 function databaseWriteChanged(result: unknown) {
@@ -984,7 +995,7 @@ export async function beginReportEvaluationDispatch(evaluationId: string, now = 
   if (!database) throw new Error("Persistent report storage is unavailable.");
   await ensureSchema(database);
   const context = await evaluationContext(database, evaluationId);
-  if (!context) throw new Error("Report evaluation not found.");
+  if (!context) throw new ReportEvaluationStateError("evaluation-not-found", "Report evaluation not found.", 404);
   const { evaluation } = context;
   if (evaluation.evaluatorVersion !== AGENT_EVALUATOR_VERSION || !["deterministic", "dispatch_failed"].includes(evaluation.status) || evaluation.dispatchAttempts >= 3) throw new Error("Report evaluation is not eligible for dispatch.");
   const dispatchAttempt = evaluation.dispatchAttempts + 1;
@@ -1013,7 +1024,7 @@ export async function reserveReportAgentEvaluation(evaluationId: string, input: 
   if (!database) throw new Error("Persistent report storage is unavailable.");
   await ensureSchema(database);
   const context = await evaluationContext(database, evaluationId);
-  if (!context) throw new Error("Report evaluation not found.");
+  if (!context) throw new ReportEvaluationStateError("evaluation-not-found", "Report evaluation not found.", 404);
   if (["complete", "agent_rejected", "needs_human_review", "call_outcome_unknown", "failed", "insufficient_facts", "rubric_unavailable"].includes(context.evaluation.status)) return { ok: false as const, code: "terminal" as const };
   if (context.evaluation.status === "reserved") return { ok: false as const, code: "already_reserved" as const };
   if (input.evaluatorVersion !== context.evaluation.evaluatorVersion || input.dispatchAttempt !== context.evaluation.dispatchAttempts) return { ok: false as const, code: "stale_attempt" as const };
@@ -1044,10 +1055,10 @@ export async function completeReportAgentEvaluation(evaluationId: string, callba
   if (!database) throw new Error("Persistent report storage is unavailable.");
   await ensureSchema(database);
   const context = await evaluationContext(database, evaluationId);
-  if (!context) throw new Error("Report evaluation not found.");
+  if (!context) throw new ReportEvaluationStateError("evaluation-not-found", "Report evaluation not found.", 404);
   const evaluation = context.evaluation;
-  if (evaluation.status !== "reserved") throw new Error("A terminal report evaluation is immutable or not reserved.");
-  if (callback.evaluatorVersion !== evaluation.evaluatorVersion || callback.dispatchAttempt !== evaluation.dispatchAttempts || callback.reservationId !== evaluation.reservationId || callback.reservationOwner !== evaluation.reservationOwner || callback.clientRequestId !== evaluation.clientRequestId || callback.model !== AGENT_MODEL || callback.promptVersion !== AGENT_PROMPT_VERSION || callback.pricingVersion !== AGENT_PRICING_VERSION) throw new Error("Report evaluation callback binding conflicts with its reservation.");
+  if (evaluation.status !== "reserved") throw new ReportEvaluationStateError("evaluation-terminal-or-not-reserved", "A terminal report evaluation is immutable or not reserved.", 409);
+  if (callback.evaluatorVersion !== evaluation.evaluatorVersion || callback.dispatchAttempt !== evaluation.dispatchAttempts || callback.reservationId !== evaluation.reservationId || callback.reservationOwner !== evaluation.reservationOwner || callback.clientRequestId !== evaluation.clientRequestId || callback.model !== AGENT_MODEL || callback.promptVersion !== AGENT_PROMPT_VERSION || callback.pricingVersion !== AGENT_PRICING_VERSION) throw new ReportEvaluationStateError("evaluation-callback-binding-conflict", "Report evaluation callback binding conflicts with its reservation.", 409);
   const [companies, products, matches] = await Promise.all([
     database.prepare(`SELECT * FROM report_companies WHERE run_id = ? ORDER BY domain`).bind(evaluation.runId).all<Record<string, unknown>>(),
     database.prepare(`SELECT * FROM report_products WHERE run_id = ? ORDER BY domain, product_id`).bind(evaluation.runId).all<Record<string, unknown>>(),
@@ -1063,7 +1074,15 @@ export async function completeReportAgentEvaluation(evaluationId: string, callba
   let usageStatus: StoredReportEvaluation["usageStatus"] = callback.usageStatus;
   let usage: ReturnType<typeof calculateAgentUsageCost> = null;
   if (callback.usageStatus === "known" && callback.usage) usage = calculateAgentUsageCost({ input_tokens: callback.usage.inputTokens, output_tokens: callback.usage.outputTokens, input_tokens_details: { cached_tokens: callback.usage.cachedInputTokens } });
-  if ((status === "complete" || status === "needs_human_review") && callback.agentOutput) {
+  if (callback.usageStatus === "known" && !usage) usageStatus = "unknown";
+  if ((status === "complete" || status === "needs_human_review") && !callback.providerResponseId) {
+    status = "agent_rejected";
+    errorCode = "provider-response-id-missing";
+  } else if (usage && usage.costMicrousd > AGENT_MAX_RESERVED_COST_MICROUSD) {
+    status = "agent_rejected";
+    errorCode = "evaluation-cost-budget-exceeded";
+    usageStatus = "known";
+  } else if ((status === "complete" || status === "needs_human_review") && callback.agentOutput) {
     const validated = validateAgentEvaluationResult(callback.agentOutput, canonical.envelope.evidence);
     if (!validated.ok || !usage || (status === "complete" && validated.ok && validated.value.humanReview !== null) || (status === "needs_human_review" && validated.ok && validated.value.humanReview === null)) {
       status = "agent_rejected";
@@ -1087,9 +1106,9 @@ export async function completeReportAgentEvaluation(evaluationId: string, callba
   const ratingBasis = status === "complete" ? "hybrid" : "deterministic_only";
   const observedAt = now.toISOString();
   const write = await database.prepare(`UPDATE report_evaluations SET status = ?, rating_basis = ?, overall_score = ?, user_value_score = ?, evidence_integrity_score = ?, evidence_yield_score = ?, presentation_score = ?, grade = ?, agent_json = ?, findings_json = ?, proposals_json = ?, provider_response_id = ?, provider_request_id = ?, usage_status = ?, cost_microusd = ?, input_tokens = ?, cached_input_tokens = ?, output_tokens = ?, error_code = ?, completed_at = ? WHERE id = ? AND status = 'reserved' AND evaluator_version = ? AND input_hash = ? AND fact_manifest_hash = ? AND dispatch_attempts = ? AND reservation_id = ? AND reservation_owner = ? AND client_request_id = ?`).bind(status, ratingBasis, hybrid?.overallScore ?? null, hybrid?.userValue ?? null, hybrid?.evidenceIntegrity ?? null, hybrid?.evidenceYield ?? null, hybrid?.presentation ?? null, hybrid?.grade ?? null, JSON.stringify(agent), JSON.stringify(findings), JSON.stringify(proposals), cleanText(callback.providerResponseId, 120), cleanText(callback.providerRequestId, 120), usageStatus, usage?.costMicrousd ?? 0, usage?.inputTokens ?? 0, usage?.cachedInputTokens ?? null, usage?.outputTokens ?? 0, errorCode, observedAt, evaluationId, evaluation.evaluatorVersion, evaluation.inputHash, evaluation.factManifestHash, evaluation.dispatchAttempts, evaluation.reservationId, evaluation.reservationOwner, evaluation.clientRequestId).run();
-  if (databaseWriteChanged(write) === false) throw new Error("Report evaluation terminal callback conflicted with current state.");
+  if (databaseWriteChanged(write) === false) throw new ReportEvaluationStateError("evaluation-callback-state-conflict", "Report evaluation terminal callback conflicted with current state.", 409);
   const persisted = await evaluationContext(database, evaluationId);
-  if (!persisted || persisted.evaluation.status === "reserved") throw new Error("Report evaluation terminal callback conflicted with current state.");
+  if (!persisted || persisted.evaluation.status === "reserved") throw new ReportEvaluationStateError("evaluation-callback-state-conflict", "Report evaluation terminal callback conflicted with current state.", 409);
   return persisted.evaluation;
 }
 
@@ -1105,7 +1124,7 @@ export async function reconcileReportEvaluations(now = new Date(), databaseOverr
     database.prepare(`UPDATE report_evaluations SET status = 'failed', dispatch_failed_at = ?, completed_at = ?, error_code = 'evaluation-dispatch-exhausted' WHERE status = 'dispatching' AND dispatch_started_at != '' AND dispatch_started_at <= ? AND reservation_id = '' AND dispatch_attempts >= 3`).bind(observedAt, observedAt, fiveMinutesAgo),
     database.prepare(`UPDATE report_evaluations SET status = 'call_outcome_unknown', watchdog_expired_at = ?, completed_at = ?, usage_status = 'unknown', error_code = 'evaluation-reservation-expired' WHERE status = 'reserved' AND reserved_at != '' AND reserved_at <= ?`).bind(observedAt, observedAt, tenMinutesAgo),
   ]);
-  const pendingRows = await database.prepare(`SELECT evaluations.id, runs.public_id FROM report_evaluations evaluations JOIN report_runs runs ON runs.id = evaluations.run_id WHERE evaluations.status = 'pending' AND evaluations.created_at <= ? ORDER BY evaluations.created_at LIMIT 25`).bind(fiveMinutesAgo).all<Record<string, unknown>>();
+  const pendingRows = await database.prepare(`SELECT evaluations.id, runs.public_id FROM report_evaluations evaluations JOIN report_runs runs ON runs.id = evaluations.run_id WHERE evaluations.status = 'pending' AND evaluations.evaluator_version = ? AND evaluations.created_at <= ? ORDER BY evaluations.created_at LIMIT 25`).bind(AGENT_EVALUATOR_VERSION, fiveMinutesAgo).all<Record<string, unknown>>();
   for (const row of pendingRows.results || []) {
     try { await evaluateStoredReport(String(row.public_id || ""), { evaluatorVersion: AGENT_EVALUATOR_VERSION }, now, database); } catch { /* deterministic profiler persists its own terminal failure when possible */ }
   }

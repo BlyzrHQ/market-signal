@@ -196,15 +196,15 @@ test("runtime schema initialization upgrades legacy report_evaluations in place"
   const value = await fixture();
   try {
     await value.database.prepare(LEGACY_EVALUATIONS_SCHEMA).run();
-    await value.database.prepare(`INSERT INTO report_evaluations (id, run_id, evaluation_type, input_hash, evaluator_version, rubric_version, status, rating_basis, created_at, completed_at) VALUES ('legacy-evaluation', 'legacy-run', 'report', 'legacy-hash', 'ecommerce-deterministic-v1', 'ecommerce-v1', 'deterministic', 'deterministic_only', '2026-08-01T00:00:00.000Z', '2026-08-01T00:01:00.000Z')`).run();
+    await value.database.prepare(`INSERT INTO report_evaluations (id, run_id, evaluation_type, input_hash, evaluator_version, rubric_version, status, rating_basis, cost_microusd, input_tokens, output_tokens, created_at, completed_at) VALUES ('legacy-evaluation', 'legacy-run', 'report', 'legacy-hash', 'ecommerce-deterministic-v1', 'ecommerce-v1', 'deterministic', 'deterministic_only', 1200, 800, 100, '2026-08-01T00:00:00.000Z', '2026-08-01T00:01:00.000Z')`).run();
     await createReportRun({ primaryDomain: "legacy.example" }, new Date("2026-08-09T09:00:00.000Z"), value.database);
     const columns = await value.database.prepare("PRAGMA table_info(report_evaluations)").all();
     const names = new Set(columns.results.map((column) => column.name));
     for (const name of ["cached_input_tokens", "usage_status", "reserved_cost_microusd", "deterministic_at", "dispatch_started_at", "dispatch_token", "dispatch_failed_at", "watchdog_expired_at", "reservation_id", "reservation_owner", "reserved_at", "client_request_id", "provider_response_id", "provider_request_id"]) {
       assert.equal(names.has(name), true, `legacy schema should gain ${name}`);
     }
-    const migrated = (await value.database.prepare("SELECT deterministic_at, usage_status FROM report_evaluations WHERE id = 'legacy-evaluation'").all()).results[0];
-    assert.deepEqual(migrated, { deterministic_at: "2026-08-01T00:01:00.000Z", usage_status: "not_called" });
+    const migrated = (await value.database.prepare("SELECT deterministic_at, usage_status, cost_microusd, input_tokens, output_tokens FROM report_evaluations WHERE id = 'legacy-evaluation'").all()).results[0];
+    assert.deepEqual(migrated, { deterministic_at: "2026-08-01T00:01:00.000Z", usage_status: "known", cost_microusd: 1200, input_tokens: 800, output_tokens: 100 });
   } finally {
     await closeFixture(value);
   }
@@ -270,6 +270,14 @@ test("invalid evidence callback is terminally rejected and unknown usage maps to
     assert.equal(unknown.inputTokens, null);
     assert.equal(unknown.cachedInputTokens, null);
     assert.equal(unknown.outputTokens, null);
+
+    const malformedFixture = await preparedEvaluation(value.database, "malformed-usage", new Date(now.getTime() + 6_000));
+    const malformedReservation = await dispatchAndReserve(value.database, malformedFixture.evaluation, new Date(now.getTime() + 7_000));
+    const malformed = await completeReportAgentEvaluation(malformedFixture.evaluation.id, terminalCallback(malformedReservation.reservation, malformedReservation.dispatch, {
+      status: "agent_rejected", errorCode: "provider-output-rejected", usageStatus: "known", usage: null, agentOutput: null,
+    }), new Date(now.getTime() + 8_000), value.database);
+    assert.equal(malformed.usageStatus, "unknown");
+    assert.equal(malformed.costMicrousd, null);
     assert.equal((await getReportEvaluation(created.publicId, value.database)).status, "agent_rejected");
   } finally {
     await closeFixture(value);
@@ -298,12 +306,53 @@ test("needs-human evaluation remains provisional with no hybrid score", async ()
   }
 });
 
+test("an over-budget provider response preserves actual usage but cannot produce a hybrid grade", async () => {
+  const value = await fixture();
+  try {
+    const now = new Date("2026-08-09T12:30:00.000Z");
+    const { evaluation } = await preparedEvaluation(value.database, "over-budget", now);
+    const { dispatch, reservation } = await dispatchAndReserve(value.database, evaluation, new Date(now.getTime() + 1_000));
+    const rejected = await completeReportAgentEvaluation(evaluation.id, terminalCallback(reservation, dispatch, {
+      usage: { inputTokens: 100_000, cachedInputTokens: 0, outputTokens: 100_000 },
+    }), new Date(now.getTime() + 2_000), value.database);
+    assert.equal(rejected.status, "agent_rejected");
+    assert.equal(rejected.errorCode, "evaluation-cost-budget-exceeded");
+    assert.equal(rejected.ratingBasis, "deterministic_only");
+    assert.equal(rejected.overallScore, null);
+    assert.equal(rejected.usageStatus, "known");
+    assert.equal(rejected.costMicrousd, 525_000);
+  } finally {
+    await closeFixture(value);
+  }
+});
+
+test("a nominally successful callback without a provider response ID is rejected with known usage preserved", async () => {
+  const value = await fixture();
+  try {
+    const now = new Date("2026-08-09T12:45:00.000Z");
+    const { evaluation } = await preparedEvaluation(value.database, "missing-provider-id", now);
+    const { dispatch, reservation } = await dispatchAndReserve(value.database, evaluation, new Date(now.getTime() + 1_000));
+    const rejected = await completeReportAgentEvaluation(evaluation.id, terminalCallback(reservation, dispatch, {
+      providerResponseId: null,
+    }), new Date(now.getTime() + 2_000), value.database);
+    assert.equal(rejected.status, "agent_rejected");
+    assert.equal(rejected.errorCode, "provider-response-id-missing");
+    assert.equal(rejected.ratingBasis, "deterministic_only");
+    assert.equal(rejected.overallScore, null);
+    assert.equal(rejected.usageStatus, "known");
+    assert.equal(rejected.costMicrousd, 1_380);
+  } finally {
+    await closeFixture(value);
+  }
+});
+
 test("reconciliation recovers stale dispatch and expires stale reservation without inventing usage", async () => {
   const value = await fixture();
   try {
     const base = new Date("2026-08-09T13:00:00.000Z");
     const staleDispatch = await preparedEvaluation(value.database, "stale-dispatch", base);
     await beginReportEvaluationDispatch(staleDispatch.evaluation.id, base, value.database);
+    await value.database.prepare(`INSERT INTO report_evaluations (id, run_id, evaluation_type, input_hash, fact_manifest_hash, evaluator_version, rubric_version, status, rating_basis, created_at) SELECT 'legacy-pending', run_id, 'report', 'legacy-pending-hash', fact_manifest_hash, 'ecommerce-deterministic-v1', rubric_version, 'pending', 'none', ? FROM report_evaluations WHERE id = ?`).bind(new Date(base.getTime() - 20 * 60_000).toISOString(), staleDispatch.evaluation.id).run();
 
     const staleReservation = await preparedEvaluation(value.database, "stale-reserved", new Date(base.getTime() + 1_000));
     await dispatchAndReserve(value.database, staleReservation.evaluation, new Date(base.getTime() + 1_000));
@@ -313,6 +362,8 @@ test("reconciliation recovers stale dispatch and expires stale reservation witho
     assert.equal(dispatchState.status, "dispatch_failed");
     assert.equal(dispatchState.errorCode, "evaluation-dispatch-stale");
     assert.ok(reconciled.candidates.includes(staleDispatch.evaluation.id));
+    const legacyPending = (await value.database.prepare("SELECT status FROM report_evaluations WHERE id = 'legacy-pending'").all()).results[0];
+    assert.equal(legacyPending.status, "pending");
 
     const unknown = await getReportEvaluation(staleReservation.created.publicId, value.database);
     assert.equal(unknown.status, "call_outcome_unknown");

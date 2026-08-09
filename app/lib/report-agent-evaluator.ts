@@ -337,9 +337,9 @@ function numericTokens(value: string) {
 }
 
 function validateNumericProse(prose: string, cited: AgentEvidenceRecord[], path: string, errors: string[]) {
-  const projections = cited.map((item) => item.text).join(" ");
+  const projectionTokens = new Set(cited.flatMap((item) => numericTokens(item.text)));
   for (const token of numericTokens(prose)) {
-    if (!projections.includes(token)) errors.push(`${path}:unsupported-numeric-claim:${token}`);
+    if (!projectionTokens.has(token)) errors.push(`${path}:unsupported-numeric-claim:${token}`);
   }
 }
 

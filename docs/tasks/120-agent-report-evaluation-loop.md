@@ -67,10 +67,12 @@ mistaken for a human decision or an authorized code change.
    estimated cost, and terminal status against the exact report-document and
    fact-manifest hashes. Hybrid scores and grade are persisted only when
    `humanReview` is null.
-7. A 15-minute scheduled recovery pass first re-runs deterministic profiling for
+7. A 15-minute scheduled recovery pass always runs, even when pilot dispatch is
+   disabled, so existing reservations and stale states cannot wedge. It first re-runs deterministic profiling for
    at most 25 `pending` evaluations older than five minutes, using the existing
    binding CAS; profiling errors terminate through Task 088's `failed` path. It
-   then redispatches unreserved `deterministic` or `dispatch_failed` rows. Stale
+   When pilot dispatch is enabled, it then redispatches unreserved `deterministic`
+   or `dispatch_failed` rows. Stale
    `dispatching` rows older than five minutes become `dispatch_failed`; the next
    database dispatch attempt increments `n` and therefore uses a new
    `dispatch:<n>` Trigger key. Stale `reserved` rows older than ten minutes
@@ -114,8 +116,12 @@ must not represent unknown usage. `usage_status` is one of `not_called`,
 
 Existing `ecommerce-deterministic-v1` rows are not upgraded or automatically
 called. Migration backfills `deterministic_at` from their existing
-`completed_at`, sets `usage_status=not_called`, and leaves nullable usage fields
-null while preserving their historical completion timestamp. New reports bind
+`completed_at`. Zero-default legacy telemetry becomes `usage_status=not_called`
+and is exposed as nullable unknown usage. Any legacy row with a positive stored
+cost or token count preserves those values as `usage_status=known` (cached input
+is conservatively zero because it was not recorded). The runtime in-place upgrade
+may retain physical zeroes where the legacy SQLite columns are `NOT NULL`, but
+the application exposes them as null unless `usage_status=known`. New reports bind
 `ecommerce-agent-v1`, which contains deterministic profiler version
 `ecommerce-deterministic-v1`. Historical agent evaluation is a later explicit
 owner action that creates a new row; it never mutates the old identity.

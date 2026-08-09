@@ -94,6 +94,13 @@ test("semantic validation accepts grounded output and rejects unknown, unrelated
   assert.ok(verdict.errors.some((error) => error.includes("evidence-subject-mismatch")));
   assert.ok(verdict.errors.some((error) => error.includes("unsupported-numeric-claim:99")));
   assert.ok(verdict.errors.some((error) => error.includes("disallowed-issue-code")));
+
+  const substringEvidence = buildAgentEvidenceCatalog(candidates.map((item) => item.id === "company:rival" ? { ...item, text: "Rival has 120 observed products." } : item));
+  const substringClaim = structuredClone(validResult());
+  substringClaim.scores.competitorUsefulness.reason = "Rival has 12 observed products.";
+  const substringVerdict = validateAgentEvaluationResult(substringClaim, substringEvidence);
+  assert.equal(substringVerdict.ok, false);
+  assert.ok(substringVerdict.errors.some((error) => error.includes("unsupported-numeric-claim:12")));
 });
 
 test("human-review requests validate but prevent hybrid scoring", () => {

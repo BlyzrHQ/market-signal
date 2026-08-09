@@ -43,12 +43,14 @@ class ProviderResultError extends Error {
   readonly code: string;
   readonly responseId: string | null;
   readonly requestId: string | null;
-  constructor(code: string, responseId: string | null, requestId: string | null) {
+  readonly measuredUsage: ReportEvaluationUsage | null;
+  constructor(code: string, responseId: string | null, requestId: string | null, measuredUsage: ReportEvaluationUsage | null = null) {
     super(code);
     this.name = "ProviderResultError";
     this.code = code;
     this.responseId = responseId;
     this.requestId = requestId;
+    this.measuredUsage = measuredUsage;
   }
 }
 
@@ -183,13 +185,13 @@ async function callOpenAI(fetchImpl: FetchLike, apiKey: string, clientRequestId:
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new ProviderResultError("provider-invalid-response", null, requestId);
     const result = value as Record<string, unknown>;
     const responseId = typeof result.id === "string" && result.id ? result.id : null;
-    if (result.status !== "completed") throw new ProviderResultError("provider-incomplete", responseId, requestId);
-    const text = outputText(result);
     const measuredUsage = usage(result.usage);
-    if (!responseId || !text || !measuredUsage) throw new ProviderResultError(!responseId ? "provider-response-id-missing" : !text ? "provider-output-rejected" : "provider-usage-missing", responseId, requestId);
+    if (result.status !== "completed") throw new ProviderResultError("provider-incomplete", responseId, requestId, measuredUsage);
+    const text = outputText(result);
+    if (!responseId || !text || !measuredUsage) throw new ProviderResultError(!responseId ? "provider-response-id-missing" : !text ? "provider-output-rejected" : "provider-usage-missing", responseId, requestId, measuredUsage);
     let agentOutput: unknown;
-    try { agentOutput = JSON.parse(text); } catch { throw new ProviderResultError("provider-output-invalid-json", responseId, requestId); }
-    if (!validAgentOutput(agentOutput)) throw new ProviderResultError("provider-output-invalid", responseId, requestId);
+    try { agentOutput = JSON.parse(text); } catch { throw new ProviderResultError("provider-output-invalid-json", responseId, requestId, measuredUsage); }
+    if (!validAgentOutput(agentOutput)) throw new ProviderResultError("provider-output-invalid", responseId, requestId, measuredUsage);
     return { responseId, requestId, measuredUsage, agentOutput };
   } finally {
     clearTimeout(timer);
@@ -239,8 +241,8 @@ export async function runReportEvaluation(payload: ReportEvaluationPayload, port
         errorCode: error instanceof ProviderHttpError ? `provider-http-${Math.floor(error.status / 100)}xx` : error.code,
         providerResponseId: error instanceof ProviderResultError ? error.responseId : null,
         providerRequestId: error.requestId,
-        usageStatus: "unknown",
-        usage: null,
+        usageStatus: error instanceof ProviderResultError && error.measuredUsage ? "known" : "unknown",
+        usage: error instanceof ProviderResultError ? error.measuredUsage : null,
         agentOutput: null,
       };
     } else {

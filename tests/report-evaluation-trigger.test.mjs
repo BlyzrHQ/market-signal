@@ -125,12 +125,12 @@ test("missing provider configuration fails before reservation", async () => {
   assert.equal(state.terminals.length, 0);
 });
 
-test("provider HTTP and malformed completed results reject; transport uncertainty is never retried", async () => {
-  for (const [fetchImpl, expectedStatus, expectedCode] of [
-    [async () => new Response("rate limited", { status: 429, headers: { "x-request-id": "req_429" } }), "agent_rejected", "provider-http-4xx"],
-    [async () => providerResponse(agentOutput(), { usage: null }), "agent_rejected", "provider-usage-missing"],
-    [async () => providerResponse({ ...agentOutput(), humanReview: undefined }), "agent_rejected", "provider-output-invalid"],
-    [async () => { throw new TypeError("network down"); }, "call_outcome_unknown", "provider-transport-unknown"],
+test("provider HTTP and malformed completed results reject; billable failures retain usage and transport uncertainty is never retried", async () => {
+  for (const [fetchImpl, expectedStatus, expectedCode, expectedUsageStatus] of [
+    [async () => new Response("rate limited", { status: 429, headers: { "x-request-id": "req_429" } }), "agent_rejected", "provider-http-4xx", "unknown"],
+    [async () => providerResponse(agentOutput(), { usage: null }), "agent_rejected", "provider-usage-missing", "unknown"],
+    [async () => providerResponse({ ...agentOutput(), humanReview: undefined }), "agent_rejected", "provider-output-invalid", "known"],
+    [async () => { throw new TypeError("network down"); }, "call_outcome_unknown", "provider-transport-unknown", "unknown"],
   ]) {
     const { port, state } = portFixture();
     let calls = 0;
@@ -139,6 +139,8 @@ test("provider HTTP and malformed completed results reject; transport uncertaint
     assert.equal(result.status, expectedStatus);
     assert.equal(state.terminals[0].callback.status, expectedStatus);
     assert.equal(state.terminals[0].callback.errorCode, expectedCode);
+    assert.equal(state.terminals[0].callback.usageStatus, expectedUsageStatus);
+    if (expectedUsageStatus === "known") assert.deepEqual(state.terminals[0].callback.usage, { inputTokens: 100, cachedInputTokens: 20, outputTokens: 50 });
   }
 });
 
