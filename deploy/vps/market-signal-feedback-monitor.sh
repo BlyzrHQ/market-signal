@@ -19,10 +19,8 @@ fail_json() {
 
 # Both files are root-owned deployment inputs rather than caller-controlled data.
 # shellcheck disable=SC1090
-set -a
 source "${env_file}"
 source "${config_file}"
-set +a
 
 domain="${MARKET_SIGNAL_DOMAIN:-}"
 [[ "${domain}" =~ ^[A-Za-z0-9.-]+$ ]] || fail_json "domain-invalid"
@@ -73,20 +71,57 @@ curl_config="${temporary}/curl.conf"
 response="${temporary}/response.json"
 headers="${temporary}/headers"
 {
-  printf 'silent\nshow-error\nproto = "=https"\ntlsv1.2\nmax-time = 20\nmax-filesize = %s\n' "${max_bytes}"
+  printf 'silent\nproto = "=https"\ntlsv1.2\nmax-time = 20\nmax-filesize = %s\n' "${max_bytes}"
   printf 'request = "%s"\nurl = "https://%s%s"\n' "${method}" "${domain}" "${path}"
   printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' "${token}"
 } >"${curl_config}"
 chmod 0600 "${curl_config}"
 unset token
 
-status="$(curl --config "${curl_config}" --dump-header "${headers}" --output "${response}" --write-out '%{http_code}' --data-raw "${body}")" \
+status="$(
+  (
+    ulimit -f 64
+    exec env -i PATH=/usr/bin:/bin LC_ALL=C \
+      curl --config "${curl_config}" --dump-header "${headers}" --output "${response}" \
+        --write-out '%{http_code}' --data-raw "${body}" 2>/dev/null
+  )
+)" \
   || fail_json "upstream-unavailable"
 bytes="$(wc -c <"${response}")"
 [[ "${bytes}" -le "${max_bytes}" ]] || fail_json "response-too-large"
-grep -qi '^content-type:.*application/json' "${headers}" || fail_json "response-not-json"
-grep -qi '^cache-control:.*no-store' "${headers}" || fail_json "response-cacheable"
-[[ "${status}" == "200" ]] || {
+header_bytes="$(wc -c <"${headers}")"
+[[ "${header_bytes}" -le "${max_bytes}" ]] || fail_json "headers-too-large"
+python3 - "${headers}" "${response}" 2>/dev/null <<'PY' || fail_json "response-invalid"
+import json
+import pathlib
+import sys
+
+header_path, body_path = map(pathlib.Path, sys.argv[1:])
+raw = header_path.read_bytes()
+blocks = [block for block in raw.replace(b"\r\n", b"\n").split(b"\n\n") if block.strip()]
+if not blocks:
+    raise SystemExit(1)
+lines = blocks[-1].decode("latin-1").splitlines()
+if not lines or not lines[0].startswith("HTTP/"):
+    raise SystemExit(1)
+headers = {}
+for line in lines[1:]:
+    if ":" not in line:
+        raise SystemExit(1)
+    name, value = line.split(":", 1)
+    headers.setdefault(name.strip().lower(), []).append(value.strip().lower())
+content_types = headers.get("content-type", [])
+cache_controls = headers.get("cache-control", [])
+if not any(value == "application/json" or value.startswith("application/json;") for value in content_types):
+    raise SystemExit(1)
+if not any("no-store" in [part.strip() for part in value.split(",")] for value in cache_controls):
+    raise SystemExit(1)
+with body_path.open("rb") as body:
+    json.load(body)
+PY
+expected_status="200"
+[[ "${action}" == "ack" ]] && expected_status="200 201"
+[[ " ${expected_status} " == *" ${status} "* ]] || {
   printf '{"ok":false,"code":"upstream-status","status":%s}\n' "${status}"
   exit 1
 }

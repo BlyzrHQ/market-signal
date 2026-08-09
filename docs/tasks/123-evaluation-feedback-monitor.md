@@ -10,7 +10,8 @@ required.
 ## Scope
 
 - Install a dedicated `market-monitor` SSH principal with one generated key,
-  no password, no forwarding, no PTY, and a forced command.
+  no password, no forwarding, no PTY, a root-owned non-interactive login
+  dispatcher, and a forced command.
 - Permit only `health`, `claim`, and exact `ack` operations. The SSH wrapper
   never evaluates caller text and the root helper validates every argument.
 - Keep monitor credentials server-owned. The helper reads the root-owned env
@@ -18,13 +19,23 @@ required.
   arguments or output.
 - Bound each upstream request to 20 seconds and 64 KiB. Return the already
   sanitized private API JSON unchanged on success and closed error JSON on
-  failure.
+  failure. Both body and headers are file-limited; only the final header block
+  is accepted and the body must parse as JSON.
 - Create a recurring Codex automation for this task. Each run processes at
   most three deliveries, presents stable delivery IDs and the report link,
   then acknowledges each exact payload only after presentation succeeds.
 - If a delivery contains an open human-review request, ask its exact question
   with the stable request ID. Human answer submission remains a separate
   explicit owner action and never changes the provisional score silently.
+
+The automation is an operational deployment object rather than a repository
+secret or application process. Its exact reviewed instructions are versioned
+in `deploy/vps/evaluation-feedback-automation-prompt.md`.
+
+The automation is created only after the reviewed helper is installed, so it
+cannot produce a failing pre-deployment run. Its automation ID, schedule, and
+first successful claim/presentation/ACK receipt are deployment evidence
+required before this task is marked complete.
 
 ## Rollout gates
 

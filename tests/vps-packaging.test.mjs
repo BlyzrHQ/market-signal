@@ -167,7 +167,9 @@ test("repeatable VPS preflight permits only SSH, Caddy, and DHCP listeners", () 
 test("evaluation feedback monitor is forced, bounded, and credential-isolated", () => {
   const helper = read("deploy/vps/market-signal-feedback-monitor.sh");
   const wrapper = read("deploy/vps/market-signal-feedback-monitor-ssh.sh");
+  const loginShell = read("deploy/vps/market-signal-feedback-monitor-login-shell.sh");
   const installer = read("deploy/vps/install-feedback-monitor.sh");
+  const automation = read("deploy/vps/evaluation-feedback-automation-prompt.md");
 
   assert.match(helper, /max_bytes=65536/);
   assert.match(helper, /max-time = 20/);
@@ -175,19 +177,33 @@ test("evaluation feedback monitor is forced, bounded, and credential-isolated", 
   assert.match(helper, /MARKET_SIGNAL_MONITOR_READ_TOKEN/);
   assert.match(helper, /MARKET_SIGNAL_MONITOR_ACK_TOKEN/);
   assert.match(helper, /curl --config/);
+  assert.match(helper, /env -i PATH=\/usr\/bin:\/bin LC_ALL=C/);
+  assert.match(helper, /ulimit -f 64/);
+  assert.match(helper, /json\.load\(body\)/);
+  assert.match(helper, /expected_status="200 201"/);
   assert.match(helper, /chmod 0600 "\$\{curl_config\}"/);
   assert.doesNotMatch(helper, /Authorization: Bearer[^\n]*curl /);
   assert.doesNotMatch(helper, /MARKET_SIGNAL_OWNER_(?:READ|WRITE)_TOKEN/);
   assert.match(helper, /\^\[a-f0-9\]\{64\}\$/);
-  assert.match(helper, /response-cacheable/);
+  assert.match(helper, /cache-control/);
+  assert.match(helper, /no-store/);
 
   assert.match(wrapper, /SSH_ORIGINAL_COMMAND/);
   assert.match(wrapper, /exec sudo \/usr\/local\/sbin\/market-signal-feedback-monitor/);
   assert.doesNotMatch(wrapper, /eval|bash -c|sh -c/);
+  assert.match(loginShell, /\[\[ "\$2" == "\/usr\/local\/sbin\/market-signal-feedback-monitor-ssh" \]\]/);
+  assert.doesNotMatch(loginShell, /eval|bash -c|sh -c/);
   assert.match(installer, /restrict,command=/);
   assert.match(installer, /passwd --lock/);
-  assert.match(installer, /visudo -cf/);
+  assert.match(installer, /trap rollback EXIT/);
+  assert.match(installer, /visudo -cf "\$\{transaction\}\/sudoers"/);
+  assert.match(installer, /--shell "\$\{monitor_shell\}"/);
+  assert.match(installer, /root:root:755/);
   assert.doesNotMatch(installer, /usermod .*docker/);
+  assert.match(automation, /at most three times\s+sequentially/);
+  assert.match(automation, /Only after that complete presentation succeeds/);
+  assert.match(automation, /Never acknowledge a failed or incomplete\s+presentation/);
+  assert.match(automation, /exact open human-review question and stable request ID/);
 });
 
 test("runtime dependencies required by vinext are installed in production", () => {
