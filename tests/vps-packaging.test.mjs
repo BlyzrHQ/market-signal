@@ -202,6 +202,11 @@ test("evaluation feedback monitor is forced, bounded, and credential-isolated", 
   assert.match(installer, /visudo -cf "\$\{transaction\}\/sudoers"/);
   assert.match(installer, /--shell "\$\{monitor_shell\}"/);
   assert.match(installer, /root:root:755/);
+  assert.match(installer, /root:\$\{monitor_group\}:750/);
+  assert.match(installer, /root:\$\{monitor_group\}:640/);
+  assert.match(installer, /-g "\$\{monitor_group\}" -m 0750/);
+  assert.match(installer, /-g "\$\{monitor_group\}" -m 0640/);
+  assert.doesNotMatch(installer, /-o "\$\{monitor_user\}"[\s\S]*authorized_keys/);
   assert.doesNotMatch(installer, /usermod .*docker/);
   assert.match(automation, /at most three times\s+sequentially/);
   assert.match(automation, /Only after that complete presentation succeeds/);
