@@ -192,7 +192,7 @@ test("evaluation feedback monitor is forced, bounded, and credential-isolated", 
   assert.match(wrapper, /exec sudo \/usr\/local\/sbin\/market-signal-feedback-monitor/);
   assert.doesNotMatch(wrapper, /eval|bash -c|sh -c/);
   assert.match(loginShell, /#!\/bin\/dash/);
-  assert.match(loginShell, /env -i LC_ALL=C PATH=\/usr\/bin:\/bin SSH_ORIGINAL_COMMAND=/);
+  assert.match(loginShell, /\/usr\/bin\/env -i LC_ALL=C PATH=\/usr\/bin:\/bin SSH_ORIGINAL_COMMAND=/);
   assert.match(loginShell, /\[ "\$2" = "\/usr\/local\/sbin\/market-signal-feedback-monitor-ssh" \]/);
   assert.doesNotMatch(loginShell, /eval|bash -c|sh -c/);
   assert.match(installer, /restrict,command=/);
@@ -208,6 +208,7 @@ test("evaluation feedback monitor is forced, bounded, and credential-isolated", 
   assert.match(automation, /Never acknowledge a failed or incomplete\s+presentation/);
   assert.match(automation, /exact open human-review question and stable request ID/);
   assert.match(automation, /100,000\s+micro-USD/);
+  assert.match(automation, /non-null integer `costMicrousd` is known cost/);
   assert.match(automation, /completedAt.*UTC calendar/);
 
   const lastBackup = installer.lastIndexOf("backup_target ");
