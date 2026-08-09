@@ -25,6 +25,7 @@ export type ReportEvaluationTerminalStatus = "complete" | "needs_human_review" |
 export type ReportEvaluationUsage = {
   inputTokens: number;
   cachedInputTokens: number;
+  cacheWriteInputTokens: number;
   outputTokens: number;
 };
 
@@ -117,11 +118,12 @@ export function parseReportEvaluationTerminalCallback(value: unknown): ReportEva
   if (![input.errorCode, input.providerResponseId, input.providerRequestId].every((item) => item === null || boundedIdentifier(item))) throw new ReportEvaluationContractError("The report evaluation callback metadata is invalid.");
   const usage = record(input.usage);
   if (input.usageStatus === "known") {
-    if (!usage || !exactKeys(usage, ["inputTokens", "cachedInputTokens", "outputTokens"])) throw new ReportEvaluationContractError("The report evaluation callback usage is invalid.");
+    if (!usage || !exactKeys(usage, ["inputTokens", "cachedInputTokens", "cacheWriteInputTokens", "outputTokens"])) throw new ReportEvaluationContractError("The report evaluation callback usage is invalid.");
     const inputTokens = Number(usage.inputTokens);
     const cachedInputTokens = Number(usage.cachedInputTokens);
+    const cacheWriteInputTokens = Number(usage.cacheWriteInputTokens);
     const outputTokens = Number(usage.outputTokens);
-    if (![inputTokens, cachedInputTokens, outputTokens].every((item) => Number.isSafeInteger(item) && item >= 0) || cachedInputTokens > inputTokens) throw new ReportEvaluationContractError("The report evaluation callback usage is invalid.");
+    if (![inputTokens, cachedInputTokens, cacheWriteInputTokens, outputTokens].every((item) => Number.isSafeInteger(item) && item >= 0) || cachedInputTokens + cacheWriteInputTokens > inputTokens) throw new ReportEvaluationContractError("The report evaluation callback usage is invalid.");
   } else if (input.usage !== null) {
     throw new ReportEvaluationContractError("Unknown report evaluation usage must be null.");
   }

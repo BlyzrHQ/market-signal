@@ -185,7 +185,7 @@ function terminalCallback(reservation, dispatch, overrides = {}) {
     providerResponseId: "resp_test",
     providerRequestId: "req_test",
     usageStatus: "known",
-    usage: { inputTokens: 1_000, cachedInputTokens: 400, outputTokens: 200 },
+    usage: { inputTokens: 1_000, cachedInputTokens: 400, cacheWriteInputTokens: 100, outputTokens: 200 },
     agentOutput: validAgentOutput(reservation.canonicalInput),
     model: REPORT_EVALUATION_MODEL,
     promptVersion: REPORT_EVALUATION_PROMPT_VERSION,
@@ -214,7 +214,7 @@ test("runtime schema initialization upgrades legacy report_evaluations in place"
     await createReportRun({ primaryDomain: "legacy.example" }, new Date("2026-08-09T09:00:00.000Z"), value.database);
     const columns = await value.database.prepare("PRAGMA table_info(report_evaluations)").all();
     const names = new Set(columns.results.map((column) => column.name));
-    for (const name of ["cached_input_tokens", "usage_status", "reserved_cost_microusd", "deterministic_at", "dispatch_started_at", "dispatch_token", "dispatch_failed_at", "watchdog_expired_at", "reservation_id", "reservation_owner", "reserved_at", "client_request_id", "provider_response_id", "provider_request_id"]) {
+    for (const name of ["cached_input_tokens", "cache_write_input_tokens", "usage_status", "reserved_cost_microusd", "deterministic_at", "dispatch_started_at", "dispatch_token", "dispatch_failed_at", "watchdog_expired_at", "reservation_id", "reservation_owner", "reserved_at", "client_request_id", "provider_response_id", "provider_request_id"]) {
       assert.equal(names.has(name), true, `legacy schema should gain ${name}`);
     }
     const migrated = (await value.database.prepare("SELECT deterministic_at, usage_status, cost_microusd, input_tokens, output_tokens FROM report_evaluations WHERE id = 'legacy-evaluation'").all()).results[0];
@@ -264,7 +264,7 @@ test("evaluation persists deterministic, dispatching, reserved, and complete sta
     assert.ok(Number.isFinite(completed.overallScore));
     assert.ok(completed.grade);
     assert.equal(completed.usageStatus, "known");
-    assert.deepEqual({ input: completed.inputTokens, cached: completed.cachedInputTokens, output: completed.outputTokens, cost: completed.costMicrousd }, { input: 1_000, cached: 400, output: 200, cost: 1_840 });
+    assert.deepEqual({ input: completed.inputTokens, cached: completed.cachedInputTokens, cacheWrite: completed.cacheWriteInputTokens, output: completed.outputTokens, cost: completed.costMicrousd }, { input: 1_000, cached: 400, cacheWrite: 100, output: 200, cost: 1_865 });
   } finally {
     await closeFixture(value);
   }
@@ -324,6 +324,7 @@ test("invalid evidence callback is terminally rejected and unknown usage maps to
     assert.equal(unknown.costMicrousd, null);
     assert.equal(unknown.inputTokens, null);
     assert.equal(unknown.cachedInputTokens, null);
+    assert.equal(unknown.cacheWriteInputTokens, null);
     assert.equal(unknown.outputTokens, null);
 
     const malformedFixture = await preparedEvaluation(value.database, "malformed-usage", new Date(now.getTime() + 6_000));
@@ -355,7 +356,7 @@ test("needs-human evaluation creates an immutable owner queue item and response 
     assert.equal(provisional.grade, null);
     assert.ok(provisional.agent.humanReview);
     assert.equal(provisional.usageStatus, "known");
-    assert.equal(provisional.costMicrousd, 1_840);
+    assert.equal(provisional.costMicrousd, 1_865);
     const pending = await listHumanReviewRequests({}, value.database);
     assert.equal(pending.items.length, 1);
     assert.equal(pending.items[0].evaluationId, evaluation.id);
@@ -650,7 +651,7 @@ test("an over-budget provider response preserves actual usage but cannot produce
     const { evaluation } = await preparedEvaluation(value.database, "over-budget", now);
     const { dispatch, reservation } = await dispatchAndReserve(value.database, evaluation, new Date(now.getTime() + 1_000));
     const rejected = await completeReportAgentEvaluation(evaluation.id, terminalCallback(reservation, dispatch, {
-      usage: { inputTokens: 100_000, cachedInputTokens: 0, outputTokens: 100_000 },
+      usage: { inputTokens: 100_000, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 100_000 },
     }), new Date(now.getTime() + 2_000), value.database);
     assert.equal(rejected.status, "agent_rejected");
     assert.equal(rejected.errorCode, "evaluation-cost-budget-exceeded");
@@ -677,7 +678,7 @@ test("a nominally successful callback without a provider response ID is rejected
     assert.equal(rejected.ratingBasis, "deterministic_only");
     assert.equal(rejected.overallScore, null);
     assert.equal(rejected.usageStatus, "known");
-    assert.equal(rejected.costMicrousd, 1_840);
+    assert.equal(rejected.costMicrousd, 1_865);
   } finally {
     await closeFixture(value);
   }
@@ -709,6 +710,7 @@ test("reconciliation recovers stale dispatch and expires stale reservation witho
     assert.equal(unknown.costMicrousd, null);
     assert.equal(unknown.inputTokens, null);
     assert.equal(unknown.cachedInputTokens, null);
+    assert.equal(unknown.cacheWriteInputTokens, null);
     assert.equal(unknown.outputTokens, null);
     assert.ok(unknown.watchdogExpiredAt);
   } finally {

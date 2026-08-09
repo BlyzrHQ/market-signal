@@ -133,8 +133,9 @@ function usage(value: unknown): ReportEvaluationUsage | null {
   const inputTokens = Number(item.input_tokens);
   const outputTokens = Number(item.output_tokens);
   const cachedInputTokens = details.cached_tokens === undefined ? 0 : Number(details.cached_tokens);
-  if (!Number.isInteger(inputTokens) || inputTokens < 0 || !Number.isInteger(outputTokens) || outputTokens < 0 || !Number.isInteger(cachedInputTokens) || cachedInputTokens < 0 || cachedInputTokens > inputTokens) return null;
-  return { inputTokens, cachedInputTokens, outputTokens };
+  const cacheWriteInputTokens = details.cache_write_tokens === undefined ? 0 : Number(details.cache_write_tokens);
+  if (!Number.isSafeInteger(inputTokens) || inputTokens < 0 || !Number.isSafeInteger(outputTokens) || outputTokens < 0 || !Number.isSafeInteger(cachedInputTokens) || cachedInputTokens < 0 || !Number.isSafeInteger(cacheWriteInputTokens) || cacheWriteInputTokens < 0 || cachedInputTokens + cacheWriteInputTokens > inputTokens) return null;
+  return { inputTokens, cachedInputTokens, cacheWriteInputTokens, outputTokens };
 }
 
 function outputText(value: Record<string, unknown>) {

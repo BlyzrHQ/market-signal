@@ -36,7 +36,7 @@ function providerResponse(output = agentOutput(), overrides = {}) {
     id: "resp_1",
     status: "completed",
     output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(output) }] }],
-    usage: { input_tokens: 100, output_tokens: 50, input_tokens_details: { cached_tokens: 20 } },
+    usage: { input_tokens: 100, output_tokens: 50, input_tokens_details: { cached_tokens: 20, cache_write_tokens: 10 } },
     ...overrides,
   }, { headers: { "x-request-id": "req_1" } });
 }
@@ -68,12 +68,14 @@ test("reservation and terminal callbacks reject open or inconsistent wire payloa
     action: "terminal", evaluatorVersion: REPORT_EVALUATOR_VERSION, dispatchAttempt: 1,
     reservationOwner: "worker:owner-1", reservationId: "reservation-1", clientRequestId: "client-2",
     status: "complete", errorCode: null, providerResponseId: "resp_1", providerRequestId: "req_1",
-    usageStatus: "known", usage: { inputTokens: 100, cachedInputTokens: 20, outputTokens: 50 }, agentOutput: agentOutput(),
+    usageStatus: "known", usage: { inputTokens: 100, cachedInputTokens: 20, cacheWriteInputTokens: 10, outputTokens: 50 }, agentOutput: agentOutput(),
     model: REPORT_EVALUATION_MODEL, promptVersion: "report-agent-judge-2026-08-09-v2", pricingVersion: "openai-gpt-5.6-luna-2026-08-09",
   };
   assert.deepEqual(parseReportEvaluationTerminalCallback(terminal), terminal);
   assert.throws(() => parseReportEvaluationTerminalCallback({ ...terminal, status: "complete", usageStatus: "unknown", usage: terminal.usage }));
   assert.throws(() => parseReportEvaluationTerminalCallback({ ...terminal, usage: { ...terminal.usage, cachedInputTokens: 120 } }));
+  assert.throws(() => parseReportEvaluationTerminalCallback({ ...terminal, usage: { ...terminal.usage, cacheWriteInputTokens: -1 } }));
+  assert.throws(() => parseReportEvaluationTerminalCallback({ ...terminal, usage: { ...terminal.usage, cachedInputTokens: 60, cacheWriteInputTokens: 50 } }));
   assert.throws(() => parseReportEvaluationTerminalCallback({ ...terminal, agentOutput: null }));
   assert.throws(() => parseReportEvaluationTerminalCallback({ ...terminal, extra: true }));
 });
@@ -100,7 +102,7 @@ test("one reservation produces one bounded Responses call and a complete callbac
   assert.equal(request.input[1].content[0].text, reservation().canonicalInput);
   assert.equal(state.terminals.length, 1);
   assert.equal(state.terminals[0].callback.status, "complete");
-  assert.deepEqual(state.terminals[0].callback.usage, { inputTokens: 100, cachedInputTokens: 20, outputTokens: 50 });
+  assert.deepEqual(state.terminals[0].callback.usage, { inputTokens: 100, cachedInputTokens: 20, cacheWriteInputTokens: 10, outputTokens: 50 });
 });
 
 test("a human question is terminal but remains explicitly needs_human_review", async () => {
@@ -145,7 +147,7 @@ test("provider HTTP and malformed completed results reject; billable failures re
     assert.equal(state.terminals[0].callback.status, expectedStatus);
     assert.equal(state.terminals[0].callback.errorCode, expectedCode);
     assert.equal(state.terminals[0].callback.usageStatus, expectedUsageStatus);
-    if (expectedUsageStatus === "known") assert.deepEqual(state.terminals[0].callback.usage, { inputTokens: 100, cachedInputTokens: 20, outputTokens: 50 });
+    if (expectedUsageStatus === "known") assert.deepEqual(state.terminals[0].callback.usage, { inputTokens: 100, cachedInputTokens: 20, cacheWriteInputTokens: 10, outputTokens: 50 });
   }
 });
 

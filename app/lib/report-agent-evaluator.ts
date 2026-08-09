@@ -24,6 +24,7 @@ export const AGENT_MAX_RESERVED_COST_MICROUSD = 20_000;
 
 export const AGENT_PRICING_USD_PER_MILLION = Object.freeze({
   uncachedInput: 1,
+  cacheWriteInput: 1.25,
   cachedInput: 0.1,
   output: 6,
 });
@@ -431,7 +432,7 @@ export function validateAgentEvaluationResult(value: unknown, evidence: readonly
   return errors.length ? { ok: false as const, errors } : { ok: true as const, value: value as AgentEvaluationResult, errors: [] as string[] };
 }
 
-export type AgentUsage = { inputTokens: number; cachedInputTokens: number; outputTokens: number; costMicrousd: number };
+export type AgentUsage = { inputTokens: number; cachedInputTokens: number; cacheWriteInputTokens: number; outputTokens: number; costMicrousd: number };
 
 export function calculateAgentUsageCost(usage: unknown): AgentUsage | null {
   const source = object(usage);
@@ -439,15 +440,18 @@ export function calculateAgentUsageCost(usage: unknown): AgentUsage | null {
   const outputTokens = Number(source.output_tokens);
   const details = object(source.input_tokens_details);
   const cachedInputTokens = source.input_tokens_details === undefined ? 0 : Number(details.cached_tokens ?? 0);
+  const cacheWriteInputTokens = source.input_tokens_details === undefined ? 0 : Number(details.cache_write_tokens ?? 0);
   if (!Number.isInteger(inputTokens) || inputTokens < 0 || !Number.isInteger(outputTokens) || outputTokens < 0
-    || !Number.isInteger(cachedInputTokens) || cachedInputTokens < 0 || cachedInputTokens > inputTokens) return null;
-  const uncachedInputTokens = inputTokens - cachedInputTokens;
+    || !Number.isInteger(cachedInputTokens) || cachedInputTokens < 0 || !Number.isInteger(cacheWriteInputTokens) || cacheWriteInputTokens < 0
+    || cachedInputTokens + cacheWriteInputTokens > inputTokens) return null;
+  const uncachedInputTokens = inputTokens - cachedInputTokens - cacheWriteInputTokens;
   const costMicrousd = Math.ceil(
     uncachedInputTokens * AGENT_PRICING_USD_PER_MILLION.uncachedInput
+    + cacheWriteInputTokens * AGENT_PRICING_USD_PER_MILLION.cacheWriteInput
     + cachedInputTokens * AGENT_PRICING_USD_PER_MILLION.cachedInput
     + outputTokens * AGENT_PRICING_USD_PER_MILLION.output,
   );
-  return { inputTokens, cachedInputTokens, outputTokens, costMicrousd };
+  return { inputTokens, cachedInputTokens, cacheWriteInputTokens, outputTokens, costMicrousd };
 }
 
 function responseText(response: Record<string, unknown>) {

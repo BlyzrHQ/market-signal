@@ -266,6 +266,7 @@ export const reportEvaluations = sqliteTable("report_evaluations", {
   costMicrousd: integer("cost_microusd"),
   inputTokens: integer("input_tokens"),
   cachedInputTokens: integer("cached_input_tokens"),
+  cacheWriteInputTokens: integer("cache_write_input_tokens"),
   outputTokens: integer("output_tokens"),
   usageStatus: text("usage_status").notNull().default("not_called"),
   reservedCostMicrousd: integer("reserved_cost_microusd").notNull().default(0),

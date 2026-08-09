@@ -1,0 +1,1 @@
+ALTER TABLE `report_evaluations` ADD `cache_write_input_tokens` integer;
