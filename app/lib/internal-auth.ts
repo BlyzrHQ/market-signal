@@ -19,6 +19,7 @@ export async function hasValidInternalAuthorization(authorization: string | null
 }
 
 export type OwnerAuthorizationOverrides = { read: string; write: string; callback: string };
+export type MonitorAuthorizationOverrides = { read: string; acknowledge: string; ownerRead: string; ownerWrite: string; callback: string };
 
 export async function hasValidOwnerAuthorization(authorization: string | null, purpose: "read" | "write", overrides?: OwnerAuthorizationOverrides) {
   const [read, write, callback] = overrides
@@ -31,6 +32,21 @@ export async function hasValidOwnerAuthorization(authorization: string | null, p
   const credentials = [read, write, callback];
   if (credentials.some((value) => value.length < 32 || /\s/.test(value)) || new Set(credentials).size !== credentials.length) return false;
   return hasValidBearerAuthorization(authorization, purpose === "read" ? read : write, 32);
+}
+
+export async function hasValidMonitorAuthorization(authorization: string | null, purpose: "read" | "acknowledge", overrides?: MonitorAuthorizationOverrides) {
+  const [read, acknowledge, ownerRead, ownerWrite, callback] = overrides
+    ? [overrides.read, overrides.acknowledge, overrides.ownerRead, overrides.ownerWrite, overrides.callback]
+    : await Promise.all([
+      runtimeEnvironmentValue("MARKET_SIGNAL_MONITOR_READ_TOKEN"),
+      runtimeEnvironmentValue("MARKET_SIGNAL_MONITOR_ACK_TOKEN"),
+      runtimeEnvironmentValue("MARKET_SIGNAL_OWNER_READ_TOKEN"),
+      runtimeEnvironmentValue("MARKET_SIGNAL_OWNER_WRITE_TOKEN"),
+      runtimeEnvironmentValue("MARKET_SIGNAL_CALLBACK_TOKEN"),
+    ]);
+  const credentials = [read, acknowledge, ownerRead, ownerWrite, callback];
+  if (credentials.some((value) => value.length < 32 || /\s/.test(value)) || new Set(credentials).size !== credentials.length) return false;
+  return hasValidBearerAuthorization(authorization, purpose === "read" ? read : acknowledge, 32);
 }
 
 async function hasValidBearerAuthorization(authorization: string | null, expected: string, minimumLength = 1) {

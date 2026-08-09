@@ -78,6 +78,34 @@
       "when": 1786237456090,
       "tag": "0010_slimy_jack_power",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1786239589655,
+      "tag": "0011_smart_naoko",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1786239929669,
+      "tag": "0012_peaceful_salo",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1786240645075,
+      "tag": "0013_icy_boom_boom",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1786241394659,
+      "tag": "0014_brainy_wrecker",
+      "breakpoints": true
     }
   ]
 }
