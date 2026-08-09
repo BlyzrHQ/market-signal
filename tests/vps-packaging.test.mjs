@@ -164,6 +164,32 @@ test("repeatable VPS preflight permits only SSH, Caddy, and DHCP listeners", () 
   assert.match(preflight, /\/etc\/market-signal\/deploy\.conf/);
 });
 
+test("evaluation feedback monitor is forced, bounded, and credential-isolated", () => {
+  const helper = read("deploy/vps/market-signal-feedback-monitor.sh");
+  const wrapper = read("deploy/vps/market-signal-feedback-monitor-ssh.sh");
+  const installer = read("deploy/vps/install-feedback-monitor.sh");
+
+  assert.match(helper, /max_bytes=65536/);
+  assert.match(helper, /max-time = 20/);
+  assert.match(helper, /max-filesize/);
+  assert.match(helper, /MARKET_SIGNAL_MONITOR_READ_TOKEN/);
+  assert.match(helper, /MARKET_SIGNAL_MONITOR_ACK_TOKEN/);
+  assert.match(helper, /curl --config/);
+  assert.match(helper, /chmod 0600 "\$\{curl_config\}"/);
+  assert.doesNotMatch(helper, /Authorization: Bearer[^\n]*curl /);
+  assert.doesNotMatch(helper, /MARKET_SIGNAL_OWNER_(?:READ|WRITE)_TOKEN/);
+  assert.match(helper, /\^\[a-f0-9\]\{64\}\$/);
+  assert.match(helper, /response-cacheable/);
+
+  assert.match(wrapper, /SSH_ORIGINAL_COMMAND/);
+  assert.match(wrapper, /exec sudo \/usr\/local\/sbin\/market-signal-feedback-monitor/);
+  assert.doesNotMatch(wrapper, /eval|bash -c|sh -c/);
+  assert.match(installer, /restrict,command=/);
+  assert.match(installer, /passwd --lock/);
+  assert.match(installer, /visudo -cf/);
+  assert.doesNotMatch(installer, /usermod .*docker/);
+});
+
 test("runtime dependencies required by vinext are installed in production", () => {
   const manifest = JSON.parse(read("package.json"));
   const dockerfile = read("Dockerfile");
