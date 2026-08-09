@@ -1230,8 +1230,8 @@ export async function submitHumanReviewResponse(requestId: string, input: { idem
   const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
   if (!database) throw new Error(STORAGE_UNAVAILABLE_MESSAGE);
   if (!/^[A-Za-z0-9-]{1,128}$/.test(requestId) || !/^[A-Za-z0-9][A-Za-z0-9:_-]{0,119}$/.test(input.idempotencyKey) || !["answered", "unable_to_determine", "invalid_question"].includes(input.resolutionCode)) throw new Error("Invalid human-review response.");
-  const answerText = cleanText(input.answerText, 1_000);
-  if (new TextEncoder().encode(input.answerText).byteLength > 4_000 || (input.resolutionCode === "answered" ? !answerText : input.answerText !== "")) throw new Error("Human-review response answer is invalid.");
+  const answerText = input.answerText;
+  if (typeof answerText !== "string" || answerText.length > 1_000 || new TextEncoder().encode(answerText).byteLength > 4_000 || /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069<>`]|https?:\/\/|www\.|\[[^\]]*\]\(/iu.test(answerText) || (input.resolutionCode === "answered" ? !answerText.trim() : answerText !== "")) throw new Error("Human-review response answer is invalid.");
   if (!Number.isFinite(now.getTime())) throw new Error("Invalid human-review response time.");
   await ensureSchema(database);
   const requestRows = await database.prepare(`SELECT requests.*, evaluations.status AS evaluation_status, runs.expires_at FROM report_human_review_requests requests JOIN report_evaluations evaluations ON evaluations.id = requests.evaluation_id JOIN report_runs runs ON runs.id = requests.run_id WHERE requests.id = ? LIMIT 1`).bind(requestId).all<Record<string, unknown>>();
@@ -1246,7 +1246,7 @@ export async function submitHumanReviewResponse(requestId: string, input: { idem
   if (existing) {
     const exact = existing.request_id === requestId && existing.idempotency_key === input.idempotencyKey && existing.response_hash === responseHash;
     if (!exact) throw new ReportEvaluationStateError("human-review-response-conflict", "A different immutable human-review response already exists.", 409);
-    return { replayed: true as const, response: { id: String(existing.id), requestId, idempotencyKey: input.idempotencyKey, resolutionCode: input.resolutionCode, answerText, respondedAt: String(existing.responded_at || "") } };
+    return { replayed: true as const, response: { id: String(existing.id), requestId, idempotencyKey: String(existing.idempotency_key), resolutionCode: existing.resolution_code as HumanReviewResolutionCode, answerText: String(existing.answer_text), respondedAt: String(existing.responded_at || "") } };
   }
   const id = internalId();
   const respondedAt = now.toISOString();
@@ -1257,7 +1257,7 @@ export async function submitHumanReviewResponse(requestId: string, input: { idem
   const persistedRows = await database.prepare(`SELECT * FROM report_human_review_responses WHERE request_id = ? OR idempotency_key = ? ORDER BY request_id = ? DESC LIMIT 1`).bind(requestId, input.idempotencyKey, requestId).all<Record<string, unknown>>();
   const persisted = persistedRows.results?.[0];
   if (!persisted || persisted.request_id !== requestId || persisted.idempotency_key !== input.idempotencyKey || persisted.response_hash !== responseHash) throw new ReportEvaluationStateError("human-review-response-conflict", "A different immutable human-review response already exists.", 409);
-  return { replayed: String(persisted.id) !== id, response: { id: String(persisted.id), requestId, idempotencyKey: input.idempotencyKey, resolutionCode: input.resolutionCode, answerText, respondedAt: String(persisted.responded_at || respondedAt) } };
+  return { replayed: String(persisted.id) !== id, response: { id: String(persisted.id), requestId, idempotencyKey: String(persisted.idempotency_key), resolutionCode: persisted.resolution_code as HumanReviewResolutionCode, answerText: String(persisted.answer_text), respondedAt: String(persisted.responded_at || respondedAt) } };
 }
 
 export async function reconcileReportEvaluations(now = new Date(), databaseOverride?: D1DatabaseLike | null) {

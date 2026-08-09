@@ -8,11 +8,36 @@ const liveServices: ResponseServices = { respond: submitHumanReviewResponse };
 const MAX_BODY_BYTES = 4_096;
 
 async function requestBody(request: Request) {
-  const declared = Number(request.headers.get("content-length") || 0);
-  if (declared > MAX_BODY_BYTES) throw new HumanReviewContractError("The human-review response body is too large.");
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) throw new HumanReviewContractError("The human-review response body is too large.");
-  try { return parseHumanReviewResponse(JSON.parse(text) as unknown); } catch (error) {
+  const contentLength = request.headers.get("content-length");
+  if (contentLength !== null) {
+    const declared = Number(contentLength);
+    if (!Number.isSafeInteger(declared) || declared < 0 || declared > MAX_BODY_BYTES) throw new HumanReviewContractError("The human-review response body is too large.");
+  }
+  const reader = request.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  if (reader) {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_BODY_BYTES) {
+        await reader.cancel();
+        throw new HumanReviewContractError("The human-review response body is too large.");
+      }
+      chunks.push(value);
+    }
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return parseHumanReviewResponse(JSON.parse(text) as unknown);
+  } catch (error) {
     if (error instanceof HumanReviewContractError) throw error;
     throw new HumanReviewContractError("Invalid human-review response JSON.");
   }

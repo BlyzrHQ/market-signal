@@ -329,6 +329,11 @@ test("needs-human evaluation creates an immutable owner queue item and response 
     }, new Date(now.getTime() + 4_000), value.database);
     assert.equal(replay.replayed, true);
     await assert.rejects(() => submitHumanReviewResponse(pending.items[0].id, {
+      idempotencyKey: "owner:human-test-1",
+      resolutionCode: "answered",
+      answerText: " Yes.  This comparison is useful for the pricing decision. ",
+    }, new Date(now.getTime() + 4_500), value.database), /immutable human-review response/);
+    await assert.rejects(() => submitHumanReviewResponse(pending.items[0].id, {
       idempotencyKey: "owner:human-test-2",
       resolutionCode: "answered",
       answerText: "No. This is a different answer.",
