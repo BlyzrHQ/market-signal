@@ -20,6 +20,9 @@ after presentation succeeds.
   from callback and owner credentials.
 - Add a bounded claim API. Claims are short, renewable only after expiry, and
   never hold a database transaction while a consumer processes feedback.
+- Keep immutable history separate from an indexed pending table. Receipt
+  insertion atomically removes the pending row, so claim and backlog work does
+  not scan an arbitrarily large acknowledged outbox prefix.
 - Add an immutable acknowledgement receipt. Exact replay succeeds; a changed
   delivery, lease, payload hash, consumer, or idempotency key conflicts.
 - Purge claims, receipts, and outbox events before their source evaluations.

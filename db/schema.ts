@@ -362,6 +362,15 @@ export const reportEvaluationFeedbackOutbox = sqliteTable("report_evaluation_fee
   uniqueIndex("report_evaluation_feedback_outbox_evaluation_uidx").on(table.evaluationId),
 ]);
 
+export const reportEvaluationFeedbackPending = sqliteTable("report_evaluation_feedback_pending", {
+  outboxId: text("outbox_id").primaryKey().references(() => reportEvaluationFeedbackOutbox.id, { onDelete: "cascade" }),
+  runId: text("run_id").notNull().references(() => reportRuns.id, { onDelete: "cascade" }),
+  queueSeq: integer("queue_seq").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (table) => [
+  uniqueIndex("report_evaluation_feedback_pending_queue_uidx").on(table.queueSeq),
+]);
+
 export const reportEvaluationFeedbackClaims = sqliteTable("report_evaluation_feedback_claims", {
   outboxId: text("outbox_id").primaryKey().references(() => reportEvaluationFeedbackOutbox.id, { onDelete: "cascade" }),
   runId: text("run_id").notNull().references(() => reportRuns.id, { onDelete: "cascade" }),
@@ -396,6 +405,7 @@ export const reportPurgeAudits = sqliteTable("report_purge_audits", {
   humanReviewRequestsDeleted: integer("human_review_requests_deleted").notNull().default(0),
   humanReviewResponsesDeleted: integer("human_review_responses_deleted").notNull().default(0),
   humanReviewOpenDeleted: integer("human_review_open_deleted").notNull().default(0),
+  evaluationFeedbackPendingDeleted: integer("evaluation_feedback_pending_deleted").notNull().default(0),
   evaluationFeedbackOutboxDeleted: integer("evaluation_feedback_outbox_deleted").notNull().default(0),
   evaluationFeedbackClaimsDeleted: integer("evaluation_feedback_claims_deleted").notNull().default(0),
   evaluationFeedbackReceiptsDeleted: integer("evaluation_feedback_receipts_deleted").notNull().default(0),

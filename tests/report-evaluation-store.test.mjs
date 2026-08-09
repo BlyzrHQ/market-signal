@@ -385,8 +385,14 @@ test("feedback migrations apply in order and install the atomic terminal trigger
       for (const statement of migration.split("--> statement-breakpoint").map((part) => part.trim()).filter(Boolean)) database.exec(statement);
     }
     database.prepare("INSERT INTO report_runs (id) VALUES ('run-1')").run();
-    database.prepare("INSERT INTO report_evaluations (id, run_id, status, completed_at, created_at) VALUES ('evaluation-1', 'run-1', 'complete', '2026-08-09T00:00:01.000Z', '2026-08-09T00:00:00.000Z')").run();
-    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM report_evaluation_feedback_outbox WHERE evaluation_id = 'evaluation-1'").get().count, 1);
+    database.prepare("INSERT INTO report_evaluations (id, run_id, status, completed_at, created_at) VALUES ('evaluation-acked', 'run-1', 'complete', '2026-08-09T00:00:01.000Z', '2026-08-09T00:00:00.000Z')").run();
+    database.prepare("INSERT INTO report_evaluation_feedback_receipts (id, outbox_id, evaluation_id, run_id, consumer_key, idempotency_key, payload_hash, receipt_hash, acknowledged_at) SELECT 'receipt-acked', id, evaluation_id, run_id, 'codex-task-feedback-v1', 'migration-acked', ?, ?, '2026-08-09T00:00:02.000Z' FROM report_evaluation_feedback_outbox WHERE evaluation_id = 'evaluation-acked'").run("a".repeat(64), "b".repeat(64));
+    const pendingMigration = await readFile(new URL("../drizzle/0013_icy_boom_boom.sql", import.meta.url), "utf8");
+    for (const statement of pendingMigration.split("--> statement-breakpoint").map((part) => part.trim()).filter(Boolean)) database.exec(statement);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM report_evaluation_feedback_pending").get().count, 0);
+    database.prepare("INSERT INTO report_evaluations (id, run_id, status, completed_at, created_at) VALUES ('evaluation-pending', 'run-1', 'failed', '2026-08-09T00:00:03.000Z', '2026-08-09T00:00:03.000Z')").run();
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM report_evaluation_feedback_outbox").get().count, 2);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM report_evaluation_feedback_pending WHERE outbox_id = (SELECT id FROM report_evaluation_feedback_outbox WHERE evaluation_id = 'evaluation-pending')").get().count, 1);
     const claims = database.pragma("table_info(report_evaluation_feedback_claims)");
     assert.equal(claims.some((column) => column.name === "payload_hash" && column.notnull === 1), true);
   } finally {
@@ -477,12 +483,23 @@ test("feedback backlog visibility uses a bounded lower-bound scan", async () => 
   try {
     const now = new Date("2026-08-09T12:09:00.000Z");
     const run = await createReportRun({ primaryDomain: "feedback-backlog.example" }, now, value.database);
-    const statements = [];
-    for (let index = 0; index < 1_005; index += 1) {
-      statements.push(value.database.prepare("INSERT INTO report_evaluations (id, run_id, evaluation_type, input_hash, fact_manifest_hash, evaluator_version, rubric_version, status, rating_basis, created_at, completed_at) VALUES (?, ?, 'report', ?, ?, 'ecommerce-agent-v1', 'r1', 'failed', 'none', ?, ?)").bind(`backlog-${index}`, run.id, `input-${index}`, `manifest-${index}`, now.toISOString(), now.toISOString()));
-    }
-    for (let offset = 0; offset < statements.length; offset += 100) await value.database.batch(statements.slice(offset, offset + 100));
+    const insertEvaluations = async (prefix, count) => {
+      const statements = [];
+      for (let index = 0; index < count; index += 1) {
+        statements.push(value.database.prepare("INSERT INTO report_evaluations (id, run_id, evaluation_type, input_hash, fact_manifest_hash, evaluator_version, rubric_version, status, rating_basis, created_at, completed_at) VALUES (?, ?, 'report', ?, ?, 'ecommerce-agent-v1', 'r1', 'failed', 'none', ?, ?)").bind(`${prefix}-${index}`, run.id, `${prefix}-input-${index}`, `${prefix}-manifest-${index}`, now.toISOString(), now.toISOString()));
+      }
+      for (let offset = 0; offset < statements.length; offset += 100) await value.database.batch(statements.slice(offset, offset + 100));
+    };
+    await insertEvaluations("acknowledged-prefix", 1_000);
+    const acknowledged = (await value.database.prepare("SELECT id, evaluation_id FROM report_evaluation_feedback_outbox ORDER BY queue_seq LIMIT 1000").all()).results;
+    const receipts = acknowledged.map((row, index) => value.database.prepare("INSERT INTO report_evaluation_feedback_receipts (id, outbox_id, evaluation_id, run_id, consumer_key, idempotency_key, payload_hash, receipt_hash, acknowledged_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(`prefix-receipt-${index}`, row.id, row.evaluation_id, run.id, REPORT_FEEDBACK_CONSUMER, `prefix-idempotency-${index}`, "a".repeat(64), "b".repeat(64), now.toISOString()));
+    for (let offset = 0; offset < receipts.length; offset += 100) await value.database.batch(receipts.slice(offset, offset + 100));
+    assert.equal((await value.database.prepare("SELECT COUNT(*) AS count FROM report_evaluation_feedback_pending").all()).results[0].count, 0);
+    await insertEvaluations("pending-backlog", 1_005);
+    assert.equal((await value.database.prepare("SELECT COUNT(*) AS count FROM report_evaluation_feedback_outbox").all()).results[0].count, 2_005);
+    assert.equal((await value.database.prepare("SELECT COUNT(*) AS count FROM report_evaluation_feedback_pending").all()).results[0].count, 1_005);
     const claimed = await claimEvaluationFeedback(new Date(now.getTime() + 1_000), value.database);
+    assert.equal(claimed.item.evaluationId, "pending-backlog-0");
     assert.equal(claimed.backlog.pending, 1_001);
     assert.equal(claimed.backlog.pendingIsLowerBound, true);
     assert.equal(claimed.backlog.oldestAt, now.toISOString());

@@ -298,6 +298,8 @@ const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS report_evaluation_feedback_outbox (queue_seq integer PRIMARY KEY AUTOINCREMENT NOT NULL, id text NOT NULL, evaluation_id text NOT NULL REFERENCES report_evaluations(id) ON DELETE CASCADE, run_id text NOT NULL REFERENCES report_runs(id) ON DELETE CASCADE, event_kind text DEFAULT 'terminal_report_evaluation' NOT NULL CHECK (event_kind = 'terminal_report_evaluation'), created_at text NOT NULL)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS report_evaluation_feedback_outbox_id_uidx ON report_evaluation_feedback_outbox (id)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS report_evaluation_feedback_outbox_evaluation_uidx ON report_evaluation_feedback_outbox (evaluation_id)`,
+  `CREATE TABLE IF NOT EXISTS report_evaluation_feedback_pending (outbox_id text PRIMARY KEY NOT NULL REFERENCES report_evaluation_feedback_outbox(id) ON DELETE CASCADE, run_id text NOT NULL REFERENCES report_runs(id) ON DELETE CASCADE, queue_seq integer NOT NULL, created_at text NOT NULL)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS report_evaluation_feedback_pending_queue_uidx ON report_evaluation_feedback_pending (queue_seq)`,
   `CREATE TABLE IF NOT EXISTS report_evaluation_feedback_claims (outbox_id text PRIMARY KEY NOT NULL REFERENCES report_evaluation_feedback_outbox(id) ON DELETE CASCADE, run_id text NOT NULL REFERENCES report_runs(id) ON DELETE CASCADE, consumer_key text NOT NULL, lease_id_hash text NOT NULL CHECK (length(lease_id_hash) = 64), payload_hash text NOT NULL CHECK (length(payload_hash) = 64), leased_until text NOT NULL, claimed_at text NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS report_evaluation_feedback_claims_expiry_idx ON report_evaluation_feedback_claims (leased_until)`,
   `CREATE TABLE IF NOT EXISTS report_evaluation_feedback_receipts (id text PRIMARY KEY NOT NULL, outbox_id text NOT NULL REFERENCES report_evaluation_feedback_outbox(id) ON DELETE CASCADE, evaluation_id text NOT NULL REFERENCES report_evaluations(id) ON DELETE CASCADE, run_id text NOT NULL REFERENCES report_runs(id) ON DELETE CASCADE, consumer_key text NOT NULL, idempotency_key text NOT NULL, payload_hash text NOT NULL CHECK (length(payload_hash) = 64), receipt_hash text NOT NULL CHECK (length(receipt_hash) = 64), acknowledged_at text NOT NULL)`,
@@ -305,7 +307,7 @@ const SCHEMA_STATEMENTS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS report_evaluation_feedback_receipts_idempotency_uidx ON report_evaluation_feedback_receipts (idempotency_key)`,
   `CREATE TRIGGER IF NOT EXISTS report_evaluation_feedback_outbox_immutable BEFORE UPDATE ON report_evaluation_feedback_outbox BEGIN SELECT RAISE(ABORT, 'immutable evaluation feedback outbox'); END`,
   `CREATE TRIGGER IF NOT EXISTS report_evaluation_feedback_receipts_immutable BEFORE UPDATE ON report_evaluation_feedback_receipts BEGIN SELECT RAISE(ABORT, 'immutable evaluation feedback receipt'); END`,
-  `CREATE TABLE IF NOT EXISTS report_purge_audits (id text PRIMARY KEY NOT NULL, cutoff text NOT NULL, heartbeat_guard text NOT NULL, runs_deleted integer NOT NULL, quality_signals_deleted integer NOT NULL, human_review_requests_deleted integer DEFAULT 0 NOT NULL, human_review_responses_deleted integer DEFAULT 0 NOT NULL, human_review_open_deleted integer DEFAULT 0 NOT NULL, evaluation_feedback_outbox_deleted integer DEFAULT 0 NOT NULL, evaluation_feedback_claims_deleted integer DEFAULT 0 NOT NULL, evaluation_feedback_receipts_deleted integer DEFAULT 0 NOT NULL, evaluations_deleted integer NOT NULL, ads_deleted integer NOT NULL, matches_deleted integer NOT NULL, products_deleted integer NOT NULL, companies_deleted integer NOT NULL, fact_chunks_deleted integer NOT NULL, fact_manifests_deleted integer NOT NULL, documents_deleted integer NOT NULL, events_deleted integer NOT NULL, observed_at text NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS report_purge_audits (id text PRIMARY KEY NOT NULL, cutoff text NOT NULL, heartbeat_guard text NOT NULL, runs_deleted integer NOT NULL, quality_signals_deleted integer NOT NULL, human_review_requests_deleted integer DEFAULT 0 NOT NULL, human_review_responses_deleted integer DEFAULT 0 NOT NULL, human_review_open_deleted integer DEFAULT 0 NOT NULL, evaluation_feedback_pending_deleted integer DEFAULT 0 NOT NULL, evaluation_feedback_outbox_deleted integer DEFAULT 0 NOT NULL, evaluation_feedback_claims_deleted integer DEFAULT 0 NOT NULL, evaluation_feedback_receipts_deleted integer DEFAULT 0 NOT NULL, evaluations_deleted integer NOT NULL, ads_deleted integer NOT NULL, matches_deleted integer NOT NULL, products_deleted integer NOT NULL, companies_deleted integer NOT NULL, fact_chunks_deleted integer NOT NULL, fact_manifests_deleted integer NOT NULL, documents_deleted integer NOT NULL, events_deleted integer NOT NULL, observed_at text NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS report_purge_audits_observed_idx ON report_purge_audits (observed_at)`,
   `CREATE TABLE IF NOT EXISTS report_product_entitlements (run_id text PRIMARY KEY NOT NULL, plan_tier text NOT NULL, product_limit integer NOT NULL, resolved_at text NOT NULL)`,
 ];
@@ -331,12 +333,15 @@ const REPORT_PURGE_AUDIT_COLUMN_MIGRATIONS = [
   ["human_review_requests_deleted", "ALTER TABLE report_purge_audits ADD COLUMN human_review_requests_deleted integer DEFAULT 0 NOT NULL"],
   ["human_review_responses_deleted", "ALTER TABLE report_purge_audits ADD COLUMN human_review_responses_deleted integer DEFAULT 0 NOT NULL"],
   ["human_review_open_deleted", "ALTER TABLE report_purge_audits ADD COLUMN human_review_open_deleted integer DEFAULT 0 NOT NULL"],
+  ["evaluation_feedback_pending_deleted", "ALTER TABLE report_purge_audits ADD COLUMN evaluation_feedback_pending_deleted integer DEFAULT 0 NOT NULL"],
   ["evaluation_feedback_outbox_deleted", "ALTER TABLE report_purge_audits ADD COLUMN evaluation_feedback_outbox_deleted integer DEFAULT 0 NOT NULL"],
   ["evaluation_feedback_claims_deleted", "ALTER TABLE report_purge_audits ADD COLUMN evaluation_feedback_claims_deleted integer DEFAULT 0 NOT NULL"],
   ["evaluation_feedback_receipts_deleted", "ALTER TABLE report_purge_audits ADD COLUMN evaluation_feedback_receipts_deleted integer DEFAULT 0 NOT NULL"],
 ] as const;
 
 const REPORT_EVALUATION_FEEDBACK_TRIGGER_STATEMENTS = [
+  `CREATE TRIGGER IF NOT EXISTS report_evaluation_feedback_outbox_pending_insert AFTER INSERT ON report_evaluation_feedback_outbox BEGIN INSERT INTO report_evaluation_feedback_pending (outbox_id, run_id, queue_seq, created_at) VALUES (NEW.id, NEW.run_id, NEW.queue_seq, NEW.created_at); END`,
+  `CREATE TRIGGER IF NOT EXISTS report_evaluation_feedback_receipt_pending_delete AFTER INSERT ON report_evaluation_feedback_receipts BEGIN DELETE FROM report_evaluation_feedback_pending WHERE outbox_id = NEW.outbox_id; END`,
   `CREATE TRIGGER IF NOT EXISTS report_evaluations_terminal_immutable BEFORE UPDATE ON report_evaluations WHEN OLD.status IN ('complete','agent_rejected','needs_human_review','call_outcome_unknown','insufficient_facts','rubric_unavailable','failed') BEGIN SELECT RAISE(ABORT, 'immutable terminal report evaluation'); END`,
   `CREATE TRIGGER IF NOT EXISTS report_evaluations_terminal_outbox_update AFTER UPDATE OF status ON report_evaluations WHEN NEW.status IN ('complete','agent_rejected','needs_human_review','call_outcome_unknown','insufficient_facts','rubric_unavailable','failed') AND OLD.status != NEW.status BEGIN INSERT INTO report_evaluation_feedback_outbox (id, evaluation_id, run_id, event_kind, created_at) VALUES (lower(hex(randomblob(16))), NEW.id, NEW.run_id, 'terminal_report_evaluation', CASE WHEN NEW.completed_at != '' THEN NEW.completed_at ELSE NEW.created_at END); END`,
   `CREATE TRIGGER IF NOT EXISTS report_evaluations_terminal_outbox_insert AFTER INSERT ON report_evaluations WHEN NEW.status IN ('complete','agent_rejected','needs_human_review','call_outcome_unknown','insufficient_facts','rubric_unavailable','failed') BEGIN INSERT INTO report_evaluation_feedback_outbox (id, evaluation_id, run_id, event_kind, created_at) VALUES (lower(hex(randomblob(16))), NEW.id, NEW.run_id, 'terminal_report_evaluation', CASE WHEN NEW.completed_at != '' THEN NEW.completed_at ELSE NEW.created_at END); END`,
@@ -582,6 +587,7 @@ async function initializeSchema(database: D1DatabaseLike) {
     await database.prepare(statement).run();
   }
   await database.prepare(`UPDATE report_evaluations SET deterministic_at = CASE WHEN deterministic_at = '' AND status IN ('deterministic', 'rubric_unavailable', 'failed') THEN COALESCE(NULLIF(completed_at, ''), created_at) ELSE deterministic_at END, usage_status = CASE WHEN usage_status IN ('', 'not_called') AND (COALESCE(cost_microusd, 0) > 0 OR COALESCE(input_tokens, 0) > 0 OR COALESCE(output_tokens, 0) > 0) THEN 'known' WHEN usage_status = '' THEN 'not_called' ELSE usage_status END WHERE (deterministic_at = '' AND status IN ('deterministic', 'rubric_unavailable', 'failed')) OR usage_status = '' OR (usage_status = 'not_called' AND (COALESCE(cost_microusd, 0) > 0 OR COALESCE(input_tokens, 0) > 0 OR COALESCE(output_tokens, 0) > 0))`).run();
+  await database.prepare(`INSERT OR IGNORE INTO report_evaluation_feedback_pending (outbox_id, run_id, queue_seq, created_at) SELECT outbox.id, outbox.run_id, outbox.queue_seq, outbox.created_at FROM report_evaluation_feedback_outbox outbox LEFT JOIN report_evaluation_feedback_receipts receipts ON receipts.outbox_id = outbox.id WHERE receipts.outbox_id IS NULL`).run();
   for (const statement of REPORT_EVALUATION_FEEDBACK_TRIGGER_STATEMENTS) await database.prepare(statement).run();
 }
 
@@ -1315,6 +1321,7 @@ function feedbackPayload(item: StoredEvaluationFeedback) {
 }
 
 const FEEDBACK_ROW_SELECT = `SELECT outbox.queue_seq, outbox.id AS delivery_id, evaluations.id AS evaluation_id, evaluations.status, evaluations.rating_basis, evaluations.grade, evaluations.overall_score, evaluations.agent_json, evaluations.error_code, evaluations.usage_status, evaluations.cost_microusd, evaluations.completed_at, runs.public_id, runs.primary_domain, runs.expires_at, requests.id AS human_request_id, requests.uncertainty_code, requests.question, requests.evidence_ids_json, human_open.request_id AS human_open_id FROM report_evaluation_feedback_outbox outbox JOIN report_evaluations evaluations ON evaluations.id = outbox.evaluation_id JOIN report_runs runs ON runs.id = outbox.run_id LEFT JOIN report_evaluation_feedback_receipts receipts ON receipts.outbox_id = outbox.id LEFT JOIN report_human_review_requests requests ON requests.evaluation_id = evaluations.id LEFT JOIN report_human_review_open human_open ON human_open.request_id = requests.id`;
+const FEEDBACK_PENDING_ROW_SELECT = `SELECT pending.queue_seq, outbox.id AS delivery_id, evaluations.id AS evaluation_id, evaluations.status, evaluations.rating_basis, evaluations.grade, evaluations.overall_score, evaluations.agent_json, evaluations.error_code, evaluations.usage_status, evaluations.cost_microusd, evaluations.completed_at, runs.public_id, runs.primary_domain, runs.expires_at, requests.id AS human_request_id, requests.uncertainty_code, requests.question, requests.evidence_ids_json, human_open.request_id AS human_open_id FROM report_evaluation_feedback_pending pending INDEXED BY report_evaluation_feedback_pending_queue_uidx JOIN report_evaluation_feedback_outbox outbox ON outbox.id = pending.outbox_id JOIN report_evaluations evaluations ON evaluations.id = outbox.evaluation_id JOIN report_runs runs ON runs.id = pending.run_id LEFT JOIN report_human_review_requests requests ON requests.evaluation_id = evaluations.id LEFT JOIN report_human_review_open human_open ON human_open.request_id = requests.id`;
 const REPORT_FEEDBACK_BACKLOG_SCAN_LIMIT = 1_001;
 
 export async function claimEvaluationFeedback(now = new Date(), databaseOverride?: D1DatabaseLike | null) {
@@ -1323,9 +1330,9 @@ export async function claimEvaluationFeedback(now = new Date(), databaseOverride
   if (!Number.isFinite(now.getTime())) throw new Error("Invalid evaluation feedback claim time.");
   await ensureSchema(database);
   const observedAt = now.toISOString();
-  const candidateRows = await database.prepare(`${FEEDBACK_ROW_SELECT} LEFT JOIN report_evaluation_feedback_claims claims ON claims.outbox_id = outbox.id WHERE receipts.outbox_id IS NULL AND runs.expires_at > ? AND (claims.outbox_id IS NULL OR claims.leased_until <= ?) ORDER BY outbox.queue_seq LIMIT 1`).bind(observedAt, observedAt).all<Record<string, unknown>>();
+  const candidateRows = await database.prepare(`${FEEDBACK_PENDING_ROW_SELECT} LEFT JOIN report_evaluation_feedback_claims claims ON claims.outbox_id = pending.outbox_id WHERE runs.expires_at > ? AND (claims.outbox_id IS NULL OR claims.leased_until <= ?) ORDER BY pending.queue_seq LIMIT 1`).bind(observedAt, observedAt).all<Record<string, unknown>>();
   const candidate = candidateRows.results?.[0];
-  const backlogRows = await database.prepare(`SELECT COUNT(*) AS count, MIN(created_at) AS oldest FROM (SELECT outbox.created_at FROM report_evaluation_feedback_outbox outbox JOIN report_runs runs ON runs.id = outbox.run_id LEFT JOIN report_evaluation_feedback_receipts receipts ON receipts.outbox_id = outbox.id WHERE receipts.outbox_id IS NULL AND runs.expires_at > ? ORDER BY outbox.queue_seq LIMIT ?) bounded_backlog`).bind(observedAt, REPORT_FEEDBACK_BACKLOG_SCAN_LIMIT).all<Record<string, unknown>>();
+  const backlogRows = await database.prepare(`SELECT COUNT(*) AS count, MIN(created_at) AS oldest FROM (SELECT pending.created_at FROM report_evaluation_feedback_pending pending INDEXED BY report_evaluation_feedback_pending_queue_uidx JOIN report_runs runs ON runs.id = pending.run_id WHERE runs.expires_at > ? ORDER BY pending.queue_seq LIMIT ?) bounded_backlog`).bind(observedAt, REPORT_FEEDBACK_BACKLOG_SCAN_LIMIT).all<Record<string, unknown>>();
   const boundedPending = numberField(backlogRows.results?.[0], "count");
   const backlog = { pending: boundedPending, pendingIsLowerBound: boundedPending === REPORT_FEEDBACK_BACKLOG_SCAN_LIMIT, oldestAt: String(backlogRows.results?.[0]?.oldest || "") || null };
   if (!candidate) return { item: null, leaseId: null, payloadHash: null, backlog };
@@ -1335,7 +1342,7 @@ export async function claimEvaluationFeedback(now = new Date(), databaseOverride
   const payloadHash = await sha256Text(JSON.stringify(feedbackPayload(item)));
   const leasedUntil = new Date(now.getTime() + REPORT_FEEDBACK_LEASE_SECONDS * 1_000).toISOString();
   const results = await database.batch([
-    database.prepare(`INSERT INTO report_evaluation_feedback_claims (outbox_id, run_id, consumer_key, lease_id_hash, payload_hash, leased_until, claimed_at) SELECT outbox.id, outbox.run_id, ?, ?, ?, ?, ? FROM report_evaluation_feedback_outbox outbox JOIN report_runs runs ON runs.id = outbox.run_id LEFT JOIN report_evaluation_feedback_receipts receipts ON receipts.outbox_id = outbox.id WHERE outbox.id = ? AND receipts.outbox_id IS NULL AND runs.expires_at > ? ON CONFLICT(outbox_id) DO UPDATE SET consumer_key = excluded.consumer_key, lease_id_hash = excluded.lease_id_hash, payload_hash = excluded.payload_hash, leased_until = excluded.leased_until, claimed_at = excluded.claimed_at WHERE report_evaluation_feedback_claims.leased_until <= ?`).bind(REPORT_FEEDBACK_CONSUMER, leaseIdHash, payloadHash, leasedUntil, observedAt, item.deliveryId, observedAt, observedAt),
+    database.prepare(`INSERT INTO report_evaluation_feedback_claims (outbox_id, run_id, consumer_key, lease_id_hash, payload_hash, leased_until, claimed_at) SELECT pending.outbox_id, pending.run_id, ?, ?, ?, ?, ? FROM report_evaluation_feedback_pending pending JOIN report_runs runs ON runs.id = pending.run_id WHERE pending.outbox_id = ? AND runs.expires_at > ? ON CONFLICT(outbox_id) DO UPDATE SET consumer_key = excluded.consumer_key, lease_id_hash = excluded.lease_id_hash, payload_hash = excluded.payload_hash, leased_until = excluded.leased_until, claimed_at = excluded.claimed_at WHERE report_evaluation_feedback_claims.leased_until <= ?`).bind(REPORT_FEEDBACK_CONSUMER, leaseIdHash, payloadHash, leasedUntil, observedAt, item.deliveryId, observedAt, observedAt),
     database.prepare(`SELECT outbox_id FROM report_evaluation_feedback_claims WHERE outbox_id = ? AND consumer_key = ? AND lease_id_hash = ? AND payload_hash = ? AND leased_until = ?`).bind(item.deliveryId, REPORT_FEEDBACK_CONSUMER, leaseIdHash, payloadHash, leasedUntil),
   ]);
   const claimed = (results[1] as { results?: Record<string, unknown>[] } | undefined)?.results?.[0];
@@ -1762,6 +1769,7 @@ export type ReportPurgeCounts = {
   humanReviewRequests: number;
   humanReviewResponses: number;
   humanReviewOpen: number;
+  evaluationFeedbackPending: number;
   evaluationFeedbackOutbox: number;
   evaluationFeedbackClaims: number;
   evaluationFeedbackReceipts: number;
@@ -1806,12 +1814,12 @@ export async function purgeExpiredReports(now = new Date(), databaseOverride?: D
   const eligible = () => [cutoff, heartbeatGuard] as const;
   const countFor = (table: string) => `(SELECT COUNT(*) FROM ${table} WHERE run_id IN (${eligibleRuns}))`;
   const runCount = `(SELECT COUNT(*) FROM report_runs WHERE id IN (${eligibleRuns}))`;
-  const audit = database.prepare(`INSERT INTO report_purge_audits (id, cutoff, heartbeat_guard, runs_deleted, quality_signals_deleted, human_review_requests_deleted, human_review_responses_deleted, human_review_open_deleted, evaluation_feedback_outbox_deleted, evaluation_feedback_claims_deleted, evaluation_feedback_receipts_deleted, evaluations_deleted, ads_deleted, matches_deleted, products_deleted, companies_deleted, fact_chunks_deleted, fact_manifests_deleted, documents_deleted, events_deleted, observed_at) SELECT ?, ?, ?, ${runCount}, ${countFor("report_quality_signals")}, ${countFor("report_human_review_requests")}, ${countFor("report_human_review_responses")}, ${countFor("report_human_review_open")}, ${countFor("report_evaluation_feedback_outbox")}, ${countFor("report_evaluation_feedback_claims")}, ${countFor("report_evaluation_feedback_receipts")}, ${countFor("report_evaluations")}, ${countFor("report_ads")}, ${countFor("report_matches")}, ${countFor("report_products")}, ${countFor("report_companies")}, ${countFor("report_fact_chunks")}, ${countFor("report_fact_manifests")}, ${countFor("report_documents")}, ${countFor("report_events")}, ? WHERE EXISTS (${eligibleRuns})`).bind(
+  const audit = database.prepare(`INSERT INTO report_purge_audits (id, cutoff, heartbeat_guard, runs_deleted, quality_signals_deleted, human_review_requests_deleted, human_review_responses_deleted, human_review_open_deleted, evaluation_feedback_pending_deleted, evaluation_feedback_outbox_deleted, evaluation_feedback_claims_deleted, evaluation_feedback_receipts_deleted, evaluations_deleted, ads_deleted, matches_deleted, products_deleted, companies_deleted, fact_chunks_deleted, fact_manifests_deleted, documents_deleted, events_deleted, observed_at) SELECT ?, ?, ?, ${runCount}, ${countFor("report_quality_signals")}, ${countFor("report_human_review_requests")}, ${countFor("report_human_review_responses")}, ${countFor("report_human_review_open")}, ${countFor("report_evaluation_feedback_pending")}, ${countFor("report_evaluation_feedback_outbox")}, ${countFor("report_evaluation_feedback_claims")}, ${countFor("report_evaluation_feedback_receipts")}, ${countFor("report_evaluations")}, ${countFor("report_ads")}, ${countFor("report_matches")}, ${countFor("report_products")}, ${countFor("report_companies")}, ${countFor("report_fact_chunks")}, ${countFor("report_fact_manifests")}, ${countFor("report_documents")}, ${countFor("report_events")}, ? WHERE EXISTS (${eligibleRuns})`).bind(
     auditId,
     cutoff,
     heartbeatGuard,
     ...eligible(),
-    ...eligible(), ...eligible(), ...eligible(), ...eligible(), ...eligible(), ...eligible(), ...eligible(), ...eligible(), ...eligible(), ...eligible(),
+    ...eligible(), ...eligible(), ...eligible(), ...eligible(), ...eligible(), ...eligible(), ...eligible(), ...eligible(), ...eligible(), ...eligible(), ...eligible(),
     ...eligible(), ...eligible(), ...eligible(), ...eligible(), ...eligible(), ...eligible(),
     cutoff,
     ...eligible(),
@@ -1825,6 +1833,7 @@ export async function purgeExpiredReports(now = new Date(), databaseOverride?: D
     guardedDelete("report_human_review_requests"),
     guardedDelete("report_evaluation_feedback_receipts"),
     guardedDelete("report_evaluation_feedback_claims"),
+    guardedDelete("report_evaluation_feedback_pending"),
     guardedDelete("report_evaluation_feedback_outbox"),
     guardedDelete("report_evaluations"),
     guardedDelete("report_ads"),
@@ -1854,6 +1863,7 @@ export async function purgeExpiredReports(now = new Date(), databaseOverride?: D
       humanReviewRequests: numberField(auditRow, "human_review_requests_deleted"),
       humanReviewResponses: numberField(auditRow, "human_review_responses_deleted"),
       humanReviewOpen: numberField(auditRow, "human_review_open_deleted"),
+      evaluationFeedbackPending: numberField(auditRow, "evaluation_feedback_pending_deleted"),
       evaluationFeedbackOutbox: numberField(auditRow, "evaluation_feedback_outbox_deleted"),
       evaluationFeedbackClaims: numberField(auditRow, "evaluation_feedback_claims_deleted"),
       evaluationFeedbackReceipts: numberField(auditRow, "evaluation_feedback_receipts_deleted"),

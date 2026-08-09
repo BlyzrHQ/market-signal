@@ -15,6 +15,7 @@ const NOW = new Date("2026-07-31T12:00:00.000Z");
 const OLD = new Date("2025-01-01T00:00:00.000Z");
 const TOKEN = "retention_callback_token_that_is_long_enough";
 const TABLES = ["report_quality_signals", "report_human_review_responses", "report_human_review_open", "report_human_review_requests", "report_evaluation_feedback_receipts", "report_evaluation_feedback_claims", "report_evaluation_feedback_outbox", "report_evaluations", "report_ads", "report_matches", "report_products", "report_companies", "report_fact_chunks", "report_fact_manifests", "report_match_batch_checkpoints", "report_product_entitlements", "report_documents", "report_events", "report_runs"];
+const DELETE_TABLES = ["report_quality_signals", "report_human_review_responses", "report_human_review_open", "report_human_review_requests", "report_evaluation_feedback_receipts", "report_evaluation_feedback_claims", "report_evaluation_feedback_pending", "report_evaluation_feedback_outbox", "report_evaluations", "report_ads", "report_matches", "report_products", "report_companies", "report_fact_chunks", "report_fact_manifests", "report_match_batch_checkpoints", "report_product_entitlements", "report_documents", "report_events", "report_runs"];
 
 async function databaseFixture(t) {
   const directory = await mkdtemp(join(tmpdir(), "market-signal-retention-"));
@@ -62,9 +63,10 @@ test("one atomic pass purges every report artifact and records exact anonymous c
   await database.prepare("UPDATE report_runs SET heartbeat_at = ? WHERE id = ?").bind(NOW.toISOString(), recent.id).run();
 
   const result = await purgeExpiredReports(NOW, database);
-  assert.deepEqual(result.deleted, { runs: 1, qualitySignals: 1, humanReviewRequests: 1, humanReviewResponses: 1, humanReviewOpen: 1, evaluationFeedbackOutbox: 1, evaluationFeedbackClaims: 1, evaluationFeedbackReceipts: 1, evaluations: 1, ads: 1, matches: 1, products: 1, companies: 1, factChunks: 1, factManifests: 1, documents: 1, events: 1 });
+  assert.deepEqual(result.deleted, { runs: 1, qualitySignals: 1, humanReviewRequests: 1, humanReviewResponses: 1, humanReviewOpen: 1, evaluationFeedbackPending: 0, evaluationFeedbackOutbox: 1, evaluationFeedbackClaims: 1, evaluationFeedbackReceipts: 1, evaluations: 1, ads: 1, matches: 1, products: 1, companies: 1, factChunks: 1, factManifests: 1, documents: 1, events: 1 });
   assert.equal(result.remaining, 0);
   for (const table of TABLES) assert.equal(await scalar(database, `SELECT COUNT(*) AS count FROM ${table}`), 2, table);
+  assert.equal(await scalar(database, "SELECT COUNT(*) AS count FROM report_evaluation_feedback_pending"), 0);
   const audits = await database.prepare("SELECT * FROM report_purge_audits").all();
   assert.equal(audits.results.length, 1);
   assert.equal(audits.results[0].runs_deleted, 1);
@@ -116,7 +118,7 @@ test("D1-compatible purge uses one guarded batch in the required child order", a
   await purgeExpiredReports(NOW, database);
   assert.equal(batches.length, 1);
   const deletes = batches[0].map((statement) => statement.query).filter((query) => query.startsWith("DELETE FROM report_") && !query.startsWith("DELETE FROM report_purge_audits"));
-  assert.deepEqual(deletes.map((query) => /^DELETE FROM (\w+)/.exec(query)[1]), TABLES);
+  assert.deepEqual(deletes.map((query) => /^DELETE FROM (\w+)/.exec(query)[1]), DELETE_TABLES);
   for (const query of deletes) assert.match(query, /expires_at <= \? AND heartbeat_at <= \?/);
 });
 
