@@ -373,6 +373,25 @@ test("needs-human evaluation creates an immutable owner queue item and response 
   }
 });
 
+test("runtime database reopen skips the one-time feedback history backfill", async () => {
+  const value = await fixture();
+  await createReportRun({ primaryDomain: "initialized-feedback.example" }, new Date("2026-08-08T00:00:00.000Z"), value.database);
+  const reopened = await NodeSqliteDatabase.open(value.path);
+  const queries = [];
+  const observed = {
+    prepare(query) { queries.push(query); return reopened.prepare(query); },
+    batch(statements) { return reopened.batch(statements); },
+  };
+  try {
+    await createReportRun({ primaryDomain: "reopened-feedback.example" }, new Date("2026-08-09T00:00:00.000Z"), observed);
+    assert.ok(queries.some((query) => query.includes("sqlite_master") && query.includes("report_evaluation_feedback_pending")));
+    assert.equal(queries.some((query) => query.startsWith("INSERT INTO report_evaluation_feedback_pending") && query.includes("SELECT outbox.id")), false);
+  } finally {
+    reopened.close();
+    await closeFixture(value);
+  }
+});
+
 test("feedback migrations apply in order and install the atomic terminal trigger", async () => {
   const directory = await mkdtemp(join(tmpdir(), "market-signal-feedback-migration-"));
   const path = join(directory, "migration.sqlite");

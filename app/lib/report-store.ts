@@ -565,6 +565,8 @@ function batchFailureClass(error: unknown) {
 }
 
 async function initializeSchema(database: D1DatabaseLike) {
+  const pendingTableRows = await database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'report_evaluation_feedback_pending' LIMIT 1").all<Record<string, unknown>>();
+  const pendingTableExisted = Boolean(pendingTableRows.results?.[0]);
   for (let index = 0; index < SCHEMA_STATEMENTS.length; index += 1) {
     try {
       await database.prepare(SCHEMA_STATEMENTS[index]).run();
@@ -587,7 +589,7 @@ async function initializeSchema(database: D1DatabaseLike) {
     await database.prepare(statement).run();
   }
   await database.prepare(`UPDATE report_evaluations SET deterministic_at = CASE WHEN deterministic_at = '' AND status IN ('deterministic', 'rubric_unavailable', 'failed') THEN COALESCE(NULLIF(completed_at, ''), created_at) ELSE deterministic_at END, usage_status = CASE WHEN usage_status IN ('', 'not_called') AND (COALESCE(cost_microusd, 0) > 0 OR COALESCE(input_tokens, 0) > 0 OR COALESCE(output_tokens, 0) > 0) THEN 'known' WHEN usage_status = '' THEN 'not_called' ELSE usage_status END WHERE (deterministic_at = '' AND status IN ('deterministic', 'rubric_unavailable', 'failed')) OR usage_status = '' OR (usage_status = 'not_called' AND (COALESCE(cost_microusd, 0) > 0 OR COALESCE(input_tokens, 0) > 0 OR COALESCE(output_tokens, 0) > 0))`).run();
-  await database.prepare(`INSERT OR IGNORE INTO report_evaluation_feedback_pending (outbox_id, run_id, queue_seq, created_at) SELECT outbox.id, outbox.run_id, outbox.queue_seq, outbox.created_at FROM report_evaluation_feedback_outbox outbox LEFT JOIN report_evaluation_feedback_receipts receipts ON receipts.outbox_id = outbox.id WHERE receipts.outbox_id IS NULL`).run();
+  if (!pendingTableExisted) await database.prepare(`INSERT INTO report_evaluation_feedback_pending (outbox_id, run_id, queue_seq, created_at) SELECT outbox.id, outbox.run_id, outbox.queue_seq, outbox.created_at FROM report_evaluation_feedback_outbox outbox LEFT JOIN report_evaluation_feedback_receipts receipts ON receipts.outbox_id = outbox.id WHERE receipts.outbox_id IS NULL`).run();
   for (const statement of REPORT_EVALUATION_FEEDBACK_TRIGGER_STATEMENTS) await database.prepare(statement).run();
 }
 
