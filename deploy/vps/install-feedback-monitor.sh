@@ -99,7 +99,9 @@ if id "${monitor_user}" >/dev/null 2>&1; then
   ! id -nG "${monitor_user}" | tr ' ' '\n' | grep -Fxq docker || fail "monitor account must not belong to the docker group"
   [[ -d "${monitor_home}/.ssh" ]] || fail "existing monitor SSH directory is missing"
   [[ "$(stat -c '%U:%G:%a' "${monitor_home}")" == "root:root:755" ]] || fail "existing monitor home must be root-owned and mode 0755"
-  [[ "$(stat -c '%U:%G:%a' "${monitor_home}/.ssh")" == "root:root:700" ]] || fail "existing monitor SSH directory must be root-owned and mode 0700"
+  [[ "$(stat -c '%U:%G:%a' "${monitor_home}/.ssh")" == "root:${monitor_group}:750" ]] || fail "existing monitor SSH directory must be root-owned, monitor-readable, and mode 0750"
+  [[ -f "${authorized_keys}" ]] || fail "existing monitor authorized_keys is missing"
+  [[ "$(stat -c '%U:%G:%a' "${authorized_keys}")" == "root:${monitor_group}:640" ]] || fail "existing monitor authorized_keys must be root-owned, monitor-readable, and mode 0640"
   [[ "$(passwd -S "${monitor_user}" | awk '{print $2}')" == "L" ]] || fail "existing monitor account must remain password-locked"
 else
   [[ ! -e "${monitor_home}" ]] || fail "monitor home exists without its dedicated account"
@@ -129,11 +131,11 @@ if ! id "${monitor_user}" >/dev/null 2>&1; then
   created_user=1
   install -d -o root -g root -m 0755 "${monitor_home}"
   created_home=1
-  install -d -o root -g root -m 0700 "${monitor_home}/.ssh"
+  install -d -o root -g "${monitor_group}" -m 0750 "${monitor_home}/.ssh"
   passwd --lock "${monitor_user}" >/dev/null
 fi
 
-install -o root -g root -m 0600 "${transaction}/authorized_keys" "${authorized_keys}.new"
+install -o root -g "${monitor_group}" -m 0640 "${transaction}/authorized_keys" "${authorized_keys}.new"
 mv -f -- "${authorized_keys}.new" "${authorized_keys}"
 install -o root -g root -m 0440 "${transaction}/sudoers" "${sudoers}.new"
 visudo -cf "${sudoers}.new" >/dev/null
