@@ -55,24 +55,19 @@ async function providerHttpErrorCode(response: Response) {
   try {
     if (!response.body) return "provider-request-rejected";
     reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
+    const bytes = new Uint8Array(4_096);
     let total = 0;
     while (true) {
       const { done, value } = await reader.read();
       if (done) { consumed = true; break; }
       const remaining = 4_096 - total;
       if (value.byteLength > remaining) {
-        if (remaining > 0) chunks.push(value.subarray(0, remaining));
-        total = 4_096;
         return "provider-request-rejected";
       }
+      bytes.set(value, total);
       total += value.byteLength;
-      chunks.push(value);
     }
-    const bytes = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, total));
     body = JSON.parse(text);
   } catch {
     return "provider-request-rejected";

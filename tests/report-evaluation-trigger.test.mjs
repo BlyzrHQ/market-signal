@@ -174,6 +174,21 @@ test("provider rejection bodies are cancelled on shortcut statuses and oversized
   }
 });
 
+test("provider error parsing copies a small view without retaining its large backing buffer", async () => {
+  const encoded = new TextEncoder().encode(JSON.stringify({ error: { type: "invalid_request_error", code: "model_not_found", param: "model" } }));
+  const backing = new Uint8Array(10_000_000);
+  backing.set(encoded, 5_000_000);
+  const view = backing.subarray(5_000_000, 5_000_000 + encoded.byteLength);
+  const stream = new ReadableStream({ start(controller) { controller.enqueue(view); controller.close(); } });
+  const { port, state } = portFixture();
+  await runReportEvaluation(PAYLOAD, port, {
+    apiKey: "test_api_key_long_enough_for_validation",
+    randomUUID: () => "client-2",
+    fetchImpl: async () => new Response(stream, { status: 400 }),
+  });
+  assert.equal(state.terminals[0].callback.errorCode, "provider-model-unavailable");
+});
+
 test("a failed terminal callback does not emit a second conflicting callback", async () => {
   const { port, state } = portFixture();
   port.terminal = async (id, callback) => { state.terminals.push({ id, callback }); throw new Error("callback unavailable"); };
