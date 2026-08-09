@@ -109,7 +109,7 @@ test("two SQLite connections serialize overlapping passes without duplicate dele
 test("D1-compatible purge uses one guarded batch in the required child order", async () => {
   const batches = [];
   const database = {
-    prepare(query) { return { query, values: [], bind(...values) { this.values = values; return this; }, async run() { return {}; }, async all() { return { results: [] }; } }; },
+    prepare(query) { return { query, values: [], bind(...values) { this.values = values; return this; }, async run() { return {}; }, async all() { return { results: query.startsWith("SELECT key FROM report_runtime_schema_markers") ? [{ key: "evaluation-feedback-pending-backfill-v1" }] : [] }; } }; },
     async batch(statements) {
       batches.push(statements);
       return statements.map((_, index) => index === statements.length - 1 ? { results: [{ count: 0 }] } : { results: [] });

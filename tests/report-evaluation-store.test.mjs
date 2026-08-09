@@ -384,8 +384,26 @@ test("runtime database reopen skips the one-time feedback history backfill", asy
   };
   try {
     await createReportRun({ primaryDomain: "reopened-feedback.example" }, new Date("2026-08-09T00:00:00.000Z"), observed);
-    assert.ok(queries.some((query) => query.includes("sqlite_master") && query.includes("report_evaluation_feedback_pending")));
+    assert.ok(queries.some((query) => query.includes("report_runtime_schema_markers") && query.startsWith("SELECT key")));
     assert.equal(queries.some((query) => query.startsWith("INSERT INTO report_evaluation_feedback_pending") && query.includes("SELECT outbox.id")), false);
+  } finally {
+    reopened.close();
+    await closeFixture(value);
+  }
+});
+
+test("runtime database reopen recovers an interrupted feedback backfill using its durable marker", async () => {
+  const value = await fixture();
+  const now = new Date("2026-08-09T00:00:00.000Z");
+  const run = await createReportRun({ primaryDomain: "interrupted-feedback.example" }, now, value.database);
+  await value.database.prepare("INSERT INTO report_evaluations (id, run_id, evaluation_type, input_hash, fact_manifest_hash, evaluator_version, rubric_version, status, rating_basis, deterministic_at, created_at, completed_at) VALUES ('interrupted-feedback', ?, 'report', 'interrupted-input', 'interrupted-manifest', 'ecommerce-agent-v1', 'r1', 'failed', 'none', ?, ?, ?)").bind(run.id, now.toISOString(), now.toISOString(), now.toISOString()).run();
+  await value.database.prepare("DELETE FROM report_evaluation_feedback_pending").run();
+  await value.database.prepare("DELETE FROM report_runtime_schema_markers WHERE key = 'evaluation-feedback-pending-backfill-v1'").run();
+  const reopened = await NodeSqliteDatabase.open(value.path);
+  try {
+    await createReportRun({ primaryDomain: "recovery-trigger.example" }, now, reopened);
+    assert.equal((await reopened.prepare("SELECT COUNT(*) AS count FROM report_evaluation_feedback_pending WHERE outbox_id = (SELECT id FROM report_evaluation_feedback_outbox WHERE evaluation_id = 'interrupted-feedback')").all()).results[0].count, 1);
+    assert.equal((await reopened.prepare("SELECT COUNT(*) AS count FROM report_runtime_schema_markers WHERE key = 'evaluation-feedback-pending-backfill-v1'").all()).results[0].count, 1);
   } finally {
     reopened.close();
     await closeFixture(value);
@@ -408,6 +426,9 @@ test("feedback migrations apply in order and install the atomic terminal trigger
     database.prepare("INSERT INTO report_evaluation_feedback_receipts (id, outbox_id, evaluation_id, run_id, consumer_key, idempotency_key, payload_hash, receipt_hash, acknowledged_at) SELECT 'receipt-acked', id, evaluation_id, run_id, 'codex-task-feedback-v1', 'migration-acked', ?, ?, '2026-08-09T00:00:02.000Z' FROM report_evaluation_feedback_outbox WHERE evaluation_id = 'evaluation-acked'").run("a".repeat(64), "b".repeat(64));
     const pendingMigration = await readFile(new URL("../drizzle/0013_icy_boom_boom.sql", import.meta.url), "utf8");
     for (const statement of pendingMigration.split("--> statement-breakpoint").map((part) => part.trim()).filter(Boolean)) database.exec(statement);
+    const markerMigration = await readFile(new URL("../drizzle/0014_brainy_wrecker.sql", import.meta.url), "utf8");
+    for (const statement of markerMigration.split("--> statement-breakpoint").map((part) => part.trim()).filter(Boolean)) database.exec(statement);
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM report_runtime_schema_markers WHERE key = 'evaluation-feedback-pending-backfill-v1'").get().count, 1);
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM report_evaluation_feedback_pending").get().count, 0);
     database.prepare("INSERT INTO report_evaluations (id, run_id, status, completed_at, created_at) VALUES ('evaluation-pending', 'run-1', 'failed', '2026-08-09T00:00:03.000Z', '2026-08-09T00:00:03.000Z')").run();
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM report_evaluation_feedback_outbox").get().count, 2);

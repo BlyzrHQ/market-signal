@@ -371,6 +371,11 @@ export const reportEvaluationFeedbackPending = sqliteTable("report_evaluation_fe
   uniqueIndex("report_evaluation_feedback_pending_queue_uidx").on(table.queueSeq),
 ]);
 
+export const reportRuntimeSchemaMarkers = sqliteTable("report_runtime_schema_markers", {
+  key: text("key").primaryKey(),
+  completedAt: text("completed_at").notNull(),
+});
+
 export const reportEvaluationFeedbackClaims = sqliteTable("report_evaluation_feedback_claims", {
   outboxId: text("outbox_id").primaryKey().references(() => reportEvaluationFeedbackOutbox.id, { onDelete: "cascade" }),
   runId: text("run_id").notNull().references(() => reportRuns.id, { onDelete: "cascade" }),
