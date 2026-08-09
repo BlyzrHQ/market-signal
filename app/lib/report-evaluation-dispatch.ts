@@ -13,8 +13,31 @@ export function reportEvaluationDispatchKey(payload: ReportEvaluationPayload) {
   return `evaluation:${payload.evaluationId}:${payload.evaluatorVersion}:dispatch:${payload.dispatchAttempt}`;
 }
 
-export async function reportEvaluationPilotEnabled(override?: string) {
-  return (override ?? await runtimeEnvironmentValue("MARKET_SIGNAL_EVALUATION_PILOT_ENABLED")) === "true";
+type EvaluationPilotContext = { primaryDomain?: string; publicReportId?: string };
+type EvaluationPilotOverrides = { enabled?: string; domains?: string; reportIds?: string };
+
+function pilotDomains(value: string) {
+  return [...new Set(value.split(",").map((domain) => domain.trim().toLowerCase()).filter((domain) => /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain)))];
+}
+
+function pilotReportIds(value: string) {
+  return [...new Set(value.split(",").map((id) => id.trim().toLowerCase()).filter((id) => /^[a-f0-9]{32}$/.test(id)))];
+}
+
+export async function reportEvaluationPilotEnabled(context: EvaluationPilotContext = {}, overrides: EvaluationPilotOverrides = {}) {
+  const enabled = overrides.enabled ?? await runtimeEnvironmentValue("MARKET_SIGNAL_EVALUATION_PILOT_ENABLED");
+  if (enabled !== "true") return false;
+  const rawDomains = overrides.domains ?? await runtimeEnvironmentValue("MARKET_SIGNAL_EVALUATION_PILOT_DOMAINS");
+  const rawReportIds = overrides.reportIds ?? await runtimeEnvironmentValue("MARKET_SIGNAL_EVALUATION_PILOT_REPORT_IDS");
+  if (rawDomains.trim() === "__all__" || rawReportIds.trim() === "__all__") return rawDomains.trim() === "__all__" && rawReportIds.trim() === "__all__";
+  if (!rawDomains.trim() || !rawReportIds.trim()) return false;
+  const domains = pilotDomains(rawDomains);
+  const reportIds = pilotReportIds(rawReportIds);
+  if (!domains.length || reportIds.length !== 1) return false;
+  return typeof context.primaryDomain === "string"
+    && domains.includes(context.primaryDomain.trim().toLowerCase())
+    && typeof context.publicReportId === "string"
+    && reportIds.includes(context.publicReportId.trim().toLowerCase());
 }
 
 export async function dispatchReportEvaluation(payload: ReportEvaluationPayload, options: { secret?: string; trigger?: TriggerEvaluation } = {}) {

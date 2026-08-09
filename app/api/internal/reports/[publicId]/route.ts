@@ -237,7 +237,7 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
             status: body.status === "limited" ? "limited" : "complete",
             observedAt: typeof body.observedAt === "string" ? body.observedAt : undefined,
           });
-          if (saved.evaluation?.status === "deterministic" && await reportEvaluationPilotEnabled()) {
+          if (saved.evaluation?.status === "deterministic" && await reportEvaluationPilotEnabled({ primaryDomain: report.run.primaryDomain, publicReportId: id })) {
             let payload: Awaited<ReturnType<typeof beginReportEvaluationDispatch>> | null = null;
             try {
               payload = await beginReportEvaluationDispatch(saved.evaluation.id);
