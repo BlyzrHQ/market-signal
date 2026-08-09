@@ -264,7 +264,7 @@ test("evaluation persists deterministic, dispatching, reserved, and complete sta
     assert.ok(Number.isFinite(completed.overallScore));
     assert.ok(completed.grade);
     assert.equal(completed.usageStatus, "known");
-    assert.deepEqual({ input: completed.inputTokens, cached: completed.cachedInputTokens, output: completed.outputTokens, cost: completed.costMicrousd }, { input: 1_000, cached: 400, output: 200, cost: 1_380 });
+    assert.deepEqual({ input: completed.inputTokens, cached: completed.cachedInputTokens, output: completed.outputTokens, cost: completed.costMicrousd }, { input: 1_000, cached: 400, output: 200, cost: 1_840 });
   } finally {
     await closeFixture(value);
   }
@@ -355,7 +355,7 @@ test("needs-human evaluation creates an immutable owner queue item and response 
     assert.equal(provisional.grade, null);
     assert.ok(provisional.agent.humanReview);
     assert.equal(provisional.usageStatus, "known");
-    assert.equal(provisional.costMicrousd, 1_380);
+    assert.equal(provisional.costMicrousd, 1_840);
     const pending = await listHumanReviewRequests({}, value.database);
     assert.equal(pending.items.length, 1);
     assert.equal(pending.items[0].evaluationId, evaluation.id);
@@ -657,7 +657,7 @@ test("an over-budget provider response preserves actual usage but cannot produce
     assert.equal(rejected.ratingBasis, "deterministic_only");
     assert.equal(rejected.overallScore, null);
     assert.equal(rejected.usageStatus, "known");
-    assert.equal(rejected.costMicrousd, 525_000);
+    assert.equal(rejected.costMicrousd, 700_000);
   } finally {
     await closeFixture(value);
   }
@@ -677,7 +677,7 @@ test("a nominally successful callback without a provider response ID is rejected
     assert.equal(rejected.ratingBasis, "deterministic_only");
     assert.equal(rejected.overallScore, null);
     assert.equal(rejected.usageStatus, "known");
-    assert.equal(rejected.costMicrousd, 1_380);
+    assert.equal(rejected.costMicrousd, 1_840);
   } finally {
     await closeFixture(value);
   }

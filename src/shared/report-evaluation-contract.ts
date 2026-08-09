@@ -1,12 +1,12 @@
 import { REPORT_EVALUATION_CAPABILITY } from "./worker-api-contract.ts";
 export { REPORT_EVALUATION_CAPABILITY };
 export const REPORT_EVALUATION_TASK_ID = "market-signal-report-evaluation" as const;
-export const REPORT_EVALUATOR_VERSION = "ecommerce-agent-v1" as const;
-export const REPORT_EVALUATION_MODEL = "gpt-5.4-mini-2026-03-17" as const;
-export const REPORT_EVALUATION_PROMPT_VERSION = "report-agent-judge-2026-08-09-v1" as const;
+export const REPORT_EVALUATOR_VERSION = "ecommerce-agent-v2" as const;
+export const REPORT_EVALUATION_MODEL = "gpt-5.6-luna" as const;
+export const REPORT_EVALUATION_PROMPT_VERSION = "report-agent-judge-2026-08-09-v2" as const;
 export const REPORT_EVALUATION_SCHEMA_VERSION = "report-agent-output-2026-08-09-v1" as const;
 export const REPORT_EVALUATION_EVIDENCE_VERSION = "report-agent-evidence-2026-08-09-v1" as const;
-export const REPORT_EVALUATION_PRICING_VERSION = "openai-2026-08-09" as const;
+export const REPORT_EVALUATION_PRICING_VERSION = "openai-gpt-5.6-luna-2026-08-09" as const;
 export const REPORT_EVALUATION_TIMEOUT_MS = 90_000;
 export const REPORT_EVALUATION_MAX_OUTPUT_TOKENS = 1_200;
 export const REPORT_EVALUATION_MAX_REQUEST_BYTES = 16_000;

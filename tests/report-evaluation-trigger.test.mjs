@@ -69,7 +69,7 @@ test("reservation and terminal callbacks reject open or inconsistent wire payloa
     reservationOwner: "worker:owner-1", reservationId: "reservation-1", clientRequestId: "client-2",
     status: "complete", errorCode: null, providerResponseId: "resp_1", providerRequestId: "req_1",
     usageStatus: "known", usage: { inputTokens: 100, cachedInputTokens: 20, outputTokens: 50 }, agentOutput: agentOutput(),
-    model: REPORT_EVALUATION_MODEL, promptVersion: "report-agent-judge-2026-08-09-v1", pricingVersion: "openai-2026-08-09",
+    model: REPORT_EVALUATION_MODEL, promptVersion: "report-agent-judge-2026-08-09-v2", pricingVersion: "openai-gpt-5.6-luna-2026-08-09",
   };
   assert.deepEqual(parseReportEvaluationTerminalCallback(terminal), terminal);
   assert.throws(() => parseReportEvaluationTerminalCallback({ ...terminal, status: "complete", usageStatus: "unknown", usage: terminal.usage }));
@@ -92,6 +92,8 @@ test("one reservation produces one bounded Responses call and a complete callbac
   assert.equal(calls[0].init.headers["X-Client-Request-Id"], "client-2");
   const request = JSON.parse(calls[0].init.body);
   assert.equal(request.model, REPORT_EVALUATION_MODEL);
+  assert.equal(request.model, "gpt-5.6-luna");
+  assert.deepEqual(request.reasoning, { effort: "low" });
   assert.equal(request.max_output_tokens, 1_200);
   assert.equal(request.text.format.strict, true);
   assert.equal(request.text.format.schema.additionalProperties, false);
@@ -127,7 +129,10 @@ test("missing provider configuration fails before reservation", async () => {
 
 test("provider HTTP and malformed completed results reject; billable failures retain usage and transport uncertainty is never retried", async () => {
   for (const [fetchImpl, expectedStatus, expectedCode, expectedUsageStatus] of [
-    [async () => new Response("rate limited", { status: 429, headers: { "x-request-id": "req_429" } }), "agent_rejected", "provider-http-4xx", "unknown"],
+    [async () => Response.json({ error: { type: "rate_limit_error", code: "rate_limit_exceeded" } }, { status: 429, headers: { "x-request-id": "req_429" } }), "agent_rejected", "provider-rate-limited", "unknown"],
+    [async () => Response.json({ error: { type: "invalid_request_error", code: "model_not_found", param: "model" } }, { status: 400, headers: { "x-request-id": "req_model" } }), "agent_rejected", "provider-model-unavailable", "unknown"],
+    [async () => Response.json({ error: { type: "invalid_request_error", code: null, param: "text.format.schema" } }, { status: 400, headers: { "x-request-id": "req_schema" } }), "agent_rejected", "provider-request-rejected", "unknown"],
+    [async () => new Response(JSON.stringify({ error: { type: "invalid_request_error", message: "x".repeat(5_000) } }), { status: 400, headers: { "x-request-id": "req_large" } }), "agent_rejected", "provider-request-rejected", "unknown"],
     [async () => providerResponse(agentOutput(), { usage: null }), "agent_rejected", "provider-usage-missing", "unknown"],
     [async () => providerResponse({ ...agentOutput(), humanReview: undefined }), "agent_rejected", "provider-output-invalid", "known"],
     [async () => { throw new TypeError("network down"); }, "call_outcome_unknown", "provider-transport-unknown", "unknown"],

@@ -31,12 +31,57 @@ export type ReportEvaluationRuntime = {
 class ProviderHttpError extends Error {
   readonly status: number;
   readonly requestId: string | null;
-  constructor(status: number, requestId: string | null) {
+  readonly errorCode: string;
+  constructor(status: number, requestId: string | null, errorCode: string) {
     super(`OpenAI Responses request failed with HTTP ${status}.`);
     this.name = "ProviderHttpError";
     this.status = status;
     this.requestId = requestId;
+    this.errorCode = errorCode;
   }
+}
+
+async function providerHttpErrorCode(response: Response) {
+  if (response.status === 401) return "provider-auth-invalid";
+  if (response.status === 403) return "provider-permission-denied";
+  if (response.status === 429) return "provider-rate-limited";
+  if (response.status < 400 || response.status >= 500) return `provider-http-${Math.floor(response.status / 100)}xx`;
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > 4_096) return "provider-request-rejected";
+  let body: unknown;
+  try {
+    if (!response.body) return "provider-request-rejected";
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > 4_096) {
+        await reader.cancel().catch(() => undefined);
+        return "provider-request-rejected";
+      }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    body = JSON.parse(text);
+  } catch {
+    return "provider-request-rejected";
+  }
+  const root = body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : {};
+  const error = root.error && typeof root.error === "object" && !Array.isArray(root.error) ? root.error as Record<string, unknown> : {};
+  const type = typeof error.type === "string" ? error.type : "";
+  const code = typeof error.code === "string" ? error.code : "";
+  const param = typeof error.param === "string" ? error.param : "";
+  if (code === "model_not_found" || (type === "invalid_request_error" && param === "model")) return "provider-model-unavailable";
+  if (type === "authentication_error") return "provider-auth-invalid";
+  if (type === "permission_error" || type === "permissions_error") return "provider-permission-denied";
+  if (type === "rate_limit_error") return "provider-rate-limited";
+  return "provider-request-rejected";
 }
 
 class ProviderResultError extends Error {
@@ -69,6 +114,7 @@ function buildRequest(canonicalInput: string) {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("The reserved evaluation input is invalid.");
   const body = {
     model: REPORT_EVALUATION_MODEL,
+    reasoning: { effort: "low" },
     max_output_tokens: REPORT_EVALUATION_MAX_OUTPUT_TOKENS,
     input: [
       { role: "developer", content: [{ type: "input_text", text: REPORT_EVALUATION_DEVELOPER_PROMPT }] },
@@ -179,7 +225,7 @@ async function callOpenAI(fetchImpl: FetchLike, apiKey: string, clientRequestId:
       body: JSON.stringify(body),
     });
     const requestId = response.headers.get("x-request-id");
-    if (!response.ok) throw new ProviderHttpError(response.status, requestId);
+    if (!response.ok) throw new ProviderHttpError(response.status, requestId, await providerHttpErrorCode(response));
     let value: unknown;
     try { value = await response.json(); } catch { throw new ProviderResultError("provider-invalid-json", null, requestId); }
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new ProviderResultError("provider-invalid-response", null, requestId);
@@ -238,7 +284,7 @@ export async function runReportEvaluation(payload: ReportEvaluationPayload, port
       callback = {
         ...base,
         status: "agent_rejected",
-        errorCode: error instanceof ProviderHttpError ? `provider-http-${Math.floor(error.status / 100)}xx` : error.code,
+        errorCode: error instanceof ProviderHttpError ? error.errorCode : error.code,
         providerResponseId: error instanceof ProviderResultError ? error.responseId : null,
         providerRequestId: error.requestId,
         usageStatus: error instanceof ProviderResultError && error.measuredUsage ? "known" : "unknown",
