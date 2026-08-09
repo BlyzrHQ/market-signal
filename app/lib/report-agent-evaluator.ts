@@ -441,8 +441,8 @@ export function calculateAgentUsageCost(usage: unknown): AgentUsage | null {
   const details = object(source.input_tokens_details);
   const cachedInputTokens = source.input_tokens_details === undefined ? 0 : Number(details.cached_tokens ?? 0);
   const cacheWriteInputTokens = source.input_tokens_details === undefined ? 0 : Number(details.cache_write_tokens ?? 0);
-  if (!Number.isInteger(inputTokens) || inputTokens < 0 || !Number.isInteger(outputTokens) || outputTokens < 0
-    || !Number.isInteger(cachedInputTokens) || cachedInputTokens < 0 || !Number.isInteger(cacheWriteInputTokens) || cacheWriteInputTokens < 0
+  if (!Number.isSafeInteger(inputTokens) || inputTokens < 0 || !Number.isSafeInteger(outputTokens) || outputTokens < 0
+    || !Number.isSafeInteger(cachedInputTokens) || cachedInputTokens < 0 || !Number.isSafeInteger(cacheWriteInputTokens) || cacheWriteInputTokens < 0
     || cachedInputTokens + cacheWriteInputTokens > inputTokens) return null;
   const uncachedInputTokens = inputTokens - cachedInputTokens - cacheWriteInputTokens;
   const costMicrousd = Math.ceil(

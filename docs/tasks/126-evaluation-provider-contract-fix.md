@@ -25,6 +25,8 @@ The configured dated model ID was not present in the current model catalog.
   each evaluation's persisted cost remains auditable.
 - Use low reasoning effort and the existing 1,200-token output ceiling to keep
   the bounded quality judgment inside the pilot cost envelope.
+- Force the standard service tier and reject cost attribution when the provider
+  does not confirm that tier in its response.
 - Parse at most 4 KiB of a rejected provider response and persist only an
   allowlisted safe category such as `provider-model-unavailable`,
   `provider-auth-invalid`, `provider-rate-limited`, or

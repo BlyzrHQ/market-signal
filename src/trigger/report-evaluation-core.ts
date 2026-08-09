@@ -42,26 +42,31 @@ class ProviderHttpError extends Error {
 }
 
 async function providerHttpErrorCode(response: Response) {
-  if (response.status === 401) return "provider-auth-invalid";
-  if (response.status === 403) return "provider-permission-denied";
-  if (response.status === 429) return "provider-rate-limited";
-  if (response.status < 400 || response.status >= 500) return `provider-http-${Math.floor(response.status / 100)}xx`;
+  const cancel = () => response.body?.cancel().catch(() => undefined);
+  if (response.status === 401) { await cancel(); return "provider-auth-invalid"; }
+  if (response.status === 403) { await cancel(); return "provider-permission-denied"; }
+  if (response.status === 429) { await cancel(); return "provider-rate-limited"; }
+  if (response.status < 400 || response.status >= 500) { await cancel(); return `provider-http-${Math.floor(response.status / 100)}xx`; }
   const declared = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > 4_096) return "provider-request-rejected";
+  if (Number.isFinite(declared) && declared > 4_096) { await cancel(); return "provider-request-rejected"; }
   let body: unknown;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  let consumed = false;
   try {
     if (!response.body) return "provider-request-rejected";
-    const reader = response.body.getReader();
+    reader = response.body.getReader();
     const chunks: Uint8Array[] = [];
     let total = 0;
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > 4_096) {
-        await reader.cancel().catch(() => undefined);
+      if (done) { consumed = true; break; }
+      const remaining = 4_096 - total;
+      if (value.byteLength > remaining) {
+        if (remaining > 0) chunks.push(value.subarray(0, remaining));
+        total = 4_096;
         return "provider-request-rejected";
       }
+      total += value.byteLength;
       chunks.push(value);
     }
     const bytes = new Uint8Array(total);
@@ -71,6 +76,8 @@ async function providerHttpErrorCode(response: Response) {
     body = JSON.parse(text);
   } catch {
     return "provider-request-rejected";
+  } finally {
+    if (reader && !consumed) await reader.cancel().catch(() => undefined);
   }
   const root = body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : {};
   const error = root.error && typeof root.error === "object" && !Array.isArray(root.error) ? root.error as Record<string, unknown> : {};
@@ -114,6 +121,7 @@ function buildRequest(canonicalInput: string) {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("The reserved evaluation input is invalid.");
   const body = {
     model: REPORT_EVALUATION_MODEL,
+    service_tier: "default",
     reasoning: { effort: "low" },
     max_output_tokens: REPORT_EVALUATION_MAX_OUTPUT_TOKENS,
     input: [
@@ -233,6 +241,7 @@ async function callOpenAI(fetchImpl: FetchLike, apiKey: string, clientRequestId:
     const result = value as Record<string, unknown>;
     const responseId = typeof result.id === "string" && result.id ? result.id : null;
     const measuredUsage = usage(result.usage);
+    if (result.service_tier !== "default") throw new ProviderResultError("provider-service-tier-unverified", responseId, requestId);
     if (result.status !== "completed") throw new ProviderResultError("provider-incomplete", responseId, requestId, measuredUsage);
     const text = outputText(result);
     if (!responseId || !text || !measuredUsage) throw new ProviderResultError(!responseId ? "provider-response-id-missing" : !text ? "provider-output-rejected" : "provider-usage-missing", responseId, requestId, measuredUsage);
