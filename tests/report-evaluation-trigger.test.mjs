@@ -35,8 +35,9 @@ function providerResponse(output = agentOutput(), overrides = {}) {
   return Response.json({
     id: "resp_1",
     status: "completed",
+    service_tier: "default",
     output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(output) }] }],
-    usage: { input_tokens: 100, output_tokens: 50, input_tokens_details: { cached_tokens: 20 } },
+    usage: { input_tokens: 100, output_tokens: 50, input_tokens_details: { cached_tokens: 20, cache_write_tokens: 10 } },
     ...overrides,
   }, { headers: { "x-request-id": "req_1" } });
 }
@@ -68,12 +69,14 @@ test("reservation and terminal callbacks reject open or inconsistent wire payloa
     action: "terminal", evaluatorVersion: REPORT_EVALUATOR_VERSION, dispatchAttempt: 1,
     reservationOwner: "worker:owner-1", reservationId: "reservation-1", clientRequestId: "client-2",
     status: "complete", errorCode: null, providerResponseId: "resp_1", providerRequestId: "req_1",
-    usageStatus: "known", usage: { inputTokens: 100, cachedInputTokens: 20, outputTokens: 50 }, agentOutput: agentOutput(),
-    model: REPORT_EVALUATION_MODEL, promptVersion: "report-agent-judge-2026-08-09-v1", pricingVersion: "openai-2026-08-09",
+    usageStatus: "known", usage: { inputTokens: 100, cachedInputTokens: 20, cacheWriteInputTokens: 10, outputTokens: 50 }, agentOutput: agentOutput(),
+    model: REPORT_EVALUATION_MODEL, promptVersion: "report-agent-judge-2026-08-09-v2", pricingVersion: "openai-gpt-5.6-luna-2026-08-09-v2",
   };
   assert.deepEqual(parseReportEvaluationTerminalCallback(terminal), terminal);
   assert.throws(() => parseReportEvaluationTerminalCallback({ ...terminal, status: "complete", usageStatus: "unknown", usage: terminal.usage }));
   assert.throws(() => parseReportEvaluationTerminalCallback({ ...terminal, usage: { ...terminal.usage, cachedInputTokens: 120 } }));
+  assert.throws(() => parseReportEvaluationTerminalCallback({ ...terminal, usage: { ...terminal.usage, cacheWriteInputTokens: -1 } }));
+  assert.throws(() => parseReportEvaluationTerminalCallback({ ...terminal, usage: { ...terminal.usage, cachedInputTokens: 60, cacheWriteInputTokens: 50 } }));
   assert.throws(() => parseReportEvaluationTerminalCallback({ ...terminal, agentOutput: null }));
   assert.throws(() => parseReportEvaluationTerminalCallback({ ...terminal, extra: true }));
 });
@@ -92,13 +95,16 @@ test("one reservation produces one bounded Responses call and a complete callbac
   assert.equal(calls[0].init.headers["X-Client-Request-Id"], "client-2");
   const request = JSON.parse(calls[0].init.body);
   assert.equal(request.model, REPORT_EVALUATION_MODEL);
+  assert.equal(request.model, "gpt-5.6-luna");
+  assert.equal(request.service_tier, "default");
+  assert.deepEqual(request.reasoning, { effort: "low" });
   assert.equal(request.max_output_tokens, 1_200);
   assert.equal(request.text.format.strict, true);
   assert.equal(request.text.format.schema.additionalProperties, false);
   assert.equal(request.input[1].content[0].text, reservation().canonicalInput);
   assert.equal(state.terminals.length, 1);
   assert.equal(state.terminals[0].callback.status, "complete");
-  assert.deepEqual(state.terminals[0].callback.usage, { inputTokens: 100, cachedInputTokens: 20, outputTokens: 50 });
+  assert.deepEqual(state.terminals[0].callback.usage, { inputTokens: 100, cachedInputTokens: 20, cacheWriteInputTokens: 10, outputTokens: 50 });
 });
 
 test("a human question is terminal but remains explicitly needs_human_review", async () => {
@@ -127,7 +133,12 @@ test("missing provider configuration fails before reservation", async () => {
 
 test("provider HTTP and malformed completed results reject; billable failures retain usage and transport uncertainty is never retried", async () => {
   for (const [fetchImpl, expectedStatus, expectedCode, expectedUsageStatus] of [
-    [async () => new Response("rate limited", { status: 429, headers: { "x-request-id": "req_429" } }), "agent_rejected", "provider-http-4xx", "unknown"],
+    [async () => Response.json({ error: { type: "rate_limit_error", code: "rate_limit_exceeded" } }, { status: 429, headers: { "x-request-id": "req_429" } }), "agent_rejected", "provider-rate-limited", "unknown"],
+    [async () => Response.json({ error: { type: "invalid_request_error", code: "model_not_found", param: "model" } }, { status: 400, headers: { "x-request-id": "req_model" } }), "agent_rejected", "provider-model-unavailable", "unknown"],
+    [async () => Response.json({ error: { type: "invalid_request_error", code: null, param: "text.format.schema" } }, { status: 400, headers: { "x-request-id": "req_schema" } }), "agent_rejected", "provider-request-rejected", "unknown"],
+    [async () => new Response(JSON.stringify({ error: { type: "invalid_request_error", message: "x".repeat(5_000) } }), { status: 400, headers: { "x-request-id": "req_large" } }), "agent_rejected", "provider-request-rejected", "unknown"],
+    [async () => providerResponse(agentOutput(), { service_tier: "priority" }), "agent_rejected", "provider-service-tier-unverified", "unknown"],
+    [async () => providerResponse(agentOutput(), { service_tier: undefined }), "agent_rejected", "provider-service-tier-unverified", "unknown"],
     [async () => providerResponse(agentOutput(), { usage: null }), "agent_rejected", "provider-usage-missing", "unknown"],
     [async () => providerResponse({ ...agentOutput(), humanReview: undefined }), "agent_rejected", "provider-output-invalid", "known"],
     [async () => { throw new TypeError("network down"); }, "call_outcome_unknown", "provider-transport-unknown", "unknown"],
@@ -140,8 +151,42 @@ test("provider HTTP and malformed completed results reject; billable failures re
     assert.equal(state.terminals[0].callback.status, expectedStatus);
     assert.equal(state.terminals[0].callback.errorCode, expectedCode);
     assert.equal(state.terminals[0].callback.usageStatus, expectedUsageStatus);
-    if (expectedUsageStatus === "known") assert.deepEqual(state.terminals[0].callback.usage, { inputTokens: 100, cachedInputTokens: 20, outputTokens: 50 });
+    if (expectedUsageStatus === "known") assert.deepEqual(state.terminals[0].callback.usage, { inputTokens: 100, cachedInputTokens: 20, cacheWriteInputTokens: 10, outputTokens: 50 });
   }
+});
+
+test("provider rejection bodies are cancelled on shortcut statuses and oversized chunks", async () => {
+  for (const [status, bytes] of [[401, 8], [400, 5_000]]) {
+    let cancelled = false;
+    const stream = new ReadableStream({
+      start(controller) { controller.enqueue(new Uint8Array(bytes).fill(65)); },
+      cancel() { cancelled = true; },
+    });
+    const { port, state } = portFixture();
+    const result = await runReportEvaluation(PAYLOAD, port, {
+      apiKey: "test_api_key_long_enough_for_validation",
+      randomUUID: () => "client-2",
+      fetchImpl: async () => new Response(stream, { status }),
+    });
+    assert.equal(result.status, "agent_rejected");
+    assert.equal(state.terminals[0].callback.usageStatus, "unknown");
+    assert.equal(cancelled, true);
+  }
+});
+
+test("provider error parsing copies a small view without retaining its large backing buffer", async () => {
+  const encoded = new TextEncoder().encode(JSON.stringify({ error: { type: "invalid_request_error", code: "model_not_found", param: "model" } }));
+  const backing = new Uint8Array(10_000_000);
+  backing.set(encoded, 5_000_000);
+  const view = backing.subarray(5_000_000, 5_000_000 + encoded.byteLength);
+  const stream = new ReadableStream({ start(controller) { controller.enqueue(view); controller.close(); } });
+  const { port, state } = portFixture();
+  await runReportEvaluation(PAYLOAD, port, {
+    apiKey: "test_api_key_long_enough_for_validation",
+    randomUUID: () => "client-2",
+    fetchImpl: async () => new Response(stream, { status: 400 }),
+  });
+  assert.equal(state.terminals[0].callback.errorCode, "provider-model-unavailable");
 });
 
 test("a failed terminal callback does not emit a second conflicting callback", async () => {

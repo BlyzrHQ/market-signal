@@ -31,12 +31,59 @@ export type ReportEvaluationRuntime = {
 class ProviderHttpError extends Error {
   readonly status: number;
   readonly requestId: string | null;
-  constructor(status: number, requestId: string | null) {
+  readonly errorCode: string;
+  constructor(status: number, requestId: string | null, errorCode: string) {
     super(`OpenAI Responses request failed with HTTP ${status}.`);
     this.name = "ProviderHttpError";
     this.status = status;
     this.requestId = requestId;
+    this.errorCode = errorCode;
   }
+}
+
+async function providerHttpErrorCode(response: Response) {
+  const cancel = () => response.body?.cancel().catch(() => undefined);
+  if (response.status === 401) { await cancel(); return "provider-auth-invalid"; }
+  if (response.status === 403) { await cancel(); return "provider-permission-denied"; }
+  if (response.status === 429) { await cancel(); return "provider-rate-limited"; }
+  if (response.status < 400 || response.status >= 500) { await cancel(); return `provider-http-${Math.floor(response.status / 100)}xx`; }
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > 4_096) { await cancel(); return "provider-request-rejected"; }
+  let body: unknown;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  let consumed = false;
+  try {
+    if (!response.body) return "provider-request-rejected";
+    reader = response.body.getReader();
+    const bytes = new Uint8Array(4_096);
+    let total = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) { consumed = true; break; }
+      const remaining = 4_096 - total;
+      if (value.byteLength > remaining) {
+        return "provider-request-rejected";
+      }
+      bytes.set(value, total);
+      total += value.byteLength;
+    }
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, total));
+    body = JSON.parse(text);
+  } catch {
+    return "provider-request-rejected";
+  } finally {
+    if (reader && !consumed) await reader.cancel().catch(() => undefined);
+  }
+  const root = body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : {};
+  const error = root.error && typeof root.error === "object" && !Array.isArray(root.error) ? root.error as Record<string, unknown> : {};
+  const type = typeof error.type === "string" ? error.type : "";
+  const code = typeof error.code === "string" ? error.code : "";
+  const param = typeof error.param === "string" ? error.param : "";
+  if (code === "model_not_found" || (type === "invalid_request_error" && param === "model")) return "provider-model-unavailable";
+  if (type === "authentication_error") return "provider-auth-invalid";
+  if (type === "permission_error" || type === "permissions_error") return "provider-permission-denied";
+  if (type === "rate_limit_error") return "provider-rate-limited";
+  return "provider-request-rejected";
 }
 
 class ProviderResultError extends Error {
@@ -69,6 +116,8 @@ function buildRequest(canonicalInput: string) {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("The reserved evaluation input is invalid.");
   const body = {
     model: REPORT_EVALUATION_MODEL,
+    service_tier: "default",
+    reasoning: { effort: "low" },
     max_output_tokens: REPORT_EVALUATION_MAX_OUTPUT_TOKENS,
     input: [
       { role: "developer", content: [{ type: "input_text", text: REPORT_EVALUATION_DEVELOPER_PROMPT }] },
@@ -87,8 +136,9 @@ function usage(value: unknown): ReportEvaluationUsage | null {
   const inputTokens = Number(item.input_tokens);
   const outputTokens = Number(item.output_tokens);
   const cachedInputTokens = details.cached_tokens === undefined ? 0 : Number(details.cached_tokens);
-  if (!Number.isInteger(inputTokens) || inputTokens < 0 || !Number.isInteger(outputTokens) || outputTokens < 0 || !Number.isInteger(cachedInputTokens) || cachedInputTokens < 0 || cachedInputTokens > inputTokens) return null;
-  return { inputTokens, cachedInputTokens, outputTokens };
+  const cacheWriteInputTokens = details.cache_write_tokens === undefined ? 0 : Number(details.cache_write_tokens);
+  if (!Number.isSafeInteger(inputTokens) || inputTokens < 0 || !Number.isSafeInteger(outputTokens) || outputTokens < 0 || !Number.isSafeInteger(cachedInputTokens) || cachedInputTokens < 0 || !Number.isSafeInteger(cacheWriteInputTokens) || cacheWriteInputTokens < 0 || cachedInputTokens + cacheWriteInputTokens > inputTokens) return null;
+  return { inputTokens, cachedInputTokens, cacheWriteInputTokens, outputTokens };
 }
 
 function outputText(value: Record<string, unknown>) {
@@ -179,13 +229,14 @@ async function callOpenAI(fetchImpl: FetchLike, apiKey: string, clientRequestId:
       body: JSON.stringify(body),
     });
     const requestId = response.headers.get("x-request-id");
-    if (!response.ok) throw new ProviderHttpError(response.status, requestId);
+    if (!response.ok) throw new ProviderHttpError(response.status, requestId, await providerHttpErrorCode(response));
     let value: unknown;
     try { value = await response.json(); } catch { throw new ProviderResultError("provider-invalid-json", null, requestId); }
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new ProviderResultError("provider-invalid-response", null, requestId);
     const result = value as Record<string, unknown>;
     const responseId = typeof result.id === "string" && result.id ? result.id : null;
     const measuredUsage = usage(result.usage);
+    if (result.service_tier !== "default") throw new ProviderResultError("provider-service-tier-unverified", responseId, requestId);
     if (result.status !== "completed") throw new ProviderResultError("provider-incomplete", responseId, requestId, measuredUsage);
     const text = outputText(result);
     if (!responseId || !text || !measuredUsage) throw new ProviderResultError(!responseId ? "provider-response-id-missing" : !text ? "provider-output-rejected" : "provider-usage-missing", responseId, requestId, measuredUsage);
@@ -238,7 +289,7 @@ export async function runReportEvaluation(payload: ReportEvaluationPayload, port
       callback = {
         ...base,
         status: "agent_rejected",
-        errorCode: error instanceof ProviderHttpError ? `provider-http-${Math.floor(error.status / 100)}xx` : error.code,
+        errorCode: error instanceof ProviderHttpError ? error.errorCode : error.code,
         providerResponseId: error instanceof ProviderResultError ? error.responseId : null,
         providerRequestId: error.requestId,
         usageStatus: error instanceof ProviderResultError && error.measuredUsage ? "known" : "unknown",

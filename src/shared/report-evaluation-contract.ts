@@ -1,12 +1,12 @@
 import { REPORT_EVALUATION_CAPABILITY } from "./worker-api-contract.ts";
 export { REPORT_EVALUATION_CAPABILITY };
 export const REPORT_EVALUATION_TASK_ID = "market-signal-report-evaluation" as const;
-export const REPORT_EVALUATOR_VERSION = "ecommerce-agent-v1" as const;
-export const REPORT_EVALUATION_MODEL = "gpt-5.4-mini-2026-03-17" as const;
-export const REPORT_EVALUATION_PROMPT_VERSION = "report-agent-judge-2026-08-09-v1" as const;
+export const REPORT_EVALUATOR_VERSION = "ecommerce-agent-v2" as const;
+export const REPORT_EVALUATION_MODEL = "gpt-5.6-luna" as const;
+export const REPORT_EVALUATION_PROMPT_VERSION = "report-agent-judge-2026-08-09-v2" as const;
 export const REPORT_EVALUATION_SCHEMA_VERSION = "report-agent-output-2026-08-09-v1" as const;
 export const REPORT_EVALUATION_EVIDENCE_VERSION = "report-agent-evidence-2026-08-09-v1" as const;
-export const REPORT_EVALUATION_PRICING_VERSION = "openai-2026-08-09" as const;
+export const REPORT_EVALUATION_PRICING_VERSION = "openai-gpt-5.6-luna-2026-08-09-v2" as const;
 export const REPORT_EVALUATION_TIMEOUT_MS = 90_000;
 export const REPORT_EVALUATION_MAX_OUTPUT_TOKENS = 1_200;
 export const REPORT_EVALUATION_MAX_REQUEST_BYTES = 16_000;
@@ -25,6 +25,7 @@ export type ReportEvaluationTerminalStatus = "complete" | "needs_human_review" |
 export type ReportEvaluationUsage = {
   inputTokens: number;
   cachedInputTokens: number;
+  cacheWriteInputTokens: number;
   outputTokens: number;
 };
 
@@ -117,11 +118,12 @@ export function parseReportEvaluationTerminalCallback(value: unknown): ReportEva
   if (![input.errorCode, input.providerResponseId, input.providerRequestId].every((item) => item === null || boundedIdentifier(item))) throw new ReportEvaluationContractError("The report evaluation callback metadata is invalid.");
   const usage = record(input.usage);
   if (input.usageStatus === "known") {
-    if (!usage || !exactKeys(usage, ["inputTokens", "cachedInputTokens", "outputTokens"])) throw new ReportEvaluationContractError("The report evaluation callback usage is invalid.");
+    if (!usage || !exactKeys(usage, ["inputTokens", "cachedInputTokens", "cacheWriteInputTokens", "outputTokens"])) throw new ReportEvaluationContractError("The report evaluation callback usage is invalid.");
     const inputTokens = Number(usage.inputTokens);
     const cachedInputTokens = Number(usage.cachedInputTokens);
+    const cacheWriteInputTokens = Number(usage.cacheWriteInputTokens);
     const outputTokens = Number(usage.outputTokens);
-    if (![inputTokens, cachedInputTokens, outputTokens].every((item) => Number.isSafeInteger(item) && item >= 0) || cachedInputTokens > inputTokens) throw new ReportEvaluationContractError("The report evaluation callback usage is invalid.");
+    if (![inputTokens, cachedInputTokens, cacheWriteInputTokens, outputTokens].every((item) => Number.isSafeInteger(item) && item >= 0) || cachedInputTokens + cacheWriteInputTokens > inputTokens) throw new ReportEvaluationContractError("The report evaluation callback usage is invalid.");
   } else if (input.usage !== null) {
     throw new ReportEvaluationContractError("Unknown report evaluation usage must be null.");
   }
