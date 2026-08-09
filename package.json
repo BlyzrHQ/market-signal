@@ -29,6 +29,7 @@
     "better-sqlite3": "12.4.1",
     "drizzle-orm": "0.45.2",
     "next": "16.2.6",
+    "posthog-js": "1.414.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "react-server-dom-webpack": "19.2.6",

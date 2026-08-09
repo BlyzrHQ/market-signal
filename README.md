@@ -131,6 +131,25 @@ actions tied to the current ChatGPT user. Leave public content anonymous.
 - `npm test`: build the starter and verify its rendered loading skeleton
 - `npm run db:generate`: generate Drizzle migrations after schema changes
 
+## Optional product analytics
+
+Market Signal supports privacy-first PostHog Cloud EU analytics. It is disabled
+unless `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN` is configured. Create a PostHog EU
+project, enable cookieless server-hash mode in that project, then configure:
+
+```bash
+NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=your_public_project_token
+NEXT_PUBLIC_POSTHOG_HOST=https://eu.i.posthog.com
+NEXT_PUBLIC_POSTHOG_SESSION_REPLAY=false
+```
+
+The integration uses explicit allowlisted events, no autocapture, no person
+profiles, and no domains, report IDs, URLs, query strings, product names,
+account identifiers, or free text. Do not enable session replay in production
+until privacy and consent requirements have been reviewed. Anonymous cookieless
+identifiers rotate, so the initial setup supports same-session/day funnels but
+is intentionally unsuitable for person-level or multi-day retention analysis.
+
 ## Learn More
 
 - [vinext Documentation](https://github.com/cloudflare/vinext)
