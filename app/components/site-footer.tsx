@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BrandMark } from "./brand-mark";
 
 export function SiteFooter({ locale = "en" }: { locale?: "en" | "ar" }) {
   const ar = locale === "ar";
@@ -7,8 +8,8 @@ export function SiteFooter({ locale = "en" }: { locale?: "en" | "ar" }) {
       <div className="shell landing-footer-grid">
         <div className="footer-brand-block">
           <Link className="brand" href={ar ? "/?lang=ar" : "/"} aria-label="Market Signal home">
-            <span className="brand-mark"><i /><i /><i /></span>
-            <span>Market Signal</span>
+            <BrandMark />
+            <span className="brand-name"><b>Market</b> Signal</span>
           </Link>
           <p>{ar ? "حوّل إشارات السوق العامة إلى قرارات منتجات أوضح." : "Turn public market signals into clearer product decisions."}</p>
           <span className="footer-status"><i /> {ar ? "النسخة التجريبية متاحة" : "Beta access is open"}</span>
