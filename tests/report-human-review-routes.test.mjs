@@ -41,6 +41,7 @@ test("owner response route rejects malformed or oversized input and maps immutab
   assert.equal((await handler(request({ action: "respond", idempotencyKey: "owner:1", resolutionCode: "unable_to_determine", answerText: "not empty" }), context)).status, 400);
   assert.equal((await handler(request({ action: "respond", idempotencyKey: "owner:1", resolutionCode: "answered", answerText: "<script>alert(1)</script>" }), context)).status, 400);
   assert.equal((await handler(request({ action: "respond", idempotencyKey: "owner:1", resolutionCode: "answered", answerText: "See https://malicious.example" }), context)).status, 400);
+  assert.equal((await handler(request({ action: "respond", idempotencyKey: "owner:1", resolutionCode: "answered", answerText: "\ud800" }), context)).status, 400);
   assert.equal((await handler(request({ action: "respond", idempotencyKey: "owner:1", resolutionCode: "answered", answerText: "Yes." }, undefined, { "content-length": "4097" }), context)).status, 400);
   const conflict = await handler(request({ action: "respond", idempotencyKey: "owner:1", resolutionCode: "answered", answerText: "Yes, useful." }), context);
   assert.equal(conflict.status, 409);

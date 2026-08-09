@@ -32,7 +32,7 @@ export function parseHumanReviewResponse(value: unknown): HumanReviewResponseInp
   if (!input || Object.keys(input).length !== keys.length || !keys.every((key) => Object.hasOwn(input, key)) || input.action !== "respond") throw new HumanReviewContractError("The human-review response is invalid.");
   if (typeof input.idempotencyKey !== "string" || !ID_PATTERN.test(input.idempotencyKey)) throw new HumanReviewContractError("The human-review idempotency key is invalid.");
   if (!HUMAN_REVIEW_RESOLUTION_CODES.includes(input.resolutionCode as HumanReviewResolutionCode)) throw new HumanReviewContractError("The human-review resolution code is invalid.");
-  if (typeof input.answerText !== "string" || input.answerText.length > 1_000 || new TextEncoder().encode(input.answerText).byteLength > 4_000 || /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069<>`]|https?:\/\/|www\.|\[[^\]]*\]\(/iu.test(input.answerText)) throw new HumanReviewContractError("The human-review answer is invalid.");
+  if (typeof input.answerText !== "string" || input.answerText.length > 1_000 || new TextEncoder().encode(input.answerText).byteLength > 4_000 || /[\uD800-\uDFFF]/u.test(input.answerText) || /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069<>`]|https?:\/\/|www\.|\[[^\]]*\]\(/iu.test(input.answerText)) throw new HumanReviewContractError("The human-review answer is invalid.");
   if (input.resolutionCode === "answered" ? !input.answerText.trim() : input.answerText !== "") throw new HumanReviewContractError("The human-review answer does not match its resolution code.");
   return input as HumanReviewResponseInput;
 }

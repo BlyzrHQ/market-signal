@@ -1231,7 +1231,7 @@ export async function submitHumanReviewResponse(requestId: string, input: { idem
   if (!database) throw new Error(STORAGE_UNAVAILABLE_MESSAGE);
   if (!/^[A-Za-z0-9-]{1,128}$/.test(requestId) || !/^[A-Za-z0-9][A-Za-z0-9:_-]{0,119}$/.test(input.idempotencyKey) || !["answered", "unable_to_determine", "invalid_question"].includes(input.resolutionCode)) throw new Error("Invalid human-review response.");
   const answerText = input.answerText;
-  if (typeof answerText !== "string" || answerText.length > 1_000 || new TextEncoder().encode(answerText).byteLength > 4_000 || /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069<>`]|https?:\/\/|www\.|\[[^\]]*\]\(/iu.test(answerText) || (input.resolutionCode === "answered" ? !answerText.trim() : answerText !== "")) throw new Error("Human-review response answer is invalid.");
+  if (typeof answerText !== "string" || answerText.length > 1_000 || new TextEncoder().encode(answerText).byteLength > 4_000 || /[\uD800-\uDFFF]/u.test(answerText) || /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069<>`]|https?:\/\/|www\.|\[[^\]]*\]\(/iu.test(answerText) || (input.resolutionCode === "answered" ? !answerText.trim() : answerText !== "")) throw new Error("Human-review response answer is invalid.");
   if (!Number.isFinite(now.getTime())) throw new Error("Invalid human-review response time.");
   await ensureSchema(database);
   const requestRows = await database.prepare(`SELECT requests.*, evaluations.status AS evaluation_status, runs.expires_at FROM report_human_review_requests requests JOIN report_evaluations evaluations ON evaluations.id = requests.evaluation_id JOIN report_runs runs ON runs.id = requests.run_id WHERE requests.id = ? LIMIT 1`).bind(requestId).all<Record<string, unknown>>();
