@@ -9,21 +9,23 @@ pilot ceiling.
 
 ## Decision
 
-Add an optional comma-separated server-owned
-`MARKET_SIGNAL_EVALUATION_PILOT_DOMAINS` allowlist:
+Add comma-separated server-owned domain and exact public-report allowlists:
+`MARKET_SIGNAL_EVALUATION_PILOT_DOMAINS` and
+`MARKET_SIGNAL_EVALUATION_PILOT_REPORT_IDS`.
 
 - the main boolean remains the kill switch;
 - missing, empty, or whitespace-only allowlists fail closed;
 - only the unmistakable `__all__` sentinel enables future global mode;
-- a non-empty allowlist permits only exact normalized report domains;
-- recovery has no report domain and therefore remains disabled while an
-  allowlist is present;
+- both an exact normalized domain and one exact 32-character public report ID
+  are required, so repeated public submissions cannot consume evaluation cost;
+- recovery has neither scoped value and therefore remains disabled;
 - invalid allowlist entries are ignored rather than widening access.
 
 ## Acceptance criteria
 
 1. `false` never dispatches an agent evaluation.
-2. `true` plus `myjam.co.uk` dispatches a terminal MyJam evaluation only.
+2. `true` plus `myjam.co.uk` and one exact public ID dispatches only that
+   terminal MyJam evaluation.
 3. Other domains and domain-less recovery remain disabled during the pilot.
 4. The global sentinel mode remains explicit and tested for a later
    reviewed rollout.

@@ -3,24 +3,32 @@ import test from "node:test";
 
 import { reportEvaluationPilotEnabled } from "../app/lib/report-evaluation-dispatch.ts";
 
-test("evaluation pilot remains globally disabled by default", async () => {
-  assert.equal(await reportEvaluationPilotEnabled("myjam.co.uk", { enabled: "false", domains: "myjam.co.uk" }), false);
+const REPORT_ID = "a".repeat(32);
+const OTHER_REPORT_ID = "b".repeat(32);
+const pilot = { enabled: "true", domains: "myjam.co.uk", reportIds: REPORT_ID };
+
+test("evaluation pilot remains disabled when the kill switch is off", async () => {
+  assert.equal(await reportEvaluationPilotEnabled({ primaryDomain: "myjam.co.uk", publicReportId: REPORT_ID }, { ...pilot, enabled: "false" }), false);
 });
 
-test("evaluation pilot domain allowlist gates terminal report dispatch", async () => {
-  const overrides = { enabled: "true", domains: " MYJAM.CO.UK, noororganic.com, invalid value " };
-  assert.equal(await reportEvaluationPilotEnabled("myjam.co.uk", overrides), true);
-  assert.equal(await reportEvaluationPilotEnabled("MYJAM.CO.UK", overrides), true);
-  assert.equal(await reportEvaluationPilotEnabled("noororganic.com", overrides), true);
-  assert.equal(await reportEvaluationPilotEnabled("example.com", overrides), false);
-  assert.equal(await reportEvaluationPilotEnabled(undefined, overrides), false);
-  assert.equal(await reportEvaluationPilotEnabled("myjam.co.uk", { enabled: "true", domains: "invalid value,," }), false);
+test("evaluation pilot requires both an exact domain and exact public report ID", async () => {
+  assert.equal(await reportEvaluationPilotEnabled({ primaryDomain: "myjam.co.uk", publicReportId: REPORT_ID }, pilot), true);
+  assert.equal(await reportEvaluationPilotEnabled({ primaryDomain: "MYJAM.CO.UK", publicReportId: REPORT_ID.toUpperCase() }, pilot), true);
+  assert.equal(await reportEvaluationPilotEnabled({ primaryDomain: "example.com", publicReportId: REPORT_ID }, pilot), false);
+  assert.equal(await reportEvaluationPilotEnabled({ primaryDomain: "myjam.co.uk", publicReportId: OTHER_REPORT_ID }, pilot), false);
+  assert.equal(await reportEvaluationPilotEnabled({}, pilot), false);
 });
 
-test("global evaluation requires an unmistakable sentinel", async () => {
-  assert.equal(await reportEvaluationPilotEnabled("example.com", { enabled: "true", domains: "__all__" }), true);
-  assert.equal(await reportEvaluationPilotEnabled(undefined, { enabled: "true", domains: "__all__" }), true);
-  assert.equal(await reportEvaluationPilotEnabled("example.com", { enabled: "true", domains: "" }), false);
-  assert.equal(await reportEvaluationPilotEnabled("example.com", { enabled: "true", domains: "   " }), false);
-  assert.equal(await reportEvaluationPilotEnabled(undefined, { enabled: "true", domains: "" }), false);
+test("missing or malformed pilot scope fails closed", async () => {
+  const context = { primaryDomain: "myjam.co.uk", publicReportId: REPORT_ID };
+  assert.equal(await reportEvaluationPilotEnabled(context, { enabled: "true", domains: "", reportIds: REPORT_ID }), false);
+  assert.equal(await reportEvaluationPilotEnabled(context, { enabled: "true", domains: "myjam.co.uk", reportIds: "" }), false);
+  assert.equal(await reportEvaluationPilotEnabled(context, { enabled: "true", domains: "invalid value", reportIds: REPORT_ID }), false);
+  assert.equal(await reportEvaluationPilotEnabled(context, { enabled: "true", domains: "myjam.co.uk", reportIds: "invalid-id" }), false);
+  assert.equal(await reportEvaluationPilotEnabled(context, { enabled: "true", domains: "__all__", reportIds: REPORT_ID }), false);
+  assert.equal(await reportEvaluationPilotEnabled(context, { enabled: "true", domains: "myjam.co.uk", reportIds: "__all__" }), false);
+});
+
+test("global evaluation requires matching unmistakable sentinels", async () => {
+  assert.equal(await reportEvaluationPilotEnabled({}, { enabled: "true", domains: "__all__", reportIds: "__all__" }), true);
 });
