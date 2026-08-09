@@ -13,8 +13,20 @@ export function reportEvaluationDispatchKey(payload: ReportEvaluationPayload) {
   return `evaluation:${payload.evaluationId}:${payload.evaluatorVersion}:dispatch:${payload.dispatchAttempt}`;
 }
 
-export async function reportEvaluationPilotEnabled(override?: string) {
-  return (override ?? await runtimeEnvironmentValue("MARKET_SIGNAL_EVALUATION_PILOT_ENABLED")) === "true";
+type EvaluationPilotOverrides = { enabled?: string; domains?: string };
+
+function pilotDomains(value: string) {
+  return [...new Set(value.split(",").map((domain) => domain.trim().toLowerCase()).filter((domain) => /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain)))];
+}
+
+export async function reportEvaluationPilotEnabled(primaryDomain?: string, overrides: EvaluationPilotOverrides = {}) {
+  const enabled = overrides.enabled ?? await runtimeEnvironmentValue("MARKET_SIGNAL_EVALUATION_PILOT_ENABLED");
+  if (enabled !== "true") return false;
+  const rawDomains = overrides.domains ?? await runtimeEnvironmentValue("MARKET_SIGNAL_EVALUATION_PILOT_DOMAINS");
+  if (!rawDomains.trim()) return true;
+  const domains = pilotDomains(rawDomains);
+  if (!domains.length) return false;
+  return typeof primaryDomain === "string" && domains.includes(primaryDomain.trim().toLowerCase());
 }
 
 export async function dispatchReportEvaluation(payload: ReportEvaluationPayload, options: { secret?: string; trigger?: TriggerEvaluation } = {}) {
