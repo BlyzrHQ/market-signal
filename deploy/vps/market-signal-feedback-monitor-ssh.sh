@@ -1,10 +1,11 @@
-#!/usr/bin/env bash
+#!/bin/bash
 set -Eeuo pipefail
 
 export LC_ALL=C
 
 command_text="${SSH_ORIGINAL_COMMAND:-}"
-read -r -a parts <<<"${command_text}"
+[[ "${command_text}" =~ ^[A-Za-z0-9:_-]+( [A-Za-z0-9:_-]+){0,4}$ ]] || exit 64
+IFS=' ' read -r -a parts <<<"${command_text}"
 
 case "${parts[0]:-}" in
   health|claim)

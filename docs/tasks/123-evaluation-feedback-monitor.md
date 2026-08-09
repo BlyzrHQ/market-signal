@@ -45,7 +45,7 @@ required before this task is marked complete.
 3. Run one controlled real public-domain evaluation and verify terminal
    evaluation → outbox → Codex presentation → immutable ACK receipt.
 4. Stop if pending backlog reaches the lower-bound cap, daily known AI cost
-   exceeds the configured pilot budget, or delivery/auth errors repeat.
+   reaches the USD 0.10 UTC-day pilot ceiling, or delivery/auth errors repeat.
 5. Enable broader evaluation only in a separate reviewed task after the pilot
    passes.
 

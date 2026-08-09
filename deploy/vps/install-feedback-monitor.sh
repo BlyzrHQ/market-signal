@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 set -Eeuo pipefail
 
 export LC_ALL=C
@@ -17,6 +17,7 @@ created_user=0
 created_group=0
 created_home=0
 committed=0
+rollback_armed=0
 
 fail() {
   echo "FAIL: $*" >&2
@@ -43,7 +44,7 @@ restore_target() {
 
 rollback() {
   local status="$?"
-  if [[ "${committed}" -eq 0 ]]; then
+  if [[ "${committed}" -eq 0 && "${rollback_armed}" -eq 1 ]]; then
     rm -f -- "${sudoers}.new" "${wrapper}.new" "${helper}.new" "${monitor_shell}.new" "${authorized_keys}.new"
     restore_target "${sudoers}" sudoers
     restore_target "${wrapper}" wrapper
@@ -102,10 +103,6 @@ if id "${monitor_user}" >/dev/null 2>&1; then
   [[ "$(passwd -S "${monitor_user}" | awk '{print $2}')" == "L" ]] || fail "existing monitor account must remain password-locked"
 else
   [[ ! -e "${monitor_home}" ]] || fail "monitor home exists without its dedicated account"
-  if ! getent group "${monitor_group}" >/dev/null; then
-    groupadd --system "${monitor_group}"
-    created_group=1
-  fi
 fi
 
 backup_target "${monitor_shell}" shell
@@ -113,6 +110,12 @@ backup_target "${helper}" helper
 backup_target "${wrapper}" wrapper
 backup_target "${sudoers}" sudoers
 backup_target "${authorized_keys}" authorized-keys
+rollback_armed=1
+
+if ! getent group "${monitor_group}" >/dev/null; then
+  groupadd --system "${monitor_group}"
+  created_group=1
+fi
 
 install -o root -g root -m 0755 "${transaction}/shell" "${monitor_shell}.new"
 mv -f -- "${monitor_shell}.new" "${monitor_shell}"

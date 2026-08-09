@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -176,7 +176,7 @@ test("evaluation feedback monitor is forced, bounded, and credential-isolated", 
   assert.match(helper, /max-filesize/);
   assert.match(helper, /MARKET_SIGNAL_MONITOR_READ_TOKEN/);
   assert.match(helper, /MARKET_SIGNAL_MONITOR_ACK_TOKEN/);
-  assert.match(helper, /curl --config/);
+  assert.match(helper, /curl --disable --config/);
   assert.match(helper, /env -i PATH=\/usr\/bin:\/bin LC_ALL=C/);
   assert.match(helper, /ulimit -f 64/);
   assert.match(helper, /json\.load\(body\)/);
@@ -191,11 +191,14 @@ test("evaluation feedback monitor is forced, bounded, and credential-isolated", 
   assert.match(wrapper, /SSH_ORIGINAL_COMMAND/);
   assert.match(wrapper, /exec sudo \/usr\/local\/sbin\/market-signal-feedback-monitor/);
   assert.doesNotMatch(wrapper, /eval|bash -c|sh -c/);
-  assert.match(loginShell, /\[\[ "\$2" == "\/usr\/local\/sbin\/market-signal-feedback-monitor-ssh" \]\]/);
+  assert.match(loginShell, /#!\/bin\/dash/);
+  assert.match(loginShell, /env -i LC_ALL=C PATH=\/usr\/bin:\/bin SSH_ORIGINAL_COMMAND=/);
+  assert.match(loginShell, /\[ "\$2" = "\/usr\/local\/sbin\/market-signal-feedback-monitor-ssh" \]/);
   assert.doesNotMatch(loginShell, /eval|bash -c|sh -c/);
   assert.match(installer, /restrict,command=/);
   assert.match(installer, /passwd --lock/);
   assert.match(installer, /trap rollback EXIT/);
+  assert.match(installer, /rollback_armed=1/);
   assert.match(installer, /visudo -cf "\$\{transaction\}\/sudoers"/);
   assert.match(installer, /--shell "\$\{monitor_shell\}"/);
   assert.match(installer, /root:root:755/);
@@ -204,6 +207,24 @@ test("evaluation feedback monitor is forced, bounded, and credential-isolated", 
   assert.match(automation, /Only after that complete presentation succeeds/);
   assert.match(automation, /Never acknowledge a failed or incomplete\s+presentation/);
   assert.match(automation, /exact open human-review question and stable request ID/);
+  assert.match(automation, /100,000\s+micro-USD/);
+  assert.match(automation, /completedAt.*UTC calendar/);
+
+  const lastBackup = installer.lastIndexOf("backup_target ");
+  const rollbackArm = installer.indexOf("rollback_armed=1");
+  const firstPrivilegedMutation = installer.indexOf("groupadd --system", rollbackArm);
+  assert.ok(lastBackup > 0 && rollbackArm > lastBackup);
+  assert.ok(firstPrivilegedMutation > rollbackArm);
+
+  const bash = process.platform === "win32" ? "C:\\Program Files\\Git\\bin\\bash.exe" : "/bin/bash";
+  for (const originalCommand of ["claim\nunexpected", "claim\runexpected", "claim\tunexpected", "claim "]) {
+    const rejected = spawnSync(bash, ["deploy/vps/market-signal-feedback-monitor-ssh.sh"], {
+      cwd: root,
+      env: { ...process.env, SSH_ORIGINAL_COMMAND: originalCommand },
+      encoding: "utf8",
+    });
+    assert.equal(rejected.status, 64, JSON.stringify({ originalCommand, stderr: rejected.stderr }));
+  }
 });
 
 test("runtime dependencies required by vinext are installed in production", () => {

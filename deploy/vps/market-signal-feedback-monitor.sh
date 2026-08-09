@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 set -Eeuo pipefail
 
 export LC_ALL=C
@@ -82,7 +82,7 @@ status="$(
   (
     ulimit -f 64
     exec env -i PATH=/usr/bin:/bin LC_ALL=C \
-      curl --config "${curl_config}" --dump-header "${headers}" --output "${response}" \
+      curl --disable --config "${curl_config}" --dump-header "${headers}" --output "${response}" \
         --write-out '%{http_code}' --data-raw "${body}" 2>/dev/null
   )
 )" \
