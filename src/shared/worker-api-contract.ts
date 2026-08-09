@@ -13,10 +13,12 @@ export const REQUIRED_WORKER_API_CAPABILITIES = [
 ] as const;
 
 export const REPORT_RETENTION_CAPABILITY = "report.retention.purge" as const;
+export const REPORT_EVALUATION_CAPABILITY = "report.evaluation.execute" as const;
 
 export const ADVERTISED_WORKER_API_CAPABILITIES = [
   ...REQUIRED_WORKER_API_CAPABILITIES,
   REPORT_RETENTION_CAPABILITY,
+  REPORT_EVALUATION_CAPABILITY,
 ] as const;
 
 export type RequiredWorkerApiCapability = typeof REQUIRED_WORKER_API_CAPABILITIES[number];

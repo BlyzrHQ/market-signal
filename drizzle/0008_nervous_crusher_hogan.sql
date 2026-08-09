@@ -1,0 +1,1 @@
+ALTER TABLE `report_evaluations` ADD `dispatch_token` text DEFAULT '' NOT NULL;
