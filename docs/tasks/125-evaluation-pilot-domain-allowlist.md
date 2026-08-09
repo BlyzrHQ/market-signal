@@ -16,10 +16,12 @@ Add comma-separated server-owned domain and exact public-report allowlists:
 - the main boolean remains the kill switch;
 - missing, empty, or whitespace-only allowlists fail closed;
 - only the unmistakable `__all__` sentinel enables future global mode;
-- both an exact normalized domain and one exact 32-character public report ID
+- both an exact normalized domain and exactly one 32-character public report ID
   are required, so repeated public submissions cannot consume evaluation cost;
 - recovery has neither scoped value and therefore remains disabled;
 - invalid allowlist entries are ignored rather than widening access.
+- dispatch retries preserve one external idempotency key per evaluation, so an
+  accepted request with a lost response cannot create another paid Trigger run.
 
 ## Acceptance criteria
 

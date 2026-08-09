@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { reportEvaluationPilotEnabled } from "../app/lib/report-evaluation-dispatch.ts";
+import { reportEvaluationDispatchKey, reportEvaluationPilotEnabled } from "../app/lib/report-evaluation-dispatch.ts";
 
 const REPORT_ID = "a".repeat(32);
 const OTHER_REPORT_ID = "b".repeat(32);
@@ -25,8 +25,15 @@ test("missing or malformed pilot scope fails closed", async () => {
   assert.equal(await reportEvaluationPilotEnabled(context, { enabled: "true", domains: "myjam.co.uk", reportIds: "" }), false);
   assert.equal(await reportEvaluationPilotEnabled(context, { enabled: "true", domains: "invalid value", reportIds: REPORT_ID }), false);
   assert.equal(await reportEvaluationPilotEnabled(context, { enabled: "true", domains: "myjam.co.uk", reportIds: "invalid-id" }), false);
+  assert.equal(await reportEvaluationPilotEnabled(context, { enabled: "true", domains: "myjam.co.uk", reportIds: `${REPORT_ID},${OTHER_REPORT_ID}` }), false);
   assert.equal(await reportEvaluationPilotEnabled(context, { enabled: "true", domains: "__all__", reportIds: REPORT_ID }), false);
   assert.equal(await reportEvaluationPilotEnabled(context, { enabled: "true", domains: "myjam.co.uk", reportIds: "__all__" }), false);
+});
+
+test("ambiguous dispatch retries preserve one external idempotency identity", () => {
+  const first = reportEvaluationDispatchKey({ evaluationId: "evaluation-1", evaluatorVersion: "agent-v1", dispatchAttempt: 1 });
+  const retry = reportEvaluationDispatchKey({ evaluationId: "evaluation-1", evaluatorVersion: "agent-v1", dispatchAttempt: 2 });
+  assert.equal(first, retry);
 });
 
 test("global evaluation requires matching unmistakable sentinels", async () => {

@@ -10,7 +10,7 @@ type TriggerHandle = { id: string };
 type TriggerEvaluation = (payload: ReportEvaluationPayload, options: { idempotencyKey: string; idempotencyKeyTTL: string; tags: string[] }) => Promise<TriggerHandle>;
 
 export function reportEvaluationDispatchKey(payload: ReportEvaluationPayload) {
-  return `evaluation:${payload.evaluationId}:${payload.evaluatorVersion}:dispatch:${payload.dispatchAttempt}`;
+  return `evaluation:${payload.evaluationId}:${payload.evaluatorVersion}:dispatch`;
 }
 
 type EvaluationPilotContext = { primaryDomain?: string; publicReportId?: string };
@@ -33,7 +33,7 @@ export async function reportEvaluationPilotEnabled(context: EvaluationPilotConte
   if (!rawDomains.trim() || !rawReportIds.trim()) return false;
   const domains = pilotDomains(rawDomains);
   const reportIds = pilotReportIds(rawReportIds);
-  if (!domains.length || !reportIds.length) return false;
+  if (!domains.length || reportIds.length !== 1) return false;
   return typeof context.primaryDomain === "string"
     && domains.includes(context.primaryDomain.trim().toLowerCase())
     && typeof context.publicReportId === "string"
