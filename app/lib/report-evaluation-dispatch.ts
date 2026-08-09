@@ -23,7 +23,8 @@ export async function reportEvaluationPilotEnabled(primaryDomain?: string, overr
   const enabled = overrides.enabled ?? await runtimeEnvironmentValue("MARKET_SIGNAL_EVALUATION_PILOT_ENABLED");
   if (enabled !== "true") return false;
   const rawDomains = overrides.domains ?? await runtimeEnvironmentValue("MARKET_SIGNAL_EVALUATION_PILOT_DOMAINS");
-  if (!rawDomains.trim()) return true;
+  if (rawDomains.trim() === "__all__") return true;
+  if (!rawDomains.trim()) return false;
   const domains = pilotDomains(rawDomains);
   if (!domains.length) return false;
   return typeof primaryDomain === "string" && domains.includes(primaryDomain.trim().toLowerCase());

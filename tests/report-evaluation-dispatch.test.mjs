@@ -17,7 +17,10 @@ test("evaluation pilot domain allowlist gates terminal report dispatch", async (
   assert.equal(await reportEvaluationPilotEnabled("myjam.co.uk", { enabled: "true", domains: "invalid value,," }), false);
 });
 
-test("an enabled pilot without an allowlist preserves the explicit global mode", async () => {
-  assert.equal(await reportEvaluationPilotEnabled("example.com", { enabled: "true", domains: "" }), true);
-  assert.equal(await reportEvaluationPilotEnabled(undefined, { enabled: "true", domains: "" }), true);
+test("global evaluation requires an unmistakable sentinel", async () => {
+  assert.equal(await reportEvaluationPilotEnabled("example.com", { enabled: "true", domains: "__all__" }), true);
+  assert.equal(await reportEvaluationPilotEnabled(undefined, { enabled: "true", domains: "__all__" }), true);
+  assert.equal(await reportEvaluationPilotEnabled("example.com", { enabled: "true", domains: "" }), false);
+  assert.equal(await reportEvaluationPilotEnabled("example.com", { enabled: "true", domains: "   " }), false);
+  assert.equal(await reportEvaluationPilotEnabled(undefined, { enabled: "true", domains: "" }), false);
 });
