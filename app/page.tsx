@@ -5,6 +5,7 @@ import { FormEvent, KeyboardEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { SiteFooter } from "./components/site-footer";
 import { postJson } from "./lib/json-response";
+import { captureProductEvent } from "./lib/product-analytics-client";
 
 type Locale = "en" | "ar";
 type ProofView = "dashboard" | "competitors" | "catalog";
@@ -74,7 +75,9 @@ export default function Home() {
   const ar = locale === "ar";
 
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("lang") !== "ar") return;
+    const initialLocale = new URLSearchParams(window.location.search).get("lang") === "ar" ? "ar" : "en";
+    captureProductEvent("landing_viewed", { locale: initialLocale });
+    if (initialLocale !== "ar") return;
     const timer = window.setTimeout(() => setLocale("ar"), 0);
     return () => window.clearTimeout(timer);
   }, []);
@@ -91,13 +94,19 @@ export default function Home() {
   async function analyze(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const primaryDomain = domain.trim();
+    if (!primaryDomain) captureProductEvent("report_request_failed", { locale, failure_stage: "validation" });
     if (!primaryDomain) { setAnalysisError(ar ? "أدخل نطاق شركتك أو رابط موقعها." : "Enter your company domain or website URL."); return; }
+    captureProductEvent("report_requested", { locale, input_kind: /^https?:\/\//i.test(primaryDomain) ? "url" : "domain" });
     setIsAnalyzing(true); setAnalysisError("");
     try {
       const created = await postJson<CreateReportResponse>("/api/reports", { primaryDomain, locale }, "Persistent report creation");
       if (!created.ok) { const failed = created as Extract<CreateReportResponse, { ok: false }>; if (failed.publicId) window.location.assign(`/reports/${failed.publicId}/loading`); else throw new Error(failed.error || "The background report job could not be started."); return; }
       window.location.assign(`/reports/${created.report.publicId}/loading`);
-    } catch (error) { setAnalysisError(error instanceof Error ? error.message : "The report could not be started."); setIsAnalyzing(false); }
+    } catch (error) {
+      captureProductEvent("report_request_failed", { locale, failure_stage: "request" });
+      setAnalysisError(error instanceof Error ? error.message : "The report could not be started.");
+      setIsAnalyzing(false);
+    }
   }
 
   return <main className="app-root landing-v2" lang={locale} dir={ar ? "rtl" : "ltr"}>

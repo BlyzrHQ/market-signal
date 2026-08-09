@@ -6,6 +6,8 @@ import { ProductDesignLab } from "../../components/product-design-lab";
 import { ExperienceBenchmark } from "../../components/experience-benchmark";
 import { reportCoverage, type ReportCoverageEvent } from "../../lib/report-coverage";
 import { jsonResponseErrorMessage, readJsonResponse } from "../../lib/json-response";
+import { captureProductEvent } from "../../lib/product-analytics-client";
+import { reportAnalyticsPlan, reportAnalyticsStatus } from "../../lib/product-analytics";
 
 type Block = { type: string; id: string } & Record<string, unknown>;
 type ReportEvent = ReportCoverageEvent;
@@ -82,7 +84,7 @@ function AdCreativeCard({ concept, ar }: { concept: Record<string, unknown>; ar:
   </article>;
 }
 
-function ReportWorkspace({ blocks, primaryProducts, publicId, primaryDomain, observedAt, reportStatus, reportEvents, ar, onToggleLocale }: { blocks: Block[]; primaryProducts?: { authoritative: boolean; totalCount: number; products: Array<Record<string, unknown>>; truncated: boolean }; publicId: string; primaryDomain: string; observedAt: string; reportStatus: string; reportEvents: ReportEvent[]; ar: boolean; onToggleLocale: () => void }) {
+function ReportWorkspace({ blocks, primaryProducts, publicId, primaryDomain, observedAt, reportStatus, productPlan, reportEvents, ar, onToggleLocale }: { blocks: Block[]; primaryProducts?: { authoritative: boolean; totalCount: number; products: Array<Record<string, unknown>>; truncated: boolean }; publicId: string; primaryDomain: string; observedAt: string; reportStatus: string; productPlan: string; reportEvents: ReportEvent[]; ar: boolean; onToggleLocale: () => void }) {
   const domainStatus = blocks.find((block) => block.type === "domain-status" && ["parked", "unavailable"].includes(display(block.status).toLowerCase()));
   const domainState = display(domainStatus?.status).toLowerCase();
   const terminalDomain = Boolean(domainStatus);
@@ -90,9 +92,10 @@ function ReportWorkspace({ blocks, primaryProducts, publicId, primaryDomain, obs
   const unavailableDomain = domainState === "unavailable";
   const activeViews = useMemo<View[]>(() => terminalDomain ? ["overview"] : VIEWS, [terminalDomain]);
   const [view, setView] = useState<View>(VIEWS[0]);
+  const [viewHydrated, setViewHydrated] = useState(false);
   const [compactNav, setCompactNav] = useState(false);
   const tabs = useRef<Array<HTMLButtonElement | null>>([]);
-  useEffect(() => { const sync = () => { const requested = new URLSearchParams(window.location.search).get("view"); const next = viewFromLocation(activeViews); setView(next); if (!activeViews.includes(requested as View)) { const url = new URL(window.location.href); url.searchParams.set("view", next); url.hash = ""; window.history.replaceState({}, "", url); } }; sync(); window.addEventListener("popstate", sync); return () => window.removeEventListener("popstate", sync); }, [activeViews]);
+  useEffect(() => { const sync = () => { const requested = new URLSearchParams(window.location.search).get("view"); const next = viewFromLocation(activeViews); setView(next); setViewHydrated(true); if (!activeViews.includes(requested as View)) { const url = new URL(window.location.href); url.searchParams.set("view", next); url.hash = ""; window.history.replaceState({}, "", url); } }; sync(); window.addEventListener("popstate", sync); return () => window.removeEventListener("popstate", sync); }, [activeViews]);
   useEffect(() => { const media = window.matchMedia("(max-width: 1023px)"); const sync = () => setCompactNav(media.matches); sync(); media.addEventListener("change", sync); return () => media.removeEventListener("change", sync); }, []);
   useEffect(() => { const frame = window.requestAnimationFrame(scrollToReportHash); window.addEventListener("hashchange", scrollToReportHash); return () => { window.cancelAnimationFrame(frame); window.removeEventListener("hashchange", scrollToReportHash); }; }, [view, blocks]);
   useEffect(() => { if (compactNav) tabs.current[activeViews.indexOf(view)]?.scrollIntoView({ inline: "nearest", block: "nearest" }); }, [activeViews, compactNav, view]);
@@ -127,6 +130,27 @@ function ReportWorkspace({ blocks, primaryProducts, publicId, primaryDomain, obs
     const item = object(row); const primary = object(item.primary);
     return list(item.matches).flatMap((match, matchIndex) => { const candidate = object(match); const rival = object(candidate.product); return rival.name ? [{ primary, rival, match: candidate, key: `${rowIndex}-${matchIndex}` }] : []; });
   }), [comparison]);
+  const reportViewed = useRef(false);
+  useEffect(() => {
+    if (reportViewed.current) return;
+    reportViewed.current = true;
+    captureProductEvent("report_viewed", {
+      report_status: reportAnalyticsStatus(reportStatus),
+      plan_key: reportAnalyticsPlan(productPlan),
+      has_competitors: competitors.length > 0,
+      has_product_matches: battles.length > 0,
+    });
+  }, [battles.length, competitors.length, productPlan, reportStatus]);
+  useEffect(() => {
+    const section = view === "overview" ? "overview" : view === "competitors" ? "competitors" : null;
+    if (!viewHydrated || !section) return;
+    captureProductEvent("report_section_viewed", {
+      section,
+      layout: "none",
+      report_status: reportAnalyticsStatus(reportStatus),
+      plan_key: reportAnalyticsPlan(productPlan),
+    });
+  }, [productPlan, reportStatus, view, viewHydrated]);
   const adBlock = blocks.find((block) => block.type === "ad-intelligence");
   const adCompanies = list(adBlock?.companies).map(object);
   const evidence = blocks.filter((block) => block.type === "evidence");
@@ -177,7 +201,7 @@ function ReportWorkspace({ blocks, primaryProducts, publicId, primaryDomain, obs
         {!competitors.length && <div className="truth-state limited"><strong>{ar ? "لم يتم التحقق من منافس" : "No competitor was verified"}</strong><p>{ar ? "هذا نقص في التغطية، وليس دليلاً على عدم وجود منافسين." : "This is a coverage gap, not proof that no competitors exist."}</p></div>}
       </>}
 
-      {view === "products" && <ProductDesignLab comparison={comparison} battles={battles} primaryProducts={primaryProducts} publicId={publicId} authoritativeMatchTotal={authoritativeMatchTotal || undefined} primaryDomain={primaryDomain} observedAt={observedAt} ar={ar} />}
+      {view === "products" && <ProductDesignLab comparison={comparison} battles={battles} primaryProducts={primaryProducts} publicId={publicId} authoritativeMatchTotal={authoritativeMatchTotal || undefined} primaryDomain={primaryDomain} observedAt={observedAt} reportStatus={reportStatus} productPlan={productPlan} ar={ar} />}
 
       {view === "ads" && <>
         <header className="panel-intro compact"><div><span>{ar ? "مراقبة الإعلانات" : "AD WATCH"}</span><h2>{ar ? "من يعلن فعلاً، وماذا تقول إعلاناته؟" : "Who is verifiably advertising, and what are their ads saying?"}</h2><p>{display(adBlock?.limitation, ar ? "تختلف تغطية مكتبات الإعلانات حسب السوق والمنصة." : "Ad-library coverage varies by market and platform.")}</p></div></header>
@@ -209,5 +233,5 @@ export default function StoredReportPage({ params }: { params: Promise<{ publicI
   if (report && !document && ["failed", "interrupted"].includes(report.run.status)) return <main className="stored-report-state" lang={ar ? "ar" : "en"} dir={dir}><Link href="/">Market Signal</Link><h1>{ar ? "توقف هذا التقرير" : "This report stopped"}</h1><p>{report.run.errorMessage || (ar ? "ابدأ تقريراً جديداً للمحاولة مرة أخرى." : "Start a fresh report to try again.")}</p></main>;
   if (!report || !document) return <main className="stored-report-state"><div className="route-spinner" /><p>Opening the saved market report…</p></main>;
   if (report.documentSchemaVersion !== 1) return <main className="stored-report-state" lang={ar ? "ar" : "en"} dir={dir}><Link href="/">Market Signal</Link><h1>{ar ? "نسخة التقرير غير مدعومة" : "Unsupported report version"}</h1></main>;
-  return <main className="stored-report-page" lang={ar ? "ar" : "en"} dir={dir}><ReportWorkspace blocks={document.blocks} primaryProducts={report.primaryProducts} publicId={report.run.publicId} primaryDomain={report.run.primaryDomain} observedAt={report.run.updatedAt} reportStatus={report.run.status} reportEvents={report.events || []} ar={ar} onToggleLocale={() => setLocaleOverride(ar ? "en" : "ar")} /></main>;
+  return <main className="stored-report-page" lang={ar ? "ar" : "en"} dir={dir}><ReportWorkspace blocks={document.blocks} primaryProducts={report.primaryProducts} publicId={report.run.publicId} primaryDomain={report.run.primaryDomain} observedAt={report.run.updatedAt} reportStatus={report.run.status} productPlan={report.run.productPlan} reportEvents={report.events || []} ar={ar} onToggleLocale={() => setLocaleOverride(ar ? "en" : "ar")} /></main>;
 }

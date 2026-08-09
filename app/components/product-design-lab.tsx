@@ -4,6 +4,8 @@ import { KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { PricePosition } from "./price-position";
 import { formatPriceClaim, resolvePriceClaim } from "../lib/price-claims";
 import { jsonResponseErrorMessage, readJsonResponse } from "../lib/json-response";
+import { captureProductEvent } from "../lib/product-analytics-client";
+import { reportAnalyticsPlan, reportAnalyticsStatus } from "../lib/product-analytics";
 
 export type ProductBattle = {
   primary: Record<string, unknown>;
@@ -21,6 +23,8 @@ type ProductDesignLabProps = {
   authoritativeMatchTotal?: number;
   primaryDomain: string;
   observedAt: string;
+  reportStatus: string;
+  productPlan: string;
   ar: boolean;
 };
 
@@ -148,7 +152,7 @@ function ProductTableDetails({ row, observedAt, ar }: { row: ProductRow; observe
 
 type MatchPagePayload = { ok: boolean; error?: string; errorCode?: string; page?: { authoritative: true; manifestHash: string; totalCount: number; directPriceCount: number; items: ProductBattle[]; nextCursor: string | null } };
 
-export function ProductDesignLab({ comparison, battles, primaryProducts, publicId, authoritativeMatchTotal, primaryDomain, observedAt, ar }: ProductDesignLabProps) {
+export function ProductDesignLab({ comparison, battles, primaryProducts, publicId, authoritativeMatchTotal, primaryDomain, observedAt, reportStatus, productPlan, ar }: ProductDesignLabProps) {
   const [layout, setLayout] = useState<ProductLayout>("table");
   const [shareStatus, setShareStatus] = useState("");
   const [shareFallback, setShareFallback] = useState("");
@@ -158,6 +162,7 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [matchLoadState, setMatchLoadState] = useState<"loading" | "ready" | "fallback" | "more" | "exporting">("loading");
   const [matchLoadMessage, setMatchLoadMessage] = useState("");
+  const [layoutHydrated, setLayoutHydrated] = useState(false);
   const layoutTabs = useRef<Array<HTMLButtonElement | null>>([]);
   const displayedBattles = authoritativeBattles ?? battles;
   const rows = useMemo(() => displayedBattles.map((battle) => prepareRow(battle, ar)), [displayedBattles, ar]);
@@ -189,12 +194,22 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
 
   useEffect(() => {
     const sync = () => {
-      const next = productLayoutFromLocation(); setLayout(next);
+      const next = productLayoutFromLocation(); setLayout(next); setLayoutHydrated(true);
       const url = new URL(window.location.href);
       if (url.searchParams.get("layout") !== next) { url.searchParams.set("layout", next); window.history.replaceState({}, "", url); }
     };
     sync(); window.addEventListener("popstate", sync); return () => window.removeEventListener("popstate", sync);
   }, []);
+
+  useEffect(() => {
+    if (!layoutHydrated) return;
+    captureProductEvent("report_section_viewed", {
+      section: "products",
+      layout,
+      report_status: reportAnalyticsStatus(reportStatus),
+      plan_key: reportAnalyticsPlan(productPlan),
+    });
+  }, [layout, layoutHydrated, productPlan, reportStatus]);
 
   const selectLayout = (next: ProductLayout) => {
     const url = new URL(window.location.href); url.searchParams.set("view", "products"); url.searchParams.set("layout", next); url.hash = "";
@@ -214,9 +229,9 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
   const shareReport = async () => {
     const url = reportUrl(); setShareFallback("");
     try {
-      if (navigator.share) { await navigator.share({ title: `${primaryDomain} — Market Signal products`, text: ar ? "مقارنة المنتجات المحفوظة" : "Saved product comparison", url }); setShareStatus(ar ? "تمت المشاركة" : "Shared"); return; }
+      if (navigator.share) { await navigator.share({ title: `${primaryDomain} — Market Signal products`, text: ar ? "مقارنة المنتجات المحفوظة" : "Saved product comparison", url }); captureProductEvent("report_shared", { share_method: "native", section: "products", plan_key: reportAnalyticsPlan(productPlan) }); setShareStatus(ar ? "تمت المشاركة" : "Shared"); return; }
     } catch (error) { if (error instanceof DOMException && error.name === "AbortError") { setShareStatus(ar ? "تم إلغاء المشاركة" : "Share canceled"); return; } }
-    if (await copyText(url)) setShareStatus(ar ? "تم نسخ الرابط" : "Link copied"); else { setShareStatus(ar ? "انسخ الرابط أدناه" : "Copy the link below"); setShareFallback(url); }
+    if (await copyText(url)) { captureProductEvent("report_shared", { share_method: "clipboard", section: "products", plan_key: reportAnalyticsPlan(productPlan) }); setShareStatus(ar ? "تم نسخ الرابط" : "Link copied"); } else { captureProductEvent("report_shared", { share_method: "fallback", section: "products", plan_key: reportAnalyticsPlan(productPlan) }); setShareStatus(ar ? "انسخ الرابط أدناه" : "Copy the link below"); setShareFallback(url); }
   };
   const loadMoreMatches = async () => {
     if (!nextCursor || matchLoadState === "more" || matchLoadState === "exporting") return;
@@ -248,6 +263,7 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
     const data = exportRows.map((row) => [display(row.battle.primary.name), row.primaryDisplay, row.priceClaim.primary?.amount ?? "", row.priceClaim.primary?.currency ?? "", row.domain, display(row.battle.rival.name), row.rivalDisplay, row.priceClaim.rival?.amount ?? "", row.priceClaim.rival?.currency ?? "", row.priceStatus, row.priceSignal, row.fullAction, row.actionSource, `${row.matchStatus}-${row.claimType}`, row.confidence, observedAt, row.primarySource, row.rivalSource]);
     const csv = `\uFEFF${[headers, ...data].map((line) => line.map(csvCell).join(",")).join("\r\n")}`;
     const href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })); const anchor = document.createElement("a"); anchor.href = href; anchor.download = `${slug(primaryDomain)}-product-comparison.csv`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(href), 0);
+    captureProductEvent("report_exported", { format: "csv", section: "products", plan_key: reportAnalyticsPlan(productPlan) });
   };
 
   const lanes = [
