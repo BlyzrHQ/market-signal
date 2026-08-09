@@ -14,7 +14,7 @@ import { createReportRetentionHttpPort } from "../src/trigger/report-retention-h
 const NOW = new Date("2026-07-31T12:00:00.000Z");
 const OLD = new Date("2025-01-01T00:00:00.000Z");
 const TOKEN = "retention_callback_token_that_is_long_enough";
-const TABLES = ["report_quality_signals", "report_human_review_responses", "report_human_review_open", "report_human_review_requests", "report_evaluations", "report_ads", "report_matches", "report_products", "report_companies", "report_fact_chunks", "report_fact_manifests", "report_match_batch_checkpoints", "report_product_entitlements", "report_documents", "report_events", "report_runs"];
+const TABLES = ["report_quality_signals", "report_human_review_responses", "report_human_review_open", "report_human_review_requests", "report_evaluation_feedback_receipts", "report_evaluation_feedback_claims", "report_evaluation_feedback_outbox", "report_evaluations", "report_ads", "report_matches", "report_products", "report_companies", "report_fact_chunks", "report_fact_manifests", "report_match_batch_checkpoints", "report_product_entitlements", "report_documents", "report_events", "report_runs"];
 
 async function databaseFixture(t) {
   const directory = await mkdtemp(join(tmpdir(), "market-signal-retention-"));
@@ -47,6 +47,9 @@ async function seedCompleteReport(database, suffix, createdAt = OLD) {
     database.prepare("INSERT INTO report_human_review_requests (id, evaluation_id, run_id, evaluator_version, input_hash, fact_manifest_hash, uncertainty_code, question, evidence_ids_json, request_hash, created_at) VALUES (?, ?, ?, 'v1', ?, ?, 'subjective_usefulness', 'Is this useful?', '[\"evidence:one\"]', ?, ?)").bind(`request-${suffix}`, `evaluation-${suffix}`, id, `input-${suffix}`, `manifest-hash-${suffix}`, "c".repeat(64), observed),
     database.prepare("INSERT INTO report_human_review_open (request_id, run_id, queue_seq) SELECT id, run_id, queue_seq FROM report_human_review_requests WHERE id = ?").bind(`request-${suffix}`),
     database.prepare("INSERT INTO report_human_review_responses (id, request_id, evaluation_id, run_id, idempotency_key, resolution_code, answer_text, response_hash, reviewer_key, responded_at) VALUES (?, ?, ?, ?, ?, 'answered', 'Yes', ?, 'product-owner-v1', ?)").bind(`response-${suffix}`, `request-${suffix}`, `evaluation-${suffix}`, id, `idempotency-${suffix}`, "d".repeat(64), observed),
+    database.prepare("INSERT INTO report_evaluation_feedback_outbox (id, evaluation_id, run_id, event_kind, created_at) VALUES (?, ?, ?, 'terminal_report_evaluation', ?)").bind(`feedback-${suffix}`, `evaluation-${suffix}`, id, observed),
+    database.prepare("INSERT INTO report_evaluation_feedback_claims (outbox_id, run_id, consumer_key, lease_id_hash, payload_hash, leased_until, claimed_at) VALUES (?, ?, 'codex-task-feedback-v1', ?, ?, ?, ?)").bind(`feedback-${suffix}`, id, "e".repeat(64), "f".repeat(64), NOW.toISOString(), observed),
+    database.prepare("INSERT INTO report_evaluation_feedback_receipts (id, outbox_id, evaluation_id, run_id, consumer_key, idempotency_key, payload_hash, receipt_hash, acknowledged_at) VALUES (?, ?, ?, ?, 'codex-task-feedback-v1', ?, ?, ?, ?)").bind(`feedback-receipt-${suffix}`, `feedback-${suffix}`, `evaluation-${suffix}`, id, `feedback-idempotency-${suffix}`, "f".repeat(64), "a".repeat(64), observed),
   ]);
   return run;
 }
@@ -59,7 +62,7 @@ test("one atomic pass purges every report artifact and records exact anonymous c
   await database.prepare("UPDATE report_runs SET heartbeat_at = ? WHERE id = ?").bind(NOW.toISOString(), recent.id).run();
 
   const result = await purgeExpiredReports(NOW, database);
-  assert.deepEqual(result.deleted, { runs: 1, qualitySignals: 1, humanReviewRequests: 1, humanReviewResponses: 1, humanReviewOpen: 1, evaluations: 1, ads: 1, matches: 1, products: 1, companies: 1, factChunks: 1, factManifests: 1, documents: 1, events: 1 });
+  assert.deepEqual(result.deleted, { runs: 1, qualitySignals: 1, humanReviewRequests: 1, humanReviewResponses: 1, humanReviewOpen: 1, evaluationFeedbackOutbox: 1, evaluationFeedbackClaims: 1, evaluationFeedbackReceipts: 1, evaluations: 1, ads: 1, matches: 1, products: 1, companies: 1, factChunks: 1, factManifests: 1, documents: 1, events: 1 });
   assert.equal(result.remaining, 0);
   for (const table of TABLES) assert.equal(await scalar(database, `SELECT COUNT(*) AS count FROM ${table}`), 2, table);
   const audits = await database.prepare("SELECT * FROM report_purge_audits").all();

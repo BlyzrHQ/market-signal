@@ -3,10 +3,13 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import Database from "better-sqlite3";
 
 import { NodeSqliteDatabase } from "../app/lib/node-sqlite-database.ts";
 import {
   beginReportEvaluationDispatch,
+  acknowledgeEvaluationFeedback,
+  claimEvaluationFeedback,
   completeReportAgentEvaluation,
   createReportRun,
   finalizeReportFactManifest,
@@ -24,6 +27,7 @@ import {
   REPORT_EVALUATION_PROMPT_VERSION,
 } from "../src/shared/report-evaluation-contract.ts";
 import { buildReportFactBundle } from "../src/shared/report-facts.ts";
+import { REPORT_FEEDBACK_CONSUMER } from "../src/shared/report-feedback-contract.ts";
 
 const LEGACY_EVALUATIONS_SCHEMA = `CREATE TABLE report_evaluations (
   id text PRIMARY KEY NOT NULL, run_id text NOT NULL, evaluation_type text NOT NULL,
@@ -43,8 +47,9 @@ const LEGACY_EVALUATIONS_SCHEMA = `CREATE TABLE report_evaluations (
 
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), "market-signal-evaluation-store-"));
-  const database = await NodeSqliteDatabase.open(join(directory, "market-signal.sqlite"));
-  return { directory, database };
+  const path = join(directory, "market-signal.sqlite");
+  const database = await NodeSqliteDatabase.open(path);
+  return { directory, path, database };
 }
 
 async function closeFixture(value) {
@@ -213,6 +218,12 @@ test("runtime schema initialization upgrades legacy report_evaluations in place"
     assert.match(migration, /report_human_review_open/);
     assert.match(migration, /report_human_review_requests_immutable/);
     assert.match(migration, /CHECK \(`resolution_code` IN/);
+    const feedbackMigration = await readFile(new URL("../drizzle/0011_smart_naoko.sql", import.meta.url), "utf8");
+    const feedbackBindingMigration = await readFile(new URL("../drizzle/0012_peaceful_salo.sql", import.meta.url), "utf8");
+    assert.match(feedbackMigration, /report_evaluations_terminal_outbox_update/);
+    assert.match(feedbackMigration, /report_evaluation_feedback_receipts_immutable/);
+    assert.match(feedbackMigration, /CHECK \(`event_kind` = 'terminal_report_evaluation'\)/);
+    assert.match(feedbackBindingMigration, /payload_hash.*CHECK \(length\(`payload_hash`\) = 64\)/);
   } finally {
     await closeFixture(value);
   }
@@ -352,6 +363,103 @@ test("needs-human evaluation creates an immutable owner queue item and response 
     assert.equal(unchanged.overallScore, null);
     assert.deepEqual(unchanged.agent, agentBefore);
   } finally {
+    await closeFixture(value);
+  }
+});
+
+test("feedback migrations apply in order and install the atomic terminal trigger", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "market-signal-feedback-migration-"));
+  const path = join(directory, "migration.sqlite");
+  const database = new Database(path);
+  try {
+    database.pragma("foreign_keys = ON");
+    database.exec("CREATE TABLE report_runs (id text PRIMARY KEY NOT NULL); CREATE TABLE report_evaluations (id text PRIMARY KEY NOT NULL, run_id text NOT NULL, status text NOT NULL, completed_at text DEFAULT '' NOT NULL, created_at text NOT NULL); CREATE TABLE report_purge_audits (id text PRIMARY KEY NOT NULL);");
+    for (const name of ["0011_smart_naoko.sql", "0012_peaceful_salo.sql"]) {
+      const migration = await readFile(new URL(`../drizzle/${name}`, import.meta.url), "utf8");
+      for (const statement of migration.split("--> statement-breakpoint").map((part) => part.trim()).filter(Boolean)) database.exec(statement);
+    }
+    database.prepare("INSERT INTO report_runs (id) VALUES ('run-1')").run();
+    database.prepare("INSERT INTO report_evaluations (id, run_id, status, completed_at, created_at) VALUES ('evaluation-1', 'run-1', 'complete', '2026-08-09T00:00:01.000Z', '2026-08-09T00:00:00.000Z')").run();
+    assert.equal(database.prepare("SELECT COUNT(*) AS count FROM report_evaluation_feedback_outbox WHERE evaluation_id = 'evaluation-1'").get().count, 1);
+    const claims = database.pragma("table_info(report_evaluation_feedback_claims)");
+    assert.equal(claims.some((column) => column.name === "payload_hash" && column.notnull === 1), true);
+  } finally {
+    database.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("terminal evaluations create one atomic feedback delivery with leased at-least-once acknowledgement", async () => {
+  const value = await fixture();
+  try {
+    const now = new Date("2026-08-09T12:05:00.000Z");
+    const { evaluation } = await preparedEvaluation(value.database, "feedback", now);
+    const { dispatch, reservation } = await dispatchAndReserve(value.database, evaluation, new Date(now.getTime() + 1_000));
+    await value.database.prepare("CREATE TRIGGER reject_feedback_outbox BEFORE INSERT ON report_evaluation_feedback_outbox BEGIN SELECT RAISE(ABORT, 'injected feedback failure'); END").run();
+    await assert.rejects(() => completeReportAgentEvaluation(evaluation.id, terminalCallback(reservation, dispatch), new Date(now.getTime() + 2_000), value.database), /injected feedback failure/);
+    assert.equal((await getReportEvaluation((await value.database.prepare("SELECT public_id FROM report_runs WHERE id = ?").bind(evaluation.runId).all()).results[0].public_id, value.database)).status, "reserved");
+    assert.equal((await value.database.prepare("SELECT COUNT(*) AS count FROM report_evaluation_feedback_outbox WHERE evaluation_id = ?").bind(evaluation.id).all()).results[0].count, 0);
+    await value.database.prepare("DROP TRIGGER reject_feedback_outbox").run();
+
+    await completeReportAgentEvaluation(evaluation.id, terminalCallback(reservation, dispatch), new Date(now.getTime() + 3_000), value.database);
+    assert.equal((await value.database.prepare("SELECT COUNT(*) AS count FROM report_evaluation_feedback_outbox WHERE evaluation_id = ?").bind(evaluation.id).all()).results[0].count, 1);
+    const claimed = await claimEvaluationFeedback(new Date(now.getTime() + 4_000), value.database);
+    assert.equal(claimed.item.evaluationId, evaluation.id);
+    assert.equal(claimed.item.status, "complete");
+    assert.equal(Array.isArray(claimed.item.strengths), true);
+    assert.match(claimed.payloadHash, /^[a-f0-9]{64}$/);
+    assert.equal((await claimEvaluationFeedback(new Date(now.getTime() + 5_000), value.database)).item, null);
+    const ack = {
+      deliveryId: claimed.item.deliveryId,
+      leaseId: claimed.leaseId,
+      payloadHash: claimed.payloadHash,
+      idempotencyKey: "codex:feedback:one",
+      consumer: REPORT_FEEDBACK_CONSUMER,
+    };
+    assert.equal((await acknowledgeEvaluationFeedback(ack, new Date(now.getTime() + 6_000), value.database)).replayed, false);
+    assert.equal((await acknowledgeEvaluationFeedback(ack, new Date(now.getTime() + 7_000), value.database)).replayed, true);
+    await assert.rejects(() => acknowledgeEvaluationFeedback({ ...ack, idempotencyKey: "codex:feedback:changed" }, new Date(now.getTime() + 8_000), value.database), /immutable evaluation feedback acknowledgement/);
+    assert.equal((await claimEvaluationFeedback(new Date(now.getTime() + 9_000), value.database)).item, null);
+    await assert.rejects(() => value.database.prepare("UPDATE report_evaluation_feedback_outbox SET event_kind = 'changed' WHERE evaluation_id = ?").bind(evaluation.id).run(), /immutable evaluation feedback outbox/);
+    await assert.rejects(() => value.database.prepare("UPDATE report_evaluation_feedback_receipts SET consumer_key = 'changed' WHERE evaluation_id = ?").bind(evaluation.id).run(), /immutable evaluation feedback receipt/);
+    await assert.rejects(() => value.database.prepare("UPDATE report_evaluations SET error_code = 'changed' WHERE id = ?").bind(evaluation.id).run(), /immutable terminal report evaluation/);
+  } finally { await closeFixture(value); }
+});
+
+test("every terminal evaluation state creates an outbox event on insert", async () => {
+  const value = await fixture();
+  try {
+    const now = new Date("2026-08-09T12:07:00.000Z");
+    const run = await createReportRun({ primaryDomain: "terminal-states.example" }, now, value.database);
+    const statuses = ["complete", "agent_rejected", "needs_human_review", "call_outcome_unknown", "insufficient_facts", "rubric_unavailable", "failed"];
+    for (const [index, status] of statuses.entries()) {
+      await value.database.prepare("INSERT INTO report_evaluations (id, run_id, evaluation_type, input_hash, fact_manifest_hash, evaluator_version, rubric_version, status, rating_basis, created_at, completed_at) VALUES (?, ?, 'report', ?, ?, ?, 'r1', ?, 'deterministic_only', ?, ?)").bind(`terminal-${index}`, run.id, `input-${index}`, `manifest-${index}`, `version-${index}`, status, now.toISOString(), now.toISOString()).run();
+    }
+    const rows = await value.database.prepare("SELECT evaluation_id FROM report_evaluation_feedback_outbox ORDER BY queue_seq").all();
+    assert.deepEqual(rows.results.map((row) => row.evaluation_id), statuses.map((_, index) => `terminal-${index}`));
+  } finally { await closeFixture(value); }
+});
+
+test("concurrent feedback claims have one winner and an expired lease is safely recovered", async () => {
+  const value = await fixture();
+  const second = await NodeSqliteDatabase.open(value.path);
+  try {
+    const now = new Date("2026-08-09T12:08:00.000Z");
+    const run = await createReportRun({ primaryDomain: "feedback-race.example" }, now, value.database);
+    await value.database.prepare("INSERT INTO report_evaluations (id, run_id, evaluation_type, input_hash, fact_manifest_hash, evaluator_version, rubric_version, status, rating_basis, error_code, dispatch_attempts, deterministic_at, created_at, completed_at) VALUES ('feedback-race', ?, 'report', 'input-race', 'manifest-race', 'ecommerce-agent-v1', 'r1', 'failed', 'none', 'dispatch-failed', 3, ?, ?, ?)").bind(run.id, now.toISOString(), now.toISOString(), now.toISOString()).run();
+    const claims = await Promise.all([
+      claimEvaluationFeedback(new Date(now.getTime() + 1_000), value.database),
+      claimEvaluationFeedback(new Date(now.getTime() + 1_000), second),
+    ]);
+    assert.deepEqual(claims.map((claim) => Boolean(claim.item)).sort(), [false, true]);
+    const first = claims.find((claim) => claim.item);
+    const recovered = await claimEvaluationFeedback(new Date(now.getTime() + 302_000), second);
+    assert.equal(recovered.item.deliveryId, first.item.deliveryId);
+    assert.notEqual(recovered.leaseId, first.leaseId);
+    await assert.rejects(() => acknowledgeEvaluationFeedback({ deliveryId: first.item.deliveryId, leaseId: first.leaseId, payloadHash: first.payloadHash, idempotencyKey: "codex:stale-lease", consumer: REPORT_FEEDBACK_CONSUMER }, new Date(now.getTime() + 303_000), value.database), /lease is missing, expired, or conflicting/);
+    assert.equal((await acknowledgeEvaluationFeedback({ deliveryId: recovered.item.deliveryId, leaseId: recovered.leaseId, payloadHash: recovered.payloadHash, idempotencyKey: "codex:recovered-lease", consumer: REPORT_FEEDBACK_CONSUMER }, new Date(now.getTime() + 303_000), value.database)).replayed, false);
+  } finally {
+    second.close();
     await closeFixture(value);
   }
 });

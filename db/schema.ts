@@ -350,6 +350,43 @@ export const reportHumanReviewOpen = sqliteTable("report_human_review_open", {
   uniqueIndex("report_human_review_open_queue_uidx").on(table.queueSeq),
 ]);
 
+export const reportEvaluationFeedbackOutbox = sqliteTable("report_evaluation_feedback_outbox", {
+  queueSeq: integer("queue_seq").primaryKey({ autoIncrement: true }),
+  id: text("id").notNull(),
+  evaluationId: text("evaluation_id").notNull().references(() => reportEvaluations.id, { onDelete: "cascade" }),
+  runId: text("run_id").notNull().references(() => reportRuns.id, { onDelete: "cascade" }),
+  eventKind: text("event_kind").notNull().default("terminal_report_evaluation"),
+  createdAt: text("created_at").notNull(),
+}, (table) => [
+  uniqueIndex("report_evaluation_feedback_outbox_id_uidx").on(table.id),
+  uniqueIndex("report_evaluation_feedback_outbox_evaluation_uidx").on(table.evaluationId),
+]);
+
+export const reportEvaluationFeedbackClaims = sqliteTable("report_evaluation_feedback_claims", {
+  outboxId: text("outbox_id").primaryKey().references(() => reportEvaluationFeedbackOutbox.id, { onDelete: "cascade" }),
+  runId: text("run_id").notNull().references(() => reportRuns.id, { onDelete: "cascade" }),
+  consumerKey: text("consumer_key").notNull(),
+  leaseIdHash: text("lease_id_hash").notNull(),
+  payloadHash: text("payload_hash").notNull(),
+  leasedUntil: text("leased_until").notNull(),
+  claimedAt: text("claimed_at").notNull(),
+});
+
+export const reportEvaluationFeedbackReceipts = sqliteTable("report_evaluation_feedback_receipts", {
+  id: text("id").primaryKey(),
+  outboxId: text("outbox_id").notNull().references(() => reportEvaluationFeedbackOutbox.id, { onDelete: "cascade" }),
+  evaluationId: text("evaluation_id").notNull().references(() => reportEvaluations.id, { onDelete: "cascade" }),
+  runId: text("run_id").notNull().references(() => reportRuns.id, { onDelete: "cascade" }),
+  consumerKey: text("consumer_key").notNull(),
+  idempotencyKey: text("idempotency_key").notNull(),
+  payloadHash: text("payload_hash").notNull(),
+  receiptHash: text("receipt_hash").notNull(),
+  acknowledgedAt: text("acknowledged_at").notNull(),
+}, (table) => [
+  uniqueIndex("report_evaluation_feedback_receipts_outbox_uidx").on(table.outboxId),
+  uniqueIndex("report_evaluation_feedback_receipts_idempotency_uidx").on(table.idempotencyKey),
+]);
+
 export const reportPurgeAudits = sqliteTable("report_purge_audits", {
   id: text("id").primaryKey(),
   cutoff: text("cutoff").notNull(),
@@ -359,6 +396,9 @@ export const reportPurgeAudits = sqliteTable("report_purge_audits", {
   humanReviewRequestsDeleted: integer("human_review_requests_deleted").notNull().default(0),
   humanReviewResponsesDeleted: integer("human_review_responses_deleted").notNull().default(0),
   humanReviewOpenDeleted: integer("human_review_open_deleted").notNull().default(0),
+  evaluationFeedbackOutboxDeleted: integer("evaluation_feedback_outbox_deleted").notNull().default(0),
+  evaluationFeedbackClaimsDeleted: integer("evaluation_feedback_claims_deleted").notNull().default(0),
+  evaluationFeedbackReceiptsDeleted: integer("evaluation_feedback_receipts_deleted").notNull().default(0),
   evaluationsDeleted: integer("evaluations_deleted").notNull(),
   adsDeleted: integer("ads_deleted").notNull(),
   matchesDeleted: integer("matches_deleted").notNull(),
