@@ -15,6 +15,7 @@ import {
   finalizeReportFactManifest,
   getReportEvaluation,
   listHumanReviewRequests,
+  markReportEvaluationDispatchFailed,
   reconcileReportEvaluations,
   reserveReportAgentEvaluation,
   saveReportDocument,
@@ -264,6 +265,35 @@ test("evaluation persists deterministic, dispatching, reserved, and complete sta
     assert.ok(completed.grade);
     assert.equal(completed.usageStatus, "known");
     assert.deepEqual({ input: completed.inputTokens, cached: completed.cachedInputTokens, output: completed.outputTokens, cost: completed.costMicrousd }, { input: 1_000, cached: 400, output: 200, cost: 1_380 });
+  } finally {
+    await closeFixture(value);
+  }
+});
+
+test("an ambiguously accepted stale worker cannot reserve cost after a bounded dispatch retry", async () => {
+  const value = await fixture();
+  try {
+    const now = new Date("2026-08-09T10:30:00.000Z");
+    const { evaluation } = await preparedEvaluation(value.database, "dispatch-retry", now);
+    const first = await beginReportEvaluationDispatch(evaluation.id, new Date(now.getTime() + 1_000), value.database);
+    await markReportEvaluationDispatchFailed(evaluation.id, first.dispatchAttempt, new Date(now.getTime() + 2_000), value.database);
+    const retry = await beginReportEvaluationDispatch(evaluation.id, new Date(now.getTime() + 3_000), value.database);
+    assert.equal(retry.dispatchAttempt, first.dispatchAttempt + 1);
+
+    assert.deepEqual(await reserveReportAgentEvaluation(evaluation.id, {
+      evaluatorVersion: first.evaluatorVersion,
+      dispatchAttempt: first.dispatchAttempt,
+      reservationOwner: "ambiguously-accepted-stale-worker",
+      clientRequestId: "stale-dispatch-request",
+    }, new Date(now.getTime() + 4_000), value.database), { ok: false, code: "stale_attempt" });
+
+    const reservation = await reserveReportAgentEvaluation(evaluation.id, {
+      evaluatorVersion: retry.evaluatorVersion,
+      dispatchAttempt: retry.dispatchAttempt,
+      reservationOwner: "current-retry-worker",
+      clientRequestId: "current-dispatch-request",
+    }, new Date(now.getTime() + 5_000), value.database);
+    assert.equal(reservation.ok, true);
   } finally {
     await closeFixture(value);
   }

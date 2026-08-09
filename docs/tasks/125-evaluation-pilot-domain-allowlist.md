@@ -20,8 +20,9 @@ Add comma-separated server-owned domain and exact public-report allowlists:
   are required, so repeated public submissions cannot consume evaluation cost;
 - recovery has neither scoped value and therefore remains disabled;
 - invalid allowlist entries are ignored rather than widening access.
-- dispatch retries preserve one external idempotency key per evaluation, so an
-  accepted request with a lost response cannot create another paid Trigger run.
+- dispatch retries remain bounded and attempt-specific. The database accepts a
+  model-cost reservation only from the current attempt, so an ambiguously
+  accepted stale worker is rejected before any OpenAI call.
 
 ## Acceptance criteria
 

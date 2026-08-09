@@ -30,10 +30,10 @@ test("missing or malformed pilot scope fails closed", async () => {
   assert.equal(await reportEvaluationPilotEnabled(context, { enabled: "true", domains: "myjam.co.uk", reportIds: "__all__" }), false);
 });
 
-test("ambiguous dispatch retries preserve one external idempotency identity", () => {
+test("each bounded dispatch attempt has its own external idempotency identity", () => {
   const first = reportEvaluationDispatchKey({ evaluationId: "evaluation-1", evaluatorVersion: "agent-v1", dispatchAttempt: 1 });
   const retry = reportEvaluationDispatchKey({ evaluationId: "evaluation-1", evaluatorVersion: "agent-v1", dispatchAttempt: 2 });
-  assert.equal(first, retry);
+  assert.notEqual(first, retry);
 });
 
 test("global evaluation requires matching unmistakable sentinels", async () => {

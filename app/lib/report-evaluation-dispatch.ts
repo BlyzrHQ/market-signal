@@ -10,7 +10,7 @@ type TriggerHandle = { id: string };
 type TriggerEvaluation = (payload: ReportEvaluationPayload, options: { idempotencyKey: string; idempotencyKeyTTL: string; tags: string[] }) => Promise<TriggerHandle>;
 
 export function reportEvaluationDispatchKey(payload: ReportEvaluationPayload) {
-  return `evaluation:${payload.evaluationId}:${payload.evaluatorVersion}:dispatch`;
+  return `evaluation:${payload.evaluationId}:${payload.evaluatorVersion}:dispatch:${payload.dispatchAttempt}`;
 }
 
 type EvaluationPilotContext = { primaryDomain?: string; publicReportId?: string };
