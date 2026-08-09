@@ -1256,7 +1256,7 @@ function feedbackItems(value: unknown) {
     const explanation = cleanText(row.explanation, 240);
     if (!explanation) return [];
     return [{
-      issueKey: cleanText(row.issueKey, 120),
+      issueCode: cleanText(row.issueCode, 120),
       subjectKind: cleanText(row.subjectKind, 40),
       subjectId: cleanText(row.subjectId, 120),
       explanation,
@@ -1315,6 +1315,7 @@ function feedbackPayload(item: StoredEvaluationFeedback) {
 }
 
 const FEEDBACK_ROW_SELECT = `SELECT outbox.queue_seq, outbox.id AS delivery_id, evaluations.id AS evaluation_id, evaluations.status, evaluations.rating_basis, evaluations.grade, evaluations.overall_score, evaluations.agent_json, evaluations.error_code, evaluations.usage_status, evaluations.cost_microusd, evaluations.completed_at, runs.public_id, runs.primary_domain, runs.expires_at, requests.id AS human_request_id, requests.uncertainty_code, requests.question, requests.evidence_ids_json, human_open.request_id AS human_open_id FROM report_evaluation_feedback_outbox outbox JOIN report_evaluations evaluations ON evaluations.id = outbox.evaluation_id JOIN report_runs runs ON runs.id = outbox.run_id LEFT JOIN report_evaluation_feedback_receipts receipts ON receipts.outbox_id = outbox.id LEFT JOIN report_human_review_requests requests ON requests.evaluation_id = evaluations.id LEFT JOIN report_human_review_open human_open ON human_open.request_id = requests.id`;
+const REPORT_FEEDBACK_BACKLOG_SCAN_LIMIT = 1_001;
 
 export async function claimEvaluationFeedback(now = new Date(), databaseOverride?: D1DatabaseLike | null) {
   const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
@@ -1324,8 +1325,9 @@ export async function claimEvaluationFeedback(now = new Date(), databaseOverride
   const observedAt = now.toISOString();
   const candidateRows = await database.prepare(`${FEEDBACK_ROW_SELECT} LEFT JOIN report_evaluation_feedback_claims claims ON claims.outbox_id = outbox.id WHERE receipts.outbox_id IS NULL AND runs.expires_at > ? AND (claims.outbox_id IS NULL OR claims.leased_until <= ?) ORDER BY outbox.queue_seq LIMIT 1`).bind(observedAt, observedAt).all<Record<string, unknown>>();
   const candidate = candidateRows.results?.[0];
-  const backlogRows = await database.prepare(`SELECT COUNT(*) AS count, MIN(outbox.created_at) AS oldest FROM report_evaluation_feedback_outbox outbox JOIN report_runs runs ON runs.id = outbox.run_id LEFT JOIN report_evaluation_feedback_receipts receipts ON receipts.outbox_id = outbox.id WHERE receipts.outbox_id IS NULL AND runs.expires_at > ?`).bind(observedAt).all<Record<string, unknown>>();
-  const backlog = { pending: numberField(backlogRows.results?.[0], "count"), oldestAt: String(backlogRows.results?.[0]?.oldest || "") || null };
+  const backlogRows = await database.prepare(`SELECT COUNT(*) AS count, MIN(created_at) AS oldest FROM (SELECT outbox.created_at FROM report_evaluation_feedback_outbox outbox JOIN report_runs runs ON runs.id = outbox.run_id LEFT JOIN report_evaluation_feedback_receipts receipts ON receipts.outbox_id = outbox.id WHERE receipts.outbox_id IS NULL AND runs.expires_at > ? ORDER BY outbox.queue_seq LIMIT ?) bounded_backlog`).bind(observedAt, REPORT_FEEDBACK_BACKLOG_SCAN_LIMIT).all<Record<string, unknown>>();
+  const boundedPending = numberField(backlogRows.results?.[0], "count");
+  const backlog = { pending: boundedPending, pendingIsLowerBound: boundedPending === REPORT_FEEDBACK_BACKLOG_SCAN_LIMIT, oldestAt: String(backlogRows.results?.[0]?.oldest || "") || null };
   if (!candidate) return { item: null, leaseId: null, payloadHash: null, backlog };
   const item = evaluationFeedbackRow(candidate);
   const leaseId = internalId();
@@ -1348,6 +1350,10 @@ export async function acknowledgeEvaluationFeedback(input: { deliveryId: string;
   await ensureSchema(database);
   const observedAt = now.toISOString();
   const receiptHash = await sha256Text(JSON.stringify(input));
+  const sourceRows = await database.prepare(`SELECT runs.expires_at FROM report_evaluation_feedback_outbox outbox JOIN report_runs runs ON runs.id = outbox.run_id WHERE outbox.id = ? LIMIT 1`).bind(input.deliveryId).all<Record<string, unknown>>();
+  const source = sourceRows.results?.[0];
+  if (!source) throw new ReportEvaluationStateError("evaluation-feedback-not-found", "Evaluation feedback delivery was not found.", 404);
+  if (Date.parse(String(source.expires_at || "")) <= now.getTime()) throw new ReportEvaluationStateError("evaluation-feedback-expired", "Evaluation feedback expired with its report.", 410);
   const existingRows = await database.prepare(`SELECT * FROM report_evaluation_feedback_receipts WHERE outbox_id = ? OR idempotency_key = ? ORDER BY outbox_id = ? DESC LIMIT 1`).bind(input.deliveryId, input.idempotencyKey, input.deliveryId).all<Record<string, unknown>>();
   const existing = existingRows.results?.[0];
   if (existing) {

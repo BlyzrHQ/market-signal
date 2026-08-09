@@ -154,7 +154,13 @@ function validAgentOutput(canonicalInput, humanReview = null) {
       decisionClarity: scored(20, "The decision path is clear.", presentation),
       topActionsIdentifiable: scored(16, "The main action is identifiable.", presentation),
     },
-    strengths: [],
+    strengths: [{
+      issueCode: "useful_competitors",
+      subjectKind: "report",
+      subjectId: "report",
+      explanation: "The competitor evidence gives the owner a useful market reference.",
+      evidenceIds: [company.id],
+    }],
     weaknesses: [],
     proposals: [],
     humanReview: humanReview ? {
@@ -406,7 +412,7 @@ test("terminal evaluations create one atomic feedback delivery with leased at-le
     const claimed = await claimEvaluationFeedback(new Date(now.getTime() + 4_000), value.database);
     assert.equal(claimed.item.evaluationId, evaluation.id);
     assert.equal(claimed.item.status, "complete");
-    assert.equal(Array.isArray(claimed.item.strengths), true);
+    assert.equal(claimed.item.strengths[0].issueCode, "useful_competitors");
     assert.match(claimed.payloadHash, /^[a-f0-9]{64}$/);
     assert.equal((await claimEvaluationFeedback(new Date(now.getTime() + 5_000), value.database)).item, null);
     const ack = {
@@ -418,7 +424,9 @@ test("terminal evaluations create one atomic feedback delivery with leased at-le
     };
     assert.equal((await acknowledgeEvaluationFeedback(ack, new Date(now.getTime() + 6_000), value.database)).replayed, false);
     assert.equal((await acknowledgeEvaluationFeedback(ack, new Date(now.getTime() + 7_000), value.database)).replayed, true);
-    await assert.rejects(() => acknowledgeEvaluationFeedback({ ...ack, idempotencyKey: "codex:feedback:changed" }, new Date(now.getTime() + 8_000), value.database), /immutable evaluation feedback acknowledgement/);
+    await assert.rejects(() => acknowledgeEvaluationFeedback({ ...ack, idempotencyKey: "codex:feedback:changed" }, new Date(now.getTime() + 7_250), value.database), /immutable evaluation feedback acknowledgement/);
+    await value.database.prepare("UPDATE report_runs SET expires_at = ? WHERE id = ?").bind(new Date(now.getTime() + 7_500).toISOString(), evaluation.runId).run();
+    await assert.rejects(() => acknowledgeEvaluationFeedback(ack, new Date(now.getTime() + 8_000), value.database), /expired with its report/);
     assert.equal((await claimEvaluationFeedback(new Date(now.getTime() + 9_000), value.database)).item, null);
     await assert.rejects(() => value.database.prepare("UPDATE report_evaluation_feedback_outbox SET event_kind = 'changed' WHERE evaluation_id = ?").bind(evaluation.id).run(), /immutable evaluation feedback outbox/);
     await assert.rejects(() => value.database.prepare("UPDATE report_evaluation_feedback_receipts SET consumer_key = 'changed' WHERE evaluation_id = ?").bind(evaluation.id).run(), /immutable evaluation feedback receipt/);
@@ -462,6 +470,23 @@ test("concurrent feedback claims have one winner and an expired lease is safely 
     second.close();
     await closeFixture(value);
   }
+});
+
+test("feedback backlog visibility uses a bounded lower-bound scan", async () => {
+  const value = await fixture();
+  try {
+    const now = new Date("2026-08-09T12:09:00.000Z");
+    const run = await createReportRun({ primaryDomain: "feedback-backlog.example" }, now, value.database);
+    const statements = [];
+    for (let index = 0; index < 1_005; index += 1) {
+      statements.push(value.database.prepare("INSERT INTO report_evaluations (id, run_id, evaluation_type, input_hash, fact_manifest_hash, evaluator_version, rubric_version, status, rating_basis, created_at, completed_at) VALUES (?, ?, 'report', ?, ?, 'ecommerce-agent-v1', 'r1', 'failed', 'none', ?, ?)").bind(`backlog-${index}`, run.id, `input-${index}`, `manifest-${index}`, now.toISOString(), now.toISOString()));
+    }
+    for (let offset = 0; offset < statements.length; offset += 100) await value.database.batch(statements.slice(offset, offset + 100));
+    const claimed = await claimEvaluationFeedback(new Date(now.getTime() + 1_000), value.database);
+    assert.equal(claimed.backlog.pending, 1_001);
+    assert.equal(claimed.backlog.pendingIsLowerBound, true);
+    assert.equal(claimed.backlog.oldestAt, now.toISOString());
+  } finally { await closeFixture(value); }
 });
 
 test("human-review queue is bounded, keyset-paged, and rejects ineligible responses", async () => {
