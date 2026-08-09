@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -11,10 +11,12 @@ import {
   createReportRun,
   finalizeReportFactManifest,
   getReportEvaluation,
+  listHumanReviewRequests,
   reconcileReportEvaluations,
   reserveReportAgentEvaluation,
   saveReportDocument,
   saveReportFactChunk,
+  submitHumanReviewResponse,
 } from "../app/lib/report-store.ts";
 import {
   REPORT_EVALUATION_MODEL,
@@ -205,6 +207,12 @@ test("runtime schema initialization upgrades legacy report_evaluations in place"
     }
     const migrated = (await value.database.prepare("SELECT deterministic_at, usage_status, cost_microusd, input_tokens, output_tokens FROM report_evaluations WHERE id = 'legacy-evaluation'").all()).results[0];
     assert.deepEqual(migrated, { deterministic_at: "2026-08-01T00:01:00.000Z", usage_status: "known", cost_microusd: 1200, input_tokens: 800, output_tokens: 100 });
+    const artifacts = await value.database.prepare("SELECT type, name FROM sqlite_master WHERE name LIKE 'report_human_review_%' ORDER BY type, name").all();
+    for (const name of ["report_human_review_requests", "report_human_review_responses", "report_human_review_open", "report_human_review_requests_immutable", "report_human_review_responses_immutable"]) assert.ok(artifacts.results.some((item) => item.name === name), name);
+    const migration = await readFile(new URL("../drizzle/0010_slimy_jack_power.sql", import.meta.url), "utf8");
+    assert.match(migration, /report_human_review_open/);
+    assert.match(migration, /report_human_review_requests_immutable/);
+    assert.match(migration, /CHECK \(`resolution_code` IN/);
   } finally {
     await closeFixture(value);
   }
@@ -284,7 +292,7 @@ test("invalid evidence callback is terminally rejected and unknown usage maps to
   }
 });
 
-test("needs-human evaluation remains provisional with no hybrid score", async () => {
+test("needs-human evaluation creates an immutable owner queue item and response without changing the provisional score", async () => {
   const value = await fixture();
   try {
     const now = new Date("2026-08-09T12:00:00.000Z");
@@ -301,9 +309,89 @@ test("needs-human evaluation remains provisional with no hybrid score", async ()
     assert.ok(provisional.agent.humanReview);
     assert.equal(provisional.usageStatus, "known");
     assert.equal(provisional.costMicrousd, 1_380);
+    const pending = await listHumanReviewRequests({}, value.database);
+    assert.equal(pending.items.length, 1);
+    assert.equal(pending.items[0].evaluationId, evaluation.id);
+    assert.equal(pending.items[0].question, "Is this comparison useful for your decision?");
+    assert.equal(pending.items[0].response, null);
+    const agentBefore = structuredClone(provisional.agent);
+
+    const answered = await submitHumanReviewResponse(pending.items[0].id, {
+      idempotencyKey: "owner:human-test-1",
+      resolutionCode: "answered",
+      answerText: "Yes. This comparison is useful for the pricing decision.",
+    }, new Date(now.getTime() + 3_000), value.database);
+    assert.equal(answered.replayed, false);
+    const replay = await submitHumanReviewResponse(pending.items[0].id, {
+      idempotencyKey: "owner:human-test-1",
+      resolutionCode: "answered",
+      answerText: "Yes. This comparison is useful for the pricing decision.",
+    }, new Date(now.getTime() + 4_000), value.database);
+    assert.equal(replay.replayed, true);
+    await assert.rejects(() => submitHumanReviewResponse(pending.items[0].id, {
+      idempotencyKey: "owner:human-test-2",
+      resolutionCode: "answered",
+      answerText: "No. This is a different answer.",
+    }, new Date(now.getTime() + 5_000), value.database), /immutable human-review response/);
+    assert.equal((await listHumanReviewRequests({}, value.database)).items.length, 0);
+    const savedResponse = (await value.database.prepare("SELECT resolution_code FROM report_human_review_responses WHERE request_id = ?").bind(pending.items[0].id).all()).results[0];
+    assert.equal(savedResponse.resolution_code, "answered");
+    const unchanged = await getReportEvaluation((await value.database.prepare("SELECT public_id FROM report_runs WHERE id = ?").bind(evaluation.runId).all()).results[0].public_id, value.database);
+    assert.equal(unchanged.status, "needs_human_review");
+    assert.equal(unchanged.ratingBasis, "deterministic_only");
+    assert.equal(unchanged.overallScore, null);
+    assert.deepEqual(unchanged.agent, agentBefore);
   } finally {
     await closeFixture(value);
   }
+});
+
+test("human-review queue is bounded, keyset-paged, and rejects ineligible responses", async () => {
+  const value = await fixture();
+  try {
+    const first = await preparedEvaluation(value.database, "page-a", new Date("2026-08-09T12:10:00.000Z"));
+    const firstCall = await dispatchAndReserve(value.database, first.evaluation, new Date("2026-08-09T12:10:01.000Z"));
+    await completeReportAgentEvaluation(first.evaluation.id, terminalCallback(firstCall.reservation, firstCall.dispatch, { status: "needs_human_review", agentOutput: validAgentOutput(firstCall.reservation.canonicalInput, true) }), new Date("2026-08-09T12:10:02.000Z"), value.database);
+    const second = await preparedEvaluation(value.database, "page-b", new Date("2026-08-09T12:11:00.000Z"));
+    const secondCall = await dispatchAndReserve(value.database, second.evaluation, new Date("2026-08-09T12:11:01.000Z"));
+    await completeReportAgentEvaluation(second.evaluation.id, terminalCallback(secondCall.reservation, secondCall.dispatch, { status: "needs_human_review", agentOutput: validAgentOutput(secondCall.reservation.canonicalInput, true) }), new Date("2026-08-09T12:11:02.000Z"), value.database);
+    const page = await listHumanReviewRequests({ limit: 1 }, value.database);
+    assert.equal(page.items.length, 1);
+    assert.ok(page.nextCursor);
+    const next = await listHumanReviewRequests({ limit: 1, afterQueueSeq: page.nextCursor.queueSeq }, value.database);
+    assert.equal(next.items.length, 1);
+    assert.notEqual(next.items[0].id, page.items[0].id);
+    await assert.rejects(() => listHumanReviewRequests({ limit: 51 }, value.database), /Invalid human-review queue/);
+    await assert.rejects(() => submitHumanReviewResponse("missing-request", { idempotencyKey: "owner:missing", resolutionCode: "unable_to_determine", answerText: "" }, new Date(), value.database), /not found/);
+  } finally { await closeFixture(value); }
+});
+
+test("human-review callback is atomic, records are database-immutable, and concurrent decisions choose one winner", async () => {
+  const value = await fixture();
+  try {
+    const base = new Date("2026-08-09T12:20:00.000Z");
+    const failing = await preparedEvaluation(value.database, "atomic-failure", base);
+    const failingCall = await dispatchAndReserve(value.database, failing.evaluation, new Date(base.getTime() + 1_000));
+    await value.database.prepare("CREATE TRIGGER reject_human_review_request BEFORE INSERT ON report_human_review_requests BEGIN SELECT RAISE(ABORT, 'injected request failure'); END").run();
+    await assert.rejects(() => completeReportAgentEvaluation(failing.evaluation.id, terminalCallback(failingCall.reservation, failingCall.dispatch, { status: "needs_human_review", agentOutput: validAgentOutput(failingCall.reservation.canonicalInput, true) }), new Date(base.getTime() + 2_000), value.database), /injected request failure/);
+    assert.equal((await getReportEvaluation(failing.created.publicId, value.database)).status, "reserved");
+    assert.equal((await value.database.prepare("SELECT COUNT(*) AS count FROM report_human_review_requests WHERE evaluation_id = ?").bind(failing.evaluation.id).all()).results[0].count, 0);
+    await value.database.prepare("DROP TRIGGER reject_human_review_request").run();
+
+    const winner = await preparedEvaluation(value.database, "concurrent", new Date(base.getTime() + 3_000));
+    const winnerCall = await dispatchAndReserve(value.database, winner.evaluation, new Date(base.getTime() + 4_000));
+    await completeReportAgentEvaluation(winner.evaluation.id, terminalCallback(winnerCall.reservation, winnerCall.dispatch, { status: "needs_human_review", agentOutput: validAgentOutput(winnerCall.reservation.canonicalInput, true) }), new Date(base.getTime() + 5_000), value.database);
+    const request = (await listHumanReviewRequests({}, value.database)).items[0];
+    await assert.rejects(() => value.database.prepare("UPDATE report_human_review_requests SET question = 'changed' WHERE id = ?").bind(request.id).run(), /immutable human review request/);
+    const decisions = await Promise.allSettled([
+      submitHumanReviewResponse(request.id, { idempotencyKey: "owner:concurrent-a", resolutionCode: "answered", answerText: "Yes." }, new Date(base.getTime() + 6_000), value.database),
+      submitHumanReviewResponse(request.id, { idempotencyKey: "owner:concurrent-b", resolutionCode: "answered", answerText: "No." }, new Date(base.getTime() + 6_000), value.database),
+    ]);
+    assert.deepEqual(decisions.map((item) => item.status).sort(), ["fulfilled", "rejected"]);
+    assert.equal((await value.database.prepare("SELECT COUNT(*) AS count FROM report_human_review_responses WHERE request_id = ?").bind(request.id).all()).results[0].count, 1);
+    assert.equal((await value.database.prepare("SELECT COUNT(*) AS count FROM report_human_review_open WHERE request_id = ?").bind(request.id).all()).results[0].count, 0);
+    await assert.rejects(() => value.database.prepare("UPDATE report_human_review_responses SET answer_text = 'changed' WHERE request_id = ?").bind(request.id).run(), /immutable human review response/);
+  } finally { await closeFixture(value); }
 });
 
 test("an over-budget provider response preserves actual usage but cannot produce a hybrid grade", async () => {

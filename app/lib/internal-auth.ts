@@ -15,11 +15,30 @@ function fixedLengthEqual(left: Uint8Array, right: Uint8Array) {
 
 export async function hasValidInternalAuthorization(authorization: string | null, expectedOverride?: string) {
   const expected = await runtimeEnvironmentValue("MARKET_SIGNAL_CALLBACK_TOKEN", expectedOverride);
+  return hasValidBearerAuthorization(authorization, expected);
+}
+
+export type OwnerAuthorizationOverrides = { read: string; write: string; callback: string };
+
+export async function hasValidOwnerAuthorization(authorization: string | null, purpose: "read" | "write", overrides?: OwnerAuthorizationOverrides) {
+  const [read, write, callback] = overrides
+    ? [overrides.read, overrides.write, overrides.callback]
+    : await Promise.all([
+      runtimeEnvironmentValue("MARKET_SIGNAL_OWNER_READ_TOKEN"),
+      runtimeEnvironmentValue("MARKET_SIGNAL_OWNER_WRITE_TOKEN"),
+      runtimeEnvironmentValue("MARKET_SIGNAL_CALLBACK_TOKEN"),
+    ]);
+  const credentials = [read, write, callback];
+  if (credentials.some((value) => value.length < 32 || /\s/.test(value)) || new Set(credentials).size !== credentials.length) return false;
+  return hasValidBearerAuthorization(authorization, purpose === "read" ? read : write, 32);
+}
+
+async function hasValidBearerAuthorization(authorization: string | null, expected: string, minimumLength = 1) {
   const match = /^Bearer ([^\s]+)$/.exec(authorization || "");
   const supplied = match?.[1] || "invalid-callback-credential";
   const comparisonTarget = expected || "missing-server-callback-credential";
   const [suppliedDigest, expectedDigest] = await Promise.all([digest(supplied), digest(comparisonTarget)]);
-  return Boolean(expected && match && fixedLengthEqual(suppliedDigest, expectedDigest));
+  return Boolean(expected.length >= minimumLength && !/\s/.test(expected) && match && fixedLengthEqual(suppliedDigest, expectedDigest));
 }
 
 export function unauthorizedInternalResponse() {

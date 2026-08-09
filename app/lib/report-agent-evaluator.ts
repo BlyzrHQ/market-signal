@@ -324,7 +324,8 @@ function exactKeys(value: Record<string, unknown>, keys: readonly string[], path
 }
 
 function boundedText(value: unknown, min: number, max: number) {
-  return typeof value === "string" && value.length >= min && value.length <= max && value.trim() === value;
+  return typeof value === "string" && value.length >= min && value.length <= max && value.trim() === value
+    && !/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069<>`]|https?:\/\/|www\.|\[[^\]]*\]\(/iu.test(value);
 }
 
 function idList(value: unknown) {

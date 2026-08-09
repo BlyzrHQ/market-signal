@@ -308,12 +308,57 @@ export const reportQualitySignals = sqliteTable("report_quality_signals", {
   index("report_quality_signals_stage_severity_observed_idx").on(table.stage, table.severity, table.observedAt),
 ]);
 
+export const reportHumanReviewRequests = sqliteTable("report_human_review_requests", {
+  queueSeq: integer("queue_seq").primaryKey({ autoIncrement: true }),
+  id: text("id").notNull(),
+  evaluationId: text("evaluation_id").notNull().references(() => reportEvaluations.id, { onDelete: "cascade" }),
+  runId: text("run_id").notNull().references(() => reportRuns.id, { onDelete: "cascade" }),
+  evaluatorVersion: text("evaluator_version").notNull(),
+  inputHash: text("input_hash").notNull(),
+  factManifestHash: text("fact_manifest_hash").notNull(),
+  uncertaintyCode: text("uncertainty_code").notNull(),
+  question: text("question").notNull(),
+  evidenceIdsJson: text("evidence_ids_json").notNull(),
+  requestHash: text("request_hash").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (table) => [
+  uniqueIndex("report_human_review_requests_id_uidx").on(table.id),
+  uniqueIndex("report_human_review_requests_evaluation_uidx").on(table.evaluationId),
+]);
+
+export const reportHumanReviewResponses = sqliteTable("report_human_review_responses", {
+  id: text("id").primaryKey(),
+  requestId: text("request_id").notNull().references(() => reportHumanReviewRequests.id, { onDelete: "cascade" }),
+  evaluationId: text("evaluation_id").notNull().references(() => reportEvaluations.id, { onDelete: "cascade" }),
+  runId: text("run_id").notNull().references(() => reportRuns.id, { onDelete: "cascade" }),
+  idempotencyKey: text("idempotency_key").notNull(),
+  resolutionCode: text("resolution_code").notNull(),
+  answerText: text("answer_text").notNull().default(""),
+  responseHash: text("response_hash").notNull(),
+  reviewerKey: text("reviewer_key").notNull(),
+  respondedAt: text("responded_at").notNull(),
+}, (table) => [
+  uniqueIndex("report_human_review_responses_request_uidx").on(table.requestId),
+  uniqueIndex("report_human_review_responses_idempotency_uidx").on(table.idempotencyKey),
+]);
+
+export const reportHumanReviewOpen = sqliteTable("report_human_review_open", {
+  requestId: text("request_id").primaryKey().references(() => reportHumanReviewRequests.id, { onDelete: "cascade" }),
+  runId: text("run_id").notNull().references(() => reportRuns.id, { onDelete: "cascade" }),
+  queueSeq: integer("queue_seq").notNull(),
+}, (table) => [
+  uniqueIndex("report_human_review_open_queue_uidx").on(table.queueSeq),
+]);
+
 export const reportPurgeAudits = sqliteTable("report_purge_audits", {
   id: text("id").primaryKey(),
   cutoff: text("cutoff").notNull(),
   heartbeatGuard: text("heartbeat_guard").notNull(),
   runsDeleted: integer("runs_deleted").notNull(),
   qualitySignalsDeleted: integer("quality_signals_deleted").notNull(),
+  humanReviewRequestsDeleted: integer("human_review_requests_deleted").notNull().default(0),
+  humanReviewResponsesDeleted: integer("human_review_responses_deleted").notNull().default(0),
+  humanReviewOpenDeleted: integer("human_review_open_deleted").notNull().default(0),
   evaluationsDeleted: integer("evaluations_deleted").notNull(),
   adsDeleted: integer("ads_deleted").notNull(),
   matchesDeleted: integer("matches_deleted").notNull(),

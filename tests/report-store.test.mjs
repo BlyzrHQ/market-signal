@@ -275,7 +275,7 @@ test("runtime schema materializes every declared report artifact table", async (
   const database = new FakeDatabase();
   await createReportRun({ primaryDomain: "example.com" }, new Date(), database);
   const schema = database.queries.join("\n");
-  for (const table of ["report_runs", "report_events", "report_documents", "report_companies", "report_products", "report_matches", "report_ads", "report_match_batch_checkpoints", "report_evaluations", "report_quality_signals", "report_purge_audits"]) assert.match(schema, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
+  for (const table of ["report_runs", "report_events", "report_documents", "report_companies", "report_products", "report_matches", "report_ads", "report_match_batch_checkpoints", "report_evaluations", "report_quality_signals", "report_human_review_requests", "report_human_review_responses", "report_human_review_open", "report_purge_audits"]) assert.match(schema, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
 });
 
 test("database acquisition diagnostics are closed and deduplicated", async () => {
