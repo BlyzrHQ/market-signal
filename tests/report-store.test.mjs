@@ -8,6 +8,7 @@ class FakeStatement {
   bind(...values) { this.values = values; return this; }
   async run() { this.database.queries.push(this.query); return {}; }
   async all() {
+    if (this.query.startsWith("SELECT key FROM report_runtime_schema_markers")) return { results: [{ key: "evaluation-feedback-pending-backfill-v1" }] };
     if (this.query.startsWith("SELECT * FROM report_runs")) {
       const key = this.values[0];
       return { results: this.database.runs.filter((run) => run.public_id === key || run.id === key).slice(0, 1) };
@@ -75,6 +76,7 @@ class CheckpointStatement {
   constructor(database, query) { this.database = database; this.query = query; this.values = []; }
   bind(...values) { this.values = values; return this; }
   async all() {
+    if (this.query.startsWith("SELECT key FROM report_runtime_schema_markers")) return { results: [{ key: "evaluation-feedback-pending-backfill-v1" }] };
     if (this.query.startsWith("SELECT * FROM report_runs")) {
       const key = this.values[0];
       return { results: this.database.runs.filter((run) => run.public_id === key || run.id === key).slice(0, 1) };
