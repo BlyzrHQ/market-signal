@@ -64,6 +64,20 @@
       "when": 1786228536637,
       "tag": "0008_nervous_crusher_hogan",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1786237183738,
+      "tag": "0009_loud_anthem",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1786237456090,
+      "tag": "0010_slimy_jack_power",
+      "breakpoints": true
     }
   ]
 }

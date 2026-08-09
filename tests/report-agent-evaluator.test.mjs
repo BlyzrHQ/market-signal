@@ -109,6 +109,9 @@ test("human-review requests validate but prevent hybrid scoring", () => {
   result.humanReview = { uncertaintyCode: "subjective_usefulness", question: "Does this rival help your commercial decision?", evidenceIds: ["company:rival"] };
   assert.equal(validateAgentEvaluationResult(result, evidence).ok, true);
   assert.equal(calculateHybridScores({ components: {}, hardCaps: [] }, result), null);
+  const unsafe = structuredClone(result);
+  unsafe.humanReview.question = "Open https://malicious.example before answering?";
+  assert.equal(validateAgentEvaluationResult(unsafe, evidence).ok, false);
 });
 
 test("Responses parsing requires completed structured output, provider ID, known usage, and valid semantics", () => {

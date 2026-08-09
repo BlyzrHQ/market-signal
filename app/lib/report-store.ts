@@ -130,10 +130,34 @@ export type StoredReportEvaluation = {
   completedAt: string;
 };
 
+export type HumanReviewResolutionCode = "answered" | "unable_to_determine" | "invalid_question";
+export type StoredHumanReviewRequest = {
+  queueSeq: number;
+  id: string;
+  evaluationId: string;
+  runId: string;
+  publicReportId: string;
+  primaryDomain: string;
+  uncertaintyCode: string;
+  question: string;
+  evidenceIds: string[];
+  strengths: Array<Record<string, unknown>>;
+  weaknesses: Array<Record<string, unknown>>;
+  proposals: Array<Record<string, unknown>>;
+  createdAt: string;
+  response: null | {
+    id: string;
+    idempotencyKey: string;
+    resolutionCode: HumanReviewResolutionCode;
+    answerText: string;
+    respondedAt: string;
+  };
+};
+
 export class ReportEvaluationStateError extends Error {
   readonly code: string;
-  readonly httpStatus: 404 | 409;
-  constructor(code: string, message: string, httpStatus: 404 | 409) {
+  readonly httpStatus: 404 | 409 | 410;
+  constructor(code: string, message: string, httpStatus: 404 | 409 | 410) {
     super(message);
     this.name = "ReportEvaluationStateError";
     this.code = code;
@@ -206,7 +230,7 @@ const STATUSES = new Set<ReportRunStatus>(["queued", "running", "complete", "lim
 const TERMINAL_REPORT_STATUSES = new Set<ReportRunStatus>(["complete", "limited", "failed", "interrupted"]);
 const schemaInitialization = new WeakMap<object, Promise<void>>();
 const emittedStorageDiagnostics = new Set<string>();
-const REPORT_STORAGE_DIAGNOSTIC = /^(?:database-(?:import-failed|binding-missing)|schema-statement-(?:[1-9]|[12]\d|3[0-4])-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api))$/;
+const REPORT_STORAGE_DIAGNOSTIC = /^(?:database-(?:import-failed|binding-missing)|schema-statement-[1-9]\d?-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api))$/;
 
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS report_runs (id text PRIMARY KEY NOT NULL, public_id text NOT NULL, primary_domain text NOT NULL, locale text DEFAULT 'en' NOT NULL, status text NOT NULL, current_phase text NOT NULL, attempt_count integer DEFAULT 1 NOT NULL, created_at text NOT NULL, updated_at text NOT NULL, heartbeat_at text NOT NULL, expires_at text NOT NULL, error_code text DEFAULT '' NOT NULL, error_message text DEFAULT '' NOT NULL)`,
@@ -241,7 +265,17 @@ const SCHEMA_STATEMENTS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS report_quality_signals_evaluation_issue_uidx ON report_quality_signals (evaluation_id, issue_key)`,
   `CREATE INDEX IF NOT EXISTS report_quality_signals_issue_observed_idx ON report_quality_signals (issue_key, observed_at)`,
   `CREATE INDEX IF NOT EXISTS report_quality_signals_stage_severity_observed_idx ON report_quality_signals (stage, severity, observed_at)`,
-  `CREATE TABLE IF NOT EXISTS report_purge_audits (id text PRIMARY KEY NOT NULL, cutoff text NOT NULL, heartbeat_guard text NOT NULL, runs_deleted integer NOT NULL, quality_signals_deleted integer NOT NULL, evaluations_deleted integer NOT NULL, ads_deleted integer NOT NULL, matches_deleted integer NOT NULL, products_deleted integer NOT NULL, companies_deleted integer NOT NULL, fact_chunks_deleted integer NOT NULL, fact_manifests_deleted integer NOT NULL, documents_deleted integer NOT NULL, events_deleted integer NOT NULL, observed_at text NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS report_human_review_requests (queue_seq integer PRIMARY KEY AUTOINCREMENT NOT NULL, id text NOT NULL, evaluation_id text NOT NULL REFERENCES report_evaluations(id) ON DELETE CASCADE, run_id text NOT NULL REFERENCES report_runs(id) ON DELETE CASCADE, evaluator_version text NOT NULL, input_hash text NOT NULL, fact_manifest_hash text NOT NULL, uncertainty_code text NOT NULL CHECK (uncertainty_code IN ('conflicting_evidence','subjective_usefulness','insufficient_context','suspected_factual_error')), question text NOT NULL CHECK (length(question) BETWEEN 1 AND 240), evidence_ids_json text NOT NULL, request_hash text NOT NULL CHECK (length(request_hash) = 64), created_at text NOT NULL)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS report_human_review_requests_id_uidx ON report_human_review_requests (id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS report_human_review_requests_evaluation_uidx ON report_human_review_requests (evaluation_id)`,
+  `CREATE TABLE IF NOT EXISTS report_human_review_responses (id text PRIMARY KEY NOT NULL, request_id text NOT NULL REFERENCES report_human_review_requests(id) ON DELETE CASCADE, evaluation_id text NOT NULL REFERENCES report_evaluations(id) ON DELETE CASCADE, run_id text NOT NULL REFERENCES report_runs(id) ON DELETE CASCADE, idempotency_key text NOT NULL, resolution_code text NOT NULL CHECK (resolution_code IN ('answered','unable_to_determine','invalid_question')), answer_text text DEFAULT '' NOT NULL CHECK ((resolution_code = 'answered' AND length(answer_text) BETWEEN 1 AND 1000) OR (resolution_code != 'answered' AND answer_text = '')), response_hash text NOT NULL CHECK (length(response_hash) = 64), reviewer_key text NOT NULL, responded_at text NOT NULL)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS report_human_review_responses_request_uidx ON report_human_review_responses (request_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS report_human_review_responses_idempotency_uidx ON report_human_review_responses (idempotency_key)`,
+  `CREATE TRIGGER IF NOT EXISTS report_human_review_requests_immutable BEFORE UPDATE ON report_human_review_requests BEGIN SELECT RAISE(ABORT, 'immutable human review request'); END`,
+  `CREATE TRIGGER IF NOT EXISTS report_human_review_responses_immutable BEFORE UPDATE ON report_human_review_responses BEGIN SELECT RAISE(ABORT, 'immutable human review response'); END`,
+  `CREATE TABLE IF NOT EXISTS report_human_review_open (request_id text PRIMARY KEY NOT NULL REFERENCES report_human_review_requests(id) ON DELETE CASCADE, run_id text NOT NULL REFERENCES report_runs(id) ON DELETE CASCADE, queue_seq integer NOT NULL)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS report_human_review_open_queue_uidx ON report_human_review_open (queue_seq)`,
+  `CREATE TABLE IF NOT EXISTS report_purge_audits (id text PRIMARY KEY NOT NULL, cutoff text NOT NULL, heartbeat_guard text NOT NULL, runs_deleted integer NOT NULL, quality_signals_deleted integer NOT NULL, human_review_requests_deleted integer DEFAULT 0 NOT NULL, human_review_responses_deleted integer DEFAULT 0 NOT NULL, human_review_open_deleted integer DEFAULT 0 NOT NULL, evaluations_deleted integer NOT NULL, ads_deleted integer NOT NULL, matches_deleted integer NOT NULL, products_deleted integer NOT NULL, companies_deleted integer NOT NULL, fact_chunks_deleted integer NOT NULL, fact_manifests_deleted integer NOT NULL, documents_deleted integer NOT NULL, events_deleted integer NOT NULL, observed_at text NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS report_purge_audits_observed_idx ON report_purge_audits (observed_at)`,
   `CREATE TABLE IF NOT EXISTS report_product_entitlements (run_id text PRIMARY KEY NOT NULL, plan_tier text NOT NULL, product_limit integer NOT NULL, resolved_at text NOT NULL)`,
 ];
@@ -261,6 +295,12 @@ const REPORT_EVALUATION_COLUMN_MIGRATIONS = [
   ["client_request_id", "ALTER TABLE report_evaluations ADD COLUMN client_request_id text DEFAULT '' NOT NULL"],
   ["provider_response_id", "ALTER TABLE report_evaluations ADD COLUMN provider_response_id text DEFAULT '' NOT NULL"],
   ["provider_request_id", "ALTER TABLE report_evaluations ADD COLUMN provider_request_id text DEFAULT '' NOT NULL"],
+] as const;
+
+const REPORT_PURGE_AUDIT_COLUMN_MIGRATIONS = [
+  ["human_review_requests_deleted", "ALTER TABLE report_purge_audits ADD COLUMN human_review_requests_deleted integer DEFAULT 0 NOT NULL"],
+  ["human_review_responses_deleted", "ALTER TABLE report_purge_audits ADD COLUMN human_review_responses_deleted integer DEFAULT 0 NOT NULL"],
+  ["human_review_open_deleted", "ALTER TABLE report_purge_audits ADD COLUMN human_review_open_deleted integer DEFAULT 0 NOT NULL"],
 ] as const;
 
 async function getDatabase(): Promise<D1DatabaseLike | null> {
@@ -494,6 +534,12 @@ async function initializeSchema(database: D1DatabaseLike) {
   const names = new Set((columns.results || []).map((column) => String(column.name || "")));
   for (const [name, statement] of REPORT_EVALUATION_COLUMN_MIGRATIONS) {
     if (names.has(name)) continue;
+    await database.prepare(statement).run();
+  }
+  const auditColumns = await database.prepare("PRAGMA table_info(report_purge_audits)").all<Record<string, unknown>>();
+  const auditNames = new Set((auditColumns.results || []).map((column) => String(column.name || "")));
+  for (const [name, statement] of REPORT_PURGE_AUDIT_COLUMN_MIGRATIONS) {
+    if (auditNames.has(name)) continue;
     await database.prepare(statement).run();
   }
   await database.prepare(`UPDATE report_evaluations SET deterministic_at = CASE WHEN deterministic_at = '' AND status IN ('deterministic', 'rubric_unavailable', 'failed') THEN COALESCE(NULLIF(completed_at, ''), created_at) ELSE deterministic_at END, usage_status = CASE WHEN usage_status IN ('', 'not_called') AND (COALESCE(cost_microusd, 0) > 0 OR COALESCE(input_tokens, 0) > 0 OR COALESCE(output_tokens, 0) > 0) THEN 'known' WHEN usage_status = '' THEN 'not_called' ELSE usage_status END`).run();
@@ -1073,6 +1119,7 @@ export async function completeReportAgentEvaluation(evaluationId: string, callba
   let hybrid: ReturnType<typeof calculateHybridScores> = null;
   let usageStatus: StoredReportEvaluation["usageStatus"] = callback.usageStatus;
   let usage: ReturnType<typeof calculateAgentUsageCost> = null;
+  let humanReview: null | { uncertaintyCode: string; question: string; evidenceIds: string[] } = null;
   if (callback.usageStatus === "known" && callback.usage) usage = calculateAgentUsageCost({ input_tokens: callback.usage.inputTokens, output_tokens: callback.usage.outputTokens, input_tokens_details: { cached_tokens: callback.usage.cachedInputTokens } });
   if (callback.usageStatus === "known" && !usage) usageStatus = "unknown";
   if ((status === "complete" || status === "needs_human_review") && !callback.providerResponseId) {
@@ -1093,6 +1140,7 @@ export async function completeReportAgentEvaluation(evaluationId: string, callba
       findings = [...evaluation.findings, ...validated.value.strengths.map((item) => ({ ...item, kind: "strength" })), ...validated.value.weaknesses.map((item) => ({ ...item, kind: "weakness" }))];
       proposals = validated.value.proposals;
       hybrid = calculateHybridScores(evaluation.deterministic, validated.value);
+      humanReview = validated.value.humanReview;
     }
   } else if (status === "complete" || status === "needs_human_review") {
     status = "agent_rejected";
@@ -1105,11 +1153,111 @@ export async function completeReportAgentEvaluation(evaluationId: string, callba
   }
   const ratingBasis = status === "complete" ? "hybrid" : "deterministic_only";
   const observedAt = now.toISOString();
-  const write = await database.prepare(`UPDATE report_evaluations SET status = ?, rating_basis = ?, overall_score = ?, user_value_score = ?, evidence_integrity_score = ?, evidence_yield_score = ?, presentation_score = ?, grade = ?, agent_json = ?, findings_json = ?, proposals_json = ?, provider_response_id = ?, provider_request_id = ?, usage_status = ?, cost_microusd = ?, input_tokens = ?, cached_input_tokens = ?, output_tokens = ?, error_code = ?, completed_at = ? WHERE id = ? AND status = 'reserved' AND evaluator_version = ? AND input_hash = ? AND fact_manifest_hash = ? AND dispatch_attempts = ? AND reservation_id = ? AND reservation_owner = ? AND client_request_id = ?`).bind(status, ratingBasis, hybrid?.overallScore ?? null, hybrid?.userValue ?? null, hybrid?.evidenceIntegrity ?? null, hybrid?.evidenceYield ?? null, hybrid?.presentation ?? null, hybrid?.grade ?? null, JSON.stringify(agent), JSON.stringify(findings), JSON.stringify(proposals), cleanText(callback.providerResponseId, 120), cleanText(callback.providerRequestId, 120), usageStatus, usage?.costMicrousd ?? 0, usage?.inputTokens ?? 0, usage?.cachedInputTokens ?? null, usage?.outputTokens ?? 0, errorCode, observedAt, evaluationId, evaluation.evaluatorVersion, evaluation.inputHash, evaluation.factManifestHash, evaluation.dispatchAttempts, evaluation.reservationId, evaluation.reservationOwner, evaluation.clientRequestId).run();
-  if (databaseWriteChanged(write) === false) throw new ReportEvaluationStateError("evaluation-callback-state-conflict", "Report evaluation terminal callback conflicted with current state.", 409);
+  const write = database.prepare(`UPDATE report_evaluations SET status = ?, rating_basis = ?, overall_score = ?, user_value_score = ?, evidence_integrity_score = ?, evidence_yield_score = ?, presentation_score = ?, grade = ?, agent_json = ?, findings_json = ?, proposals_json = ?, provider_response_id = ?, provider_request_id = ?, usage_status = ?, cost_microusd = ?, input_tokens = ?, cached_input_tokens = ?, output_tokens = ?, error_code = ?, completed_at = ? WHERE id = ? AND status = 'reserved' AND evaluator_version = ? AND input_hash = ? AND fact_manifest_hash = ? AND dispatch_attempts = ? AND reservation_id = ? AND reservation_owner = ? AND client_request_id = ?`).bind(status, ratingBasis, hybrid?.overallScore ?? null, hybrid?.userValue ?? null, hybrid?.evidenceIntegrity ?? null, hybrid?.evidenceYield ?? null, hybrid?.presentation ?? null, hybrid?.grade ?? null, JSON.stringify(agent), JSON.stringify(findings), JSON.stringify(proposals), cleanText(callback.providerResponseId, 120), cleanText(callback.providerRequestId, 120), usageStatus, usage?.costMicrousd ?? 0, usage?.inputTokens ?? 0, usage?.cachedInputTokens ?? null, usage?.outputTokens ?? 0, errorCode, observedAt, evaluationId, evaluation.evaluatorVersion, evaluation.inputHash, evaluation.factManifestHash, evaluation.dispatchAttempts, evaluation.reservationId, evaluation.reservationOwner, evaluation.clientRequestId);
+  const statements = [write];
+  if (status === "needs_human_review" && humanReview) {
+    const requestId = internalId();
+    const requestHash = await sha256Text(JSON.stringify({ evaluationId, runId: evaluation.runId, evaluatorVersion: evaluation.evaluatorVersion, inputHash: evaluation.inputHash, factManifestHash: evaluation.factManifestHash, uncertaintyCode: humanReview.uncertaintyCode, question: humanReview.question, evidenceIds: humanReview.evidenceIds }));
+    statements.push(database.prepare(`INSERT INTO report_human_review_requests (id, evaluation_id, run_id, evaluator_version, input_hash, fact_manifest_hash, uncertainty_code, question, evidence_ids_json, request_hash, created_at) SELECT ?, id, run_id, evaluator_version, input_hash, fact_manifest_hash, ?, ?, ?, ?, ? FROM report_evaluations WHERE id = ? AND status = 'needs_human_review'`).bind(requestId, humanReview.uncertaintyCode, humanReview.question, JSON.stringify(humanReview.evidenceIds), requestHash, observedAt, evaluationId));
+    statements.push(database.prepare(`INSERT INTO report_human_review_open (request_id, run_id, queue_seq) SELECT id, run_id, queue_seq FROM report_human_review_requests WHERE id = ? AND request_hash = ?`).bind(requestId, requestHash));
+  }
+  const writes = await database.batch(statements);
+  if (databaseWriteChanged(writes[0]) === false) throw new ReportEvaluationStateError("evaluation-callback-state-conflict", "Report evaluation terminal callback conflicted with current state.", 409);
   const persisted = await evaluationContext(database, evaluationId);
   if (!persisted || persisted.evaluation.status === "reserved") throw new ReportEvaluationStateError("evaluation-callback-state-conflict", "Report evaluation terminal callback conflicted with current state.", 409);
+  if (status === "needs_human_review") {
+    const requests = await database.prepare(`SELECT * FROM report_human_review_requests WHERE evaluation_id = ? LIMIT 1`).bind(evaluationId).all<Record<string, unknown>>();
+    const request = requests.results?.[0];
+    const expectedHash = humanReview ? await sha256Text(JSON.stringify({ evaluationId, runId: evaluation.runId, evaluatorVersion: evaluation.evaluatorVersion, inputHash: evaluation.inputHash, factManifestHash: evaluation.factManifestHash, uncertaintyCode: humanReview.uncertaintyCode, question: humanReview.question, evidenceIds: humanReview.evidenceIds })) : "";
+    if (!request || request.run_id !== evaluation.runId || request.evaluator_version !== evaluation.evaluatorVersion || request.input_hash !== evaluation.inputHash || request.fact_manifest_hash !== evaluation.factManifestHash || request.request_hash !== expectedHash) throw new ReportEvaluationStateError("human-review-request-binding-conflict", "The human-review request binding conflicted with its evaluation.", 409);
+  }
   return persisted.evaluation;
+}
+
+function humanReviewRow(row: Record<string, unknown>): StoredHumanReviewRequest {
+  const agent = parsedRecord(row.agent_json);
+  const responseId = String(row.response_id || "");
+  return {
+    queueSeq: Number(row.queue_seq || 0),
+    id: String(row.id || ""),
+    evaluationId: String(row.evaluation_id || ""),
+    runId: String(row.run_id || ""),
+    publicReportId: String(row.public_id || ""),
+    primaryDomain: String(row.primary_domain || ""),
+    uncertaintyCode: String(row.uncertainty_code || ""),
+    question: String(row.question || ""),
+    evidenceIds: parsedStringArray(row.evidence_ids_json),
+    strengths: Array.isArray(agent.strengths) ? agent.strengths.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item))) : [],
+    weaknesses: Array.isArray(agent.weaknesses) ? agent.weaknesses.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item))) : [],
+    proposals: Array.isArray(agent.proposals) ? agent.proposals.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item))) : [],
+    createdAt: String(row.created_at || ""),
+    response: responseId ? {
+      id: responseId,
+      idempotencyKey: String(row.response_idempotency_key || ""),
+      resolutionCode: String(row.response_resolution_code || "unable_to_determine") as HumanReviewResolutionCode,
+      answerText: String(row.response_answer_text || ""),
+      respondedAt: String(row.responded_at || ""),
+    } : null,
+  };
+}
+
+function parsedStringArray(value: unknown) {
+  try {
+    const parsed = JSON.parse(String(value || "[]"));
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch { return []; }
+}
+
+export async function listHumanReviewRequests(options: { limit?: number; afterQueueSeq?: number; now?: Date } = {}, databaseOverride?: D1DatabaseLike | null) {
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error(STORAGE_UNAVAILABLE_MESSAGE);
+  await ensureSchema(database);
+  const limit = options.limit ?? 20;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new Error("Invalid human-review queue options.");
+  const afterQueueSeq = options.afterQueueSeq ?? 0;
+  const now = options.now || new Date();
+  if (!Number.isSafeInteger(afterQueueSeq) || afterQueueSeq < 0 || !Number.isFinite(now.getTime())) throw new Error("Invalid human-review queue cursor.");
+  const rows = await database.prepare(`SELECT requests.*, evaluations.agent_json, runs.public_id, runs.primary_domain, NULL AS response_id FROM report_human_review_open open JOIN report_human_review_requests requests ON requests.id = open.request_id JOIN report_evaluations evaluations ON evaluations.id = requests.evaluation_id JOIN report_runs runs ON runs.id = requests.run_id WHERE evaluations.status = 'needs_human_review' AND runs.expires_at > ? AND open.queue_seq > ? ORDER BY open.queue_seq LIMIT ?`).bind(now.toISOString(), afterQueueSeq, limit).all<Record<string, unknown>>();
+  const items = (rows.results || []).map((row) => {
+    const mapped = humanReviewRow(row);
+    mapped.evidenceIds = parsedStringArray(row.evidence_ids_json);
+    return mapped;
+  });
+  return { items, hasMore: items.length === limit, nextCursor: items.length === limit ? { queueSeq: items.at(-1)!.queueSeq } : null };
+}
+
+export async function submitHumanReviewResponse(requestId: string, input: { idempotencyKey: string; resolutionCode: HumanReviewResolutionCode; answerText: string }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error(STORAGE_UNAVAILABLE_MESSAGE);
+  if (!/^[A-Za-z0-9-]{1,128}$/.test(requestId) || !/^[A-Za-z0-9][A-Za-z0-9:_-]{0,119}$/.test(input.idempotencyKey) || !["answered", "unable_to_determine", "invalid_question"].includes(input.resolutionCode)) throw new Error("Invalid human-review response.");
+  const answerText = input.answerText;
+  if (typeof answerText !== "string" || answerText.length > 1_000 || new TextEncoder().encode(answerText).byteLength > 4_000 || /[\uD800-\uDFFF]/u.test(answerText) || /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069<>`]|https?:\/\/|www\.|\[[^\]]*\]\(/iu.test(answerText) || (input.resolutionCode === "answered" ? !answerText.trim() : answerText !== "")) throw new Error("Human-review response answer is invalid.");
+  if (!Number.isFinite(now.getTime())) throw new Error("Invalid human-review response time.");
+  await ensureSchema(database);
+  const requestRows = await database.prepare(`SELECT requests.*, evaluations.status AS evaluation_status, runs.expires_at FROM report_human_review_requests requests JOIN report_evaluations evaluations ON evaluations.id = requests.evaluation_id JOIN report_runs runs ON runs.id = requests.run_id WHERE requests.id = ? LIMIT 1`).bind(requestId).all<Record<string, unknown>>();
+  const request = requestRows.results?.[0];
+  if (!request) throw new ReportEvaluationStateError("human-review-request-not-found", "Human-review request not found.", 404);
+  if (Date.parse(String(request.expires_at || "")) <= now.getTime()) throw new ReportEvaluationStateError("human-review-request-expired", "Human-review request expired with its report.", 410);
+  if (request.evaluation_status !== "needs_human_review") throw new ReportEvaluationStateError("human-review-request-ineligible", "Human-review request is no longer eligible.", 409);
+  const reviewerKey = "product-owner-v1";
+  const responseHash = await sha256Text(JSON.stringify({ requestId, idempotencyKey: input.idempotencyKey, resolutionCode: input.resolutionCode, answerText, reviewerKey }));
+  const existingRows = await database.prepare(`SELECT * FROM report_human_review_responses WHERE request_id = ? OR idempotency_key = ? ORDER BY request_id = ? DESC LIMIT 1`).bind(requestId, input.idempotencyKey, requestId).all<Record<string, unknown>>();
+  const existing = existingRows.results?.[0];
+  if (existing) {
+    const exact = existing.request_id === requestId && existing.idempotency_key === input.idempotencyKey && existing.response_hash === responseHash;
+    if (!exact) throw new ReportEvaluationStateError("human-review-response-conflict", "A different immutable human-review response already exists.", 409);
+    return { replayed: true as const, response: { id: String(existing.id), requestId, idempotencyKey: String(existing.idempotency_key), resolutionCode: existing.resolution_code as HumanReviewResolutionCode, answerText: String(existing.answer_text), respondedAt: String(existing.responded_at || "") } };
+  }
+  const id = internalId();
+  const respondedAt = now.toISOString();
+  await database.batch([
+    database.prepare(`INSERT INTO report_human_review_responses (id, request_id, evaluation_id, run_id, idempotency_key, resolution_code, answer_text, response_hash, reviewer_key, responded_at) SELECT ?, requests.id, requests.evaluation_id, requests.run_id, ?, ?, ?, ?, ?, ? FROM report_human_review_requests requests JOIN report_human_review_open open ON open.request_id = requests.id JOIN report_evaluations evaluations ON evaluations.id = requests.evaluation_id JOIN report_runs runs ON runs.id = requests.run_id WHERE requests.id = ? AND evaluations.status = 'needs_human_review' AND runs.expires_at > ? ON CONFLICT DO NOTHING`).bind(id, input.idempotencyKey, input.resolutionCode, answerText, responseHash, reviewerKey, respondedAt, requestId, respondedAt),
+    database.prepare(`DELETE FROM report_human_review_open WHERE request_id = ? AND EXISTS (SELECT 1 FROM report_human_review_responses WHERE request_id = ? AND idempotency_key = ? AND response_hash = ?)`).bind(requestId, requestId, input.idempotencyKey, responseHash),
+  ]);
+  const persistedRows = await database.prepare(`SELECT * FROM report_human_review_responses WHERE request_id = ? OR idempotency_key = ? ORDER BY request_id = ? DESC LIMIT 1`).bind(requestId, input.idempotencyKey, requestId).all<Record<string, unknown>>();
+  const persisted = persistedRows.results?.[0];
+  if (!persisted || persisted.request_id !== requestId || persisted.idempotency_key !== input.idempotencyKey || persisted.response_hash !== responseHash) throw new ReportEvaluationStateError("human-review-response-conflict", "A different immutable human-review response already exists.", 409);
+  return { replayed: String(persisted.id) !== id, response: { id: String(persisted.id), requestId, idempotencyKey: String(persisted.idempotency_key), resolutionCode: persisted.resolution_code as HumanReviewResolutionCode, answerText: String(persisted.answer_text), respondedAt: String(persisted.responded_at || respondedAt) } };
 }
 
 export async function reconcileReportEvaluations(now = new Date(), databaseOverride?: D1DatabaseLike | null) {
@@ -1440,6 +1588,9 @@ const REPORT_PURGE_AUDIT_RETENTION_MS = 365 * 24 * 60 * 60 * 1000;
 export type ReportPurgeCounts = {
   runs: number;
   qualitySignals: number;
+  humanReviewRequests: number;
+  humanReviewResponses: number;
+  humanReviewOpen: number;
   evaluations: number;
   ads: number;
   matches: number;
@@ -1481,13 +1632,13 @@ export async function purgeExpiredReports(now = new Date(), databaseOverride?: D
   const eligible = () => [cutoff, heartbeatGuard] as const;
   const countFor = (table: string) => `(SELECT COUNT(*) FROM ${table} WHERE run_id IN (${eligibleRuns}))`;
   const runCount = `(SELECT COUNT(*) FROM report_runs WHERE id IN (${eligibleRuns}))`;
-  const audit = database.prepare(`INSERT INTO report_purge_audits (id, cutoff, heartbeat_guard, runs_deleted, quality_signals_deleted, evaluations_deleted, ads_deleted, matches_deleted, products_deleted, companies_deleted, fact_chunks_deleted, fact_manifests_deleted, documents_deleted, events_deleted, observed_at) SELECT ?, ?, ?, ${runCount}, ${countFor("report_quality_signals")}, ${countFor("report_evaluations")}, ${countFor("report_ads")}, ${countFor("report_matches")}, ${countFor("report_products")}, ${countFor("report_companies")}, ${countFor("report_fact_chunks")}, ${countFor("report_fact_manifests")}, ${countFor("report_documents")}, ${countFor("report_events")}, ? WHERE EXISTS (${eligibleRuns})`).bind(
+  const audit = database.prepare(`INSERT INTO report_purge_audits (id, cutoff, heartbeat_guard, runs_deleted, quality_signals_deleted, human_review_requests_deleted, human_review_responses_deleted, human_review_open_deleted, evaluations_deleted, ads_deleted, matches_deleted, products_deleted, companies_deleted, fact_chunks_deleted, fact_manifests_deleted, documents_deleted, events_deleted, observed_at) SELECT ?, ?, ?, ${runCount}, ${countFor("report_quality_signals")}, ${countFor("report_human_review_requests")}, ${countFor("report_human_review_responses")}, ${countFor("report_human_review_open")}, ${countFor("report_evaluations")}, ${countFor("report_ads")}, ${countFor("report_matches")}, ${countFor("report_products")}, ${countFor("report_companies")}, ${countFor("report_fact_chunks")}, ${countFor("report_fact_manifests")}, ${countFor("report_documents")}, ${countFor("report_events")}, ? WHERE EXISTS (${eligibleRuns})`).bind(
     auditId,
     cutoff,
     heartbeatGuard,
     ...eligible(),
+    ...eligible(), ...eligible(), ...eligible(), ...eligible(), ...eligible(), ...eligible(), ...eligible(),
     ...eligible(), ...eligible(), ...eligible(), ...eligible(), ...eligible(), ...eligible(),
-    ...eligible(), ...eligible(), ...eligible(), ...eligible(),
     cutoff,
     ...eligible(),
   );
@@ -1495,6 +1646,9 @@ export async function purgeExpiredReports(now = new Date(), databaseOverride?: D
   const statements = [
     audit,
     guardedDelete("report_quality_signals"),
+    guardedDelete("report_human_review_responses"),
+    guardedDelete("report_human_review_open"),
+    guardedDelete("report_human_review_requests"),
     guardedDelete("report_evaluations"),
     guardedDelete("report_ads"),
     guardedDelete("report_matches"),
@@ -1520,6 +1674,9 @@ export async function purgeExpiredReports(now = new Date(), databaseOverride?: D
     deleted: {
       runs: numberField(auditRow, "runs_deleted"),
       qualitySignals: numberField(auditRow, "quality_signals_deleted"),
+      humanReviewRequests: numberField(auditRow, "human_review_requests_deleted"),
+      humanReviewResponses: numberField(auditRow, "human_review_responses_deleted"),
+      humanReviewOpen: numberField(auditRow, "human_review_open_deleted"),
       evaluations: numberField(auditRow, "evaluations_deleted"),
       ads: numberField(auditRow, "ads_deleted"),
       matches: numberField(auditRow, "matches_deleted"),
