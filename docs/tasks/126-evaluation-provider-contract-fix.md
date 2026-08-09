@@ -19,8 +19,8 @@ The configured dated model ID was not present in the current model catalog.
   cost-sensitive model requested for this project.
 - Bump the evaluator and prompt versions so old immutable evaluations cannot be
   confused with the corrected contract.
-- Update metering to the documented standard rates: USD 1.00/M ordinary input,
-  USD 1.25/M cache writes, USD 0.10/M cache reads, and USD 6.00/M output.
+- Update metering to the documented standard rates: USD 0.20/M ordinary input,
+  USD 0.25/M cache writes, USD 0.02/M cache reads, and USD 1.20/M output.
 - Carry cache-write tokens through the Trigger callback contract and SQLite so
   each evaluation's persisted cost remains auditable.
 - Use low reasoning effort and the existing 1,200-token output ceiling to keep

@@ -23,10 +23,10 @@ export const AGENT_MAX_EVIDENCE_RECORDS = 48;
 export const AGENT_MAX_RESERVED_COST_MICROUSD = 20_000;
 
 export const AGENT_PRICING_USD_PER_MILLION = Object.freeze({
-  uncachedInput: 1,
-  cacheWriteInput: 1.25,
-  cachedInput: 0.1,
-  output: 6,
+  uncachedInput: 0.2,
+  cacheWriteInput: 0.25,
+  cachedInput: 0.02,
+  output: 1.2,
 });
 
 export const AGENT_DEVELOPER_INSTRUCTIONS = REPORT_EVALUATION_DEVELOPER_PROMPT;

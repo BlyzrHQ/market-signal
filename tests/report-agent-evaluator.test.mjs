@@ -124,13 +124,13 @@ test("Responses parsing requires completed structured output, provider ID, known
   }, evidence);
   assert.equal(parsed.ok, true);
   assert.equal(parsed.providerResponseId, "resp_1");
-  assert.deepEqual(parsed.usage, { inputTokens: 1_000, cachedInputTokens: 400, cacheWriteInputTokens: 100, outputTokens: 200, costMicrousd: 1_865 });
+  assert.deepEqual(parsed.usage, { inputTokens: 1_000, cachedInputTokens: 400, cacheWriteInputTokens: 100, outputTokens: 200, costMicrousd: 373 });
   assert.equal(parseAgentApiResponse({ id: "resp_2", status: "incomplete", usage: { input_tokens: 1, output_tokens: 1 } }, evidence).errorCode, "incomplete-response");
   assert.equal(parseAgentApiResponse({ id: "resp_3", status: "completed", output_text: JSON.stringify(validResult()) }, evidence).errorCode, "missing-or-invalid-usage");
 });
 
 test("usage cost is conservative and rejects impossible cached-token counts", () => {
-  assert.deepEqual(calculateAgentUsageCost({ input_tokens: 10, output_tokens: 2 }), { inputTokens: 10, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 2, costMicrousd: 22 });
+  assert.deepEqual(calculateAgentUsageCost({ input_tokens: 10, output_tokens: 2 }), { inputTokens: 10, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 2, costMicrousd: 5 });
   assert.equal(calculateAgentUsageCost({ input_tokens: 10, input_tokens_details: { cached_tokens: 11 }, output_tokens: 2 }), null);
   assert.equal(calculateAgentUsageCost({ input_tokens: 10, input_tokens_details: { cached_tokens: 6, cache_write_tokens: 5 }, output_tokens: 2 }), null);
   assert.equal(calculateAgentUsageCost({ input_tokens: 10, input_tokens_details: { cache_write_tokens: 1.5 }, output_tokens: 2 }), null);

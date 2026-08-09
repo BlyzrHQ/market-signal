@@ -70,7 +70,7 @@ test("reservation and terminal callbacks reject open or inconsistent wire payloa
     reservationOwner: "worker:owner-1", reservationId: "reservation-1", clientRequestId: "client-2",
     status: "complete", errorCode: null, providerResponseId: "resp_1", providerRequestId: "req_1",
     usageStatus: "known", usage: { inputTokens: 100, cachedInputTokens: 20, cacheWriteInputTokens: 10, outputTokens: 50 }, agentOutput: agentOutput(),
-    model: REPORT_EVALUATION_MODEL, promptVersion: "report-agent-judge-2026-08-09-v2", pricingVersion: "openai-gpt-5.6-luna-2026-08-09",
+    model: REPORT_EVALUATION_MODEL, promptVersion: "report-agent-judge-2026-08-09-v2", pricingVersion: "openai-gpt-5.6-luna-2026-08-09-v2",
   };
   assert.deepEqual(parseReportEvaluationTerminalCallback(terminal), terminal);
   assert.throws(() => parseReportEvaluationTerminalCallback({ ...terminal, status: "complete", usageStatus: "unknown", usage: terminal.usage }));
