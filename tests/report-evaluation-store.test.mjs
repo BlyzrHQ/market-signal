@@ -498,11 +498,30 @@ test("feedback backlog visibility uses a bounded lower-bound scan", async () => 
     await insertEvaluations("pending-backlog", 1_005);
     assert.equal((await value.database.prepare("SELECT COUNT(*) AS count FROM report_evaluation_feedback_outbox").all()).results[0].count, 2_005);
     assert.equal((await value.database.prepare("SELECT COUNT(*) AS count FROM report_evaluation_feedback_pending").all()).results[0].count, 1_005);
+    const leasedPrefix = (await value.database.prepare("SELECT outbox_id FROM report_evaluation_feedback_pending ORDER BY queue_seq LIMIT 1000").all()).results;
+    const activeClaims = leasedPrefix.map((row) => value.database.prepare("INSERT INTO report_evaluation_feedback_claims (outbox_id, run_id, consumer_key, lease_id_hash, payload_hash, leased_until, claimed_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(row.outbox_id, run.id, REPORT_FEEDBACK_CONSUMER, "c".repeat(64), "d".repeat(64), new Date(now.getTime() + 60_000).toISOString(), now.toISOString()));
+    for (let offset = 0; offset < activeClaims.length; offset += 100) await value.database.batch(activeClaims.slice(offset, offset + 100));
     const claimed = await claimEvaluationFeedback(new Date(now.getTime() + 1_000), value.database);
-    assert.equal(claimed.item.evaluationId, "pending-backlog-0");
+    assert.equal(claimed.item.evaluationId, "pending-backlog-1000");
     assert.equal(claimed.backlog.pending, 1_001);
     assert.equal(claimed.backlog.pendingIsLowerBound, true);
     assert.equal(claimed.backlog.oldestAt, now.toISOString());
+  } finally { await closeFixture(value); }
+});
+
+test("feedback claims remove only a bounded expired prefix before selecting work", async () => {
+  const value = await fixture();
+  try {
+    const now = new Date("2026-08-09T12:09:00.000Z");
+    const expiredRun = await createReportRun({ primaryDomain: "expired-prefix.example" }, new Date("2025-01-01T00:00:00.000Z"), value.database);
+    const expired = [];
+    for (let index = 0; index < 1_001; index += 1) expired.push(value.database.prepare("INSERT INTO report_evaluations (id, run_id, evaluation_type, input_hash, fact_manifest_hash, evaluator_version, rubric_version, status, rating_basis, created_at, completed_at) VALUES (?, ?, 'report', ?, ?, 'ecommerce-agent-v1', 'r1', 'failed', 'none', ?, ?)").bind(`expired-prefix-${index}`, expiredRun.id, `expired-input-${index}`, `expired-manifest-${index}`, "2025-01-01T00:00:00.000Z", "2025-01-01T00:00:00.000Z"));
+    for (let offset = 0; offset < expired.length; offset += 100) await value.database.batch(expired.slice(offset, offset + 100));
+    const validRun = await createReportRun({ primaryDomain: "valid-after-expired.example" }, now, value.database);
+    await value.database.prepare("INSERT INTO report_evaluations (id, run_id, evaluation_type, input_hash, fact_manifest_hash, evaluator_version, rubric_version, status, rating_basis, created_at, completed_at) VALUES ('valid-after-expired', ?, 'report', 'valid-input', 'valid-manifest', 'ecommerce-agent-v1', 'r1', 'failed', 'none', ?, ?)").bind(validRun.id, now.toISOString(), now.toISOString()).run();
+    const claimed = await claimEvaluationFeedback(new Date(now.getTime() + 1_000), value.database);
+    assert.equal(claimed.item.evaluationId, "valid-after-expired");
+    assert.equal((await value.database.prepare("SELECT COUNT(*) AS count FROM report_evaluation_feedback_pending").all()).results[0].count, 1);
   } finally { await closeFixture(value); }
 });
 
