@@ -402,8 +402,8 @@ function scopedPriceSignals(currency: string, values: number[]) {
 function isRecurringPriceSuffix(value: string) {
   const normalized = value.trim().replace(/^(?:(?:[-:;,—–]|\()\s*)+/u, "");
   if (/^(?:billed|charged|paid|payable|due|payments?)\b[\p{L}\p{N}\s'/-]{0,80}\b(?:day|daily|week|weekly|bi[- ]?weekly|wk|fortnight|fortnightly|month|monthly|mo|quarter|quarterly|qtr|year|yearly|annual|annually|yr)s?\b/iu.test(normalized)) return true;
-  if (/^(?:on|for)\b[\p{L}\p{N}\s'/-]{0,80}\b(?:day|daily|week|weekly|bi[- ]?weekly|wk|fortnight|fortnightly|month|monthly|mo|quarter|quarterly|qtr|year|yearly|annual|annually|yr)s?\b/iu.test(normalized)) return true;
-  return /^(?:(?:(?:\/\s*|per\s+|a\s+|(?:once|twice)\s+(?:a|per)\s+|(?:billed|charged|paid|payable|due)\s+(?:(?:per|a)\s+|(?:once|twice)\s+(?:a|per)\s+|(?:every|each)\s+(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|other)\s+)?)?|(?:every|each)\s+(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|other)\s+)?)?(?:day|daily|week|weekly|bi[- ]?weekly|wk|fortnight|fortnightly|month|monthly|mo|quarter|quarterly|qtr|year|yearly|annual|annually|yr)s?|(?:per|every|each)\s+billing\s+cycles?))\b/iu.test(normalized);
+  if (/^(?:on|for|at)\b[\p{L}\p{N}\s'/-]{0,80}\b(?:day|daily|week|weekly|bi[- ]?weekly|wk|fortnight|fortnightly|month|monthly|mo|quarter|quarterly|qtr|year|yearly|annual|annually|yr)s?\b/iu.test(normalized)) return true;
+  return /^(?:(?:(?:\/\s*|per\s+|a\s+|(?:once|twice)\s+(?:a|per)\s+|(?:billed|charged|paid|payable|due)\s+(?:(?:per|a)\s+|(?:once|twice)\s+(?:a|per)\s+|(?:every|each)\s+(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|other)\s+)?)?|(?:every|each)\s+(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|other)\s+)?)?(?:day|daily|week|weekly|bi[- ]?weekly|wk|fortnight|fortnightly|month|monthly|mo|quarter|quarterly|qtr|year|yearly|annual|annually|yr)s?|(?:\/\s*|per\s+|every\s+|each\s+|(?:once|twice)\s+(?:a|per)\s+)billing\s+cycles?))\b/iu.test(normalized);
 }
 
 function markedAmounts(markup: string, currency: string) {

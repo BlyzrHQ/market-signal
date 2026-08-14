@@ -435,7 +435,7 @@ test("rejects an entire current price container when any member is invalid", () 
     const labeledDiscount = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">${markup}</p>`);
     assert.deepEqual(labeledDiscount.priceSignals, [], markup);
   }
-  for (const billingCycleSuffix of ['Only $20.00 per billing cycle', 'Only $20.00 every billing cycle', 'Only $20.00 each billing cycle']) {
+  for (const billingCycleSuffix of ['Only $20.00 per billing cycle', 'Only $20.00 every billing cycle', 'Only $20.00 each billing cycle', 'Only $20.00 / billing cycle', 'Only $20.00 once per billing cycle', 'Pay $20.00 at the start of each month']) {
     const recurringPrice = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">${billingCycleSuffix}</p>`);
     assert.deepEqual(recurringPrice.priceSignals, [], billingCycleSuffix);
   }
