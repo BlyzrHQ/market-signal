@@ -199,6 +199,7 @@ function publicImageFromScope(scope: string, sourceUrl: string) {
     const classes = htmlAttributeValue(tag.raw, "class")
       .split(/\s+/)
       .map((value) => value.toLowerCase().replace(/[_-]+/g, "-"));
+    if (classes.some((value) => /(?:^|-)(?:placeholder|skeleton|loading)(?:-|$)/u.test(value))) continue;
     if (!classes.some((value) => [...acceptedClasses].some((token) => value === token || value.startsWith(`${token}-`)))) continue;
     const raw = ["data-large_image", "data-lazy-src", "data-src", "src"]
       .map((attribute) => htmlAttributeValue(tag.raw, attribute))
@@ -292,6 +293,10 @@ function isUnitPriceClassToken(value: string) {
     || (/(?:^|-)price(?:-|$)/u.test(value) && /(?:^|-)(?:unit|measure)(?:-|$)/u.test(value));
 }
 
+function hasIncentiveLabel(value: string) {
+  return /\b(?:gift\s+(?:card|certificate)|voucher|promo(?:tional)?\s+code|promotional\s+credit|store\s+credit)\b/iu.test(value);
+}
+
 function elementMarkupByClassTokens(
   scope: string,
   allowedTags: ReadonlySet<string>,
@@ -333,8 +338,8 @@ function isSecondaryPriceMarkup(markup: string) {
   });
   if (hasNestedSecondaryElement) return false;
   const text = decodeEvidence(markup).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  if (hasIncentiveLabel(text)) return true;
   if (/\b(?:now|sale|current)\b/iu.test(text)) return false;
-  if (/\b(?:gift\s+card|store\s+credit)\b/iu.test(text)) return true;
   return /^(?:compare\s+at|was|regular(?:\s+price)?|list\s+price|msrp|rrp|original(?:\s+price)?|retail(?:\s+price)?|deposit|down\s+payment|due\s+today|as\s+low\s+as|financ(?:e|ing)|lease|payment\s+plan|save\b|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|store\s+credit|coupon|rewards?)/iu.test(text);
 }
 
@@ -384,7 +389,7 @@ function scopedPriceSignals(currency: string, values: number[]) {
 }
 
 function isRecurringPriceSuffix(value: string) {
-  return /^(?:(?:\/\s*|per\s+|a\s+)?(?:day|daily|week|weekly|wk|month|monthly|mo|quarter|quarterly|year|yearly|annual|annually|yr)s?)\b/iu.test(value.trim());
+  return /^(?:(?:\/\s*|per\s+|a\s+)?(?:day|daily|week|weekly|wk|month|monthly|mo|quarter|quarterly|qtr|year|yearly|annual|annually|yr)s?)\b/iu.test(value.trim());
 }
 
 function markedAmounts(markup: string, currency: string) {
@@ -440,9 +445,10 @@ function markedAmounts(markup: string, currency: string) {
     const before = priceText.slice(0, matches[0].index ?? 0).trim();
     const after = priceText.slice((matches[0].index ?? 0) + matches[0][0].length).trim();
     if (/\bsave\b[\s\S]*$/iu.test(before)
+      || hasIncentiveLabel(before)
       || /\b(?:compare\s+at|regular\s+price|list\s+price|msrp|rrp|original\s+price|retail\s+price|deposit|down\s+payment|due\s+today|as\s+low\s+as|financ(?:e|ing)|lease|payment\s+plan|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|store\s+credit|coupon|rewards?)\b[\s\S]*$/iu.test(before)
       || /^(?:(?:[\p{L}-]+\s+){0,3})?(?:off|deposit|down\s+payment|due\s+today|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|back|store\s+credit|gift\s+card|credit|coupon|rewards?\s+points?|points?)\b/iu.test(after)
-      || /^(?:[\s\S]{0,80})\b(?:gift\s+card|store\s+credit)\b/iu.test(after)
+      || (after.length <= 80 && hasIncentiveLabel(after))
       || isRecurringPriceSuffix(after)) return [];
   }
   const validContexts = matches.every((match) => {
