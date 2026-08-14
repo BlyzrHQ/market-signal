@@ -251,6 +251,14 @@ test("reconciles qualified structured dollar markers with explicit currency", ()
     sourceUrl: "https://acme.test/products/conflict-widget",
   });
   assert.deepEqual(conflict.products[0].priceSignals, []);
+
+  for (const [name, price] of [["Plan A", "Plan A $19.99"], ["Vitamin C", "Vitamin C $19.99"]]) {
+    const collision = extraction({
+      document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name, offers: { price } })}</script>`,
+      sourceUrl: `https://acme.test/products/${name.toLowerCase().replaceAll(" ", "-")}`,
+    });
+    assert.equal(collision.products[0].priceSignals[0].currency, undefined, price);
+  }
 });
 
 test("preserves explicitly positive and decorated positive structured prices", () => {

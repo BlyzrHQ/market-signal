@@ -273,6 +273,25 @@ test("does not collapse visible multi-currency evidence into a single point pric
   assert.equal(evidence.basis, "unavailable");
 });
 
+test("parses complete localized decimal and grouped prices without suffix matching", () => {
+  const decimalComma = extractScopedProductPageEvidence('<h1>Product</h1><p class="price">12,50 EUR</p>');
+  assert.deepEqual(decimalComma.priceSignals, [{ raw: "EUR 12.5", currency: "EUR", amount: 12.5 }]);
+  const groupedDecimalComma = extractScopedProductPageEvidence('<h1>Product</h1><p class="price">1.234,56 EUR</p>');
+  assert.deepEqual(groupedDecimalComma.priceSignals, [{ raw: "EUR 1234.56", currency: "EUR", amount: 1234.56 }]);
+  const groupedDecimalPoint = extractScopedProductPageEvidence('<h1>Product</h1><p class="price">USD 1,234.56</p>');
+  assert.deepEqual(groupedDecimalPoint.priceSignals, [{ raw: "USD 1234.56", currency: "USD", amount: 1234.56 }]);
+});
+
+test("rejects an entire current price container when any member is invalid", () => {
+  for (const markup of ["$0.00 - $12.50", "-$5.00 / $12.50", "$ - $12.50"]) {
+    const evidence = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">${markup}</p>`);
+    assert.deepEqual(evidence.priceSignals, [], markup);
+  }
+  const sale = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price"><del>$0.00</del><ins>$12.50</ins></p>');
+  assert.deepEqual(sale.priceSignals, [{ raw: "USD 12.5", currency: "USD", amount: 12.5 }]);
+  assert.equal(sale.basis, "sale");
+});
+
 test("rejects unsupported or negative scoped price markup", () => {
   const unsupported = extractScopedProductPageEvidence('<html><head><meta property="og:price:currency" content="XXX"></head><body><h1>Product</h1><p class="price">XXX 12.50</p></body></html>');
   const negativePrefix = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">-$12.50</p></body></html>');

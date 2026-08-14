@@ -321,14 +321,14 @@ const DOLLAR_CURRENCIES = new Set([
 ]);
 const QUALIFIED_DOLLAR_MARKERS: ReadonlyArray<[currency: string, marker: RegExp]> = [
   ["USD", /(?:^|[^\p{L}\p{N}])US\s*\$\s*[+-]?\d/iu],
-  ["CAD", /(?:^|[^\p{L}\p{N}])(?:CA|C)\s*\$\s*[+-]?\d/iu],
-  ["AUD", /(?:^|[^\p{L}\p{N}])(?:AU|A)\s*\$\s*[+-]?\d/iu],
-  ["BRL", /(?:^|[^\p{L}\p{N}])R\s*\$\s*[+-]?\d/iu],
+  ["CAD", /(?:^|[^\p{L}\p{N}])(?:CA\s*\$|C\$)\s*[+-]?\d/iu],
+  ["AUD", /(?:^|[^\p{L}\p{N}])(?:AU\s*\$|A\$)\s*[+-]?\d/iu],
+  ["BRL", /(?:^|[^\p{L}\p{N}])R\$\s*[+-]?\d/iu],
   ["DOP", /(?:^|[^\p{L}\p{N}])RD\s*\$\s*[+-]?\d/iu],
   ["HKD", /(?:^|[^\p{L}\p{N}])HK\s*\$\s*[+-]?\d/iu],
   ["MXN", /(?:^|[^\p{L}\p{N}])MX\s*\$\s*[+-]?\d/iu],
   ["NZD", /(?:^|[^\p{L}\p{N}])NZ\s*\$\s*[+-]?\d/iu],
-  ["SGD", /(?:^|[^\p{L}\p{N}])S\s*\$\s*[+-]?\d/iu],
+  ["SGD", /(?:^|[^\p{L}\p{N}])S\$\s*[+-]?\d/iu],
   ["TWD", /(?:^|[^\p{L}\p{N}])NT\s*\$\s*[+-]?\d/iu],
 ];
 

@@ -141,9 +141,29 @@ const CURRENCY_TOKENS: Record<string, string> = {
 
 function currencyAmountExpression(currency: string) {
   const decimals = /^(?:KWD|BHD|OMR)$/.test(currency) ? 3 : 2;
-  const amount = `[0-9]{1,6}(?:,[0-9]{3})*(?:\\.[0-9]{1,${decimals}})?`;
+  const whole = "(?:[0-9]{1,3}(?:[.,][0-9]{3})+|[0-9]{1,6})";
+  const amount = `(?<![\\d.,])${whole}(?:[.,][0-9]{1,${decimals}})?(?![\\d.,])`;
   const token = CURRENCY_TOKENS[currency] || currency.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(?:${token})\\s*(${amount})|(${amount})\\s*(?:${token})`, "giu");
+}
+
+function currencyTokenExpression(currency: string) {
+  const token = CURRENCY_TOKENS[currency] || currency.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:${token})`, "giu");
+}
+
+function localizedAmount(raw: string, currency: string) {
+  const decimals = /^(?:KWD|BHD|OMR)$/.test(currency) ? 3 : 2;
+  const comma = raw.lastIndexOf(",");
+  const dot = raw.lastIndexOf(".");
+  if (comma >= 0 && dot >= 0) {
+    return Number(comma > dot ? raw.replace(/\./g, "").replace(",", ".") : raw.replace(/,/g, ""));
+  }
+  if (comma >= 0) {
+    const fractionLength = raw.length - comma - 1;
+    return Number(fractionLength > 0 && fractionLength <= decimals ? raw.replace(/,/g, ".") : raw.replace(/,/g, ""));
+  }
+  return Number(raw);
 }
 
 function currenciesFromMarkup(value: string) {
@@ -197,8 +217,10 @@ function markedAmounts(markup: string, currency: string) {
     .replace(/[\p{Pd}\u207B\u208B\u2212\u2213\u2238\u2296\u229D\u229F\u2796\u2A29-\u2A2C\u2A3A\u2A41\u2A6C]/gu, "-");
   if (/&#(?:x[0-9a-f]+|\d+)/i.test(decoded)) return [];
   const expression = currencyAmountExpression(currency);
-  return [...decoded.matchAll(expression)]
-    .filter((match) => {
+  const matches = [...decoded.matchAll(expression)];
+  const tokenCount = [...decoded.matchAll(currencyTokenExpression(currency))].length;
+  if (matches.length === 0 || matches.length !== tokenCount) return [];
+  const validContexts = matches.every((match) => {
       const start = match.index ?? 0;
       const before = decoded.slice(0, start);
       const after = decoded.slice(start + match[0].length);
@@ -209,8 +231,10 @@ function markedAmounts(markup: string, currency: string) {
         && !/\(\s*$/u.test(before)
         && !/^\s*\)/u.test(after)
         && !/^\s*-\s*$/u.test(after);
-    })
-    .map((match) => Number((match[1] || match[2]).replace(/,/g, "")));
+    });
+  if (!validContexts) return [];
+  const amounts = matches.map((match) => localizedAmount(match[1] || match[2], currency));
+  return amounts.every((amount) => Number.isFinite(amount) && amount > 0) ? amounts : [];
 }
 
 export function extractScopedProductPageEvidence(document: string, sourceUrl = "https://product.invalid/") {
@@ -230,14 +254,14 @@ export function extractScopedProductPageEvidence(document: string, sourceUrl = "
   ]);
   const qualifiedDollarMarkers: ReadonlyArray<[currency: string, marker: RegExp]> = [
     ["USD", /(?:^|[^\p{L}\p{N}])US\s*\$\s*[+-]?\d/iu],
-    ["CAD", /(?:^|[^\p{L}\p{N}])(?:CA|C)\s*\$\s*[+-]?\d/iu],
-    ["AUD", /(?:^|[^\p{L}\p{N}])(?:AU|A)\s*\$\s*[+-]?\d/iu],
-    ["BRL", /(?:^|[^\p{L}\p{N}])R\s*\$\s*[+-]?\d/iu],
+    ["CAD", /(?:^|[^\p{L}\p{N}])(?:CA\s*\$|C\$)\s*[+-]?\d/iu],
+    ["AUD", /(?:^|[^\p{L}\p{N}])(?:AU\s*\$|A\$)\s*[+-]?\d/iu],
+    ["BRL", /(?:^|[^\p{L}\p{N}])R\$\s*[+-]?\d/iu],
     ["DOP", /(?:^|[^\p{L}\p{N}])RD\s*\$\s*[+-]?\d/iu],
     ["HKD", /(?:^|[^\p{L}\p{N}])HK\s*\$\s*[+-]?\d/iu],
     ["MXN", /(?:^|[^\p{L}\p{N}])MX\s*\$\s*[+-]?\d/iu],
     ["NZD", /(?:^|[^\p{L}\p{N}])NZ\s*\$\s*[+-]?\d/iu],
-    ["SGD", /(?:^|[^\p{L}\p{N}])S\s*\$\s*[+-]?\d/iu],
+    ["SGD", /(?:^|[^\p{L}\p{N}])S\$\s*[+-]?\d/iu],
     ["TWD", /(?:^|[^\p{L}\p{N}])NT\s*\$\s*[+-]?\d/iu],
   ];
   const qualifiedDollarCurrencies = qualifiedDollarMarkers
