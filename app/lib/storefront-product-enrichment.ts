@@ -251,12 +251,11 @@ function htmlTagSpans(value: string) {
   return tags;
 }
 
-function preferredCurrentPriceMarkup(scope: string) {
-  const accepted = new Set(["product-price-sale", "sale-price", "current-price", "price-current"]);
+function elementMarkupByClassTokens(scope: string, allowedTags: ReadonlySet<string>, accepted: ReadonlySet<string>) {
   const tags = htmlTagSpans(scope);
   for (let index = 0; index < tags.length; index += 1) {
     const opening = tags[index];
-    if (opening.closing || !new Set(["div", "span"]).has(opening.name)) continue;
+    if (opening.closing || !allowedTags.has(opening.name)) continue;
     const tag = opening.raw;
     const classValue = tag.match(/\sclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
     const classes = (classValue?.[1] || classValue?.[2] || classValue?.[3] || "")
@@ -273,6 +272,14 @@ function preferredCurrentPriceMarkup(scope: string) {
     }
   }
   return "";
+}
+
+function preferredCurrentPriceMarkup(scope: string) {
+  return elementMarkupByClassTokens(
+    scope,
+    new Set(["div", "span"]),
+    new Set(["product-price-sale", "sale-price", "current-price", "price-current"]),
+  );
 }
 
 function removeSecondaryPriceElements(markup: string) {
@@ -358,7 +365,7 @@ function markedAmounts(markup: string, currency: string) {
   if (matches.length === 1) {
     const before = priceText.slice(0, matches[0].index ?? 0).trim();
     const after = priceText.slice((matches[0].index ?? 0) + matches[0][0].length).trim();
-    if (/\b(?:save(?:\s+up\s+to)?|discount|instant\s+savings?|saving|savings|rebate)\s*$/iu.test(before)
+    if (/\b(?:save(?:\s+(?:up\s+to|an?\s+extra|extra))?|discount|instant\s+savings?|saving|savings|rebate)\s*$/iu.test(before)
       || /^(?:off|discount|instant\s+savings?|saving|savings|rebate)\b/iu.test(after)) return [];
   }
   const validContexts = matches.every((match) => {
@@ -402,8 +409,8 @@ function markedAmounts(markup: string, currency: string) {
 export function extractScopedProductPageEvidence(document: string, sourceUrl = "https://product.invalid/") {
   const scope = productScope(document);
   const priceMarkup = preferredCurrentPriceMarkup(scope)
-    || scope.match(/<p\b[^>]*class\s*=\s*["'][^"']*\bprice\b[^"']*["'][^>]*>[\s\S]*?<\/p>/i)?.[0]
-    || scope.match(/<(?:div|span)\b[^>]*class\s*=\s*["'][^"']*(?:product[-_ ]price|single_product_price)[^"']*["'][^>]*>[\s\S]*?<\/(?:div|span)>/i)?.[0]
+    || elementMarkupByClassTokens(scope, new Set(["p"]), new Set(["price"]))
+    || elementMarkupByClassTokens(scope, new Set(["div", "span"]), new Set(["product-price", "single-product-price"]))
     || "";
   const currentMarkup = priceMarkup.match(/<ins\b[^>]*>([\s\S]*?)<\/ins>/i)?.[1]
     || priceMarkup.replace(/<del\b[^>]*>[\s\S]*?<\/del>/gi, " ");

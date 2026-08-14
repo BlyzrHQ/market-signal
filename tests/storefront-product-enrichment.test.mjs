@@ -371,6 +371,8 @@ test("rejects an entire current price container when any member is invalid", () 
   assert.deepEqual(bemSiblingRegularSale.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
   const unquotedBemSale = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="product-price--regular">$120.00</div><div class=product-price--sale>$100.00</div>');
   assert.deepEqual(unquotedBemSale.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const unitPriceBeforeProductPrice = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="unit-price">$5 / 100 ml</p><p class="price">$100</p>');
+  assert.deepEqual(unitPriceBeforeProductPrice.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
   const wholesaleNotSale = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="wholesale-price">$60.00</div><p class="price">$100.00</p>');
   assert.deepEqual(wholesaleNotSale.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
   const wholesaleSaleNotCurrent = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="wholesale-sale-price">$60.00</div><p class="price">$100.00</p>');
@@ -389,7 +391,7 @@ test("rejects an entire current price container when any member is invalid", () 
   assert.deepEqual(nonmemberPublicPrice.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
   const discountOnly = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">$20.00 OFF</p>');
   assert.deepEqual(discountOnly.priceSignals, []);
-  for (const markup of ['Save $20.00', 'Save up to $20.00', 'Discount $20.00', '$20.00 savings', '$20.00 instant savings', '$20.00 rebate']) {
+  for (const markup of ['Save $20.00', 'Save up to $20.00', 'Save an extra $20.00', 'Discount $20.00', '$20.00 savings', '$20.00 instant savings', '$20.00 rebate']) {
     const labeledDiscount = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">${markup}</p>`);
     assert.deepEqual(labeledDiscount.priceSignals, [], markup);
   }
