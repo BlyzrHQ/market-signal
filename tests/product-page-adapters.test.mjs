@@ -44,15 +44,18 @@ test("builds exact same-domain Shopify and WooCommerce adapter requests", () => 
 
 test("confirms Shopify currency only from same-page public metadata", () => {
   assert.equal(confirmedProductCurrency('<meta property="product:price:currency" content="GBP">'), "GBP");
-  assert.equal(confirmedProductCurrency('<script>Shopify.currency = {"active":"AED","rate":"1.0"}</script>'), "AED");
-  assert.equal(confirmedProductCurrency('<meta property="og:price:currency" content="USD"><script>Shopify.currency = {"active":"EUR"}</script>'), "");
+  assert.equal(confirmedProductCurrency('<script>Shopify.currency = {"active":"AED","rate":"1.0"}</script>'), "");
+  assert.equal(confirmedProductCurrency('<meta property="og:price:currency" content="USD"><script>Shopify.currency = {"active":"EUR"}</script>'), "USD");
   assert.equal(confirmedProductCurrency('<meta property="product:price:currency" content="USD"><meta property="og:price:currency" content="EUR">'), "");
   assert.equal(hasConflictingDirectProductCurrency('<meta property="product:price:currency" content="USD"><meta property="og:price:currency" content="EUR">'), true);
   assert.equal(hasConflictingDirectProductCurrency('<meta property="product:price:currency" content="USD"><meta property="product:price:currency" content="EUR">'), true);
-  assert.equal(hasConflictingDirectProductCurrency('<script>Shopify.currency = {"active":"USD"}</script><script>Shopify.currency = {"active":"EUR"}</script>'), true);
+  assert.equal(hasConflictingDirectProductCurrency('<script>Shopify.currency = {"active":"USD"}</script><script>Shopify.currency = {"active":"EUR"}</script>'), false);
   assert.equal(hasConflictingDirectProductCurrency('<meta property="product:price:currency" content="USD"><meta property="product:price:currency" content=EUR>'), true);
   assert.equal(confirmedProductCurrency('<meta data-name="product:price:currency" content="EUR">'), "");
   assert.equal(confirmedProductCurrency('<!-- <meta property="product:price:currency" content="EUR"> -->'), "");
+  assert.equal(confirmedProductCurrency('<script>const example = `<meta property="product:price:currency" content="EUR">`;</script>'), "");
+  assert.equal(confirmedProductCurrency('<template><meta property="product:price:currency" content="EUR"></template>'), "");
+  assert.equal(confirmedProductCurrency('<!-- <meta property="product:price:currency" content="EUR">'), "");
   assert.equal(hasConflictingDirectProductCurrency('<meta property="product:price:currency" content="USD"><script type="application/ld+json">{"priceCurrency":"EUR"}</script>'), false);
   assert.equal(confirmedProductCurrency('<script type="application/ld+json">{"priceCurrency":"EUR"}</script>'), "EUR");
   assert.equal(confirmedProductCurrency("Prices in pounds"), "");
@@ -148,6 +151,21 @@ test("keeps a selected Shopify variant set non-comparable when any selected pric
   });
   assert.deepEqual(result.product?.priceSignals, []);
   assert.match(result.gap, /every selected variant/i);
+});
+
+test("accepts only canonical integer minor units from storefront adapters", () => {
+  const parse = (price) => parseShopifyProduct({
+    payload: { title: "Canonical Price", handle: "canonical-price", variants: [{ title: "Default Title", price }] },
+    requestedKey: "canonical-price",
+    sourceUrl: "https://shop.test/products/canonical-price",
+    domain: "shop.test",
+    observedAt: "2026-07-20T10:00:00.000Z",
+    currency: "USD",
+  });
+  for (const value of ["0x10", "1e3", 12.5, "12.5", Number.MAX_SAFE_INTEGER + 1]) {
+    assert.deepEqual(parse(value).product?.priceSignals, [], String(value));
+  }
+  assert.deepEqual(parse("1250").product?.priceSignals, [{ raw: "USD 12.5", currency: "USD", amount: 12.5 }]);
 });
 
 test("quantity steering excludes differently sized Shopify variants while preserving same-size choices", () => {

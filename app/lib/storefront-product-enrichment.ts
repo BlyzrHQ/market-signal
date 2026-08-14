@@ -220,8 +220,10 @@ export function extractScopedProductPageEvidence(document: string, sourceUrl = "
       ? ""
       : confirmedProductCurrency(document, { allowStructured: false });
   const currency = isSupportedCurrency(observedCurrency) ? observedCurrency.trim().toUpperCase() : "";
-  const variationAttribute = scope.match(/data-product_variations\s*=\s*(["'])([\s\S]*?)\1/i)?.[2] || "";
-  if (variationAttribute && currency) {
+  const variationAttributeMatch = scope.match(/\bdata-product_variations(?:\s*=\s*(?:"([\s\S]*?)"|'([\s\S]*?)'|([^\s>]+)))?/i);
+  const variationAttribute = variationAttributeMatch ? (variationAttributeMatch[1] ?? variationAttributeMatch[2] ?? variationAttributeMatch[3] ?? "") : "";
+  if (variationAttributeMatch && currency) {
+    if (!variationAttribute) return { priceSignals: [], basis: "unavailable" as const, imageUrl: publicImageFromScope(scope, sourceUrl) };
     try {
       const variations = JSON.parse(decodeEvidence(variationAttribute));
       if (!Array.isArray(variations) || !variations.length) {

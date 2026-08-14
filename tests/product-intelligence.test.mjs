@@ -137,10 +137,12 @@ test("rejects negative structured and metadata prices instead of making them pos
       { "@type": "Product", name: "Acme Numeric Currency Contradiction", brand: { name: "Acme" }, offers: { price: "&#36;12.50", priceCurrency: "EUR" } },
       { "@type": "Product", name: "Acme Mixed ISO Contradiction", brand: { name: "Acme" }, offers: { price: "USD 12 / EUR 10", priceCurrency: "EUR" } },
       { "@type": "Product", name: "Acme Incomplete Range With Point", brand: { name: "Acme" }, offers: { price: 19.99, lowPrice: 0, highPrice: 29.99, priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Semicolonless Numeric Currency Contradiction", brand: { name: "Acme" }, offers: { price: "&#36 12.50", priceCurrency: "EUR" } },
+      { "@type": "Product", name: "Acme Semicolonless Hex Currency Contradiction", brand: { name: "Acme" }, offers: { price: "&#x24 12.50", priceCurrency: "EUR" } },
     ])}</script>`,
     sourceUrl: "https://acme.com/products/negative-catalog",
   });
-  assert.equal(structured.products.length, 37);
+  assert.equal(structured.products.length, 39);
   assert.ok(structured.products.every((item) => item.priceSignals.length === 0), structured.products.filter((item) => item.priceSignals.length).map((item) => item.name).join(", "));
 
   const metadata = extraction({
@@ -190,6 +192,26 @@ test("rejects conflicting or inactive Open Graph price metadata", () => {
     sourceUrl: "https://acme.com/products/metadata-widget",
   });
   assert.deepEqual(commented.products[0].priceSignals, []);
+
+  for (const inert of [
+    '<script>const example = `<meta property="product:price:amount" content="77"><meta property="product:price:currency" content="USD">`;</script>',
+    '<template><meta property="product:price:amount" content="77"><meta property="product:price:currency" content="USD"></template>',
+    '<!-- <meta property="product:price:amount" content="77"><meta property="product:price:currency" content="USD">',
+  ]) {
+    const result = extraction({ document: `<script type="application/ld+json">${JSON.stringify(product)}</script>${inert}`, sourceUrl: "https://acme.com/products/metadata-widget" });
+    assert.deepEqual(result.products[0].priceSignals, []);
+  }
+});
+
+test("does not infer ISO currencies from lowercase ordinary prose", () => {
+  const result = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify([
+      { "@type": "Product", name: "Acme All", offers: { price: "for all 19.99" } },
+      { "@type": "Product", name: "Acme Try", offers: { price: "try 19.99" } },
+    ])}</script>`,
+    sourceUrl: "https://acme.com/products/prose",
+  });
+  assert.ok(result.products.every((item) => item.priceSignals.every((signal) => !signal.currency)));
 });
 
 test("preserves explicitly positive and decorated positive structured prices", () => {

@@ -182,13 +182,16 @@ test("keeps an incomplete WooCommerce variation set non-comparable", () => {
 });
 
 test("keeps malformed and non-array WooCommerce variation payloads non-comparable", () => {
-  const payloads = ["{", JSON.stringify("not-an-array"), JSON.stringify({ display_price: 19.99 })];
+  const payloads = ["{", JSON.stringify("not-an-array"), JSON.stringify({ display_price: 19.99 }), "", "false"];
   for (const payload of payloads) {
     const encoded = payload.replace(/"/g, "&quot;");
-    const evidence = extractScopedProductPageEvidence(`<h1>Tea</h1><form data-product_variations="${encoded}"><p class="price">USD 19.99</p></form>`);
+    const attribute = payload === "false" ? "data-product_variations=false" : `data-product_variations="${encoded}"`;
+    const evidence = extractScopedProductPageEvidence(`<h1>Tea</h1><form ${attribute}><p class="price">USD 19.99</p></form>`);
     assert.deepEqual(evidence.priceSignals, [], payload);
     assert.equal(evidence.basis, "unavailable", payload);
   }
+  const booleanEvidence = extractScopedProductPageEvidence('<h1>Tea</h1><form data-product_variations><p class="price">USD 19.99</p></form>');
+  assert.deepEqual(booleanEvidence.priceSignals, []);
 });
 
 test("does not collapse visible multi-currency evidence into a single point price", () => {
@@ -346,7 +349,7 @@ test("uses the matched product currency instead of an unrelated structured produ
   }
 });
 
-test("does not label a Shopify adapter price when structured and active storefront currencies conflict", async () => {
+test("ignores script-only Shopify currency and uses explicit structured product currency", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
     const url = String(input);
@@ -356,7 +359,7 @@ test("does not label a Shopify adapter price when structured and active storefro
   };
   try {
     const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
-    assert.deepEqual(result.products[0].priceSignals, []);
+    assert.deepEqual(result.products[0].priceSignals, [{ raw: "USD 13.4", currency: "USD", amount: 13.4 }]);
   } finally {
     globalThis.fetch = originalFetch;
   }

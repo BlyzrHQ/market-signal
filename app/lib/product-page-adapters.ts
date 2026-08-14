@@ -107,7 +107,11 @@ function metaContents(document: string, key: string) {
     const match = tag.match(new RegExp(`(?:^|\\s)${escapedName}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
     return text(match?.[1] || match?.[2] || match?.[3], 40);
   };
-  return [...document.matchAll(/<meta\b[^>]*>/gi)]
+  const activeDocument = document
+    .replace(/<!--[\s\S]*?(?:-->|$)/g, " ")
+    .replace(/<(script|style|template|noscript)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
+    .replace(/<(?:script|style|template|noscript)\b[^>]*>[\s\S]*$/gi, " ");
+  return [...activeDocument.matchAll(/<meta\b[^>]*>/gi)]
     .map((match) => match[0])
     .filter((tag) => ["property", "name", "itemprop"].some((attribute) => attributeValue(tag, attribute) === key))
     .map((tag) => attributeValue(tag, "content"))
@@ -120,12 +124,9 @@ function isoCurrency(value: unknown) {
 }
 
 function directProductCurrencies(document: string) {
-  const activeDocument = document.replace(/<!--[\s\S]*?-->/g, " ");
   const metadata = ["product:price:currency", "og:price:currency", "priceCurrency"]
-    .flatMap((key) => metaContents(activeDocument, key));
-  const shopify = [...activeDocument.matchAll(/Shopify\.currency\s*=\s*\{[^}]*["']active["']\s*:\s*["']([A-Za-z]{3})["']/gi)]
-    .map((match) => match[1]);
-  return [...new Set([...metadata, ...shopify].map(isoCurrency).filter(Boolean))];
+    .flatMap((key) => metaContents(document, key));
+  return [...new Set(metadata.map(isoCurrency).filter(Boolean))];
 }
 
 export function hasConflictingDirectProductCurrency(document: string) {
@@ -144,9 +145,16 @@ export function confirmedProductCurrency(document: string, options: { allowStruc
   return unique.length === 1 ? unique[0] : "";
 }
 
+function canonicalMinorUnits(value: unknown) {
+  if (typeof value === "number") return Number.isSafeInteger(value) && value >= 0 ? value : null;
+  if (typeof value !== "string" || !/^\d+$/.test(value.trim())) return null;
+  const numeric = Number(value.trim());
+  return Number.isSafeInteger(numeric) ? numeric : null;
+}
+
 function minorUnitPrice(value: unknown, currency: string, explicitDigits: unknown): ProductPriceSignal | null {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric < 0 || !currency) return null;
+  const numeric = canonicalMinorUnits(value);
+  if (numeric === null || !currency) return null;
   const digits = Number.isInteger(explicitDigits) && Number(explicitDigits) >= 0 && Number(explicitDigits) <= 4
     ? Number(explicitDigits)
     : 2;
@@ -156,10 +164,8 @@ function minorUnitPrice(value: unknown, currency: string, explicitDigits: unknow
 }
 
 function positiveMinorUnitInput(value: unknown) {
-  if (typeof value === "number") return Number.isFinite(value) && value > 0;
-  if (typeof value !== "string" || !value.trim()) return false;
-  const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric > 0;
+  const numeric = canonicalMinorUnits(value);
+  return numeric !== null && numeric > 0;
 }
 
 function identifierRecord(value: JsonRecord | null) {

@@ -321,13 +321,13 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown): ProductPriceSi
     .replace(/&pound;/gi, "£")
     .replace(/&euro;/gi, "€")
     .replace(/&dollar;/gi, "$")
-    .replace(/&#(\d+);/g, (_, code: string) => decodedCodePoint(code, 10))
-    .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => decodedCodePoint(code, 16));
+    .replace(/&#(\d+)(?:;|(?=\s|\p{Sc}))/gu, (_, code: string) => decodedCodePoint(code, 10))
+    .replace(/&#x([0-9a-f]+)(?:;|(?=\s|\p{Sc}))/giu, (_, code: string) => decodedCodePoint(code, 16));
   const observedCurrencies = new Set<string>();
   if (/£/.test(currencyEvidence)) observedCurrencies.add("GBP");
   if (/€/.test(currencyEvidence)) observedCurrencies.add("EUR");
   if (/\$/.test(currencyEvidence)) observedCurrencies.add("USD");
-  for (const match of currencyEvidence.toUpperCase().matchAll(/\b[A-Z]{3}\b/g)) if (isSupportedCurrency(match[0])) observedCurrencies.add(match[0]);
+  for (const match of currencyEvidence.matchAll(/\b[A-Z]{3}\b/g)) if (isSupportedCurrency(match[0])) observedCurrencies.add(match[0]);
   if (observedCurrencies.size > 1 || (explicitCurrency && [...observedCurrencies].some((currency) => currency !== explicitCurrency))) return null;
   const inferredCurrency = [...observedCurrencies][0];
   const currency = explicitCurrency || inferredCurrency;
@@ -388,7 +388,10 @@ function metaContents(document: string, key: string) {
     const match = tag.match(new RegExp(`(?:^|\\s)${escapedName}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
     return clean(match?.[1] || match?.[2] || match?.[3] || "");
   };
-  const activeDocument = document.replace(/<!--[\s\S]*?-->/g, " ");
+  const activeDocument = document
+    .replace(/<!--[\s\S]*?(?:-->|$)/g, " ")
+    .replace(/<(script|style|template|noscript)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
+    .replace(/<(?:script|style|template|noscript)\b[^>]*>[\s\S]*$/gi, " ");
   return [...activeDocument.matchAll(/<meta\b[^>]*>/gi)]
     .map((match) => match[0])
     .filter((tag) => ["property", "name", "itemprop"].some((attribute) => attributeValue(tag, attribute) === key))
