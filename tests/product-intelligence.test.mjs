@@ -259,6 +259,16 @@ test("reconciles qualified structured dollar markers with explicit currency", ()
     });
     assert.equal(collision.products[0].priceSignals[0].currency, undefined, price);
   }
+  const ambiguousCordoba = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Ambiguous Cordoba", offers: { price: "C$19.99" } })}</script>`,
+    sourceUrl: "https://acme.test/products/ambiguous-cordoba",
+  });
+  assert.equal(ambiguousCordoba.products[0].priceSignals[0].currency, undefined);
+  const explicitCordoba = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Nicaragua Product", offers: { price: "C$19.99", priceCurrency: "NIO" } })}</script>`,
+    sourceUrl: "https://acme.test/products/nicaragua-product",
+  });
+  assert.deepEqual(explicitCordoba.products[0].priceSignals, [{ raw: "NIO C$19.99", currency: "NIO", amount: 19.99, period: undefined }]);
 });
 
 test("preserves explicitly positive and decorated positive structured prices", () => {

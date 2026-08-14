@@ -156,6 +156,13 @@ function currencyTokenExpression(currency: string) {
   return new RegExp(`(?:${token})`, "giu");
 }
 
+function currencyRangeExpression(currency: string) {
+  const token = CURRENCY_TOKENS[currency] || currency.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const amount = `[+-]?${localizedAmountPattern(currency)}`;
+  const separator = "(?:-|/|\\bto\\b)";
+  return new RegExp(`(?:${token})\\s*(${amount})\\s*${separator}\\s*(${amount})|(${amount})\\s*${separator}\\s*(${amount})\\s*(?:${token})`, "giu");
+}
+
 function localizedAmount(raw: string, currency: string) {
   const decimals = /^(?:KWD|BHD|OMR)$/.test(currency) ? 3 : 2;
   const compact = raw.replace(/[\s\u00A0\u202F']/gu, "");
@@ -240,11 +247,8 @@ function markedAmounts(markup: string, currency: string) {
     });
   if (!validContexts) return [];
   const amounts = matches.map((match) => localizedAmount(match[1] || match[2], currency));
-  const rangeAmount = localizedAmountPattern(currency);
-  const sharedRangeExpression = new RegExp(`(?<![\\d.,])([+-]?${rangeAmount})(?![\\d.,])\\s*(?:-|\\bto\\b)\\s*([+-]?${rangeAmount})(?![\\d.,])`, "giu");
-  for (const range of decoded.matchAll(sharedRangeExpression)) {
-    const endpoints = [localizedAmount(range[1], currency), localizedAmount(range[2], currency)];
-    if (!endpoints.some((endpoint) => amounts.includes(endpoint))) continue;
+  for (const range of decoded.matchAll(currencyRangeExpression(currency))) {
+    const endpoints = [localizedAmount(range[1] || range[3], currency), localizedAmount(range[2] || range[4], currency)];
     amounts.push(...endpoints);
   }
   return amounts.every((amount) => Number.isFinite(amount) && amount > 0) ? amounts : [];
@@ -263,11 +267,11 @@ export function extractScopedProductPageEvidence(document: string, sourceUrl = "
   const hasDollarSymbol = /\$/.test(decodedPriceMarkup);
   const dollarCurrencies = new Set([
     "ARS", "AUD", "BMD", "BND", "BRL", "BSD", "BZD", "CAD", "CLP", "COP", "DOP", "FJD", "GYD", "HKD", "JMD",
-    "KYD", "LRD", "MXN", "NAD", "NZD", "SBD", "SGD", "SRD", "TTD", "TWD", "USD", "XCD", "ZWL",
+    "KYD", "LRD", "MXN", "NAD", "NIO", "NZD", "SBD", "SGD", "SRD", "TTD", "TWD", "USD", "XCD", "ZWL",
   ]);
   const qualifiedDollarMarkers: ReadonlyArray<[currency: string, marker: RegExp]> = [
     ["USD", /(?:^|[^\p{L}\p{N}])US\s*\$\s*[+-]?\d/iu],
-    ["CAD", /(?:^|[^\p{L}\p{N}])(?:CA\s*\$|C\$)\s*[+-]?\d/iu],
+    ["CAD", /(?:^|[^\p{L}\p{N}])CA\s*\$\s*[+-]?\d/iu],
     ["AUD", /(?:^|[^\p{L}\p{N}])(?:AU\s*\$|A\$)\s*[+-]?\d/iu],
     ["BRL", /(?:^|[^\p{L}\p{N}])R\$\s*[+-]?\d/iu],
     ["DOP", /(?:^|[^\p{L}\p{N}])RD\s*\$\s*[+-]?\d/iu],

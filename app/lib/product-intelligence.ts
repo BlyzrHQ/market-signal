@@ -317,11 +317,11 @@ function decodedCodePoint(value: string, radix: number) {
 const AMBIGUOUS_CURRENCY_WORDS = new Set(["ALL", "COP", "CUP", "GEL", "MAD", "PEN", "TOP", "TRY"]);
 const DOLLAR_CURRENCIES = new Set([
   "ARS", "AUD", "BMD", "BND", "BRL", "BSD", "BZD", "CAD", "CLP", "COP", "DOP", "FJD", "GYD", "HKD", "JMD",
-  "KYD", "LRD", "MXN", "NAD", "NZD", "SBD", "SGD", "SRD", "TTD", "TWD", "USD", "XCD", "ZWL",
+  "KYD", "LRD", "MXN", "NAD", "NIO", "NZD", "SBD", "SGD", "SRD", "TTD", "TWD", "USD", "XCD", "ZWL",
 ]);
 const QUALIFIED_DOLLAR_MARKERS: ReadonlyArray<[currency: string, marker: RegExp]> = [
   ["USD", /(?:^|[^\p{L}\p{N}])US\s*\$\s*[+-]?\d/iu],
-  ["CAD", /(?:^|[^\p{L}\p{N}])(?:CA\s*\$|C\$)\s*[+-]?\d/iu],
+  ["CAD", /(?:^|[^\p{L}\p{N}])CA\s*\$\s*[+-]?\d/iu],
   ["AUD", /(?:^|[^\p{L}\p{N}])(?:AU\s*\$|A\$)\s*[+-]?\d/iu],
   ["BRL", /(?:^|[^\p{L}\p{N}])R\$\s*[+-]?\d/iu],
   ["DOP", /(?:^|[^\p{L}\p{N}])RD\s*\$\s*[+-]?\d/iu],

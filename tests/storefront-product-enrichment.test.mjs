@@ -265,6 +265,10 @@ test("reconciles qualified visible dollar markers before a generic dollar", () =
   assert.deepEqual(usDollarAsCad.priceSignals, []);
   const canadianDollarAsUsd = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">CA $19.99</p>');
   assert.deepEqual(canadianDollarAsUsd.priceSignals, []);
+  const nicaraguanCordoba = extractScopedProductPageEvidence('<meta property="product:price:currency" content="NIO"><h1>Product</h1><p class="price">C$19.99</p>');
+  assert.deepEqual(nicaraguanCordoba.priceSignals, [{ raw: "NIO 19.99", currency: "NIO", amount: 19.99 }]);
+  const ambiguousCordoba = extractScopedProductPageEvidence('<h1>Product</h1><p class="price">C$19.99</p>');
+  assert.deepEqual(ambiguousCordoba.priceSignals, []);
 });
 
 test("does not collapse visible multi-currency evidence into a single point price", () => {
@@ -303,6 +307,17 @@ test("rejects an entire current price container when any member is invalid", () 
     { raw: "USD 19.99", currency: "USD", amount: 19.99 },
   ]);
   assert.equal(sharedCurrencyRange.basis, "range");
+
+  const slashRange = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">USD 12.50 / 15.00</p>');
+  assert.deepEqual(slashRange.priceSignals, [
+    { raw: "USD 12.5", currency: "USD", amount: 12.5 },
+    { raw: "USD 15", currency: "USD", amount: 15 },
+  ]);
+  for (const markup of ['USD 10.00 <span>Save 10-12%</span>', '$12.00 <span>Size 12-18 months</span>']) {
+    const evidence = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">${markup}</p>`);
+    const expected = markup.startsWith("USD 10") ? 10 : 12;
+    assert.deepEqual(evidence.priceSignals, [{ raw: `USD ${expected}`, currency: "USD", amount: expected }], markup);
+  }
 });
 
 test("rejects unsupported or negative scoped price markup", () => {
