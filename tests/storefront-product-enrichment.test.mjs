@@ -359,8 +359,12 @@ test("rejects an entire current price container when any member is invalid", () 
   assert.deepEqual(struckCompareAt.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
   const styledStrike = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price"><span style="text-decoration:line-through">$120.00</span><span>$100.00</span></p>');
   assert.deepEqual(styledStrike.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const styledStrikeLine = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price"><span style="text-decoration-line:line-through">$120.00</span><span>$100.00</span></p>');
+  assert.deepEqual(styledStrikeLine.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
   const unwrappedWas = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">Was $120.00 — now $100.00</p>');
   assert.deepEqual(unwrappedWas.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const regularSale = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">Regular $120.00 Sale $100.00</p>');
+  assert.deepEqual(regularSale.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
   const trailingCurrencyRange = extractScopedProductPageEvidence('<h1>Product</h1><p class="price">100.00 - 120.00 USD</p>');
   assert.deepEqual(trailingCurrencyRange.priceSignals.map((signal) => signal.amount), [100, 120]);
   assert.equal(trailingCurrencyRange.basis, "range");
