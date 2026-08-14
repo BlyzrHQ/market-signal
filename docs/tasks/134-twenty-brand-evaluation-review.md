@@ -64,5 +64,9 @@ Two independent Codex reviewers blocked the first artifact because failed runs
 were represented as zero metrics, pair-level evidence was absent, validation
 was weaker than production, run resumption was incomplete, the Agency outlier
 was aggregated with Starter, and the Wearform identity conflict was hidden by
-the aggregate PASS. The artifact and runner were corrected for each of those
-findings. A fresh strict re-review is required before this draft PR can merge.
+the aggregate PASS. Subsequent reviews also found and drove fixes for
+self-declared source domains, ungrounded direct-price counts, non-atomic
+checkpoints, terminalized local polling errors, and cross-competitor match-slot
+evidence. Both independent reviewers returned PASS with no blocking findings on
+implementation head `a67edfe73fe04ef0328b1c7b25902728fcd0252b`. The draft PR
+remains unmerged because the required Fable gate is still unavailable.
