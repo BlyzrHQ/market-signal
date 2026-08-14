@@ -6,6 +6,7 @@ import {
   type CanonicalProductQuantity,
 } from "./product-normalization.ts";
 import type { ProductPriceSignal, ProductRecord } from "./product-intelligence.ts";
+import { stripInactiveHtmlMarkup } from "./active-html-markup.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -107,12 +108,7 @@ function metaContents(document: string, key: string) {
     const match = tag.match(new RegExp(`(?:^|\\s)${escapedName}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
     return text(match?.[1] || match?.[2] || match?.[3], 40);
   };
-  let activeDocument = document.replace(/<!--[\s\S]*?(?:-->|$)/g, " ");
-  for (const tagName of ["script", "style", "template", "noscript", "textarea", "title", "iframe", "xmp"]) {
-    activeDocument = activeDocument
-      .replace(new RegExp(`<${tagName}\\b[\\s\\S]*<\\/${tagName}\\s*>`, "gi"), " ")
-      .replace(new RegExp(`<${tagName}\\b[\\s\\S]*$`, "gi"), " ");
-  }
+  const activeDocument = stripInactiveHtmlMarkup(document);
   return [...activeDocument.matchAll(/<meta\b[^>]*>/gi)]
     .map((match) => match[0])
     .filter((tag) => ["property", "name", "itemprop"].some((attribute) => attributeValue(tag, attribute) === key))

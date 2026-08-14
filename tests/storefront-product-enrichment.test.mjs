@@ -208,6 +208,23 @@ test("ignores scoped prices, variations, and images inside inert markup", () => 
   }
 });
 
+test("preserves active product evidence between sibling script blocks", () => {
+  const evidence = extractScopedProductPageEvidence('<script>head()</script><h1>Tea</h1><div class="summary"><p class="price">USD 19.99</p><img class="product-image" src="https://cdn.shop.test/tea.jpg"></div><script>foot()</script>');
+  assert.deepEqual(evidence.priceSignals, [{ raw: "USD 19.99", currency: "USD", amount: 19.99 }]);
+  assert.equal(evidence.imageUrl, "https://cdn.shop.test/tea.jpg");
+});
+
+test("reconciles visible and direct product currencies before publishing a scoped price", () => {
+  const conflicting = extractScopedProductPageEvidence('<meta property="product:price:currency" content="EUR"><h1>Tea</h1><p class="price">USD 19.99</p>');
+  assert.deepEqual(conflicting.priceSignals, []);
+
+  const disambiguatedDollar = extractScopedProductPageEvidence('<meta property="product:price:currency" content="CAD"><h1>Tea</h1><p class="price">$19.99</p>');
+  assert.deepEqual(disambiguatedDollar.priceSignals, [{ raw: "CAD 19.99", currency: "CAD", amount: 19.99 }]);
+
+  const ambiguousDollar = extractScopedProductPageEvidence('<h1>Tea</h1><p class="price">$19.99</p>');
+  assert.deepEqual(ambiguousDollar.priceSignals, []);
+});
+
 test("does not collapse visible multi-currency evidence into a single point price", () => {
   const evidence = extractScopedProductPageEvidence('<h1>Product</h1><div class="summary"><p class="price">USD 12.50 / EUR 10.99</p></div>');
   assert.deepEqual(evidence.priceSignals, []);
@@ -562,9 +579,13 @@ test("does not confuse unrelated-content with a related-product boundary", () =>
 });
 
 test("preserves decorated and promotional positive scoped prices", () => {
-  for (const markup of ["+19.99 USD", "★ $19.99", "≈$19.99", "Sale - USD 19.99", "Promo &ndash; $19.99", "Now - 19.99 USD"]) {
+  for (const markup of ["+19.99 USD", "Sale - USD 19.99", "Now - 19.99 USD"]) {
     const evidence = extractScopedProductPageEvidence(`<h1>Product</h1><div class="summary"><p class="price">${markup}</p></div>`);
     assert.equal(evidence.priceSignals[0]?.amount, 19.99, markup);
+  }
+  for (const markup of ["★ $19.99", "≈$19.99", "Promo &ndash; $19.99"]) {
+    const evidence = extractScopedProductPageEvidence(`<h1>Product</h1><div class="summary"><p class="price">${markup}</p></div>`);
+    assert.deepEqual(evidence.priceSignals, [], markup);
   }
 });
 

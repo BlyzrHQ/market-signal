@@ -10,6 +10,7 @@ import {
   type CanonicalProductQuantity,
   type ProductIdentifiers,
 } from "./product-normalization.ts";
+import { stripInactiveHtmlMarkup } from "./active-html-markup.ts";
 
 export type ProductPriceSignal = {
   raw: string;
@@ -313,7 +314,8 @@ function decodedCodePoint(value: string, radix: number) {
   return Number.isInteger(code) && code >= 0 && code <= 0x10FFFF ? String.fromCodePoint(code) : " ";
 }
 
-const RAW_ISO_CURRENCIES = new Set(["AED", "AUD", "BHD", "BRL", "CAD", "CHF", "CNY", "EGP", "EUR", "GBP", "HKD", "INR", "JOD", "JPY", "KRW", "KWD", "NZD", "OMR", "QAR", "SAR", "SGD", "USD"]);
+const AMBIGUOUS_CURRENCY_WORDS = new Set(["ALL", "COP", "CUP", "GEL", "MAD", "PEN", "TOP", "TRY"]);
+const DOLLAR_CURRENCIES = new Set(["AUD", "CAD", "HKD", "NZD", "SGD", "USD"]);
 
 function priceSignal(rawValue: unknown, currencyValue?: unknown): ProductPriceSignal | null {
   const rawText = text(rawValue);
@@ -323,13 +325,17 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown): ProductPriceSi
     .replace(/&pound(?:;|(?=\s|\d))/gi, "£")
     .replace(/&euro(?:;|(?=\s|\d))/gi, "€")
     .replace(/&dollar(?:;|(?=\s|\d))/gi, "$")
+    .replace(/&yen(?:;|(?=\s|\d))/gi, "¥")
     .replace(/&#(\d+)(?:;|(?=\s|\p{Sc}))/gu, (_, code: string) => decodedCodePoint(code, 10))
     .replace(/&#x([0-9a-f]+)(?:;|(?=\s|\p{Sc}))/giu, (_, code: string) => decodedCodePoint(code, 16));
   const observedCurrencies = new Set<string>();
   if (/£/.test(currencyEvidence)) observedCurrencies.add("GBP");
   if (/€/.test(currencyEvidence)) observedCurrencies.add("EUR");
-  if (/\$/.test(currencyEvidence)) observedCurrencies.add("USD");
-  if (/¥/.test(currencyEvidence)) observedCurrencies.add("JPY");
+  const hasDollarSymbol = /\$/.test(currencyEvidence);
+  const hasYenSymbol = /¥/.test(currencyEvidence);
+  if (hasDollarSymbol && explicitCurrency && !DOLLAR_CURRENCIES.has(explicitCurrency)) return null;
+  if (hasYenSymbol && explicitCurrency && !new Set(["CNY", "JPY"]).has(explicitCurrency)) return null;
+  if (hasDollarSymbol && !explicitCurrency) observedCurrencies.add("USD");
   if (/₹/.test(currencyEvidence)) observedCurrencies.add("INR");
   if (/₩/.test(currencyEvidence)) observedCurrencies.add("KRW");
   if (/₽/.test(currencyEvidence)) observedCurrencies.add("RUB");
@@ -337,7 +343,10 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown): ProductPriceSi
   if (/₪/.test(currencyEvidence)) observedCurrencies.add("ILS");
   for (const match of currencyEvidence.matchAll(/\b[A-Za-z]{3}\b/g)) {
     const currency = match[0].toUpperCase();
-    if (RAW_ISO_CURRENCIES.has(currency)) observedCurrencies.add(currency);
+    const index = match.index ?? 0;
+    const amountAdjacent = /^\s*[+-]?\d/.test(currencyEvidence.slice(index + match[0].length))
+      || /\d(?:[.,]\d+)?\s*$/.test(currencyEvidence.slice(0, index));
+    if (amountAdjacent && isSupportedCurrency(currency) && !AMBIGUOUS_CURRENCY_WORDS.has(currency)) observedCurrencies.add(currency);
   }
   if (observedCurrencies.size > 1 || (explicitCurrency && [...observedCurrencies].some((currency) => currency !== explicitCurrency))) return null;
   const inferredCurrency = [...observedCurrencies][0];
@@ -399,12 +408,7 @@ function metaContents(document: string, key: string) {
     const match = tag.match(new RegExp(`(?:^|\\s)${escapedName}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
     return clean(match?.[1] || match?.[2] || match?.[3] || "");
   };
-  let activeDocument = document.replace(/<!--[\s\S]*?(?:-->|$)/g, " ");
-  for (const tagName of ["script", "style", "template", "noscript", "textarea", "title", "iframe", "xmp"]) {
-    activeDocument = activeDocument
-      .replace(new RegExp(`<${tagName}\\b[\\s\\S]*<\\/${tagName}\\s*>`, "gi"), " ")
-      .replace(new RegExp(`<${tagName}\\b[\\s\\S]*$`, "gi"), " ");
-  }
+  const activeDocument = stripInactiveHtmlMarkup(document);
   return [...activeDocument.matchAll(/<meta\b[^>]*>/gi)]
     .map((match) => match[0])
     .filter((tag) => ["property", "name", "itemprop"].some((attribute) => attributeValue(tag, attribute) === key))

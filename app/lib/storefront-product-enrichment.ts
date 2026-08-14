@@ -3,6 +3,7 @@ import { bilingualNormalize, bilingualTokens, parseCanonicalQuantity, quantities
 import { CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX, catalogReplacementAuditAttribute, extractProductsFromHtml, isSupportedCurrency, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "./product-intelligence.ts";
 import { confirmedProductCurrency, hasConflictingDirectProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "./product-page-adapters.ts";
 import { sharedRobotsPolicyResolver } from "./robots-policy.ts";
+import { stripInactiveHtmlMarkup } from "./active-html-markup.ts";
 
 const MAX_DOCUMENT_BYTES = 1_500_000;
 export const MAX_ENRICHMENT_TARGETS = 64;
@@ -116,16 +117,6 @@ function decodeEvidence(value: string) {
     .replace(/&#x([0-9a-f]+)(?:;|(?=\s|\p{Sc}))/giu, (_, code: string) => decodedCodePoint(code, 16));
 }
 
-function stripInactiveMarkup(value: string) {
-  let active = value.replace(/<!--[\s\S]*?(?:-->|$)/g, " ");
-  for (const tagName of ["script", "style", "template", "noscript", "textarea", "title", "iframe", "xmp"]) {
-    active = active
-      .replace(new RegExp(`<${tagName}\\b[\\s\\S]*<\\/${tagName}\\s*>`, "gi"), " ")
-      .replace(new RegExp(`<${tagName}\\b[\\s\\S]*$`, "gi"), " ");
-  }
-  return active;
-}
-
 function normalizeLocalizedNumbers(value: string) {
   return value
     .replace(/[\u0660-\u0669]/g, (digit) => String(digit.charCodeAt(0) - 0x0660))
@@ -174,7 +165,7 @@ function publicImageFromScope(scope: string, sourceUrl: string) {
 }
 
 function productScope(document: string) {
-  const activeDocument = stripInactiveMarkup(document);
+  const activeDocument = stripInactiveHtmlMarkup(document);
   const title = activeDocument.match(/<h1\b[^>]*>[\s\S]*?<\/h1>/i);
   const summaryIndex = activeDocument.search(/class\s*=\s*["'][^"']*(?:summary|product-summary)[^"']*["']/i);
   const start = Math.max(0, title?.index ?? summaryIndex);
@@ -225,11 +216,19 @@ function markedAmounts(markup: string, currency: string) {
 export function extractScopedProductPageEvidence(document: string, sourceUrl = "https://product.invalid/") {
   const scope = productScope(document);
   const markedCurrencies = currenciesFromMarkup(scope);
-  const observedCurrency = markedCurrencies.length === 1
-    ? markedCurrencies[0]
-    : markedCurrencies.length > 1
+  const directCurrency = confirmedProductCurrency(document, { allowStructured: false });
+  const decodedScope = decodeEvidence(scope);
+  const hasDollarSymbol = /\$/.test(decodedScope);
+  const dollarCurrencies = new Set(["AUD", "CAD", "HKD", "NZD", "SGD", "USD"]);
+  const observedCurrency = directCurrency && hasDollarSymbol && dollarCurrencies.has(directCurrency)
+    ? directCurrency
+    : directCurrency && markedCurrencies.length > 0 && !markedCurrencies.includes(directCurrency)
       ? ""
-      : confirmedProductCurrency(document, { allowStructured: false });
+      : markedCurrencies.length === 1 && !(hasDollarSymbol && !/\bUSD\b/i.test(decodedScope) && !directCurrency)
+        ? markedCurrencies[0]
+        : markedCurrencies.length > 1
+          ? ""
+          : directCurrency;
   const currency = isSupportedCurrency(observedCurrency) ? observedCurrency.trim().toUpperCase() : "";
   const variationAttributeMatch = scope.match(/\bdata-product_variations(?:\s*=\s*(?:"([\s\S]*?)"|'([\s\S]*?)'|([^\s>]+)))?/i);
   const variationAttribute = variationAttributeMatch ? (variationAttributeMatch[1] ?? variationAttributeMatch[2] ?? variationAttributeMatch[3] ?? "") : "";
@@ -253,7 +252,10 @@ export function extractScopedProductPageEvidence(document: string, sourceUrl = "
     || "";
   const currentMarkup = priceMarkup.match(/<ins\b[^>]*>([\s\S]*?)<\/ins>/i)?.[1]
     || priceMarkup.replace(/<del\b[^>]*>[\s\S]*?<\/del>/gi, " ");
-  const signals = scopedPriceSignals(currency, markedAmounts(currentMarkup, currency));
+  const comparableMarkup = directCurrency && hasDollarSymbol && dollarCurrencies.has(directCurrency)
+    ? currentMarkup.replace(/\$/g, `${directCurrency} `)
+    : currentMarkup;
+  const signals = scopedPriceSignals(currency, markedAmounts(comparableMarkup, currency));
   return {
     priceSignals: signals,
     basis: signals.length > 1 ? "range" as const : signals.length === 1 ? (/<ins\b/i.test(priceMarkup) ? "sale" as const : "point" as const) : "unavailable" as const,
