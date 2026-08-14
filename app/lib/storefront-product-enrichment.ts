@@ -318,7 +318,8 @@ function markedAmounts(markup: string, currency: string) {
 
 export function extractScopedProductPageEvidence(document: string, sourceUrl = "https://product.invalid/") {
   const scope = productScope(document);
-  const priceMarkup = scope.match(/<p\b[^>]*class\s*=\s*["'][^"']*\bprice\b[^"']*["'][^>]*>[\s\S]*?<\/p>/i)?.[0]
+  const priceMarkup = scope.match(/<(?:div|span)\b[^>]*class\s*=\s*["'][^"']*(?:product[-_ ]price[-_ ]sale|sale[-_ ]price|current[-_ ]price|price[-_ ]current)[^"']*["'][^>]*>[\s\S]*?<\/(?:div|span)>/i)?.[0]
+    || scope.match(/<p\b[^>]*class\s*=\s*["'][^"']*\bprice\b[^"']*["'][^>]*>[\s\S]*?<\/p>/i)?.[0]
     || scope.match(/<(?:div|span)\b[^>]*class\s*=\s*["'][^"']*(?:product[-_ ]price|single_product_price)[^"']*["'][^>]*>[\s\S]*?<\/(?:div|span)>/i)?.[0]
     || "";
   const currentMarkup = priceMarkup.match(/<ins\b[^>]*>([\s\S]*?)<\/ins>/i)?.[1]
