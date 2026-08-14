@@ -302,8 +302,12 @@ function observedCatalogReplacement(item: ProductEnrichmentTarget, products: Pro
   } satisfies ProductRecord;
 }
 
+function isPositivePriceSignal(signal: ProductRecord["priceSignals"][number]) {
+  return typeof signal.amount === "number" && Number.isFinite(signal.amount) && signal.amount > 0 && Boolean(signal.currency);
+}
+
 function hasConfirmedPrice(products: ProductRecord[]) {
-  return products.some((product) => product.priceSignals.some((signal) => typeof signal.amount === "number" && Boolean(signal.currency)));
+  return products.some((product) => product.priceSignals.some(isPositivePriceSignal));
 }
 
 function hasSecureImage(products: ProductRecord[]) {
@@ -311,7 +315,7 @@ function hasSecureImage(products: ProductRecord[]) {
 }
 
 function comparablePrice(product: ProductRecord) {
-  const prices = product.priceSignals.filter((signal) => typeof signal.amount === "number" && Boolean(signal.currency));
+  const prices = product.priceSignals.filter(isPositivePriceSignal);
   return prices.length > 0 && new Set(prices.map((signal) => signal.currency)).size === 1 && new Set(prices.map((signal) => signal.amount)).size === 1;
 }
 
@@ -383,6 +387,9 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       if (!fetched.ok) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed", fetched.status, "http") };
       if (!/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed", fetched.status, "content") };
       const extracted = pageExtraction(fetched.text, fetched.url, item.domain);
+      for (const product of extracted.result.products) {
+        product.priceSignals = product.priceSignals.filter(isPositivePriceSignal);
+      }
       const expected = expectedProduct(item);
       addScopedProductPageEvidence(fetched.text, fetched.url, expected, extracted.result.products, extracted.pageTitle);
       const initialIdentity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle);

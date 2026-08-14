@@ -171,6 +171,42 @@ test("recovers public Shopify variants while preserving a non-comparable price b
   }
 });
 
+test("replaces a zero Shopify page placeholder with a positive same-domain adapter price", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({
+      title: "CornerStone Enhanced Visibility Beanie",
+      handle: "cornerstone-enhanced-visibility-beanie",
+      variants: [{ title: "Default Title", price: 1340 }],
+    }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name: "CornerStone Enhanced Visibility Beanie",
+      offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+    })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({
+      expectedName: "CornerStone Enhanced Visibility Beanie",
+      sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie",
+    })], 1);
+    assert.equal(result.products.length, 1);
+    assert.deepEqual(result.products[0].priceSignals, [{ raw: "USD 13.4", currency: "USD", amount: 13.4 }]);
+    assert.deepEqual(calls, [
+      "https://shop.test/robots.txt",
+      "https://shop.test/products/cornerstone-enhanced-visibility-beanie",
+      "https://shop.test/products/cornerstone-enhanced-visibility-beanie.js",
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("preserves custom same-domain shop URLs for HTML-only enrichment", async () => {
   const parsed = publicProductTarget(target({ sourceUrl: "https://shop.test/shop/maamoul-pistachio" }));
   assert.ok(parsed);
