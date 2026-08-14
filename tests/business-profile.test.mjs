@@ -45,3 +45,12 @@ test("prefers a descriptive title segment over the brand-only segment", () => {
   assert.match(result.category, /Natural Nut Butters/i);
   assert.notEqual(result.category, "Pip & Nut");
 });
+
+test("keeps promotional shipping and setup copy out of an ecommerce category", () => {
+  const result = profile({
+    domain: "wearform.com",
+    title: "Custom Work Uniforms with Logo | Free Shipping & No Set-up Charge &ndash; WearForm.com",
+    description: "Custom branded workwear, uniforms, shirts, safety apparel, and company clothing.",
+  });
+  assert.equal(result.category, "Custom Work Uniforms with Logo");
+});

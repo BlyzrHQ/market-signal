@@ -477,10 +477,7 @@ export async function discoverCompetitors(profile: DiscoveryProfile): Promise<Di
   const anchors = business.businessType === "ecommerce" ? productSearchAnchors(business.offerings, MAX_PRODUCT_SEARCHES, business.brandName) : [];
   const productResults = await Promise.all(anchors.map((anchor) => runLane(endpoint, apiKey, model, "product", { ...business, offerings: [anchor] }, { ...profile, products: [anchor] })));
   const productCandidates = mergeCandidates(productResults.flatMap((result) => result.candidates));
-  const needsCompanyDiscovery = business.businessType !== "ecommerce" || productCandidates.length === 0;
-  const companyResults = needsCompanyDiscovery
-    ? await Promise.all((["entity", "category"] as SearchLane[]).map((lane) => runLane(endpoint, apiKey, model, lane, business, profile)))
-    : [];
+  const companyResults = await Promise.all((["entity", "category"] as SearchLane[]).map((lane) => runLane(endpoint, apiKey, model, lane, business, profile)));
   const strategy: DiscoveryResult["strategy"] = business.businessType !== "ecommerce"
     ? "company-first"
     : productCandidates.length
@@ -490,7 +487,7 @@ export async function discoverCompetitors(profile: DiscoveryProfile): Promise<Di
   const fallbackGap = strategy === "company-fallback"
     ? [anchors.length ? (productSearchesCompleted ? "Product searches completed with no attributable seller, so company/category discovery ran as a fallback; every ecommerce lead still requires current product overlap before inclusion." : "Product search did not produce an attributable seller because one or more searches failed or returned no usable product page, so company/category discovery ran as a fallback; every ecommerce lead still requires current product overlap before inclusion.") : "No attributable ecommerce product was available for search, so company/category discovery ran as a fallback; every ecommerce lead still requires current product overlap before inclusion."]
     : [];
-  const settled = productCandidates.length ? productResults : [...productResults, ...companyResults];
+  const settled = [...productResults, ...companyResults];
   const candidates = mergeCandidates(settled.flatMap((result) => result.candidates));
   const queries = [...new Set(settled.flatMap((result) => result.queries))].slice(0, 16);
   const gaps = [...fallbackGap, ...settled.flatMap((result) => result.gap ? [result.gap] : [])];

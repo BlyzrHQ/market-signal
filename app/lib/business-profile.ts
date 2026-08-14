@@ -28,6 +28,7 @@ export type BusinessProfileInput = {
 
 const STOPWORDS = new Set(["about", "all", "and", "app", "best", "build", "building", "buy", "company", "for", "from", "get", "home", "more", "our", "product", "products", "shop", "store", "that", "the", "their", "this", "with", "your"]);
 const GENERIC_TITLES = /^(?:features?|home|plans?|pricing|products?|services?|solutions?)$/i;
+const PROMOTIONAL_TITLE = /\b(?:buy now|discount|free shipping|limited[- ]time|no (?:set[- ]?up|setup) (?:charge|fee)|sale|save \d+%|shop online)\b/i;
 
 export function profileTerms(value: string) {
   return [...new Set(value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").split(/\s+/).filter((term) => term.length > 2 && !STOPWORDS.has(term) && !/^\d+$/.test(term)))];
@@ -63,7 +64,7 @@ function businessType(input: BusinessProfileInput): BusinessType {
 function category(input: BusinessProfileInput, type: BusinessType) {
   const segments = input.title.split(/\s+(?:\||—|–)\s+/).map((part) => part.trim()).filter(Boolean);
   const domainTokens = new Set(profileTerms(input.domain.split(".")[0]));
-  const descriptive = segments.map((segment) => ({ segment, terms: profileTerms(segment) })).filter(({ segment, terms }) => terms.length >= 2 && !GENERIC_TITLES.test(segment) && terms.some((term) => !domainTokens.has(term))).sort((left, right) => right.terms.length - left.terms.length)[0]?.segment;
+  const descriptive = segments.map((segment) => ({ segment, terms: profileTerms(segment) })).filter(({ segment, terms }) => terms.length >= 2 && !GENERIC_TITLES.test(segment) && !PROMOTIONAL_TITLE.test(segment) && terms.some((term) => !domainTokens.has(term))).sort((left, right) => right.terms.length - left.terms.length)[0]?.segment;
   const productCategories = input.products.map((product) => product.category).filter((value) => value && !/^(?:agency|ecommerce|features?|plans?|product|products|saas|services?|shop|store|uncategorized)$/i.test(value));
   const frequentCategory = [...new Map(productCategories.map((value) => [value, productCategories.filter((candidate) => candidate === value).length])).entries()].sort((left, right) => right[1] - left[1])[0]?.[0];
   const fallback = type === "agency" ? "digital product design and development agency" : type === "saas" ? "business software platform" : type === "ecommerce" ? "online retail" : "business";
