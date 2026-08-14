@@ -278,6 +278,8 @@ function htmlAttributeValue(tag: string, attributeName: string) {
   return "";
 }
 
+const unitPriceClassTokens = new Set(["unit-price", "unitprice", "price-per-unit", "price-unit", "price-per-measure"]);
+
 function elementMarkupByClassTokens(
   scope: string,
   allowedTags: ReadonlySet<string>,
@@ -309,6 +311,7 @@ function preferredCurrentPriceMarkup(scope: string) {
     scope,
     new Set(["div", "span"]),
     new Set(["product-price-sale", "sale-price", "current-price", "price-current"]),
+    unitPriceClassTokens,
   );
 }
 
@@ -395,8 +398,8 @@ function markedAmounts(markup: string, currency: string) {
     const before = priceText.slice(0, matches[0].index ?? 0).trim();
     const after = priceText.slice((matches[0].index ?? 0) + matches[0][0].length).trim();
     if (/\bsave\b[\s\S]*$/iu.test(before)
-      || /\b(?:discount|instant\s+savings?|saving|savings|rebate)\s*$/iu.test(before)
-      || /^(?:off|discount|instant\s+savings?|saving|savings|rebate)\b/iu.test(after)) return [];
+      || /\b(?:discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|store\s+credit|coupon|rewards?)\s*$/iu.test(before)
+      || /^(?:off|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|back|store\s+credit|credit|coupon|rewards?\s+points?|points?)\b/iu.test(after)) return [];
   }
   const validContexts = matches.every((match) => {
       const start = match.index ?? 0;
@@ -438,15 +441,14 @@ function markedAmounts(markup: string, currency: string) {
 
 export function extractScopedProductPageEvidence(document: string, sourceUrl = "https://product.invalid/") {
   const scope = productScope(document);
-  const unitPriceClasses = new Set(["unit-price", "unitprice", "price-per-unit", "price-unit", "price-per-measure"]);
   const priceMarkup = preferredCurrentPriceMarkup(scope)
     || elementMarkupByClassTokens(
       scope,
       new Set(["p"]),
       new Set(["price"]),
-      unitPriceClasses,
+      unitPriceClassTokens,
     )
-    || elementMarkupByClassTokens(scope, new Set(["div", "span"]), new Set(["product-price", "single-product-price"]), unitPriceClasses)
+    || elementMarkupByClassTokens(scope, new Set(["div", "span"]), new Set(["product-price", "single-product-price"]), unitPriceClassTokens)
     || "";
   const currentMarkup = priceMarkup.match(/<ins\b[^>]*>([\s\S]*?)<\/ins>/i)?.[1]
     || priceMarkup.replace(/<del\b[^>]*>[\s\S]*?<\/del>/gi, " ");
