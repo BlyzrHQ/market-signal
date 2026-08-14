@@ -241,8 +241,9 @@ function markedAmounts(markup: string, currency: string) {
   let priceText = decoded;
   if (installmentAt >= 0 && firstObservedAmount) {
     const firstEnd = (firstObservedAmount.index ?? 0) + firstObservedAmount[0].length;
-    const financingConnector = [...decoded.slice(firstEnd, installmentAt).matchAll(/\b(?:or|with)\b/giu)].at(-1);
-    const financingStart = financingConnector ? firstEnd + (financingConnector.index ?? 0) : installmentAt;
+    const beforeInstallment = decoded.slice(0, installmentAt);
+    const financingLead = beforeInstallment.match(/(?:\b(?:or|with)\b[\s\S]*|(?:[-,;]|\s)\s*(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|twelve)\s+(?:(?:interest[- ]free|easy|monthly|weekly|biweekly)\s*)*)$/iu);
+    const financingStart = financingLead ? beforeInstallment.length - financingLead[0].length : installmentAt;
     const productPrefix = decoded.slice(0, financingStart).trimEnd();
     const prefixAmounts = [...productPrefix.matchAll(expression)];
     const secondObservedAmount = prefixAmounts[1];
@@ -250,7 +251,7 @@ function markedAmounts(markup: string, currency: string) {
       ? decoded.slice((firstObservedAmount.index ?? 0) + firstObservedAmount[0].length, secondObservedAmount.index ?? 0)
       : "";
     const hasExplicitTokenRange = Boolean(secondObservedAmount && /^\s*(?:-|\/|to)\s*$/iu.test(between));
-    const sharedCurrencyRange = [...productPrefix.matchAll(currencyRangeExpression(currency, false))][0];
+    const sharedCurrencyRange = [...productPrefix.matchAll(currencyRangeExpression(currency))][0];
     if (hasExplicitTokenRange) {
       priceText = productPrefix.slice(0, (secondObservedAmount!.index ?? 0) + secondObservedAmount![0].length);
     } else if (sharedCurrencyRange) {
