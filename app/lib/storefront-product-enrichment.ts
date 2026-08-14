@@ -293,7 +293,8 @@ function elementMarkupByClassTokens(
     const classes = htmlAttributeValue(opening.raw, "class")
       .split(/\s+/)
       .map((value) => value.toLowerCase().replace(/[_-]+/g, "-"));
-    if (!classes.some((value) => accepted.has(value)) || classes.some((value) => rejected.has(value))) continue;
+    const hasRejectedClass = classes.some((value) => [...rejected].some((token) => value === token || value.startsWith(`${token}-`)));
+    if (!classes.some((value) => accepted.has(value)) || hasRejectedClass) continue;
     const start = opening.index;
     let depth = 0;
     for (const elementTag of tags.slice(index)) {
@@ -398,8 +399,8 @@ function markedAmounts(markup: string, currency: string) {
     const before = priceText.slice(0, matches[0].index ?? 0).trim();
     const after = priceText.slice((matches[0].index ?? 0) + matches[0][0].length).trim();
     if (/\bsave\b[\s\S]*$/iu.test(before)
-      || /\b(?:discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|store\s+credit|coupon|rewards?)\s*$/iu.test(before)
-      || /^(?:off|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|back|store\s+credit|credit|coupon|rewards?\s+points?|points?)\b/iu.test(after)) return [];
+      || /\b(?:discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|store\s+credit|coupon|rewards?)\b[\s\S]*$/iu.test(before)
+      || /^(?:in\s+)?(?:off|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|back|store\s+credit|credit|coupon|rewards?\s+points?|points?)\b/iu.test(after)) return [];
   }
   const validContexts = matches.every((match) => {
       const start = match.index ?? 0;
