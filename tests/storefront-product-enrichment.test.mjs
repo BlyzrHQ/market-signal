@@ -175,9 +175,13 @@ test("rejects unsupported or negative scoped price markup", () => {
   const unsupported = extractScopedProductPageEvidence('<html><head><meta property="og:price:currency" content="XXX"></head><body><h1>Product</h1><p class="price">XXX 12.50</p></body></html>');
   const negativePrefix = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">-$12.50</p></body></html>');
   const negativeSpaced = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">- $12.50</p></body></html>');
+  const encodedNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&minus;$12.50</p></body></html>');
+  const accountingNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">($12.50)</p></body></html>');
   assert.deepEqual(unsupported.priceSignals, []);
   assert.deepEqual(negativePrefix.priceSignals, []);
   assert.deepEqual(negativeSpaced.priceSignals, []);
+  assert.deepEqual(encodedNegative.priceSignals, []);
+  assert.deepEqual(accountingNegative.priceSignals, []);
 });
 
 test("replaces a zero Shopify page placeholder with a positive same-domain adapter price", async () => {
@@ -211,6 +215,36 @@ test("replaces a zero Shopify page placeholder with a positive same-domain adapt
       "https://shop.test/products/cornerstone-enhanced-visibility-beanie",
       "https://shop.test/products/cornerstone-enhanced-visibility-beanie.js",
     ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("prefers a valid adapter price when an exact-name zero placeholder ranks above a compatible longer title", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({
+      title: "CornerStone Enhanced Visibility Beanie with Reflective Stripe",
+      handle: "cornerstone-enhanced-visibility-beanie",
+      variants: [{ title: "Default Title", price: 1340 }],
+    }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name: "CornerStone Enhanced Visibility Beanie",
+      offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+    })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({
+      expectedName: "CornerStone Enhanced Visibility Beanie",
+      sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie",
+    })], 1);
+    assert.equal(result.products.length, 1);
+    assert.equal(result.products[0].name, "CornerStone Enhanced Visibility Beanie with Reflective Stripe");
+    assert.deepEqual(result.products[0].priceSignals, [{ raw: "USD 13.4", currency: "USD", amount: 13.4 }]);
   } finally {
     globalThis.fetch = originalFetch;
   }

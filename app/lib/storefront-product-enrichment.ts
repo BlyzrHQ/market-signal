@@ -97,6 +97,7 @@ function decodeEvidence(value: string) {
     .replace(/&euro;|&#8364;/gi, "\u20AC")
     .replace(/&lt;/gi, "<")
     .replace(/&gt;/gi, ">")
+    .replace(/&minus;/gi, "\u2212")
     .replace(/&amp;/gi, "&")
     .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 10)))
     .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 16)));
@@ -169,7 +170,12 @@ function markedAmounts(markup: string, currency: string) {
   const decoded = normalizeLocalizedNumbers(decodeEvidence(markup.replace(/<[^>]*>/g, " ")));
   const expression = currencyAmountExpression(currency);
   return [...decoded.matchAll(expression)]
-    .filter((match) => !/[-−–—]\s*$/u.test(decoded.slice(0, match.index ?? 0)))
+    .filter((match) => {
+      const start = match.index ?? 0;
+      const before = decoded.slice(0, start);
+      const after = decoded.slice(start + match[0].length);
+      return !/[-−–—]\s*$/u.test(before) && !/\(\s*$/u.test(before) && !/^\s*\)/u.test(after);
+    })
     .map((match) => Number((match[1] || match[2]).replace(/,/g, "")));
 }
 
@@ -436,7 +442,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
         const replacement = observedCatalogReplacement(item, replacementCandidates, extracted.pageTitle, fetched.url);
         return replacement ? { product: replacement, gap: null } : { product: null, gap: gap(identity.reason, "identity_mismatch", undefined, "identity") };
       }
-      const accepted = identity.products[0];
+      const accepted = identity.products.find((product) => hasConfirmedPrice([product])) || identity.products[0];
       const unresolvedAdapterGap = adapterGap && accepted && !hasConfirmedPrice([accepted]) ? adapterGap : "";
       return { product: accepted ? { ...accepted, id: item.productId } : null, gap: unresolvedAdapterGap ? gap(unresolvedAdapterGap, "adapter_limited", undefined, "adapter") : null };
     } catch (error) {
