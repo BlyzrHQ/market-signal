@@ -226,6 +226,23 @@ function productScope(document: string) {
   return relatedAt >= 0 ? bounded.slice(0, relatedAt) : bounded;
 }
 
+function preferredCurrentPriceMarkup(scope: string) {
+  const accepted = new Set(["product-price-sale", "sale-price", "current-price", "price-current"]);
+  for (const opening of scope.matchAll(/<(div|span)\b[^>]*>/gi)) {
+    const tag = opening[0];
+    const classValue = tag.match(/\bclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+    const classes = (classValue?.[1] || classValue?.[2] || classValue?.[3] || "")
+      .split(/\s+/)
+      .map((value) => value.toLowerCase().replace(/[_-]+/g, "-"));
+    if (!classes.some((value) => accepted.has(value))) continue;
+    const start = opening.index ?? 0;
+    const closing = new RegExp(`</${opening[1]}\\s*>`, "i").exec(scope.slice(start + tag.length));
+    if (!closing) continue;
+    return scope.slice(start, start + tag.length + (closing.index ?? 0) + closing[0].length);
+  }
+  return "";
+}
+
 function scopedPriceSignals(currency: string, values: number[]) {
   if (!currency) return [];
   return [...new Set(values.filter((amount) => Number.isFinite(amount) && amount > 0))]
@@ -318,7 +335,7 @@ function markedAmounts(markup: string, currency: string) {
 
 export function extractScopedProductPageEvidence(document: string, sourceUrl = "https://product.invalid/") {
   const scope = productScope(document);
-  const priceMarkup = scope.match(/<(?:div|span)\b[^>]*class\s*=\s*["'](?:[^"']*[\s_-])?(?:product[\s_-]+price[\s_-]+sale|sale[\s_-]+price|current[\s_-]+price|price[\s_-]+current)(?=[\s_-]|["'])[^"']*["'][^>]*>[\s\S]*?<\/(?:div|span)>/i)?.[0]
+  const priceMarkup = preferredCurrentPriceMarkup(scope)
     || scope.match(/<p\b[^>]*class\s*=\s*["'][^"']*\bprice\b[^"']*["'][^>]*>[\s\S]*?<\/p>/i)?.[0]
     || scope.match(/<(?:div|span)\b[^>]*class\s*=\s*["'][^"']*(?:product[-_ ]price|single_product_price)[^"']*["'][^>]*>[\s\S]*?<\/(?:div|span)>/i)?.[0]
     || "";
