@@ -104,10 +104,12 @@ test("rejects negative structured and metadata prices instead of making them pos
       { "@type": "Product", name: "Acme String Negative", brand: { name: "Acme" }, offers: { price: "-12.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Unicode Negative", brand: { name: "Acme" }, offers: { price: "−12.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Encoded Negative", brand: { name: "Acme" }, offers: { price: "&minus;12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Spaced Negative", brand: { name: "Acme" }, offers: { price: "- $12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Accounting Negative", brand: { name: "Acme" }, offers: { price: "($12.50)", priceCurrency: "USD" } },
     ])}</script>`,
     sourceUrl: "https://acme.com/products/negative-catalog",
   });
-  assert.equal(structured.products.length, 4);
+  assert.equal(structured.products.length, 6);
   assert.ok(structured.products.every((item) => item.priceSignals.length === 0));
 
   const metadata = extraction({
@@ -120,6 +122,17 @@ test("rejects negative structured and metadata prices instead of making them pos
   });
   assert.equal(metadata.products.length, 1);
   assert.deepEqual(metadata.products[0].priceSignals, []);
+
+  const accountingMetadata = extraction({
+    document: `<head><meta property="product:price:amount" content="($12.50)"><meta property="product:price:currency" content="USD"></head><script type="application/ld+json">${JSON.stringify({
+      "@type": "Product", name: "Acme Accounting Widget", brand: { name: "Acme" },
+    })}</script>`,
+    sourceUrl: "https://acme.com/products/accounting-widget",
+    pageTitle: "Acme Accounting Widget",
+    headings: ["Acme Accounting Widget"],
+  });
+  assert.equal(accountingMetadata.products.length, 1);
+  assert.deepEqual(accountingMetadata.products[0].priceSignals, []);
 });
 
 test("prefers an exact product H1 when a marketing-prefixed title contains that identity", () => {

@@ -320,6 +320,9 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown): ProductPriceSi
     .replace(/&#x(?:2212|2013|2014);/gi, "-")
     .replace(/[−–—]/gu, "-")
     .replace(/,/g, "");
+  const separatedNegative = /-\s*(?:[A-Z]{3}\s*|[$£€]\s*)?\d/u.test(normalizedAmountText);
+  const accountingNegative = /\(\s*(?:[A-Z]{3}\s*|[$£€]\s*)?\d+(?:\.\d+)?(?:\s*[A-Z]{3})?\s*\)/u.test(normalizedAmountText);
+  if (separatedNegative || accountingNegative) return null;
   const amountMatch = normalizedAmountText.match(/[+-]?\d+(?:\.\d+)?/);
   const amount = amountMatch ? Number(amountMatch[0]) : undefined;
   if (typeof amount === "number" && Number.isFinite(amount) && amount < 0) return null;
