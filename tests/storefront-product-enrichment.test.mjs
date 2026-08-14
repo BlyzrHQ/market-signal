@@ -182,7 +182,12 @@ test("keeps an incomplete WooCommerce variation set non-comparable", () => {
 });
 
 test("keeps malformed and non-array WooCommerce variation payloads non-comparable", () => {
-  const payloads = ["{", JSON.stringify("not-an-array"), JSON.stringify({ display_price: 19.99 }), "", "false"];
+  const payloads = [
+    "{", JSON.stringify("not-an-array"), JSON.stringify({ display_price: 19.99 }), "", "false",
+    JSON.stringify([{ display_price: true }]),
+    JSON.stringify([{ display_price: "0x10" }]),
+    JSON.stringify([{ display_price: "1e3" }]),
+  ];
   for (const payload of payloads) {
     const encoded = payload.replace(/"/g, "&quot;");
     const attribute = payload === "false" ? "data-product_variations=false" : `data-product_variations="${encoded}"`;
@@ -192,6 +197,15 @@ test("keeps malformed and non-array WooCommerce variation payloads non-comparabl
   }
   const booleanEvidence = extractScopedProductPageEvidence('<h1>Tea</h1><form data-product_variations><p class="price">USD 19.99</p></form>');
   assert.deepEqual(booleanEvidence.priceSignals, []);
+});
+
+test("ignores scoped prices, variations, and images inside inert markup", () => {
+  const variation = JSON.stringify([{ display_price: 19.99 }]).replace(/"/g, "&quot;");
+  for (const [open, close] of [["<script>", "</script>"], ["<template>", "</template>"], ["<textarea>", "</textarea>"], ["<xmp>", "</xmp>"]]) {
+    const evidence = extractScopedProductPageEvidence(`<h1>Tea</h1>${open}<form data-product_variations="${variation}"><p class="price">USD 19.99</p><img class="product-image" src="https://cdn.shop.test/inert.jpg"></form>${close}`);
+    assert.deepEqual(evidence.priceSignals, [], open);
+    assert.equal(evidence.imageUrl, "", open);
+  }
 });
 
 test("does not collapse visible multi-currency evidence into a single point price", () => {

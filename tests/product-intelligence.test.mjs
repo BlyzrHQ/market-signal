@@ -139,10 +139,13 @@ test("rejects negative structured and metadata prices instead of making them pos
       { "@type": "Product", name: "Acme Incomplete Range With Point", brand: { name: "Acme" }, offers: { price: 19.99, lowPrice: 0, highPrice: 29.99, priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Semicolonless Numeric Currency Contradiction", brand: { name: "Acme" }, offers: { price: "&#36 12.50", priceCurrency: "EUR" } },
       { "@type": "Product", name: "Acme Semicolonless Hex Currency Contradiction", brand: { name: "Acme" }, offers: { price: "&#x24 12.50", priceCurrency: "EUR" } },
+      { "@type": "Product", name: "Acme Yen Currency Contradiction", brand: { name: "Acme" }, offers: { price: "¥1200", priceCurrency: "EUR" } },
+      { "@type": "Product", name: "Acme Lower ISO Currency Contradiction", brand: { name: "Acme" }, offers: { price: "12.50 usd", priceCurrency: "EUR" } },
+      { "@type": "Product", name: "Acme Semicolonless Named Currency Contradiction", brand: { name: "Acme" }, offers: { price: "&pound 12.50", priceCurrency: "EUR" } },
     ])}</script>`,
     sourceUrl: "https://acme.com/products/negative-catalog",
   });
-  assert.equal(structured.products.length, 39);
+  assert.equal(structured.products.length, 42);
   assert.ok(structured.products.every((item) => item.priceSignals.length === 0), structured.products.filter((item) => item.priceSignals.length).map((item) => item.name).join(", "));
 
   const metadata = extraction({
@@ -197,6 +200,11 @@ test("rejects conflicting or inactive Open Graph price metadata", () => {
     '<script>const example = `<meta property="product:price:amount" content="77"><meta property="product:price:currency" content="USD">`;</script>',
     '<template><meta property="product:price:amount" content="77"><meta property="product:price:currency" content="USD"></template>',
     '<!-- <meta property="product:price:amount" content="77"><meta property="product:price:currency" content="USD">',
+    '<template><template><meta property="product:price:amount" content="77"><meta property="product:price:currency" content="USD"></template></template>',
+    '<textarea><meta property="product:price:amount" content="77"><meta property="product:price:currency" content="USD"></textarea>',
+    '<title><meta property="product:price:amount" content="77"><meta property="product:price:currency" content="USD"></title>',
+    '<iframe srcdoc="<meta property=\'product:price:amount\' content=\'77\'><meta property=\'product:price:currency\' content=\'USD\'>"></iframe>',
+    '<xmp><meta property="product:price:amount" content="77"><meta property="product:price:currency" content="USD"></xmp>',
   ]) {
     const result = extraction({ document: `<script type="application/ld+json">${JSON.stringify(product)}</script>${inert}`, sourceUrl: "https://acme.com/products/metadata-widget" });
     assert.deepEqual(result.products[0].priceSignals, []);
@@ -208,6 +216,8 @@ test("does not infer ISO currencies from lowercase ordinary prose", () => {
     document: `<script type="application/ld+json">${JSON.stringify([
       { "@type": "Product", name: "Acme All", offers: { price: "for all 19.99" } },
       { "@type": "Product", name: "Acme Try", offers: { price: "try 19.99" } },
+      { "@type": "Product", name: "Acme Upper All", offers: { price: "FOR ALL 19.99" } },
+      { "@type": "Product", name: "Acme Upper Try", offers: { price: "TRY 19.99" } },
     ])}</script>`,
     sourceUrl: "https://acme.com/products/prose",
   });

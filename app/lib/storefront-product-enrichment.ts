@@ -116,6 +116,16 @@ function decodeEvidence(value: string) {
     .replace(/&#x([0-9a-f]+)(?:;|(?=\s|\p{Sc}))/giu, (_, code: string) => decodedCodePoint(code, 16));
 }
 
+function stripInactiveMarkup(value: string) {
+  let active = value.replace(/<!--[\s\S]*?(?:-->|$)/g, " ");
+  for (const tagName of ["script", "style", "template", "noscript", "textarea", "title", "iframe", "xmp"]) {
+    active = active
+      .replace(new RegExp(`<${tagName}\\b[\\s\\S]*<\\/${tagName}\\s*>`, "gi"), " ")
+      .replace(new RegExp(`<${tagName}\\b[\\s\\S]*$`, "gi"), " ");
+  }
+  return active;
+}
+
 function normalizeLocalizedNumbers(value: string) {
   return value
     .replace(/[\u0660-\u0669]/g, (digit) => String(digit.charCodeAt(0) - 0x0660))
@@ -164,10 +174,11 @@ function publicImageFromScope(scope: string, sourceUrl: string) {
 }
 
 function productScope(document: string) {
-  const title = document.match(/<h1\b[^>]*>[\s\S]*?<\/h1>/i);
-  const summaryIndex = document.search(/class\s*=\s*["'][^"']*(?:summary|product-summary)[^"']*["']/i);
+  const activeDocument = stripInactiveMarkup(document);
+  const title = activeDocument.match(/<h1\b[^>]*>[\s\S]*?<\/h1>/i);
+  const summaryIndex = activeDocument.search(/class\s*=\s*["'][^"']*(?:summary|product-summary)[^"']*["']/i);
   const start = Math.max(0, title?.index ?? summaryIndex);
-  const bounded = document.slice(start, Math.min(document.length, start + 160_000));
+  const bounded = activeDocument.slice(start, Math.min(activeDocument.length, start + 160_000));
   const marker = /(?:^|[\s_-])(?:related(?:[\s_-]+products?)?|upsells?|cross[\s_-]*sells?|recommend(?:ed|ations?)|product[\s_-]*recommendations?|you[\s_-]*may[\s_-]*also[\s_-]*like|similar[\s_-]*products?)(?:$|[\s_-])/i;
   let relatedAt = -1;
   for (const tag of bounded.matchAll(/<([a-z][\w:-]*)\b[^>]*>/gi)) {
@@ -229,8 +240,8 @@ export function extractScopedProductPageEvidence(document: string, sourceUrl = "
       if (!Array.isArray(variations) || !variations.length) {
         return { priceSignals: [], basis: "unavailable" as const, imageUrl: publicImageFromScope(scope, sourceUrl) };
       }
-      const rawAmounts = variations.map((variation) => Number(variation?.display_price));
-      if (rawAmounts.some((amount) => !Number.isFinite(amount) || amount <= 0)) return { priceSignals: [], basis: "unavailable" as const, imageUrl: publicImageFromScope(scope, sourceUrl) };
+      const rawAmounts = variations.map((variation) => variation?.display_price);
+      if (rawAmounts.some((amount) => typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0)) return { priceSignals: [], basis: "unavailable" as const, imageUrl: publicImageFromScope(scope, sourceUrl) };
       const amounts = rawAmounts;
       const signals = scopedPriceSignals(currency, amounts);
       if (signals.length) return { priceSignals: signals, basis: signals.length > 1 ? "range" as const : "point" as const, imageUrl: publicImageFromScope(scope, sourceUrl) };

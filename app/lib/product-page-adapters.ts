@@ -107,10 +107,12 @@ function metaContents(document: string, key: string) {
     const match = tag.match(new RegExp(`(?:^|\\s)${escapedName}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
     return text(match?.[1] || match?.[2] || match?.[3], 40);
   };
-  const activeDocument = document
-    .replace(/<!--[\s\S]*?(?:-->|$)/g, " ")
-    .replace(/<(script|style|template|noscript)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
-    .replace(/<(?:script|style|template|noscript)\b[^>]*>[\s\S]*$/gi, " ");
+  let activeDocument = document.replace(/<!--[\s\S]*?(?:-->|$)/g, " ");
+  for (const tagName of ["script", "style", "template", "noscript", "textarea", "title", "iframe", "xmp"]) {
+    activeDocument = activeDocument
+      .replace(new RegExp(`<${tagName}\\b[\\s\\S]*<\\/${tagName}\\s*>`, "gi"), " ")
+      .replace(new RegExp(`<${tagName}\\b[\\s\\S]*$`, "gi"), " ");
+  }
   return [...activeDocument.matchAll(/<meta\b[^>]*>/gi)]
     .map((match) => match[0])
     .filter((tag) => ["property", "name", "itemprop"].some((attribute) => attributeValue(tag, attribute) === key))
