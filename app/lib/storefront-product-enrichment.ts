@@ -138,6 +138,7 @@ const CURRENCY_TOKENS: Record<string, string> = {
   CAD: "\\bCAD\\b",
   AUD: "\\bAUD\\b",
 };
+const supportedCurrencyCodesPattern = Object.keys(CURRENCY_TOKENS).join("|");
 
 function localizedAmountPattern(currency: string, requireDecimals = false) {
   const decimals = /^(?:KWD|BHD|OMR)$/.test(currency) ? 3 : 2;
@@ -301,8 +302,8 @@ function hasIncentiveLabel(value: string) {
 }
 
 function hasRecurringPriceLead(value: string) {
-  const recurringAt = value.search(/\b(?:pay\s+)?(?:daily|weekly|biweekly|monthly|quarterly|yearly|annually)\b/iu);
-  const amountAt = value.search(/(?:[$€£¥₹]\s*[+-]?\d|\b[A-Z]{3}\s*[+-]?\d|[+-]?\d[\d\s.,']*\s+[A-Z]{3}\b)/u);
+  const recurringAt = value.search(/\b(?:pay\s+(?:(?:per|a)\s+)?(?:day|week|wk|month|mo|quarter|qtr|year|yr)|per\s+(?:day|week|wk|month|mo|quarter|qtr|year|yr)|daily|weekly|biweekly|monthly|quarterly|yearly|annually)\b/iu);
+  const amountAt = value.search(new RegExp(`(?:[$€£¥₹]\\s*[+-]?\\d|\\b(?:${supportedCurrencyCodesPattern})\\s*[+-]?\\d|[+-]?\\d[\\d\\s.,']*\\s+(?:${supportedCurrencyCodesPattern})\\b)`, "u"));
   return recurringAt >= 0 && (amountAt < 0 || recurringAt < amountAt);
 }
 
