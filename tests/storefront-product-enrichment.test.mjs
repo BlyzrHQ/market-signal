@@ -181,6 +181,9 @@ test("rejects unsupported or negative scoped price markup", () => {
   const encodedHyphen = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&hyphen;$12.50</p></body></html>');
   const encodedDash = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&dash;$12.50</p></body></html>');
   const numericHyphen = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&#x2010;$12.50</p></body></html>');
+  const superscriptMinus = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&#x207b;$12.50</p></body></html>');
+  const subscriptMinus = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&#x208b;$12.50</p></body></html>');
+  const heavyMinus = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&#x2796;$12.50</p></body></html>');
   const trailingNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">$12.50-</p></body></html>');
   const accountingNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">($12.50)</p></body></html>');
   assert.deepEqual(unsupported.priceSignals, []);
@@ -192,6 +195,9 @@ test("rejects unsupported or negative scoped price markup", () => {
   assert.deepEqual(encodedHyphen.priceSignals, []);
   assert.deepEqual(encodedDash.priceSignals, []);
   assert.deepEqual(numericHyphen.priceSignals, []);
+  assert.deepEqual(superscriptMinus.priceSignals, []);
+  assert.deepEqual(subscriptMinus.priceSignals, []);
+  assert.deepEqual(heavyMinus.priceSignals, []);
   assert.deepEqual(trailingNegative.priceSignals, []);
   assert.deepEqual(accountingNegative.priceSignals, []);
 });
@@ -278,6 +284,35 @@ test("uses the matched product currency instead of an unrelated structured produ
     })], 1);
     assert.equal(result.products.length, 1);
     assert.deepEqual(result.products[0].priceSignals, [{ raw: "USD 13.4", currency: "USD", amount: 13.4 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not use a recommendation block price as scoped target evidence", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({
+      title: "CornerStone Enhanced Visibility Beanie",
+      handle: "cornerstone-enhanced-visibility-beanie",
+      variants: [{ title: "Default Title", price: 1340 }],
+    }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({
+      "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", offers: { price: "0", priceCurrency: "USD" },
+    })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1><div class="recommendations"><p class="price">USD 89.99</p></div><div class="summary"><img class="product-image" src="https://cdn.shop.test/beanie.jpg"><p class="price">USD 12.50</p></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({
+      expectedName: "CornerStone Enhanced Visibility Beanie",
+      sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie",
+    })], 1);
+    assert.equal(result.products.length, 1);
+    assert.deepEqual(result.products[0].priceSignals, [{ raw: "USD 13.4", currency: "USD", amount: 13.4 }]);
+    assert.equal(calls.at(-1), "https://shop.test/products/cornerstone-enhanced-visibility-beanie.js");
   } finally {
     globalThis.fetch = originalFetch;
   }

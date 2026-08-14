@@ -113,13 +113,16 @@ test("rejects negative structured and metadata prices instead of making them pos
       { "@type": "Product", name: "Acme Figure Dash Negative", brand: { name: "Acme" }, offers: { price: "\u201212.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Small Hyphen Negative", brand: { name: "Acme" }, offers: { price: "\ufe6312.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Fullwidth Hyphen Negative", brand: { name: "Acme" }, offers: { price: "\uff0d12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Superscript Minus Negative", brand: { name: "Acme" }, offers: { price: "\u207b12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Subscript Minus Negative", brand: { name: "Acme" }, offers: { price: "\u208b12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Heavy Minus Negative", brand: { name: "Acme" }, offers: { price: "\u279612.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Spaced Negative", brand: { name: "Acme" }, offers: { price: "- $12.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Accounting Negative", brand: { name: "Acme" }, offers: { price: "($12.50)", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Trailing Negative", brand: { name: "Acme" }, offers: { price: "$12.50-", priceCurrency: "USD" } },
     ])}</script>`,
     sourceUrl: "https://acme.com/products/negative-catalog",
   });
-  assert.equal(structured.products.length, 16);
+  assert.equal(structured.products.length, 19);
   assert.ok(structured.products.every((item) => item.priceSignals.length === 0));
 
   const metadata = extraction({

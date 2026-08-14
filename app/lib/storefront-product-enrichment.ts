@@ -158,7 +158,7 @@ function productScope(document: string) {
   const summaryIndex = document.search(/class\s*=\s*["'][^"']*(?:summary|product-summary)[^"']*["']/i);
   const start = Math.max(0, title?.index ?? summaryIndex);
   const bounded = document.slice(start, Math.min(document.length, start + 160_000));
-  const relatedAt = bounded.search(/<(?:section|div)\b[^>]*class\s*=\s*["'][^"']*(?:related|upsells|cross-sells)[^"']*["']/i);
+  const relatedAt = bounded.search(/<(?:section|div)\b[^>]*class\s*=\s*["'][^"']*(?:related|upsells|cross-sells|recommend(?:ed|ations?)|you-may-also-like|similar-products)[^"']*["']/i);
   return relatedAt >= 0 ? bounded.slice(0, relatedAt) : bounded;
 }
 
@@ -171,7 +171,7 @@ function scopedPriceSignals(currency: string, values: number[]) {
 
 function markedAmounts(markup: string, currency: string) {
   const decoded = normalizeLocalizedNumbers(decodeEvidence(markup.replace(/<[^>]*>/g, " ")))
-    .replace(/[\p{Pd}\u2212]/gu, "-");
+    .replace(/[\p{Pd}\u207B\u208B\u2212\u2796\u2A2A]/gu, "-");
   const expression = currencyAmountExpression(currency);
   return [...decoded.matchAll(expression)]
     .filter((match) => {

@@ -321,7 +321,7 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown): ProductPriceSi
     .replace(/&#(?:8722|8211|8212);/gi, "-")
     .replace(/&#x(?:2212|2013|2014);/gi, "-")
     .replace(/[−–—]/gu, "-")
-    .replace(/[\p{Pd}\u2212]/gu, "-")
+    .replace(/[\p{Pd}\u207B\u208B\u2212\u2796\u2A2A]/gu, "-")
     .replace(/,/g, "");
   const separatedNegative = /-\s*(?:[A-Z]{3}\s*|[$£€]\s*)?\d/u.test(normalizedAmountText);
   const accountingNegative = /\(\s*(?:[A-Z]{3}\s*|[$£€]\s*)?\d+(?:\.\d+)?(?:\s*[A-Z]{3})?\s*\)/u.test(normalizedAmountText);
