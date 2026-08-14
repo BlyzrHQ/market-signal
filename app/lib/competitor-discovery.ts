@@ -99,8 +99,24 @@ function cleanSearchUrl(value: unknown) {
   return url.toString();
 }
 
+function lexicalTokens(value: string) {
+  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").split(/\s+/).filter(Boolean);
+}
+
+function canonicalProductToken(token: string) {
+  return token.length > 3 && token.endsWith("s") && !/(?:ss|us|is)$/.test(token) ? token.slice(0, -1) : token;
+}
+
 function normalizedTokens(value: string) {
-  return [...new Set(value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").split(/\s+/).filter((token) => token.length > 1 && !SEARCH_SOURCE_STOPWORDS.has(token) && !/^\d+(?:\.\d+)?(?:g|kg|ml|l|oz|lb|pk|pack|pcs?)?$/i.test(token)))];
+  return [...new Set(lexicalTokens(value).map(canonicalProductToken).filter((token) => token.length > 1 && !SEARCH_SOURCE_STOPWORDS.has(token) && !/^\d+(?:\.\d+)?(?:g|kg|ml|l|oz|lb|pk|pack|pcs?)?$/i.test(token)))];
+}
+
+function hasPluralPathVariant(path: string, productName: string) {
+  const productTokens = new Set(normalizedTokens(productName));
+  return lexicalTokens(path).some((token) => {
+    const canonical = canonicalProductToken(token);
+    return canonical !== token && productTokens.has(canonical);
+  });
 }
 
 function domainBrandIdentity(value: string) {
@@ -144,7 +160,8 @@ function isProductDetailSource(url: string, product: ProductRecord) {
     const pathTokens = normalizedTokens(path);
     const productTokens = normalizedTokens(product.name);
     const shared = productTokens.filter((token) => pathTokens.includes(token));
-    return shared.length >= 3 || (shared.length >= 2 && shared.length / Math.max(1, productTokens.length) >= 0.6);
+    const coverage = shared.length / Math.max(1, productTokens.length);
+    return shared.length >= 3 || (shared.length >= 2 && (coverage >= 0.6 || (coverage >= 0.5 && hasPluralPathVariant(path, product.name))));
   } catch {
     return false;
   }

@@ -238,6 +238,35 @@ test("rejects homepages and category pages even when their text repeats a produc
   ]);
 });
 
+test("accepts a pluralized product path for the same Wearform product family", () => {
+  const wearformProfile = {
+    domain: "wearform.com",
+    title: "Wearform",
+    description: "Custom work uniforms with logo",
+    region: "United States",
+    language: "en",
+    products: [product("Men's S/S Blend Custom T-Shirt", "https://wearform.com/products/mens-blend-custom-t-shirt")],
+  };
+  const payload = {
+    output: [{
+      type: "web_search_call",
+      action: {
+        query: "custom work t shirts with logo United States",
+        sources: [
+          { title: "Custom T-Shirts | CustomInk", url: "https://www.customink.com/products/psr-custom-t-shirts" },
+          { title: "Custom T-Shirts | CustomInk", url: "https://www.customink.com/collections/products" },
+        ],
+      },
+    }],
+  };
+
+  const candidates = candidatesFromSearchEvidence(payload, wearformProfile);
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].domain, "customink.com");
+  assert.equal(candidates[0].matchedPrimaryProductName, "Men's S/S Blend Custom T-Shirt");
+  assert.equal(candidates[0].matchedProductUrl, "https://www.customink.com/products/psr-custom-t-shirts");
+});
+
 test("selects a bounded product-search set across distinct name families", () => {
   const products = [
     product("Lamb Leg Halal 2500g", "https://myjam.co.uk/products/lamb-leg"),
