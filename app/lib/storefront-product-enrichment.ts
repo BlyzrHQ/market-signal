@@ -1,6 +1,6 @@
 import { canonicalDomain, normalizeDomain } from "./domain.ts";
 import { bilingualNormalize, bilingualTokens, parseCanonicalQuantity, quantitiesConflict } from "./product-normalization.ts";
-import { CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX, catalogReplacementAuditAttribute, extractProductsFromHtml, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "./product-intelligence.ts";
+import { CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX, catalogReplacementAuditAttribute, extractProductsFromHtml, isSupportedCurrency, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "./product-intelligence.ts";
 import { confirmedProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "./product-page-adapters.ts";
 import { sharedRobotsPolicyResolver } from "./robots-policy.ts";
 
@@ -303,7 +303,11 @@ function observedCatalogReplacement(item: ProductEnrichmentTarget, products: Pro
 }
 
 function isPositivePriceSignal(signal: ProductRecord["priceSignals"][number]) {
-  return typeof signal.amount === "number" && Number.isFinite(signal.amount) && signal.amount > 0 && Boolean(signal.currency);
+  return typeof signal.amount === "number" && Number.isFinite(signal.amount) && signal.amount > 0 && isSupportedCurrency(signal.currency);
+}
+
+function withPositivePrices(product: ProductRecord) {
+  return { ...product, priceSignals: product.priceSignals.filter(isPositivePriceSignal) };
 }
 
 function hasConfirmedPrice(products: ProductRecord[]) {
@@ -387,9 +391,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       if (!fetched.ok) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed", fetched.status, "http") };
       if (!/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed", fetched.status, "content") };
       const extracted = pageExtraction(fetched.text, fetched.url, item.domain);
-      for (const product of extracted.result.products) {
-        product.priceSignals = product.priceSignals.filter(isPositivePriceSignal);
-      }
+      extracted.result.products = extracted.result.products.map(withPositivePrices);
       const expected = expectedProduct(item);
       addScopedProductPageEvidence(fetched.text, fetched.url, expected, extracted.result.products, extracted.pageTitle);
       const initialIdentity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle);
@@ -412,12 +414,12 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
               const adapterResult = adapter.kind === "shopify"
                 ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: confirmedProductCurrency(fetched.text), expectedQuantity: expected.quantity })
                 : parseWooCommerceProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt: new Date().toISOString() });
-              if (adapterResult.product) extracted.result.products.push(adapterResult.product);
+              if (adapterResult.product) extracted.result.products.push(withPositivePrices(adapterResult.product));
               if (item.allowCatalogReplacement === true && !initialIdentity.accepted) {
                 const replacementAdapterResult = adapter.kind === "shopify"
                   ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: confirmedProductCurrency(fetched.text) })
                   : adapterResult;
-                if (replacementAdapterResult.product) replacementCandidates.push(replacementAdapterResult.product);
+                if (replacementAdapterResult.product) replacementCandidates.push(withPositivePrices(replacementAdapterResult.product));
               }
               adapterGap = adapterResult.gap;
             }

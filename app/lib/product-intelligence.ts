@@ -47,6 +47,10 @@ const ISO_CURRENCIES = new Set<string>((() => {
   }
 })());
 
+export function isSupportedCurrency(value: unknown) {
+  return ISO_CURRENCIES.has(String(value || "").trim().toUpperCase());
+}
+
 export function hasValidObservedRivalPrice(product: ProductRecord) {
   return product.priceSignals.some((signal) => {
     const currency = String(signal.currency || "").trim().toUpperCase();
@@ -54,7 +58,7 @@ export function hasValidObservedRivalPrice(product: ProductRecord) {
       && Number.isFinite(signal.amount)
       && signal.amount > 0
       && Boolean(String(signal.raw || "").trim())
-      && ISO_CURRENCIES.has(currency);
+      && isSupportedCurrency(currency);
   });
 }
 
