@@ -367,10 +367,31 @@ test("does not use an unquoted related-products class as scoped target evidence"
   assert.deepEqual(evidence.priceSignals, []);
 });
 
-test("preserves decorated positive scoped prices", () => {
-  for (const markup of ["+19.99 USD", "★ $19.99", "≈$19.99"]) {
+test("does not confuse unrelated-content with a related-product boundary", () => {
+  const evidence = extractScopedProductPageEvidence('<h1>Target</h1><div class="unrelated-content">Editorial copy</div><div class="summary"><p class="price">USD 12.50</p></div>');
+  assert.deepEqual(evidence.priceSignals, [{ raw: "USD 12.5", currency: "USD", amount: 12.5 }]);
+});
+
+test("preserves decorated and promotional positive scoped prices", () => {
+  for (const markup of ["+19.99 USD", "★ $19.99", "≈$19.99", "Sale - USD 19.99", "Promo &ndash; $19.99", "Now - 19.99 USD"]) {
     const evidence = extractScopedProductPageEvidence(`<h1>Product</h1><div class="summary"><p class="price">${markup}</p></div>`);
     assert.equal(evidence.priceSignals[0]?.amount, 19.99, markup);
+  }
+});
+
+test("does not assign a Shopify fallback price when the matched product exposes multiple currencies", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({ title: "CornerStone Enhanced Visibility Beanie", handle: "cornerstone-enhanced-visibility-beanie", variants: [{ title: "Default Title", price: 1340 }] }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", offers: [{ price: "0", priceCurrency: "USD" }, { price: "10", priceCurrency: "EUR" }] })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, [{ raw: "EUR 10", currency: "EUR", amount: 10, period: undefined }]);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 

@@ -161,10 +161,18 @@ function productScope(document: string) {
   const summaryIndex = document.search(/class\s*=\s*["'][^"']*(?:summary|product-summary)[^"']*["']/i);
   const start = Math.max(0, title?.index ?? summaryIndex);
   const bounded = document.slice(start, Math.min(document.length, start + 160_000));
-  const attributeBoundary = bounded.search(/<[a-z][\w:-]*\b[^>]*(?:class|id)\s*=\s*["'][^"']*(?:related|upsells|cross-sells|recommend(?:ed|ations?)|you-may-also-like|similar-products)[^"']*["']/i);
-  const unquotedAttributeBoundary = bounded.search(/<[a-z][\w:-]*\b[^>]*(?:class|id)\s*=\s*[^\s>"']*(?:related|upsells|cross-sells|recommend(?:ed|ations?)|you-may-also-like|similar-products)[^\s>"']*/i);
-  const customElementBoundary = bounded.search(/<[a-z][\w:-]*(?:recommend|related|upsell|cross-sell|similar)[\w:-]*\b/i);
-  const relatedAt = [attributeBoundary, unquotedAttributeBoundary, customElementBoundary].filter((index) => index >= 0).sort((left, right) => left - right)[0] ?? -1;
+  const marker = /(?:^|[\s_-])(?:related(?:[\s_-]+products?)?|upsells?|cross[\s_-]*sells?|recommend(?:ed|ations?)|product[\s_-]*recommendations?|you[\s_-]*may[\s_-]*also[\s_-]*like|similar[\s_-]*products?)(?:$|[\s_-])/i;
+  let relatedAt = -1;
+  for (const tag of bounded.matchAll(/<([a-z][\w:-]*)\b[^>]*>/gi)) {
+    const markup = tag[0];
+    const tagName = tag[1].replace(/:/g, "-");
+    const quoted = [...markup.matchAll(/(?:class|id)\s*=\s*(["'])(.*?)\1/gi)].map((match) => match[2]);
+    const unquoted = [...markup.matchAll(/(?:class|id)\s*=\s*([^\s>"']+)/gi)].map((match) => match[1]);
+    if (marker.test(tagName) || [...quoted, ...unquoted].some((value) => marker.test(value))) {
+      relatedAt = tag.index ?? -1;
+      break;
+    }
+  }
   return relatedAt >= 0 ? bounded.slice(0, relatedAt) : bounded;
 }
 
@@ -184,7 +192,7 @@ function markedAmounts(markup: string, currency: string) {
       const start = match.index ?? 0;
       const before = decoded.slice(0, start);
       const after = decoded.slice(start + match[0].length);
-      return !/-\s*$/u.test(before)
+      return !/^\s*-\s*$/u.test(before)
         && !/\(\s*$/u.test(before)
         && !/^\s*(?:\)|-)/u.test(after);
     })
@@ -337,10 +345,12 @@ function hasConfirmedPrice(products: ProductRecord[]) {
 }
 
 function confirmedAdapterCurrency(document: string, matchedProduct?: ProductRecord) {
-  const matchedCurrency = matchedProduct?.priceSignals
+  const matchedCurrencies = [...new Set((matchedProduct?.priceSignals || [])
     .map((signal) => signal.currency?.trim().toUpperCase() || "")
-    .find(isSupportedCurrency);
-  return matchedCurrency || confirmedProductCurrency(document, { allowStructured: false });
+    .filter(isSupportedCurrency))];
+  if (matchedCurrencies.length === 1) return matchedCurrencies[0];
+  if (matchedCurrencies.length > 1) return "";
+  return confirmedProductCurrency(document, { allowStructured: false });
 }
 
 function hasSecureImage(products: ProductRecord[]) {
