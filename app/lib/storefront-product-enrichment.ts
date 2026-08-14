@@ -328,7 +328,7 @@ function isSecondaryPriceMarkup(markup: string) {
   if (hasNestedSecondaryElement) return false;
   const text = decodeEvidence(markup).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   if (/\b(?:now|sale|current)\b/iu.test(text)) return false;
-  return /^(?:compare\s+at|was|regular(?:\s+price)?|list\s+price|msrp|rrp|original(?:\s+price)?|retail(?:\s+price)?|deposit|down\s+payment|due\s+today|save\b|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|store\s+credit|coupon|rewards?)/iu.test(text);
+  return /^(?:compare\s+at|was|regular(?:\s+price)?|list\s+price|msrp|rrp|original(?:\s+price)?|retail(?:\s+price)?|deposit|down\s+payment|due\s+today|financ(?:e|ing)|lease|payment\s+plan|save\b|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|store\s+credit|coupon|rewards?)/iu.test(text);
 }
 
 function preferredCurrentPriceMarkup(scope: string) {
@@ -427,8 +427,9 @@ function markedAmounts(markup: string, currency: string) {
     const before = priceText.slice(0, matches[0].index ?? 0).trim();
     const after = priceText.slice((matches[0].index ?? 0) + matches[0][0].length).trim();
     if (/\bsave\b[\s\S]*$/iu.test(before)
-      || /\b(?:compare\s+at|regular\s+price|list\s+price|msrp|rrp|original\s+price|retail\s+price|deposit|down\s+payment|due\s+today|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|store\s+credit|coupon|rewards?)\b[\s\S]*$/iu.test(before)
-      || /^(?:(?:[\p{L}-]+\s+){0,3})?(?:off|deposit|down\s+payment|due\s+today|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|back|store\s+credit|credit|coupon|rewards?\s+points?|points?)\b/iu.test(after)) return [];
+      || /\b(?:compare\s+at|regular\s+price|list\s+price|msrp|rrp|original\s+price|retail\s+price|deposit|down\s+payment|due\s+today|financ(?:e|ing)|lease|payment\s+plan|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|store\s+credit|coupon|rewards?)\b[\s\S]*$/iu.test(before)
+      || /^(?:(?:[\p{L}-]+\s+){0,3})?(?:off|deposit|down\s+payment|due\s+today|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|back|store\s+credit|credit|coupon|rewards?\s+points?|points?)\b/iu.test(after)
+      || /^(?:\/|per\s+)(?:day|week|month|quarter|year)s?\b/iu.test(after)) return [];
   }
   const validContexts = matches.every((match) => {
       const start = match.index ?? 0;
