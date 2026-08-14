@@ -320,6 +320,7 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown): ProductPriceSi
     .replace(/&pound;/gi, "£")
     .replace(/&euro;/gi, "€")
     .replace(/&dollar;/gi, "$")
+    .replace(/&colon;/gi, ":")
     .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 10)))
     .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 16)))
     .replace(/&#(?:8722|8211|8212);/gi, "-")

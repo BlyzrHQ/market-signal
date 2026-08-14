@@ -104,6 +104,7 @@ function decodeEvidence(value: string) {
     .replace(/&ominus;/gi, "-")
     .replace(/&nbsp;/gi, " ")
     .replace(/&dollar;/gi, "$")
+    .replace(/&colon;/gi, ":")
     .replace(/&amp;/gi, "&")
     .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 10)))
     .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 16)));
@@ -494,7 +495,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
         : adapterEvidenceProduct
           && identity.products.includes(adapterEvidenceProduct)
           && hasConfirmedPrice([adapterEvidenceProduct])
-          ? adapterEvidenceProduct
+          ? { ...adapterEvidenceProduct, imageUrl: adapterEvidenceProduct.imageUrl || strongestInitialProduct?.imageUrl || "" }
           : identity.products[0];
       const unresolvedAdapterGap = adapterGap && accepted && !hasConfirmedPrice([accepted]) ? adapterGap : "";
       return { product: accepted ? { ...accepted, id: item.productId } : null, gap: unresolvedAdapterGap ? gap(unresolvedAdapterGap, "adapter_limited", undefined, "adapter") : null };
