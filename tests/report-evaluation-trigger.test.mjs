@@ -70,7 +70,7 @@ test("reservation and terminal callbacks reject open or inconsistent wire payloa
     reservationOwner: "worker:owner-1", reservationId: "reservation-1", clientRequestId: "client-2",
     status: "complete", errorCode: null, providerResponseId: "resp_1", providerRequestId: "req_1",
     usageStatus: "known", usage: { inputTokens: 100, cachedInputTokens: 20, cacheWriteInputTokens: 10, outputTokens: 50 }, agentOutput: agentOutput(),
-    model: REPORT_EVALUATION_MODEL, promptVersion: "report-agent-judge-2026-08-09-v2", pricingVersion: "openai-gpt-5.6-luna-2026-08-09-v2",
+    model: REPORT_EVALUATION_MODEL, promptVersion: "report-agent-judge-2026-08-14-v3", pricingVersion: "openai-gpt-5.6-luna-2026-08-09-v2",
   };
   assert.deepEqual(parseReportEvaluationTerminalCallback(terminal), terminal);
   assert.throws(() => parseReportEvaluationTerminalCallback({ ...terminal, status: "complete", usageStatus: "unknown", usage: terminal.usage }));
@@ -101,10 +101,26 @@ test("one reservation produces one bounded Responses call and a complete callbac
   assert.equal(request.max_output_tokens, 1_200);
   assert.equal(request.text.format.strict, true);
   assert.equal(request.text.format.schema.additionalProperties, false);
+  const schemaText = JSON.stringify(request.text.format.schema);
+  assert.equal(schemaText.includes("uniqueItems"), false);
   assert.equal(request.input[1].content[0].text, reservation().canonicalInput);
   assert.equal(state.terminals.length, 1);
   assert.equal(state.terminals[0].callback.status, "complete");
   assert.deepEqual(state.terminals[0].callback.usage, { inputTokens: 100, cachedInputTokens: 20, cacheWriteInputTokens: 10, outputTokens: 50 });
+});
+
+test("application validation still rejects duplicate evidence IDs without provider uniqueItems", async () => {
+  const { port, state } = portFixture();
+  const duplicateEvidence = agentOutput();
+  duplicateEvidence.scores.competitorUsefulness.evidenceIds = ["report:evidence-1", "report:evidence-1"];
+  const result = await runReportEvaluation(PAYLOAD, port, {
+    apiKey: "test_api_key_long_enough_for_validation",
+    randomUUID: () => "client-2",
+    fetchImpl: async () => providerResponse(duplicateEvidence),
+  });
+  assert.equal(result.status, "agent_rejected");
+  assert.equal(state.terminals[0].callback.errorCode, "provider-output-invalid");
+  assert.equal(state.terminals[0].callback.usageStatus, "known");
 });
 
 test("a human question is terminal but remains explicitly needs_human_review", async () => {
