@@ -100,6 +100,7 @@ function decodeEvidence(value: string) {
     .replace(/&minus;/gi, "\u2212")
     .replace(/&ndash;/gi, "\u2013")
     .replace(/&mdash;/gi, "\u2014")
+    .replace(/&(?:hyphen|dash);/gi, "-")
     .replace(/&amp;/gi, "&")
     .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 10)))
     .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 16)));
@@ -169,21 +170,22 @@ function scopedPriceSignals(currency: string, values: number[]) {
 }
 
 function markedAmounts(markup: string, currency: string) {
-  const decoded = normalizeLocalizedNumbers(decodeEvidence(markup.replace(/<[^>]*>/g, " ")));
+  const decoded = normalizeLocalizedNumbers(decodeEvidence(markup.replace(/<[^>]*>/g, " ")))
+    .replace(/[\p{Pd}\u2212]/gu, "-");
   const expression = currencyAmountExpression(currency);
   return [...decoded.matchAll(expression)]
     .filter((match) => {
       const start = match.index ?? 0;
       const before = decoded.slice(0, start);
       const after = decoded.slice(start + match[0].length);
-      return !/[-−–—]\s*$/u.test(before) && !/\(\s*$/u.test(before) && !/^\s*\)/u.test(after);
+      return !/-\s*$/u.test(before) && !/\(\s*$/u.test(before) && !/^\s*(?:\)|-)/u.test(after);
     })
     .map((match) => Number((match[1] || match[2]).replace(/,/g, "")));
 }
 
 export function extractScopedProductPageEvidence(document: string, sourceUrl = "https://product.invalid/") {
   const scope = productScope(document);
-  const observedCurrency = confirmedProductCurrency(document) || currencyFromMarkup(scope);
+  const observedCurrency = currencyFromMarkup(scope) || confirmedProductCurrency(document, { allowStructured: false });
   const currency = isSupportedCurrency(observedCurrency) ? observedCurrency.trim().toUpperCase() : "";
   const variationAttribute = scope.match(/data-product_variations\s*=\s*(["'])([\s\S]*?)\1/i)?.[2] || "";
   if (variationAttribute && currency) {
@@ -216,9 +218,10 @@ function addScopedProductPageEvidence(document: string, sourceUrl: string, expec
   const identity = validateProductPageIdentity([expected], products, pageTitle, { allowScopedPageSignal: true });
   if (!identity.accepted) return;
   const selected = identity.products[0];
+  const selectedPositive = withPositivePrices(selected);
   products.push({
     ...selected,
-    priceSignals: selected.priceSignals.length ? selected.priceSignals : evidence.priceSignals,
+    priceSignals: selectedPositive.priceSignals.length ? selectedPositive.priceSignals : evidence.priceSignals,
     imageUrl: selected.imageUrl || evidence.imageUrl,
     attributes: [...new Set([...selected.attributes, ...(evidence.priceSignals.length ? [`Price evidence: ${evidence.basis}`] : [])])],
     extraction: selected.extraction === "json-ld" ? selected.extraction : "page-signal",
@@ -325,6 +328,13 @@ function hasConfirmedPrice(products: ProductRecord[]) {
   return products.some((product) => product.priceSignals.some(isPositivePriceSignal));
 }
 
+function confirmedAdapterCurrency(document: string, matchedProduct?: ProductRecord) {
+  const matchedCurrency = matchedProduct?.priceSignals
+    .map((signal) => signal.currency?.trim().toUpperCase() || "")
+    .find(isSupportedCurrency);
+  return matchedCurrency || confirmedProductCurrency(document, { allowStructured: false });
+}
+
 function hasSecureImage(products: ProductRecord[]) {
   return products.some((product) => /^https:\/\//i.test(product.imageUrl));
 }
@@ -404,6 +414,8 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       const extracted = pageExtraction(fetched.text, fetched.url, item.domain);
       const expected = expectedProduct(item);
       addScopedProductPageEvidence(fetched.text, fetched.url, expected, extracted.result.products, extracted.pageTitle);
+      const rawInitialIdentity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle, { allowScopedPageSignal: true });
+      const rawMatchedProduct = rawInitialIdentity.products[0];
       extracted.result.products = extracted.result.products.map(withPositivePrices);
       const initialIdentity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle);
       const replacementCandidates = [...extracted.result.products];
@@ -425,7 +437,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
               const payload = JSON.parse(adapterResponse.text);
               const observedAt = new Date().toISOString();
               const adapterResult = adapter.kind === "shopify"
-                ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: confirmedProductCurrency(fetched.text), expectedQuantity: expected.quantity })
+                ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: confirmedAdapterCurrency(fetched.text, rawMatchedProduct), expectedQuantity: expected.quantity })
                 : parseWooCommerceProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt: new Date().toISOString() });
               if (adapterResult.product) {
                 adapterEvidenceProduct = withPositivePrices(adapterResult.product);
@@ -433,7 +445,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
               }
               if (item.allowCatalogReplacement === true && !initialIdentity.accepted) {
                 const replacementAdapterResult = adapter.kind === "shopify"
-                  ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: confirmedProductCurrency(fetched.text) })
+                  ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: confirmedAdapterCurrency(fetched.text, rawMatchedProduct) })
                   : adapterResult;
                 if (replacementAdapterResult.product) replacementCandidates.push(withPositivePrices(replacementAdapterResult.product));
               }

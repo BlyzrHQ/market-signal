@@ -114,13 +114,18 @@ function isoCurrency(value: unknown) {
   return /^[A-Z]{3}$/.test(candidate) ? candidate : "";
 }
 
-export function confirmedProductCurrency(document: string) {
+export function confirmedProductCurrency(document: string, options: { allowStructured?: boolean } = {}) {
   const metadata = metaContent(document, "product:price:currency")
     || metaContent(document, "og:price:currency")
     || metaContent(document, "priceCurrency");
   const shopify = document.match(/Shopify\.currency\s*=\s*\{[^}]*["']active["']\s*:\s*["']([A-Za-z]{3})["']/i)?.[1];
-  const structured = document.match(/["']priceCurrency["']\s*:\s*["']([A-Za-z]{3})["']/i)?.[1];
-  return isoCurrency(metadata || shopify || structured);
+  if (metadata || shopify) return isoCurrency(metadata || shopify);
+  if (options.allowStructured === false) return "";
+  const structured = [...document.matchAll(/["']priceCurrency["']\s*:\s*["']([A-Za-z]{3})["']/gi)]
+    .map((match) => isoCurrency(match[1]))
+    .filter(Boolean);
+  const unique = [...new Set(structured)];
+  return unique.length === 1 ? unique[0] : "";
 }
 
 function minorUnitPrice(value: unknown, currency: string, explicitDigits: unknown): ProductPriceSignal | null {

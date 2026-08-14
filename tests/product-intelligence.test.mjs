@@ -104,6 +104,8 @@ test("rejects negative structured and metadata prices instead of making them pos
       { "@type": "Product", name: "Acme String Negative", brand: { name: "Acme" }, offers: { price: "-12.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Unicode Negative", brand: { name: "Acme" }, offers: { price: "−12.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Encoded Negative", brand: { name: "Acme" }, offers: { price: "&minus;12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Named Hyphen Negative", brand: { name: "Acme" }, offers: { price: "&hyphen;$12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Named Dash Negative", brand: { name: "Acme" }, offers: { price: "&dash;$12.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Decimal Entity Negative", brand: { name: "Acme" }, offers: { price: "&#45;12.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Hex Entity Negative", brand: { name: "Acme" }, offers: { price: "&#x2d;12.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Hyphen Negative", brand: { name: "Acme" }, offers: { price: "\u201012.50", priceCurrency: "USD" } },
@@ -113,10 +115,11 @@ test("rejects negative structured and metadata prices instead of making them pos
       { "@type": "Product", name: "Acme Fullwidth Hyphen Negative", brand: { name: "Acme" }, offers: { price: "\uff0d12.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Spaced Negative", brand: { name: "Acme" }, offers: { price: "- $12.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Accounting Negative", brand: { name: "Acme" }, offers: { price: "($12.50)", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Trailing Negative", brand: { name: "Acme" }, offers: { price: "$12.50-", priceCurrency: "USD" } },
     ])}</script>`,
     sourceUrl: "https://acme.com/products/negative-catalog",
   });
-  assert.equal(structured.products.length, 13);
+  assert.equal(structured.products.length, 16);
   assert.ok(structured.products.every((item) => item.priceSignals.length === 0));
 
   const metadata = extraction({
