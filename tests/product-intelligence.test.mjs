@@ -104,12 +104,19 @@ test("rejects negative structured and metadata prices instead of making them pos
       { "@type": "Product", name: "Acme String Negative", brand: { name: "Acme" }, offers: { price: "-12.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Unicode Negative", brand: { name: "Acme" }, offers: { price: "−12.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Encoded Negative", brand: { name: "Acme" }, offers: { price: "&minus;12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Decimal Entity Negative", brand: { name: "Acme" }, offers: { price: "&#45;12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Hex Entity Negative", brand: { name: "Acme" }, offers: { price: "&#x2d;12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Hyphen Negative", brand: { name: "Acme" }, offers: { price: "\u201012.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Nonbreaking Hyphen Negative", brand: { name: "Acme" }, offers: { price: "\u201112.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Figure Dash Negative", brand: { name: "Acme" }, offers: { price: "\u201212.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Small Hyphen Negative", brand: { name: "Acme" }, offers: { price: "\ufe6312.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Fullwidth Hyphen Negative", brand: { name: "Acme" }, offers: { price: "\uff0d12.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Spaced Negative", brand: { name: "Acme" }, offers: { price: "- $12.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Accounting Negative", brand: { name: "Acme" }, offers: { price: "($12.50)", priceCurrency: "USD" } },
     ])}</script>`,
     sourceUrl: "https://acme.com/products/negative-catalog",
   });
-  assert.equal(structured.products.length, 6);
+  assert.equal(structured.products.length, 13);
   assert.ok(structured.products.every((item) => item.priceSignals.length === 0));
 
   const metadata = extraction({
@@ -133,6 +140,17 @@ test("rejects negative structured and metadata prices instead of making them pos
   });
   assert.equal(accountingMetadata.products.length, 1);
   assert.deepEqual(accountingMetadata.products[0].priceSignals, []);
+
+  const entityMetadata = extraction({
+    document: `<head><meta property="product:price:amount" content="&#45;12.50"><meta property="product:price:currency" content="USD"></head><script type="application/ld+json">${JSON.stringify({
+      "@type": "Product", name: "Acme Entity Widget", brand: { name: "Acme" },
+    })}</script>`,
+    sourceUrl: "https://acme.com/products/entity-widget",
+    pageTitle: "Acme Entity Widget",
+    headings: ["Acme Entity Widget"],
+  });
+  assert.equal(entityMetadata.products.length, 1);
+  assert.deepEqual(entityMetadata.products[0].priceSignals, []);
 });
 
 test("prefers an exact product H1 when a marketing-prefixed title contains that identity", () => {
