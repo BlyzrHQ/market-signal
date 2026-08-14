@@ -292,7 +292,7 @@ test("keeps deterministic source order when a small catalog has no recurring fam
   assert.deepEqual(productSearchAnchors(products, 3).map((item) => item.name), products.map((item) => item.name));
 });
 
-test("does not run company lanes when product-backed candidates exist", async () => {
+test("runs company lanes even when a product-backed ecommerce candidate exists", async () => {
   const previousKey = process.env.OPENAI_API_KEY;
   const previousFetch = globalThis.fetch;
   process.env.OPENAI_API_KEY = "test-only";
@@ -303,17 +303,18 @@ test("does not run company lanes when product-backed candidates exist", async ()
   globalThis.fetch = async (_url, init) => {
     const request = JSON.parse(init.body);
     const input = JSON.parse(request.input[1].content);
-    if (input.lane !== "product") throw new DOMException("Timed out", "AbortError");
-    return Response.json({ output: [
+    if (input.lane === "product") return Response.json({ output: [
       { type: "web_search_call", action: { query: "Pistachio Baklava UK product", sources: [{ title: "Pistachio Baklava | Rival", url: "https://rival.example/products/pistachio-baklava" }] } },
       { type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Baklava", region: "United Kingdom", queries: ["Pistachio Baklava UK product"], candidates: [] }) }] },
     ] });
+    const candidate = { domain: "company.example", companyName: "Company Rival", reason: "Same bakery market", searchQuery: "baklava competitors UK", websiteUrl: "https://company.example/", evidenceUrl: "https://company.example/baklava", evidenceTitle: "Baklava shop and delivery", marketCategory: "Baklava", relationship: "direct", sharedOfferings: ["baklava"], matchedPrimaryProductName: "", matchedProductUrl: "" };
+    return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Baklava", region: "United Kingdom", queries: ["baklava competitors UK"], candidates: [candidate] }) }] }] });
   };
   try {
     const result = await discoverCompetitors(searchProfile);
-    assert.deepEqual(result.candidates.map((candidate) => candidate.domain), ["rival.example"]);
+    assert.deepEqual(result.candidates.map((candidate) => candidate.domain), ["rival.example", "company.example"]);
     assert.equal(result.strategy, "product-first");
-    assert.equal(result.gaps.filter((gap) => /timed out/i.test(gap)).length, 0);
+    assert.equal(result.candidates[0].evidenceMethod, "search-source");
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
@@ -376,7 +377,7 @@ test("rejects two-token overlap when it covers too little of the anchor product"
   assert.deepEqual(candidatesFromSearchEvidence(payload, longProfile), []);
 });
 
-test("uses product-backed sellers without spending competitor slots on company-first results", async () => {
+test("ranks product-backed sellers ahead of company-first results", async () => {
   const previousKey = process.env.OPENAI_API_KEY;
   const previousFetch = globalThis.fetch;
   process.env.OPENAI_API_KEY = "test-only";
@@ -400,20 +401,22 @@ test("uses product-backed sellers without spending competitor slots on company-f
         { type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: [`UK buy ${name}`], candidates: [] }) }] },
       ] });
     }
-    throw new Error("company-first discovery must not run after product sellers were found");
+    const candidate = { domain: "company-only.example", companyName: "Company only", reason: "Same grocery market", searchQuery: "halal grocery competitors UK", websiteUrl: "https://company-only.example/", evidenceUrl: "https://company-only.example/", evidenceTitle: "Halal grocery company", marketCategory: "Halal grocery", relationship: "direct", sharedOfferings: ["halal grocery"], matchedPrimaryProductName: "", matchedProductUrl: "" };
+    return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: ["halal grocery competitors UK"], candidates: [candidate] }) }] }] });
   };
   try {
     const result = await discoverCompetitors(searchProfile);
     assert.equal(result.strategy, "product-first");
-    assert.equal(result.candidates.length, 4);
-    assert.equal(result.candidates.every((candidate) => candidate.evidenceMethod === "search-source" && candidate.matchedProductUrl), true);
+    assert.equal(result.candidates.length, 5);
+    assert.equal(result.candidates.slice(0, 4).every((candidate) => candidate.evidenceMethod === "search-source" && candidate.matchedProductUrl), true);
+    assert.equal(result.candidates[4].domain, "company-only.example");
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
   }
 });
 
-test("runs company discovery only after product searches return no attributable sellers", async () => {
+test("retains company discovery when product searches return no attributable sellers", async () => {
   const previousKey = process.env.OPENAI_API_KEY;
   const previousFetch = globalThis.fetch;
   process.env.OPENAI_API_KEY = "test-only";
