@@ -380,6 +380,12 @@ function hasSecureImage(products: ProductRecord[]) {
   return products.some((product) => /^https:\/\//i.test(product.imageUrl));
 }
 
+function productsCanShareEvidence(left: ProductRecord | null, right: ProductRecord | null, pageTitle: string) {
+  return Boolean(left && right
+    && validateProductPageIdentity([left], [right], pageTitle, { allowScopedPageSignal: true }).accepted
+    && validateProductPageIdentity([right], [left], pageTitle, { allowScopedPageSignal: true }).accepted);
+}
+
 function comparablePrice(product: ProductRecord) {
   const prices = product.priceSignals.filter(isPositivePriceSignal);
   return prices.length > 0 && new Set(prices.map((signal) => signal.currency)).size === 1 && new Set(prices.map((signal) => signal.amount)).size === 1;
@@ -514,12 +520,12 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
         ? originalIdentityProduct
         : null;
       const accepted = originalAccepted
-        ? (!hasSecureImage([originalAccepted]) && adapterIdentityProduct?.imageUrl
+        ? (!hasSecureImage([originalAccepted]) && adapterIdentityProduct?.imageUrl && productsCanShareEvidence(originalAccepted, adapterIdentityProduct, extracted.pageTitle)
             ? { ...originalAccepted, imageUrl: adapterIdentityProduct.imageUrl }
             : originalAccepted)
         : adapterIdentityProduct
           && hasConfirmedPrice([adapterIdentityProduct])
-          ? { ...adapterIdentityProduct, imageUrl: adapterIdentityProduct.imageUrl || originalIdentityProduct?.imageUrl || "" }
+          ? { ...adapterIdentityProduct, imageUrl: adapterIdentityProduct.imageUrl || (productsCanShareEvidence(adapterIdentityProduct, originalIdentityProduct, extracted.pageTitle) ? originalIdentityProduct?.imageUrl : "") || "" }
           : identity.products[0];
       const unresolvedAdapterGap = adapterGap && accepted && !hasConfirmedPrice([accepted]) ? adapterGap : "";
       return { product: accepted ? { ...accepted, id: item.productId } : null, gap: unresolvedAdapterGap ? gap(unresolvedAdapterGap, "adapter_limited", undefined, "adapter") : null };

@@ -334,6 +334,7 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown): ProductPriceSi
     .replace(/[−–—]/gu, "-")
     .replace(/[\p{Pd}\u207B\u208B\u2212\u2213\u2238\u2296\u229D\u229F\u2796\u2A29-\u2A2C\u2A3A\u2A41\u2A6C]/gu, "-")
     .replace(/,/g, "");
+  if (/&#(?:x[0-9a-f]+|\d+)/i.test(normalizedAmountText)) return null;
   const separatedNegative = /^\s*(?:(?:[A-Z]{3}|\p{Sc})\s*)?-\s*[^\d]{0,24}\d/u.test(normalizedAmountText);
   const labeledNegative = /[:=]\s*-\s*[^\d]{0,24}\d/u.test(normalizedAmountText);
   const accountingNegative = /\(\s*(?:[A-Z]{3}\s*|[$£€]\s*)?\d+(?:\.\d+)?(?:\s*[A-Z]{3})?\s*\)/u.test(normalizedAmountText);
@@ -350,9 +351,17 @@ function offerSignals(value: unknown): ProductPriceSignal[] {
   const found: ProductPriceSignal[] = [];
   for (const offer of records(value)) {
     const currency = offer.priceCurrency;
-    for (const key of ["price", "lowPrice", "highPrice"] as const) {
-      const signal = priceSignal(offer[key], currency);
-      if (signal) found.push(signal);
+    const price = priceSignal(offer.price, currency);
+    if (price) found.push(price);
+    const hasRangeEndpoint = offer.lowPrice !== undefined || offer.highPrice !== undefined;
+    if (hasRangeEndpoint) {
+      const low = priceSignal(offer.lowPrice, currency);
+      const high = priceSignal(offer.highPrice, currency);
+      const completePositiveRange = low && high
+        && typeof low.amount === "number" && Number.isFinite(low.amount) && low.amount > 0
+        && typeof high.amount === "number" && Number.isFinite(high.amount) && high.amount > 0
+        && low.currency && low.currency === high.currency;
+      if (completePositiveRange) found.push(low, high);
     }
     found.push(...offerSignals(offer.offers));
     found.push(...offerSignals(offer.priceSpecification));

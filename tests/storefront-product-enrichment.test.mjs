@@ -385,6 +385,43 @@ test("does not collapse a partial structured range into its positive endpoint", 
   }
 });
 
+test("does not collapse malformed or negative structured ranges into a positive endpoint", async () => {
+  const originalFetch = globalThis.fetch;
+  for (const lowPrice of ["N/A", -1, "-1", "NaN"]) {
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+      return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", offers: { lowPrice, highPrice: 19.99, priceCurrency: "USD" } })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+    };
+    const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/shop/cornerstone-enhanced-visibility-beanie" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, [], String(lowPrice));
+    resetSharedRobotsPolicyResolverForTests();
+  }
+  globalThis.fetch = originalFetch;
+});
+
+test("does not merge page and adapter evidence when their observed SKUs conflict", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({
+      title: "CornerStone Enhanced Visibility Beanie",
+      handle: "cornerstone-enhanced-visibility-beanie",
+      featured_image: "https://cdn.shop.test/wrong-sku.jpg",
+      variants: [{ title: "Default Title", price: 1340, sku: "ADAPTER-B" }],
+    }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", sku: "PAGE-A", offers: { price: 12.5, priceCurrency: "USD" } })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
+    assert.equal(result.products[0].identifiers?.sku, "PAGE-A");
+    assert.equal(result.products[0].imageUrl, "");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("does not use a recommendation block price as scoped target evidence", async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];

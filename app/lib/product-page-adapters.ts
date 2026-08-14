@@ -101,12 +101,14 @@ export function storefrontAdapterRequest(sourceUrl: string): StorefrontAdapterRe
   return null;
 }
 
-function metaContent(document: string, key: string) {
+function metaContents(document: string, key: string) {
   const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const identity = `(?:property|name|itemprop)\\s*=\\s*["']${escaped}["']`;
-  const identityFirst = new RegExp(`<meta[^>]+${identity}[^>]+content\\s*=\\s*["']([^"']*)["']`, "i");
-  const contentFirst = new RegExp(`<meta[^>]+content\\s*=\\s*["']([^"']*)["'][^>]+${identity}`, "i");
-  return text(document.match(identityFirst)?.[1] || document.match(contentFirst)?.[1], 20);
+  const identity = new RegExp(`(?:property|name|itemprop)\\s*=\\s*["']${escaped}["']`, "i");
+  return [...document.matchAll(/<meta\b[^>]*>/gi)]
+    .map((match) => match[0])
+    .filter((tag) => identity.test(tag))
+    .map((tag) => text(tag.match(/\bcontent\s*=\s*["']([^"']*)["']/i)?.[1], 20))
+    .filter(Boolean);
 }
 
 function isoCurrency(value: unknown) {
@@ -115,13 +117,11 @@ function isoCurrency(value: unknown) {
 }
 
 function directProductCurrencies(document: string) {
-  const metadata = [
-    metaContent(document, "product:price:currency"),
-    metaContent(document, "og:price:currency"),
-    metaContent(document, "priceCurrency"),
-  ];
-  const shopify = document.match(/Shopify\.currency\s*=\s*\{[^}]*["']active["']\s*:\s*["']([A-Za-z]{3})["']/i)?.[1];
-  return [...new Set([...metadata, shopify].map(isoCurrency).filter(Boolean))];
+  const metadata = ["product:price:currency", "og:price:currency", "priceCurrency"]
+    .flatMap((key) => metaContents(document, key));
+  const shopify = [...document.matchAll(/Shopify\.currency\s*=\s*\{[^}]*["']active["']\s*:\s*["']([A-Za-z]{3})["']/gi)]
+    .map((match) => match[1]);
+  return [...new Set([...metadata, ...shopify].map(isoCurrency).filter(Boolean))];
 }
 
 export function hasConflictingDirectProductCurrency(document: string) {
@@ -225,7 +225,8 @@ export function parseShopifyProduct(input: {
     ? variants.filter((variant) => quantitiesEqual(input.expectedQuantity, shopifyVariantQuantity(name, variant)))
     : [];
   const selectedVariants = input.expectedQuantity && quantityMatches.length > 0 ? quantityMatches : variants;
-  const priceSignals = input.currency
+  const completeSelectedPricing = selectedVariants.length > 0 && selectedVariants.every((variant) => positiveMinorUnitInput(variant.price));
+  const priceSignals = input.currency && completeSelectedPricing
     ? [...new Map(selectedVariants.map((variant) => minorUnitPrice(variant.price, input.currency, 2)).filter((value): value is ProductPriceSignal => Boolean(value)).map((signal) => [`${signal.currency}|${signal.amount}`, signal])).values()]
     : [];
   const selectedVariant = selectedVariants.length === 1 ? selectedVariants[0] : null;
@@ -246,7 +247,9 @@ export function parseShopifyProduct(input: {
   });
   return {
     product,
-    gap: !input.currency && selectedVariants.some((variant) => Number.isFinite(Number(variant.price)))
+    gap: !completeSelectedPricing
+      ? "Shopify did not expose a positive price for every selected variant, so the product price was not treated as comparable."
+      : !input.currency && selectedVariants.some((variant) => Number.isFinite(Number(variant.price)))
       ? "Shopify exposed a price but no same-page currency, so the price was not treated as comparable."
       : "",
   };
