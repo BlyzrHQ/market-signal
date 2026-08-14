@@ -17,6 +17,7 @@ import {
   listHumanReviewRequests,
   markReportEvaluationDispatchFailed,
   reconcileReportEvaluations,
+  reconcileRequestedReportEvaluations,
   reserveReportAgentEvaluation,
   saveReportDocument,
   saveReportFactChunk,
@@ -713,6 +714,22 @@ test("reconciliation recovers stale dispatch and expires stale reservation witho
     assert.equal(unknown.cacheWriteInputTokens, null);
     assert.equal(unknown.outputTokens, null);
     assert.ok(unknown.watchdogExpiredAt);
+  } finally {
+    await closeFixture(value);
+  }
+});
+
+test("bounded recovery returns only evaluations belonging to exact requested public reports", async () => {
+  const value = await fixture();
+  try {
+    const now = new Date("2026-08-09T14:00:00.000Z");
+    const requested = await preparedEvaluation(value.database, "requested-recovery", now);
+    const unrelated = await preparedEvaluation(value.database, "unrelated-recovery", new Date(now.getTime() + 1_000));
+    const recovery = await reconcileRequestedReportEvaluations([requested.created.publicId], new Date(now.getTime() + 2_000), value.database);
+    assert.deepEqual(recovery.candidates, [requested.evaluation.id]);
+    assert.ok(!recovery.candidates.includes(unrelated.evaluation.id));
+    await assert.rejects(() => reconcileRequestedReportEvaluations([], now, value.database), /Invalid report evaluation recovery scope/);
+    await assert.rejects(() => reconcileRequestedReportEvaluations([requested.created.publicId, requested.created.publicId], now, value.database), /Invalid report evaluation recovery scope/);
   } finally {
     await closeFixture(value);
   }

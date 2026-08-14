@@ -37,17 +37,64 @@ test("evaluation callback route authenticates, rejects malformed contracts, and 
   assert.equal((await conflict.json()).code, "evaluation-callback-state-conflict");
 });
 
-test("recovery always reconciles while pilot-off prevents every dispatch", async () => {
+function recoveryRequest(body, authorization = `Bearer ${token}`) {
+  return new Request("https://example.test/api/internal/evaluations/recovery", { method: "POST", headers: { authorization, "content-type": "application/json" }, body: typeof body === "string" ? body : JSON.stringify(body) });
+}
+
+test("recovery authenticates before parsing and rejects unbounded or malformed scopes", async () => {
   const calls = [];
   const post = createReportEvaluationRecoveryHandler({
-    async reconcile() { calls.push("reconcile"); return { candidates: [evaluationId] }; },
-    async enabled() { calls.push("enabled"); return false; },
-    async begin() { calls.push("begin"); throw new Error("must not dispatch"); },
-    async dispatch() { calls.push("dispatch"); throw new Error("must not dispatch"); },
-    async markFailed() { calls.push("markFailed"); throw new Error("must not dispatch"); },
+    async watchdog() { calls.push("watchdog"); throw new Error("must not reconcile"); },
+    async reconcile() { calls.push("reconcile"); throw new Error("must not reconcile"); },
+    async begin() { throw new Error("must not dispatch"); },
+    async dispatch() { throw new Error("must not dispatch"); },
+    async markFailed() { throw new Error("must not dispatch"); },
+  }, token);
+  assert.equal((await post(recoveryRequest("{", "Bearer wrong"))).status, 401);
+  assert.equal((await post(recoveryRequest("{"))).status, 400);
+  assert.equal((await post(recoveryRequest({ publicReportIds: [] }))).status, 400);
+  assert.equal((await post(recoveryRequest({ publicReportIds: ["a".repeat(32), "a".repeat(32)] }))).status, 400);
+  assert.equal((await post(recoveryRequest({ publicReportIds: ["a".repeat(32), "b".repeat(32), "c".repeat(32), "d".repeat(32)] }))).status, 400);
+  assert.equal((await post(recoveryRequest({ publicReportIds: ["not-a-report"] }))).status, 400);
+  const streamed = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("x".repeat(400)));
+      controller.enqueue(new TextEncoder().encode("y".repeat(400)));
+      controller.close();
+    },
+  });
+  const oversized = new Request("https://example.test/api/internal/evaluations/recovery", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: streamed, duplex: "half" });
+  assert.equal((await post(oversized)).status, 400);
+  assert.deepEqual(calls, []);
+});
+
+test("scheduled recovery keeps watchdog reconciliation active without dispatching backlog", async () => {
+  const calls = [];
+  const post = createReportEvaluationRecoveryHandler({
+    async watchdog() { calls.push("watchdog"); return { reconciled: true }; },
+    async reconcile() { throw new Error("must not query dispatch candidates"); },
+    async begin() { throw new Error("must not dispatch"); },
+    async dispatch() { throw new Error("must not dispatch"); },
+    async markFailed() { throw new Error("must not dispatch"); },
   }, token);
   const response = await post(new Request("https://example.test/api/internal/evaluations/recovery", { method: "POST", headers: { authorization: `Bearer ${token}` } }));
   assert.equal(response.status, 200);
-  assert.deepEqual(calls, ["reconcile", "enabled"]);
-  assert.deepEqual(await response.json(), { ok: true, enabled: false, candidates: 1, dispatched: 0, failed: 0 });
+  assert.deepEqual(calls, ["watchdog"]);
+  assert.deepEqual(await response.json(), { ok: true, mode: "watchdog", dispatched: 0, failed: 0 });
+});
+
+test("recovery dispatches only the exact requested report candidates", async () => {
+  const calls = [];
+  const reportId = "a".repeat(32);
+  const post = createReportEvaluationRecoveryHandler({
+    async watchdog() { throw new Error("must not run watchdog-only mode"); },
+    async reconcile(ids) { calls.push(["reconcile", ids]); return { candidates: [evaluationId] }; },
+    async begin(id) { calls.push(["begin", id]); return { evaluationId: id, evaluatorVersion: "agent-v1", dispatchAttempt: 1 }; },
+    async dispatch(payload) { calls.push(["dispatch", payload.evaluationId]); return { runId: "run_test" }; },
+    async markFailed() { calls.push("markFailed"); throw new Error("must not dispatch"); },
+  }, token);
+  const response = await post(recoveryRequest({ publicReportIds: [reportId] }));
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls, [["reconcile", [reportId]], ["begin", evaluationId], ["dispatch", evaluationId]]);
+  assert.deepEqual(await response.json(), { ok: true, requested: 1, candidates: 1, dispatched: 1, failed: 0 });
 });

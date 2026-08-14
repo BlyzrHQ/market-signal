@@ -1448,10 +1448,7 @@ export async function submitHumanReviewResponse(requestId: string, input: { idem
   return { replayed: String(persisted.id) !== id, response: { id: String(persisted.id), requestId, idempotencyKey: String(persisted.idempotency_key), resolutionCode: persisted.resolution_code as HumanReviewResolutionCode, answerText: String(persisted.answer_text), respondedAt: String(persisted.responded_at || respondedAt) } };
 }
 
-export async function reconcileReportEvaluations(now = new Date(), databaseOverride?: D1DatabaseLike | null) {
-  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
-  if (!database) throw new Error("Persistent report storage is unavailable.");
-  await ensureSchema(database);
+async function reconcileReportEvaluationWatchdogs(database: D1DatabaseLike, now: Date) {
   const fiveMinutesAgo = new Date(now.getTime() - 5 * 60_000).toISOString();
   const tenMinutesAgo = new Date(now.getTime() - 10 * 60_000).toISOString();
   const observedAt = now.toISOString();
@@ -1460,11 +1457,38 @@ export async function reconcileReportEvaluations(now = new Date(), databaseOverr
     database.prepare(`UPDATE report_evaluations SET status = 'failed', dispatch_failed_at = ?, completed_at = ?, error_code = 'evaluation-dispatch-exhausted' WHERE status = 'dispatching' AND dispatch_started_at != '' AND dispatch_started_at <= ? AND reservation_id = '' AND dispatch_attempts >= 3`).bind(observedAt, observedAt, fiveMinutesAgo),
     database.prepare(`UPDATE report_evaluations SET status = 'call_outcome_unknown', watchdog_expired_at = ?, completed_at = ?, usage_status = 'unknown', error_code = 'evaluation-reservation-expired' WHERE status = 'reserved' AND reserved_at != '' AND reserved_at <= ?`).bind(observedAt, observedAt, tenMinutesAgo),
   ]);
+  return { fiveMinutesAgo };
+}
+
+export async function reconcileReportEvaluationStates(now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error("Persistent report storage is unavailable.");
+  await ensureSchema(database);
+  const { fiveMinutesAgo } = await reconcileReportEvaluationWatchdogs(database, now);
   const pendingRows = await database.prepare(`SELECT evaluations.id, runs.public_id FROM report_evaluations evaluations JOIN report_runs runs ON runs.id = evaluations.run_id WHERE evaluations.status = 'pending' AND evaluations.evaluator_version = ? AND evaluations.created_at <= ? ORDER BY evaluations.created_at LIMIT 25`).bind(AGENT_EVALUATOR_VERSION, fiveMinutesAgo).all<Record<string, unknown>>();
   for (const row of pendingRows.results || []) {
     try { await evaluateStoredReport(String(row.public_id || ""), { evaluatorVersion: AGENT_EVALUATOR_VERSION }, now, database); } catch { /* deterministic profiler persists its own terminal failure when possible */ }
   }
+  return { reconciled: true as const };
+}
+
+export async function reconcileReportEvaluations(now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error("Persistent report storage is unavailable.");
+  await reconcileReportEvaluationStates(now, database);
   const candidates = await database.prepare(`SELECT id FROM report_evaluations WHERE evaluator_version = ? AND status IN ('deterministic', 'dispatch_failed') AND dispatch_attempts < 3 ORDER BY deterministic_at, created_at LIMIT 25`).bind(AGENT_EVALUATOR_VERSION).all<Record<string, unknown>>();
+  return { candidates: (candidates.results || []).map((row) => String(row.id || "")).filter(Boolean) };
+}
+
+export async function reconcileRequestedReportEvaluations(publicReportIds: string[], now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+  const normalizedIds = [...new Set(publicReportIds.map((id) => id.trim().toLowerCase()))];
+  if (normalizedIds.length !== publicReportIds.length || normalizedIds.length < 1 || normalizedIds.length > 3 || normalizedIds.some((id) => !PUBLIC_ID_PATTERN.test(id))) throw new Error("Invalid report evaluation recovery scope.");
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error("Persistent report storage is unavailable.");
+  await ensureSchema(database);
+  await reconcileReportEvaluationWatchdogs(database, now);
+  const placeholders = normalizedIds.map(() => "?").join(", ");
+  const candidates = await database.prepare(`SELECT evaluations.id FROM report_evaluations evaluations JOIN report_runs runs ON runs.id = evaluations.run_id WHERE runs.public_id IN (${placeholders}) AND evaluations.evaluator_version = ? AND evaluations.status IN ('deterministic', 'dispatch_failed') AND evaluations.dispatch_attempts < 3 ORDER BY evaluations.deterministic_at, evaluations.created_at LIMIT 3`).bind(...normalizedIds, AGENT_EVALUATOR_VERSION).all<Record<string, unknown>>();
   return { candidates: (candidates.results || []).map((row) => String(row.id || "")).filter(Boolean) };
 }
 
