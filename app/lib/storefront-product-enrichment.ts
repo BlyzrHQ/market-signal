@@ -251,17 +251,47 @@ function htmlTagSpans(value: string) {
   return tags;
 }
 
-function elementMarkupByClassTokens(scope: string, allowedTags: ReadonlySet<string>, accepted: ReadonlySet<string>) {
+function htmlAttributeValue(tag: string, attributeName: string) {
+  const identity = tag.match(/^<\s*\/?\s*[a-z][\w:-]*/i);
+  let index = identity?.[0].length ?? tag.length;
+  while (index < tag.length) {
+    while (/\s/u.test(tag[index] || "")) index += 1;
+    if (tag[index] === ">" || tag[index] === "/") break;
+    const nameStart = index;
+    while (index < tag.length && !/[\s=>/]/u.test(tag[index])) index += 1;
+    const name = tag.slice(nameStart, index).toLowerCase();
+    while (/\s/u.test(tag[index] || "")) index += 1;
+    if (tag[index] !== "=") continue;
+    index += 1;
+    while (/\s/u.test(tag[index] || "")) index += 1;
+    const quote = tag[index] === '"' || tag[index] === "'" ? tag[index++] : "";
+    const valueStart = index;
+    if (quote) {
+      while (index < tag.length && tag[index] !== quote) index += 1;
+    } else {
+      while (index < tag.length && !/[\s>]/u.test(tag[index])) index += 1;
+    }
+    const value = tag.slice(valueStart, index);
+    if (quote && tag[index] === quote) index += 1;
+    if (name === attributeName.toLowerCase()) return value;
+  }
+  return "";
+}
+
+function elementMarkupByClassTokens(
+  scope: string,
+  allowedTags: ReadonlySet<string>,
+  accepted: ReadonlySet<string>,
+  rejected = new Set<string>(),
+) {
   const tags = htmlTagSpans(scope);
   for (let index = 0; index < tags.length; index += 1) {
     const opening = tags[index];
     if (opening.closing || !allowedTags.has(opening.name)) continue;
-    const tag = opening.raw;
-    const classValue = tag.match(/\sclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
-    const classes = (classValue?.[1] || classValue?.[2] || classValue?.[3] || "")
+    const classes = htmlAttributeValue(opening.raw, "class")
       .split(/\s+/)
       .map((value) => value.toLowerCase().replace(/[_-]+/g, "-"));
-    if (!classes.some((value) => accepted.has(value))) continue;
+    if (!classes.some((value) => accepted.has(value)) || classes.some((value) => rejected.has(value))) continue;
     const start = opening.index;
     let depth = 0;
     for (const elementTag of tags.slice(index)) {
@@ -289,8 +319,7 @@ function removeSecondaryPriceElements(markup: string) {
   for (let index = 0; index < tags.length; index += 1) {
     const opening = tags[index];
     if (opening.closing) continue;
-    const classValue = opening.raw.match(/\sclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
-    const classes = (classValue?.[1] || classValue?.[2] || classValue?.[3] || "")
+    const classes = htmlAttributeValue(opening.raw, "class")
       .split(/\s+/)
       .map((value) => value.toLowerCase().replace(/[_-]+/g, "-"));
     if (!classes.some((value) => secondary.has(value))) continue;
@@ -365,7 +394,7 @@ function markedAmounts(markup: string, currency: string) {
   if (matches.length === 1) {
     const before = priceText.slice(0, matches[0].index ?? 0).trim();
     const after = priceText.slice((matches[0].index ?? 0) + matches[0][0].length).trim();
-    if (/\b(?:save(?:\s+(?:up\s+to|an?\s+extra|extra))?|discount|instant\s+savings?|saving|savings|rebate)\s*$/iu.test(before)
+    if (/\b(?:save(?:\s+(?:up\s+to|an?\s+extra|extra|an?\s+additional|additional|a\s+further|further|another))?|discount|instant\s+savings?|saving|savings|rebate)\s*$/iu.test(before)
       || /^(?:off|discount|instant\s+savings?|saving|savings|rebate)\b/iu.test(after)) return [];
   }
   const validContexts = matches.every((match) => {
@@ -409,7 +438,12 @@ function markedAmounts(markup: string, currency: string) {
 export function extractScopedProductPageEvidence(document: string, sourceUrl = "https://product.invalid/") {
   const scope = productScope(document);
   const priceMarkup = preferredCurrentPriceMarkup(scope)
-    || elementMarkupByClassTokens(scope, new Set(["p"]), new Set(["price"]))
+    || elementMarkupByClassTokens(
+      scope,
+      new Set(["p"]),
+      new Set(["price"]),
+      new Set(["unit-price", "unitprice", "price-per-unit", "price-unit", "price-per-measure"]),
+    )
     || elementMarkupByClassTokens(scope, new Set(["div", "span"]), new Set(["product-price", "single-product-price"]))
     || "";
   const currentMarkup = priceMarkup.match(/<ins\b[^>]*>([\s\S]*?)<\/ins>/i)?.[1]
