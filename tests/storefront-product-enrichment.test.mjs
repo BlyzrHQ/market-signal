@@ -207,8 +207,15 @@ test("replaces a zero Shopify page placeholder with a positive same-domain adapt
   }
 });
 
-test("keeps zero or unsupported-currency Shopify prices non-comparable after adapter enrichment", async () => {
-  for (const priceCurrency of ["USD", "XXX", "   "]) {
+test("keeps non-positive, non-finite, or unsupported-currency Shopify prices non-comparable after adapter enrichment", async () => {
+  for (const { priceCurrency, adapterPrice } of [
+    { priceCurrency: "USD", adapterPrice: 0 },
+    { priceCurrency: "USD", adapterPrice: -100 },
+    { priceCurrency: "USD", adapterPrice: "NaN" },
+    { priceCurrency: "USD", adapterPrice: "Infinity" },
+    { priceCurrency: "XXX", adapterPrice: 1340 },
+    { priceCurrency: "   ", adapterPrice: 1340 },
+  ]) {
     resetSharedRobotsPolicyResolverForTests();
     const originalFetch = globalThis.fetch;
     const calls = [];
@@ -219,7 +226,7 @@ test("keeps zero or unsupported-currency Shopify prices non-comparable after ada
       if (url.endsWith(".js")) return Response.json({
         title: "CornerStone Enhanced Visibility Beanie",
         handle: "cornerstone-enhanced-visibility-beanie",
-        variants: [{ title: "Default Title", price: priceCurrency === "USD" ? 0 : 1340 }],
+        variants: [{ title: "Default Title", price: adapterPrice }],
       }, { headers: { "content-type": "text/javascript" } });
       return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({
         "@context": "https://schema.org",
