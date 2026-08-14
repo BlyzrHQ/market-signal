@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "baseUrl": "https://signal.blyzr.com",
   "startedAt": "2026-08-14T21:24:31.585Z",
-  "completedAt": "2026-08-14T21:55:18.485Z",
+  "completedAt": "2026-08-14T22:03:12.600Z",
   "concurrency": 3,
   "domains": [
     "wearform.com",
@@ -80,6 +80,8 @@
         {
           "primaryId": "wearform.com-product-women-s-collective-soft-shell-custom-jacket-kmyf0z",
           "primaryName": "Women's Collective Soft Shell Custom Jacket",
+          "primaryClaimedDomain": "wearform.com",
+          "primaryExpectedDomain": "wearform.com",
           "primarySourceUrl": "https://wearform.com/products/port-authority-womens-collective-soft-shell-custom-jacket-l901wl",
           "primaryPrices": [
             {
@@ -91,6 +93,8 @@
           "rivalId": "rlpuniform.com-product-port-authority-women-s-collective-soft-shell-jac-3e2646",
           "rivalName": "Port Authority ® Women's Collective Soft Shell Jacket. L901",
           "rivalDomain": "rlpuniform.com",
+          "rivalClaimedDomain": "rlpuniform.com",
+          "rivalExpectedDomain": "rlpuniform.com",
           "rivalSourceUrl": "https://www.rlpuniform.com/products/port-authority-%C2%AE-womens-collective-soft-shell-jacket-l901",
           "rivalPrices": [
             {
@@ -125,6 +129,8 @@
         {
           "primaryId": "wearform.com-product-women-s-c-free-brick-custom-jacket-y4uewa",
           "primaryName": "Women's C-FREE Brick Custom Jacket",
+          "primaryClaimedDomain": "wearform.com",
+          "primaryExpectedDomain": "wearform.com",
           "primarySourceUrl": "https://wearform.com/products/port-authority-womens-c-free-brick-custom-jacket-l854wl",
           "primaryPrices": [
             {
@@ -136,6 +142,8 @@
           "rivalId": "rlpuniform.com-product-port-authority-women-s-c-free-brick-jacket-l854-9anjz2",
           "rivalName": "Port Authority ® Women's C-FREE ® Brick Jacket L854",
           "rivalDomain": "rlpuniform.com",
+          "rivalClaimedDomain": "rlpuniform.com",
+          "rivalExpectedDomain": "rlpuniform.com",
           "rivalSourceUrl": "https://www.rlpuniform.com/products/port-authority-%C2%AE-womens-c-free-%C2%AE-brick-jacket-l854",
           "rivalPrices": [
             {
@@ -170,6 +178,8 @@
         {
           "primaryId": "wearform.com-product-women-s-insulated-heavy-ripstop-custom-jacket-1mucob",
           "primaryName": "Women's Insulated Heavy Ripstop Custom Jacket",
+          "primaryClaimedDomain": "wearform.com",
+          "primaryExpectedDomain": "wearform.com",
           "primarySourceUrl": "https://wearform.com/products/port-authority-womens-insulated-heavy-ripstop-custom-jacket-l721wl",
           "primaryPrices": [
             {
@@ -181,6 +191,8 @@
           "rivalId": "rlpuniform.com-product-port-authority-women-s-insulated-heavy-ripstop-j-14fa7e",
           "rivalName": "Port Authority ® Women's Insulated Heavy Ripstop Jacket L721",
           "rivalDomain": "rlpuniform.com",
+          "rivalClaimedDomain": "rlpuniform.com",
+          "rivalExpectedDomain": "rlpuniform.com",
           "rivalSourceUrl": "https://www.rlpuniform.com/products/port-authority-%C2%AE-womens-insulated-heavy-ripstop-jacket-l721",
           "rivalPrices": [
             {
@@ -215,11 +227,15 @@
         {
           "primaryId": "wearform.com-product-women-s-hybrid-soft-shell-custom-jacket-12n9uu",
           "primaryName": "Women's Hybrid Soft-Shell Custom Jacket",
+          "primaryClaimedDomain": "wearform.com",
+          "primaryExpectedDomain": "wearform.com",
           "primarySourceUrl": "https://wearform.com/products/port-authority-womens-hybrid-soft-shell-custom-jacket-l787wl",
           "primaryPrices": [],
           "rivalId": "rlpuniform.com-product-port-authority-women-s-hybrid-soft-shell-jacket--160u4v",
           "rivalName": "Port Authority ® Women's Hybrid Soft Shell Jacket. L787",
           "rivalDomain": "rlpuniform.com",
+          "rivalClaimedDomain": "rlpuniform.com",
+          "rivalExpectedDomain": "rlpuniform.com",
           "rivalSourceUrl": "https://www.rlpuniform.com/products/port-authority-%C2%AE-womens-hybrid-soft-shell-jacket-l787",
           "rivalPrices": [
             {
@@ -254,11 +270,15 @@
         {
           "primaryId": "wearform.com-product-men-s-collective-soft-shell-custom-jacket-s4wn0t",
           "primaryName": "Men's Collective Soft Shell Custom Jacket",
+          "primaryClaimedDomain": "wearform.com",
+          "primaryExpectedDomain": "wearform.com",
           "primarySourceUrl": "https://wearform.com/products/port-authority-mens-collective-soft-shell-custom-jacket-j901wl",
           "primaryPrices": [],
           "rivalId": "rlpuniform.com-product-port-authority-collective-soft-shell-jacket-j901-15vagy",
           "rivalName": "Port Authority ® Collective Soft Shell Jacket. J901",
           "rivalDomain": "rlpuniform.com",
+          "rivalClaimedDomain": "rlpuniform.com",
+          "rivalExpectedDomain": "rlpuniform.com",
           "rivalSourceUrl": "https://www.rlpuniform.com/products/port-authority-%C2%AE-collective-soft-shell-jacket-j901",
           "rivalPrices": [
             {
@@ -293,11 +313,15 @@
         {
           "primaryId": "wearform.com-product-men-s-insulated-varsity-custom-jacket-zbedn2",
           "primaryName": "Men's Insulated Varsity Custom Jacket",
+          "primaryClaimedDomain": "wearform.com",
+          "primaryExpectedDomain": "wearform.com",
           "primarySourceUrl": "https://wearform.com/products/sport-tek-mens-insulated-varsity-custom-jacket-jst58wl",
           "primaryPrices": [],
           "rivalId": "rlpuniform.com-product-sport-tek-insulated-varsity-jacket-jst58-9l4p0q",
           "rivalName": "Sport-Tek ® Insulated Varsity Jacket JST58",
           "rivalDomain": "rlpuniform.com",
+          "rivalClaimedDomain": "rlpuniform.com",
+          "rivalExpectedDomain": "rlpuniform.com",
           "rivalSourceUrl": "https://www.rlpuniform.com/products/sport-tek-%C2%AE-insulated-varsity-jacket-jst58",
           "rivalPrices": [
             {
@@ -332,11 +356,15 @@
         {
           "primaryId": "wearform.com-product-men-s-insulated-heavy-ripstop-custom-jacket-1l8bdl",
           "primaryName": "Men's Insulated Heavy Ripstop Custom Jacket",
+          "primaryClaimedDomain": "wearform.com",
+          "primaryExpectedDomain": "wearform.com",
           "primarySourceUrl": "https://wearform.com/products/port-authority-mens-insulated-heavy-ripstop-custom-jacket-j721wl",
           "primaryPrices": [],
           "rivalId": "rlpuniform.com-product-port-authority-insulated-heavy-ripstop-jacket-j7-oo0ecl",
           "rivalName": "Port Authority ® Insulated Heavy Ripstop Jacket J721",
           "rivalDomain": "rlpuniform.com",
+          "rivalClaimedDomain": "rlpuniform.com",
+          "rivalExpectedDomain": "rlpuniform.com",
           "rivalSourceUrl": "https://www.rlpuniform.com/products/port-authority-%C2%AE-insulated-heavy-ripstop-jacket-j721",
           "rivalPrices": [
             {
@@ -371,11 +399,15 @@
         {
           "primaryId": "wearform.com-product-women-s-collective-striated-fleece-custom-jacket-11o2nw",
           "primaryName": "Women's Collective Striated Fleece Custom Jacket",
+          "primaryClaimedDomain": "wearform.com",
+          "primaryExpectedDomain": "wearform.com",
           "primarySourceUrl": "https://wearform.com/products/port-authority-womens-collective-striated-fleece-custom-jacket-l905wl",
           "primaryPrices": [],
           "rivalId": "rlpuniform.com-product-port-authority-women-s-collective-striated-fleec-1l411g",
           "rivalName": "Port Authority ® Women's Collective Striated Fleece Jacket. L905",
           "rivalDomain": "rlpuniform.com",
+          "rivalClaimedDomain": "rlpuniform.com",
+          "rivalExpectedDomain": "rlpuniform.com",
           "rivalSourceUrl": "https://www.rlpuniform.com/products/port-authority-%C2%AE-womens-collective-striated-fleece-jacket-l905",
           "rivalPrices": [
             {
@@ -410,11 +442,15 @@
         {
           "primaryId": "wearform.com-product-women-s-puffer-custom-vest-1o4isn",
           "primaryName": "Women's Puffer Custom Vest",
+          "primaryClaimedDomain": "wearform.com",
+          "primaryExpectedDomain": "wearform.com",
           "primarySourceUrl": "https://wearform.com/products/port-authority-womens-puffer-custom-vest-l853wl",
           "primaryPrices": [],
           "rivalId": "rlpuniform.com-product-port-authority-women-s-puffer-vest-l853-1msa05",
           "rivalName": "Port Authority ® Women's Puffer Vest L853",
           "rivalDomain": "rlpuniform.com",
+          "rivalClaimedDomain": "rlpuniform.com",
+          "rivalExpectedDomain": "rlpuniform.com",
           "rivalSourceUrl": "https://www.rlpuniform.com/products/port-authority-%C2%AE-womens-puffer-vest-l853",
           "rivalPrices": [
             {
@@ -449,11 +485,15 @@
         {
           "primaryId": "wearform.com-product-men-s-midweight-crewneck-custom-sweatshirt-7zradj",
           "primaryName": "Men's Midweight Crewneck Custom Sweatshirt",
+          "primaryClaimedDomain": "wearform.com",
+          "primaryExpectedDomain": "wearform.com",
           "primarySourceUrl": "https://wearform.com/products/carhartt-mens-midweight-crewneck-custom-sweatshirt-ctk124wl",
           "primaryPrices": [],
           "rivalId": "rlpuniform.com-product-carhartt-midweight-crewneck-sweatshirt-ctk124-6w9yj3",
           "rivalName": "Carhartt ® Midweight Crewneck Sweatshirt. CTK124",
           "rivalDomain": "rlpuniform.com",
+          "rivalClaimedDomain": "rlpuniform.com",
+          "rivalExpectedDomain": "rlpuniform.com",
           "rivalSourceUrl": "https://www.rlpuniform.com/products/carhartt-%C2%AE-midweight-crewneck-sweatshirt-ctk124",
           "rivalPrices": [
             {
@@ -478,11 +518,15 @@
         {
           "primaryId": "wearform.com-product-men-s-hybrid-soft-shell-custom-jacket-l3e87t",
           "primaryName": "Men's Hybrid Soft-Shell Custom Jacket",
+          "primaryClaimedDomain": "wearform.com",
+          "primaryExpectedDomain": "wearform.com",
           "primarySourceUrl": "https://wearform.com/products/port-authority-mens-hybrid-soft-shell-custom-jacket-j787wl",
           "primaryPrices": [],
           "rivalId": "rlpuniform.com-product-port-authority-hybrid-soft-shell-jacket-j787-cfllsr",
           "rivalName": "Port Authority ® Hybrid Soft Shell Jacket. J787",
           "rivalDomain": "rlpuniform.com",
+          "rivalClaimedDomain": "rlpuniform.com",
+          "rivalExpectedDomain": "rlpuniform.com",
           "rivalSourceUrl": "https://www.rlpuniform.com/products/port-authority-%C2%AE-hybrid-soft-shell-jacket-j787",
           "rivalPrices": [
             {
@@ -517,11 +561,15 @@
         {
           "primaryId": "wearform.com-product-men-s-insulated-letterman-custom-jacket-eyd5p9",
           "primaryName": "Men's Insulated Letterman Custom Jacket",
+          "primaryClaimedDomain": "wearform.com",
+          "primaryExpectedDomain": "wearform.com",
           "primarySourceUrl": "https://wearform.com/products/sport-tek-mens-insulated-letterman-custom-jacket-jst82wl",
           "primaryPrices": [],
           "rivalId": "rlpuniform.com-product-sport-tek-insulated-letterman-jacket-jst82-u21m8q",
           "rivalName": "Sport-Tek ® Insulated Letterman Jacket. JST82",
           "rivalDomain": "rlpuniform.com",
+          "rivalClaimedDomain": "rlpuniform.com",
+          "rivalExpectedDomain": "rlpuniform.com",
           "rivalSourceUrl": "https://www.rlpuniform.com/products/sport-tek-%C2%AE-insulated-letterman-jacket-jst82",
           "rivalPrices": [
             {
@@ -558,11 +606,15 @@
         {
           "primaryId": "wearform.com-product-men-s-quilted-flannel-lined-duck-active-hooded-c-l2rvh0",
           "primaryName": "Men's Quilted-Flannel-Lined Duck Active Hooded Custom Jacket",
+          "primaryClaimedDomain": "wearform.com",
+          "primaryExpectedDomain": "wearform.com",
           "primarySourceUrl": "https://wearform.com/products/carhartt-mens-quilted-flannel-lined-duck-active-hooded-custom-jacket-ct106677wl",
           "primaryPrices": [],
           "rivalId": "rlpuniform.com-product-carhartt-quilted-flanne-lined-duck-active-jac-ct-u85w0a",
           "rivalName": "Carhartt ® Quilted-Flanne-Lined Duck Active Jac. CT106677",
           "rivalDomain": "rlpuniform.com",
+          "rivalClaimedDomain": "rlpuniform.com",
+          "rivalExpectedDomain": "rlpuniform.com",
           "rivalSourceUrl": "https://www.rlpuniform.com/products/carhartt-%C2%AE-quilted-flanne-lined-duck-active-jac-ct106677",
           "rivalPrices": [
             {
@@ -589,11 +641,15 @@
         {
           "primaryId": "wearform.com-product-men-s-challenger-custom-jacket-8dcy31",
           "primaryName": "Men's Challenger Custom Jacket",
+          "primaryClaimedDomain": "wearform.com",
+          "primaryExpectedDomain": "wearform.com",
           "primarySourceUrl": "https://wearform.com/products/port-authority-mens-challenger-custom-jacket-j354wl",
           "primaryPrices": [],
           "rivalId": "rlpuniform.com-product-port-authority-challengertm-jacket-j754-5tyri5",
           "rivalName": "Port Authority ® Challenger™ Jacket. J754",
           "rivalDomain": "rlpuniform.com",
+          "rivalClaimedDomain": "rlpuniform.com",
+          "rivalExpectedDomain": "rlpuniform.com",
           "rivalSourceUrl": "https://www.rlpuniform.com/products/port-authority-%C2%AE-challenger%E2%84%A2-jacket-j754",
           "rivalPrices": [
             {
@@ -640,11 +696,15 @@
         {
           "primaryId": "wearform.com-product-women-s-puffer-custom-jacket-13150w",
           "primaryName": "Women's Puffer Custom Jacket",
+          "primaryClaimedDomain": "wearform.com",
+          "primaryExpectedDomain": "wearform.com",
           "primarySourceUrl": "https://wearform.com/products/port-authority-womens-puffer-custom-jacket-l852wl",
           "primaryPrices": [],
           "rivalId": "rlpuniform.com-product-port-authority-women-s-puffer-jacket-l852-1hqyz2",
           "rivalName": "Port Authority ® Women's Puffer Jacket L852",
           "rivalDomain": "rlpuniform.com",
+          "rivalClaimedDomain": "rlpuniform.com",
+          "rivalExpectedDomain": "rlpuniform.com",
           "rivalSourceUrl": "https://www.rlpuniform.com/products/port-authority-%C2%AE-womens-puffer-jacket-l852",
           "rivalPrices": [
             {
@@ -681,11 +741,15 @@
         {
           "primaryId": "wearform.com-product-women-s-puffy-parka-custom-jacket-1v4nfa",
           "primaryName": "Women's Puffy Parka Custom Jacket",
+          "primaryClaimedDomain": "wearform.com",
+          "primaryExpectedDomain": "wearform.com",
           "primarySourceUrl": "https://wearform.com/products/mercer-mettle-womens-puffy-parka-custom-jacket-mm7213wl",
           "primaryPrices": [],
           "rivalId": "rlpuniform.com-product-mercer-mettle-women-s-puffy-parka-mm7213-1wma08",
           "rivalName": "Mercer+Mettle ® Women's Puffy Parka MM7213",
           "rivalDomain": "rlpuniform.com",
+          "rivalClaimedDomain": "rlpuniform.com",
+          "rivalExpectedDomain": "rlpuniform.com",
           "rivalSourceUrl": "https://www.rlpuniform.com/products/mercer-mettle-%C2%AE-womens-puffy-parka-mm7213",
           "rivalPrices": [
             {
@@ -722,11 +786,15 @@
         {
           "primaryId": "wearform.com-product-men-s-hi-visibility-ansi-107-class-3-waterproof--1yw8wj",
           "primaryName": "Men's Hi-Visibility ANSI 107 Class-3 Waterproof Heavyweight Insulated Custom Jacket",
+          "primaryClaimedDomain": "wearform.com",
+          "primaryExpectedDomain": "wearform.com",
           "primarySourceUrl": "https://wearform.com/products/carhartt-mens-hi-visibility-ansi-107-class-3-waterproof-heavyweight-insulated-custom-jacket-ct106694wl",
           "primaryPrices": [],
           "rivalId": "rlpuniform.com-product-carhartt-ansi-107-class-3-waterproof-heavyweight-1k2ie3",
           "rivalName": "Carhartt ® ANSI 107 Class 3 Waterproof Heavyweight Insulated Jacket CT106694",
           "rivalDomain": "rlpuniform.com",
+          "rivalClaimedDomain": "rlpuniform.com",
+          "rivalExpectedDomain": "rlpuniform.com",
           "rivalSourceUrl": "https://www.rlpuniform.com/products/carhartt-%C2%AE-ansi-107-class-3-waterproof-heavyweight-insulated-jacket-ct106694",
           "rivalPrices": [
             {
@@ -799,6 +867,8 @@
         {
           "primaryId": "myjam.co.uk-product-spinach-bunch-121mmq",
           "primaryName": "Spinach Bunch",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/spinach-bunch",
           "primaryPrices": [
             {
@@ -810,6 +880,8 @@
           "rivalId": "desiibasket.com-product-spinach-bunch-105hit",
           "rivalName": "Spinach Bunch",
           "rivalDomain": "desiibasket.com",
+          "rivalClaimedDomain": "desiibasket.com",
+          "rivalExpectedDomain": "desiibasket.com",
           "rivalSourceUrl": "https://desiibasket.com/products/spinach-bunch",
           "rivalPrices": [
             {
@@ -829,6 +901,8 @@
         {
           "primaryId": "myjam.co.uk-product-tilda-pure-basmati-rice-10kg-1u2ucs",
           "primaryName": "Tilda Pure Basmati Rice 10kg",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/tilda-pure-basmati-rice-10kg",
           "primaryPrices": [
             {
@@ -840,6 +914,8 @@
           "rivalId": "desiibasket.com-product-laila-basmati-rice-10kg-1mwcmj",
           "rivalName": "LAILA BASMATI RICE 10KG",
           "rivalDomain": "desiibasket.com",
+          "rivalClaimedDomain": "desiibasket.com",
+          "rivalExpectedDomain": "desiibasket.com",
           "rivalSourceUrl": "https://desiibasket.com/products/laila-basmati-rice-10kg",
           "rivalPrices": [
             {
@@ -861,6 +937,8 @@
         {
           "primaryId": "myjam.co.uk-product-okra-500g-6qwweh",
           "primaryName": "Okra 500g",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/okra-500g",
           "primaryPrices": [
             {
@@ -872,6 +950,8 @@
           "rivalId": "desiibasket.com-product-okra-1z43ig",
           "rivalName": "Okra",
           "rivalDomain": "desiibasket.com",
+          "rivalClaimedDomain": "desiibasket.com",
+          "rivalExpectedDomain": "desiibasket.com",
           "rivalSourceUrl": "https://desiibasket.com/products/okra",
           "rivalPrices": [
             {
@@ -891,6 +971,8 @@
         {
           "primaryId": "myjam.co.uk-product-ginger-500g-kixfwf",
           "primaryName": "Ginger 500g",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/ginger-500g",
           "primaryPrices": [
             {
@@ -902,6 +984,8 @@
           "rivalId": "desiibasket.com-product-organic-ginger-1aymvz",
           "rivalName": "Organic Ginger",
           "rivalDomain": "desiibasket.com",
+          "rivalClaimedDomain": "desiibasket.com",
+          "rivalExpectedDomain": "desiibasket.com",
           "rivalSourceUrl": "https://desiibasket.com/products/organic-ginger",
           "rivalPrices": [
             {
@@ -928,6 +1012,8 @@
         {
           "primaryId": "myjam.co.uk-product-fresh-mint-bunch-m7397s",
           "primaryName": "Fresh Mint Bunch",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/fresh-mint-bunch",
           "primaryPrices": [
             {
@@ -939,6 +1025,8 @@
           "rivalId": "desiibasket.com-product-mint-bunched-herb-mentha-15jo2n",
           "rivalName": "Mint Bunched Herb (Mentha)",
           "rivalDomain": "desiibasket.com",
+          "rivalClaimedDomain": "desiibasket.com",
+          "rivalExpectedDomain": "desiibasket.com",
           "rivalSourceUrl": "https://desiibasket.com/products/mint-bunched-herb-mentha",
           "rivalPrices": [
             {
@@ -965,6 +1053,8 @@
         {
           "primaryId": "myjam.co.uk-product-basil-50g-19w9zr",
           "primaryName": "Basil 50g",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/basil-50g",
           "primaryPrices": [
             {
@@ -976,6 +1066,8 @@
           "rivalId": "desiibasket.com-product-basil-bunched-herb-1k4q6y",
           "rivalName": "Basil Bunched Herb",
           "rivalDomain": "desiibasket.com",
+          "rivalClaimedDomain": "desiibasket.com",
+          "rivalExpectedDomain": "desiibasket.com",
           "rivalSourceUrl": "https://desiibasket.com/products/basil-bunched-herb",
           "rivalPrices": [
             {
@@ -1002,6 +1094,8 @@
         {
           "primaryId": "myjam.co.uk-product-vine-ripe-tomatoes-500g-13if5v",
           "primaryName": "Vine Ripe Tomatoes 500g",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/vine-ripe-tomatoes-500g",
           "primaryPrices": [
             {
@@ -1013,6 +1107,8 @@
           "rivalId": "desiibasket.com-product-loose-tomatoes-500gbag-1ih9fr",
           "rivalName": "loose Tomatoes 500gBag",
           "rivalDomain": "desiibasket.com",
+          "rivalClaimedDomain": "desiibasket.com",
+          "rivalExpectedDomain": "desiibasket.com",
           "rivalSourceUrl": "https://desiibasket.com/products/loose-tomatoes-500gbag",
           "rivalPrices": [
             {
@@ -1034,6 +1130,8 @@
         {
           "primaryId": "myjam.co.uk-product-cyprus-coriander-bunch-xz2mve",
           "primaryName": "Cyprus Coriander Bunch",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/cyprus-coriander-bunch",
           "primaryPrices": [
             {
@@ -1045,6 +1143,8 @@
           "rivalId": "desiibasket.com-product-coriander-bunched-herb-cilantro-1hku9m",
           "rivalName": "Coriander Bunched Herb (Cilantro)",
           "rivalDomain": "desiibasket.com",
+          "rivalClaimedDomain": "desiibasket.com",
+          "rivalExpectedDomain": "desiibasket.com",
           "rivalSourceUrl": "https://desiibasket.com/products/coriander-bunched-herb-cilantro",
           "rivalPrices": [
             {
@@ -1071,6 +1171,8 @@
         {
           "primaryId": "myjam.co.uk-product-chicken-thigh-no-bone-halal-500g-fyf4v",
           "primaryName": "Chicken Thigh No Bone Halal 500g",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/chicken-thigh-no-bone-halal-500g",
           "primaryPrices": [
             {
@@ -1082,6 +1184,8 @@
           "rivalId": "egrocers.uk-product-chicken-thigh-boneless-1jbjx1",
           "rivalName": "Chicken Thigh Boneless",
           "rivalDomain": "egrocers.uk",
+          "rivalClaimedDomain": "egrocers.uk",
+          "rivalExpectedDomain": "egrocers.uk",
           "rivalSourceUrl": "https://www.egrocers.uk/product/chicken-thigh-boneless/",
           "rivalPrices": [
             {
@@ -1101,6 +1205,8 @@
         {
           "primaryId": "myjam.co.uk-product-lime-each-1b77e9",
           "primaryName": "Lime each",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/lime-each",
           "primaryPrices": [
             {
@@ -1112,6 +1218,8 @@
           "rivalId": "desiibasket.com-product-lime-green-6nos-tvue48",
           "rivalName": "Lime Green (6nos)",
           "rivalDomain": "desiibasket.com",
+          "rivalClaimedDomain": "desiibasket.com",
+          "rivalExpectedDomain": "desiibasket.com",
           "rivalSourceUrl": "https://desiibasket.com/products/lime-green-6nos",
           "rivalPrices": [
             {
@@ -1133,6 +1241,8 @@
         {
           "primaryId": "myjam.co.uk-product-chicken-drumsticks-halal-5pcs-12k203",
           "primaryName": "Chicken Drumsticks Halal 5Pcs",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/chicken-drum-stick-halal-5pcs",
           "primaryPrices": [
             {
@@ -1144,6 +1254,8 @@
           "rivalId": "egrocers.uk-product-chicken-drum-sticks-zreprr",
           "rivalName": "Chicken Drum Sticks",
           "rivalDomain": "egrocers.uk",
+          "rivalClaimedDomain": "egrocers.uk",
+          "rivalExpectedDomain": "egrocers.uk",
           "rivalSourceUrl": "https://www.egrocers.uk/product/chicken-drum-sticks/",
           "rivalPrices": [
             {
@@ -1165,6 +1277,8 @@
         {
           "primaryId": "myjam.co.uk-product-humza-frozen-meat-samosa-halal-20pcs-1o1kmc",
           "primaryName": "Humza Frozen Meat Samosa Halal 20Pcs",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/humza-frozen-meat-samosa-halal-20pcs",
           "primaryPrices": [
             {
@@ -1176,6 +1290,8 @@
           "rivalId": "desiibasket.com-product-balaji-jumbo-samosa-1esm69",
           "rivalName": "Balaji Jumbo Samosa",
           "rivalDomain": "desiibasket.com",
+          "rivalClaimedDomain": "desiibasket.com",
+          "rivalExpectedDomain": "desiibasket.com",
           "rivalSourceUrl": "https://desiibasket.com/products/balaji-jumbo-samosa",
           "rivalPrices": [
             {
@@ -1195,6 +1311,8 @@
         {
           "primaryId": "myjam.co.uk-product-chicken-nibblets-halal-500g-64piy5",
           "primaryName": "Chicken Nibblets Halal 500G",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/chicken-nibblets-halal-500g",
           "primaryPrices": [
             {
@@ -1206,6 +1324,8 @@
           "rivalId": "egrocers.uk-product-chicken-niblets-1jnvfq",
           "rivalName": "Chicken Niblets",
           "rivalDomain": "egrocers.uk",
+          "rivalClaimedDomain": "egrocers.uk",
+          "rivalExpectedDomain": "egrocers.uk",
           "rivalSourceUrl": "https://www.egrocers.uk/product/chicken-niblets/",
           "rivalPrices": [
             {
@@ -1225,6 +1345,8 @@
         {
           "primaryId": "myjam.co.uk-product-halal-chicken-breast-500g-1037du",
           "primaryName": "Halal Chicken Breast 500g",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/halal-chicken-breast-500g",
           "primaryPrices": [
             {
@@ -1236,6 +1358,8 @@
           "rivalId": "egrocers.uk-product-chicken-breast-boneless-15gr1n",
           "rivalName": "Chicken Breast Boneless",
           "rivalDomain": "egrocers.uk",
+          "rivalClaimedDomain": "egrocers.uk",
+          "rivalExpectedDomain": "egrocers.uk",
           "rivalSourceUrl": "https://www.egrocers.uk/product/chicken-breast-boneless/",
           "rivalPrices": [
             {
@@ -1255,6 +1379,8 @@
         {
           "primaryId": "myjam.co.uk-product-halal-lamb-chops-500g-7hvqab",
           "primaryName": "Halal Lamb Chops 500g",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/halal-lamb-chops-500g",
           "primaryPrices": [
             {
@@ -1266,6 +1392,8 @@
           "rivalId": "egrocers.uk-product-bbq-lamb-chops-7ur0yt",
           "rivalName": "BBQ Lamb Chops",
           "rivalDomain": "egrocers.uk",
+          "rivalClaimedDomain": "egrocers.uk",
+          "rivalExpectedDomain": "egrocers.uk",
           "rivalSourceUrl": "https://www.egrocers.uk/product/bbq-lamb-chops/",
           "rivalPrices": [
             {
@@ -1287,6 +1415,8 @@
         {
           "primaryId": "myjam.co.uk-product-minced-chicken-halal-500g-ottx4p",
           "primaryName": "Minced Chicken Halal 500g",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/minced-chicken-halal-500g",
           "primaryPrices": [
             {
@@ -1298,6 +1428,8 @@
           "rivalId": "egrocers.uk-product-chicken-mince-1dc9rn",
           "rivalName": "Chicken Mince",
           "rivalDomain": "egrocers.uk",
+          "rivalClaimedDomain": "egrocers.uk",
+          "rivalExpectedDomain": "egrocers.uk",
           "rivalSourceUrl": "https://www.egrocers.uk/product/chicken-mince/",
           "rivalPrices": [
             {
@@ -1317,6 +1449,8 @@
         {
           "primaryId": "myjam.co.uk-product-juhayna-mango-1l-4ssalq",
           "primaryName": "Juhayna Mango 1L",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/juhayna-mango-1l",
           "primaryPrices": [
             {
@@ -1328,6 +1462,8 @@
           "rivalId": "desiibasket.com-product-rubicon-mango-juice-drink-6-x1l-lf11cv",
           "rivalName": "RUBICON MANGO JUICE DRINK 6 X1L",
           "rivalDomain": "desiibasket.com",
+          "rivalClaimedDomain": "desiibasket.com",
+          "rivalExpectedDomain": "desiibasket.com",
           "rivalSourceUrl": "https://desiibasket.com/products/rubicon-mango-juice-drink-6-x1l",
           "rivalPrices": [
             {
@@ -1349,6 +1485,8 @@
         {
           "primaryId": "myjam.co.uk-product-tariq-halal-lamb-boneless-diced-500g-e8rpf4",
           "primaryName": "Tariq Halal Lamb Boneless Diced 500g",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/tariq-halal-lamb-boneless-diced",
           "primaryPrices": [
             {
@@ -1360,6 +1498,8 @@
           "rivalId": "egrocers.uk-product-lamb-boneless-1qmti6",
           "rivalName": "Lamb Boneless",
           "rivalDomain": "egrocers.uk",
+          "rivalClaimedDomain": "egrocers.uk",
+          "rivalExpectedDomain": "egrocers.uk",
           "rivalSourceUrl": "https://www.egrocers.uk/product/lamb-boneless/",
           "rivalPrices": [
             {
@@ -1381,6 +1521,8 @@
         {
           "primaryId": "myjam.co.uk-product-baby-pineapple-each-mukvgc",
           "primaryName": "Baby Pineapple Each",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/baby-pineapple",
           "primaryPrices": [
             {
@@ -1392,6 +1534,8 @@
           "rivalId": "desiibasket.com-product-fresh-pineapple-fruit-uh69l0",
           "rivalName": "FRESH PINEAPPLE FRUIT",
           "rivalDomain": "desiibasket.com",
+          "rivalClaimedDomain": "desiibasket.com",
+          "rivalExpectedDomain": "desiibasket.com",
           "rivalSourceUrl": "https://desiibasket.com/products/fresh-pineapple-fruit",
           "rivalPrices": [
             {
@@ -1413,6 +1557,8 @@
         {
           "primaryId": "myjam.co.uk-product-lamb-back-chops-500g-znnehb",
           "primaryName": "Lamb Back Chops 500g",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/lamb-back-chops-500g",
           "primaryPrices": [
             {
@@ -1424,6 +1570,8 @@
           "rivalId": "egrocers.uk-product-lamb-chops-back-front-1da518",
           "rivalName": "Lamb Chops Back / Front",
           "rivalDomain": "egrocers.uk",
+          "rivalClaimedDomain": "egrocers.uk",
+          "rivalExpectedDomain": "egrocers.uk",
           "rivalSourceUrl": "https://www.egrocers.uk/product/lamb-chops-back-front/",
           "rivalPrices": [
             {
@@ -1445,6 +1593,8 @@
         {
           "primaryId": "myjam.co.uk-product-tariq-halal-lamb-mince-500g-1tlyfn",
           "primaryName": "Tariq Halal Lamb Mince 500g",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/tariq-halal-lamb-mince",
           "primaryPrices": [
             {
@@ -1456,6 +1606,8 @@
           "rivalId": "egrocers.uk-product-sheep-leg-mince-1o8fkm",
           "rivalName": "Sheep Leg Mince",
           "rivalDomain": "egrocers.uk",
+          "rivalClaimedDomain": "egrocers.uk",
+          "rivalExpectedDomain": "egrocers.uk",
           "rivalSourceUrl": "https://www.egrocers.uk/product/sheep-leg-mince/",
           "rivalPrices": [
             {
@@ -1477,6 +1629,8 @@
         {
           "primaryId": "myjam.co.uk-product-loubnan-mixed-nuts-deluxe-100g-11f54v",
           "primaryName": "Loubnan Mixed Nuts Deluxe 100G",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/mixed-nuts-deluxe-100g",
           "primaryPrices": [
             {
@@ -1488,6 +1642,8 @@
           "rivalId": "desiibasket.com-product-fudco-deluxe-nuts-raisins-mix-250gms-1i7rl2",
           "rivalName": "FUDCO DELUXE NUTS & RAISINS MIX 250gms",
           "rivalDomain": "desiibasket.com",
+          "rivalClaimedDomain": "desiibasket.com",
+          "rivalExpectedDomain": "desiibasket.com",
           "rivalSourceUrl": "https://desiibasket.com/products/fudco-deluxe-nuts-raisins-mix-250gms",
           "rivalPrices": [
             {
@@ -1509,6 +1665,8 @@
         {
           "primaryId": "myjam.co.uk-product-minced-mix-meat-halal-2kg-t074ga",
           "primaryName": "Minced Mix Meat Halal 2kg",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/minced-mix-meat-halal-2kg",
           "primaryPrices": [
             {
@@ -1520,6 +1678,8 @@
           "rivalId": "egrocers.uk-product-ordinary-meat-mince-6bgbyn",
           "rivalName": "Ordinary Meat Mince",
           "rivalDomain": "egrocers.uk",
+          "rivalClaimedDomain": "egrocers.uk",
+          "rivalExpectedDomain": "egrocers.uk",
           "rivalSourceUrl": "https://www.egrocers.uk/product/ordinary-meat-mince/",
           "rivalPrices": [
             {
@@ -1541,6 +1701,8 @@
         {
           "primaryId": "myjam.co.uk-product-peri-peri-whole-chicken-halal-1pc-mvb3sv",
           "primaryName": "Peri Peri Whole Chicken Halal 1Pc",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/peri-peri-whole-chicken-halal-1pc",
           "primaryPrices": [
             {
@@ -1552,6 +1714,8 @@
           "rivalId": "egrocers.uk-product-bbq-peri-peri-whole-chicken-1t33zj",
           "rivalName": "BBQ Peri Peri Whole Chicken",
           "rivalDomain": "egrocers.uk",
+          "rivalClaimedDomain": "egrocers.uk",
+          "rivalExpectedDomain": "egrocers.uk",
           "rivalSourceUrl": "https://www.egrocers.uk/product/bbq-peri-peri-whole-chicken/",
           "rivalPrices": [
             {
@@ -1573,6 +1737,8 @@
         {
           "primaryId": "myjam.co.uk-product-roberts-gold-tea-ginger-tea-20-bags-ddvfoe",
           "primaryName": "Roberts Gold Tea Ginger Tea 20 Bags",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/roberts-gold-tea-ginger-tea-20-bags",
           "primaryPrices": [
             {
@@ -1584,6 +1750,8 @@
           "rivalId": "desiibasket.com-product-tata-tea-quick-chai-ginger-10-sachets-aty6a8",
           "rivalName": "Tata Tea Quick Chai - Ginger [10 Sachets]",
           "rivalDomain": "desiibasket.com",
+          "rivalClaimedDomain": "desiibasket.com",
+          "rivalExpectedDomain": "desiibasket.com",
           "rivalSourceUrl": "https://desiibasket.com/products/tata-quick-tea-ginger",
           "rivalPrices": [
             {
@@ -1605,6 +1773,8 @@
         {
           "primaryId": "myjam.co.uk-product-pure-minced-lamb-halal-no-fat-500g-1v7jpm",
           "primaryName": "Pure Minced Lamb Halal - No Fat 500g",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/pure-minced-lamb-halal-no-fat-500g",
           "primaryPrices": [
             {
@@ -1616,6 +1786,8 @@
           "rivalId": "egrocers.uk-product-lamb-leg-mince-sxqov3",
           "rivalName": "Lamb Leg Mince",
           "rivalDomain": "egrocers.uk",
+          "rivalClaimedDomain": "egrocers.uk",
+          "rivalExpectedDomain": "egrocers.uk",
           "rivalSourceUrl": "https://www.egrocers.uk/product/lamb-leg-mince/",
           "rivalPrices": [
             {
@@ -1637,6 +1809,8 @@
         {
           "primaryId": "myjam.co.uk-product-chicken-liver-halal-500g-uk0069",
           "primaryName": "Chicken Liver Halal 500G",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/chicken-liver-halal-500g",
           "primaryPrices": [
             {
@@ -1648,6 +1822,8 @@
           "rivalId": "egrocers.uk-product-chicken-liver-f7jsla",
           "rivalName": "Chicken Liver",
           "rivalDomain": "egrocers.uk",
+          "rivalClaimedDomain": "egrocers.uk",
+          "rivalExpectedDomain": "egrocers.uk",
           "rivalSourceUrl": "https://www.egrocers.uk/product/chicken-liver/",
           "rivalPrices": [
             {
@@ -1669,6 +1845,8 @@
         {
           "primaryId": "myjam.co.uk-product-lamb-ribs-halal-500g-aot4t3",
           "primaryName": "Lamb Ribs Halal 500G",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/lamb-ribs-halal-500g",
           "primaryPrices": [
             {
@@ -1680,6 +1858,8 @@
           "rivalId": "egrocers.uk-product-lamb-ribs-bdrhn8",
           "rivalName": "Lamb Ribs",
           "rivalDomain": "egrocers.uk",
+          "rivalClaimedDomain": "egrocers.uk",
+          "rivalExpectedDomain": "egrocers.uk",
           "rivalSourceUrl": "https://www.egrocers.uk/product/lamb-ribs/",
           "rivalPrices": [
             {
@@ -1701,6 +1881,8 @@
         {
           "primaryId": "myjam.co.uk-product-safi-cow-butter-ghee-600g-nhfyl8",
           "primaryName": "Safi Cow Butter Ghee 600G",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/safi-butter-ghee-600g",
           "primaryPrices": [
             {
@@ -1712,6 +1894,8 @@
           "rivalId": "desiibasket.com-product-amul-butter-15fpta",
           "rivalName": "Amul Butter",
           "rivalDomain": "desiibasket.com",
+          "rivalClaimedDomain": "desiibasket.com",
+          "rivalExpectedDomain": "desiibasket.com",
           "rivalSourceUrl": "https://desiibasket.com/products/amul-butter-200gm",
           "rivalPrices": [
             {
@@ -1738,6 +1922,8 @@
         {
           "primaryId": "myjam.co.uk-product-lamb-neck-halal-900g-18t7sz",
           "primaryName": "Lamb Neck Halal 900G",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/lamb-neck-halal-900g",
           "primaryPrices": [
             {
@@ -1749,6 +1935,8 @@
           "rivalId": "egrocers.uk-product-lamb-neck-htzcgc",
           "rivalName": "Lamb Neck",
           "rivalDomain": "egrocers.uk",
+          "rivalClaimedDomain": "egrocers.uk",
+          "rivalExpectedDomain": "egrocers.uk",
           "rivalSourceUrl": "https://www.egrocers.uk/product/lamb-neck/",
           "rivalPrices": [
             {
@@ -1770,6 +1958,8 @@
         {
           "primaryId": "myjam.co.uk-product-tariq-halal-chicken-legs-skin-on-600g-16sv1k",
           "primaryName": "Tariq Halal Chicken Legs (Skin On) 600g",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/chicken-legs-skin-on-1kg",
           "primaryPrices": [
             {
@@ -1781,6 +1971,8 @@
           "rivalId": "egrocers.uk-product-chicken-legs-rbjina",
           "rivalName": "Chicken Legs per/kg",
           "rivalDomain": "egrocers.uk",
+          "rivalClaimedDomain": "egrocers.uk",
+          "rivalExpectedDomain": "egrocers.uk",
           "rivalSourceUrl": "https://www.egrocers.uk/product/chicken-legs/",
           "rivalPrices": [
             {
@@ -1802,6 +1994,8 @@
         {
           "primaryId": "myjam.co.uk-product-mahmood-tea-ceylon-black-tea-450g-5vv0a7",
           "primaryName": "Mahmood Tea Ceylon Black Tea 450G",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/mahmood-tea-ceylon-black-tea-450g",
           "primaryPrices": [
             {
@@ -1813,6 +2007,8 @@
           "rivalId": "desiibasket.com-product-tata-tea-gold-loose-450g-8bulwo",
           "rivalName": "Tata Tea Gold Loose 450g",
           "rivalDomain": "desiibasket.com",
+          "rivalClaimedDomain": "desiibasket.com",
+          "rivalExpectedDomain": "desiibasket.com",
           "rivalSourceUrl": "https://desiibasket.com/products/tata-tea-gold-loose-450g",
           "rivalPrices": [
             {
@@ -1832,6 +2028,8 @@
         {
           "primaryId": "myjam.co.uk-product-chicken-gizzard-halal-500g-e0jq5p",
           "primaryName": "Chicken Gizzard Halal 500g",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/chicken-gizzard-halal-500g",
           "primaryPrices": [
             {
@@ -1843,6 +2041,8 @@
           "rivalId": "egrocers.uk-product-chicken-gizzard-y7n9y2",
           "rivalName": "Chicken Gizzard",
           "rivalDomain": "egrocers.uk",
+          "rivalClaimedDomain": "egrocers.uk",
+          "rivalExpectedDomain": "egrocers.uk",
           "rivalSourceUrl": "https://www.egrocers.uk/product/chicken-gizzard/",
           "rivalPrices": [
             {
@@ -1864,6 +2064,8 @@
         {
           "primaryId": "myjam.co.uk-product-beef-sirloin-steak-halal-500g-c5mc88",
           "primaryName": "Beef Sirloin Steak Halal 500G",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/beef-sirloin-steak-halal-500g",
           "primaryPrices": [
             {
@@ -1875,6 +2077,8 @@
           "rivalId": "egrocers.uk-product-bbq-marinated-masala-lamb-steak-1mk351",
           "rivalName": "BBQ Marinated Masala Lamb Steak",
           "rivalDomain": "egrocers.uk",
+          "rivalClaimedDomain": "egrocers.uk",
+          "rivalExpectedDomain": "egrocers.uk",
           "rivalSourceUrl": "https://www.egrocers.uk/product/bbq-marinated-masala-lamb-steak/",
           "rivalPrices": [
             {
@@ -1896,6 +2100,8 @@
         {
           "primaryId": "myjam.co.uk-product-ahmad-tea-cardamom-tea-100-bags-1uwzs4",
           "primaryName": "Ahmad Tea Cardamom Tea 100 Bags",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/ahmad-tea-cardamom-tea-100-bags",
           "primaryPrices": [
             {
@@ -1907,6 +2113,8 @@
           "rivalId": "desiibasket.com-product-wagh-bakri-cardamom-tea-sachets-140g-z1c91n",
           "rivalName": "Wagh Bakri Cardamom Tea Sachets 140g",
           "rivalDomain": "desiibasket.com",
+          "rivalClaimedDomain": "desiibasket.com",
+          "rivalExpectedDomain": "desiibasket.com",
           "rivalSourceUrl": "https://desiibasket.com/products/wagh-bakri-cardamom-tea-sachets-140g",
           "rivalPrices": [
             {
@@ -1928,6 +2136,8 @@
         {
           "primaryId": "myjam.co.uk-product-baby-chicken-halal-apx-900g-1jgg5s",
           "primaryName": "Baby Chicken Halal apx 900g",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/baby-chicken-halal-apx-900g",
           "primaryPrices": [
             {
@@ -1939,6 +2149,8 @@
           "rivalId": "egrocers.uk-product-3-baby-chicken-1yiqsi",
           "rivalName": "3 Baby Chicken",
           "rivalDomain": "egrocers.uk",
+          "rivalClaimedDomain": "egrocers.uk",
+          "rivalExpectedDomain": "egrocers.uk",
           "rivalSourceUrl": "https://www.egrocers.uk/product/3-baby-chicken/",
           "rivalPrices": [
             {
@@ -1960,6 +2172,8 @@
         {
           "primaryId": "myjam.co.uk-product-halal-dutch-veal-cubes-500g-1qjezi",
           "primaryName": "Halal Dutch Veal Cubes 500g",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/dutch-veal-cubes-500g",
           "primaryPrices": [
             {
@@ -1971,6 +2185,8 @@
           "rivalId": "egrocers.uk-product-beef-cubes-gw4ydg",
           "rivalName": "Beef Cubes",
           "rivalDomain": "egrocers.uk",
+          "rivalClaimedDomain": "egrocers.uk",
+          "rivalExpectedDomain": "egrocers.uk",
           "rivalSourceUrl": "https://www.egrocers.uk/product/beef-cubes/",
           "rivalPrices": [
             {
@@ -1990,6 +2206,8 @@
         {
           "primaryId": "myjam.co.uk-product-ahmad-tea-earl-grey-tea-100-bags-1by4us",
           "primaryName": "Ahmad Tea Earl Grey Tea 100 Bags",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/ahmad-tea-earl-grey-tea-100-bags",
           "primaryPrices": [
             {
@@ -2001,6 +2219,8 @@
           "rivalId": "desiibasket.com-product-wagh-bakri-masala-chai-100-tea-bags-18uf4u",
           "rivalName": "Wagh Bakri Masala Chai 100 Tea Bags",
           "rivalDomain": "desiibasket.com",
+          "rivalClaimedDomain": "desiibasket.com",
+          "rivalExpectedDomain": "desiibasket.com",
           "rivalSourceUrl": "https://desiibasket.com/products/wagh-bakri-masala-chai-100-tea-bags",
           "rivalPrices": [
             {
@@ -2020,6 +2240,8 @@
         {
           "primaryId": "myjam.co.uk-product-indomie-mi-goreng-instant-fried-noodles-5-packs-c8y0v5",
           "primaryName": "Indomie Mi Goreng Instant Fried Noodles 5 Packs",
+          "primaryClaimedDomain": "myjam.co.uk",
+          "primaryExpectedDomain": "myjam.co.uk",
           "primarySourceUrl": "https://myjam.co.uk/products/indomie-mi-goreng-instant-fried-noodles-5-packs",
           "primaryPrices": [
             {
@@ -2031,6 +2253,8 @@
           "rivalId": "desiibasket.com-product-top-ramen-noodles-masala-1f4rot",
           "rivalName": "TOP RAMEN NOODLES- MASALA",
           "rivalDomain": "desiibasket.com",
+          "rivalClaimedDomain": "desiibasket.com",
+          "rivalExpectedDomain": "desiibasket.com",
           "rivalSourceUrl": "https://desiibasket.com/products/yellow-spilt-peas",
           "rivalPrices": [
             {
@@ -2185,6 +2409,8 @@
         {
           "primaryId": "colourpop.com-product-tapered-blending-brush-bqia84",
           "primaryName": "Tapered Blending Brush",
+          "primaryClaimedDomain": "colourpop.com",
+          "primaryExpectedDomain": "colourpop.com",
           "primarySourceUrl": "https://colourpop.com/products/tapered-blending-brush",
           "primaryPrices": [
             {
@@ -2196,6 +2422,8 @@
           "rivalId": "morphe.com-product-m331-tapered-blender-eyeshadow-brush-1fvl1j",
           "rivalName": "M331 Tapered Blender Eyeshadow Brush",
           "rivalDomain": "morphe.com",
+          "rivalClaimedDomain": "morphe.com",
+          "rivalExpectedDomain": "morphe.com",
           "rivalSourceUrl": "https://www.morphe.com/products/m331-tapered-blender-eyeshadow-brush",
           "rivalPrices": [
             {
@@ -2217,6 +2445,8 @@
         {
           "primaryId": "colourpop.com-product-angled-eye-brush-181ql9",
           "primaryName": "Angled Eye Brush",
+          "primaryClaimedDomain": "colourpop.com",
+          "primaryExpectedDomain": "colourpop.com",
           "primarySourceUrl": "https://colourpop.com/products/angled-eye-brush",
           "primaryPrices": [
             {
@@ -2228,6 +2458,8 @@
           "rivalId": "morphe.com-product-m363-angled-eyeliner-brush-nq03ya",
           "rivalName": "M363 Angled Eyeliner Brush",
           "rivalDomain": "morphe.com",
+          "rivalClaimedDomain": "morphe.com",
+          "rivalExpectedDomain": "morphe.com",
           "rivalSourceUrl": "https://www.morphe.com/products/m363-angled-eyeliner-brush",
           "rivalPrices": [
             {
@@ -2249,6 +2481,8 @@
         {
           "primaryId": "colourpop.com-product-brow-dual-ended-brush-1qc2kv",
           "primaryName": "Brow Dual Ended Brush",
+          "primaryClaimedDomain": "colourpop.com",
+          "primaryExpectedDomain": "colourpop.com",
           "primarySourceUrl": "https://colourpop.com/products/brow-dual-ended-brush",
           "primaryPrices": [
             {
@@ -2260,6 +2494,8 @@
           "rivalId": "morphe.com-product-m401-dual-ended-angled-brow-brush-spoolie-upyiaf",
           "rivalName": "M401 Dual-Ended Angled Brow Brush & Spoolie",
           "rivalDomain": "morphe.com",
+          "rivalClaimedDomain": "morphe.com",
+          "rivalExpectedDomain": "morphe.com",
           "rivalSourceUrl": "https://www.morphe.com/products/m401-dual-ended-angled-brow-brush-spoolie",
           "rivalPrices": [
             {
@@ -2281,6 +2517,8 @@
         {
           "primaryId": "colourpop.com-product-babydoll-glow-bundle-1m5bc8",
           "primaryName": "Babydoll Glow Bundle",
+          "primaryClaimedDomain": "colourpop.com",
+          "primaryExpectedDomain": "colourpop.com",
           "primarySourceUrl": "https://colourpop.com/products/babydoll-glow-bundle",
           "primaryPrices": [
             {
@@ -2292,6 +2530,8 @@
           "rivalId": "morphe.com-product-plum-cloudlight-soft-glow-diffused-blush-lip-fil-wk45s5",
           "rivalName": "Plum Cloudlight Soft Glow Diffused Blush & Lip Filter Hydroplump Soft Matte Lipstick Bundle",
           "rivalDomain": "morphe.com",
+          "rivalClaimedDomain": "morphe.com",
+          "rivalExpectedDomain": "morphe.com",
           "rivalSourceUrl": "https://www.morphe.com/products/plum-cloudlight-soft-glow-diffused-blush-lip-filter-hydroplump-soft-matte-lipstick-bundle",
           "rivalPrices": [
             {
@@ -2313,6 +2553,8 @@
         {
           "primaryId": "colourpop.com-product-medium-dome-brush-feecfi",
           "primaryName": "Medium Dome Brush",
+          "primaryClaimedDomain": "colourpop.com",
+          "primaryExpectedDomain": "colourpop.com",
           "primarySourceUrl": "https://colourpop.com/products/medium-dome-brush",
           "primaryPrices": [
             {
@@ -2324,6 +2566,8 @@
           "rivalId": "morphe.com-product-m104-domed-foundation-brush-9gk6mq",
           "rivalName": "M104 Domed Foundation Brush",
           "rivalDomain": "morphe.com",
+          "rivalClaimedDomain": "morphe.com",
+          "rivalExpectedDomain": "morphe.com",
           "rivalSourceUrl": "https://www.morphe.com/products/m104-domed-foundation-brush",
           "rivalPrices": [
             {
@@ -2345,6 +2589,8 @@
         {
           "primaryId": "colourpop.com-product-large-powder-brush-dpqyqg",
           "primaryName": "Large Powder Brush",
+          "primaryClaimedDomain": "colourpop.com",
+          "primaryExpectedDomain": "colourpop.com",
           "primarySourceUrl": "https://colourpop.com/products/large-powder-brush",
           "primaryPrices": [
             {
@@ -2356,6 +2602,8 @@
           "rivalId": "morphe.com-product-m161-large-rounded-powder-brush-tszowx",
           "rivalName": "M161 Large Rounded Powder Brush",
           "rivalDomain": "morphe.com",
+          "rivalClaimedDomain": "morphe.com",
+          "rivalExpectedDomain": "morphe.com",
           "rivalSourceUrl": "https://www.morphe.com/products/m161-large-rounded-powder-brush",
           "rivalPrices": [
             {
@@ -2377,6 +2625,8 @@
         {
           "primaryId": "colourpop.com-product-ultimate-brush-roll-1a1tlo",
           "primaryName": "Ultimate Brush Roll",
+          "primaryClaimedDomain": "colourpop.com",
+          "primaryExpectedDomain": "colourpop.com",
           "primarySourceUrl": "https://colourpop.com/products/ultimate-makeup-brush-roll",
           "primaryPrices": [
             {
@@ -2388,6 +2638,8 @@
           "rivalId": "morphe.com-product-ultimate-brush-set-ef6k65",
           "rivalName": "Ultimate Brush Set",
           "rivalDomain": "morphe.com",
+          "rivalClaimedDomain": "morphe.com",
+          "rivalExpectedDomain": "morphe.com",
           "rivalSourceUrl": "https://www.morphe.com/products/ultimate-brush-set",
           "rivalPrices": [
             {
@@ -2455,6 +2707,8 @@
         {
           "primaryId": "beardbrand.com-product-norse-winter-beard-balm-iz8ory",
           "primaryName": "Norse Winter Beard Balm",
+          "primaryClaimedDomain": "beardbrand.com",
+          "primaryExpectedDomain": "beardbrand.com",
           "primarySourceUrl": "https://www.beardbrand.com/products/norse-winter-beard-balm",
           "primaryPrices": [
             {
@@ -2466,6 +2720,8 @@
           "rivalId": "johnnie-ray.com-product-coldwater-beard-balm-176zkv",
           "rivalName": "Coldwater Beard Balm",
           "rivalDomain": "johnnie-ray.com",
+          "rivalClaimedDomain": "johnnie-ray.com",
+          "rivalExpectedDomain": "johnnie-ray.com",
           "rivalSourceUrl": "https://johnnie-ray.com/products/copy-coldwater-beard-balm",
           "rivalPrices": [
             {
@@ -2490,6 +2746,8 @@
         {
           "primaryId": "beardbrand.com-product-norse-winter-beard-oil-puvjs4",
           "primaryName": "Norse Winter Beard Oil",
+          "primaryClaimedDomain": "beardbrand.com",
+          "primaryExpectedDomain": "beardbrand.com",
           "primarySourceUrl": "https://www.beardbrand.com/products/norse-winter-beard-oil",
           "primaryPrices": [
             {
@@ -2506,6 +2764,8 @@
           "rivalId": "johnnie-ray.com-product-coldwater-beard-oil-a5rhem",
           "rivalName": "Coldwater Beard Oil",
           "rivalDomain": "johnnie-ray.com",
+          "rivalClaimedDomain": "johnnie-ray.com",
+          "rivalExpectedDomain": "johnnie-ray.com",
           "rivalSourceUrl": "https://johnnie-ray.com/products/coldwater-beard-oil",
           "rivalPrices": [
             {
@@ -2530,6 +2790,8 @@
         {
           "primaryId": "beardbrand.com-product-bold-fortune-beard-balm-xdh90",
           "primaryName": "Bold Fortune Beard Balm",
+          "primaryClaimedDomain": "beardbrand.com",
+          "primaryExpectedDomain": "beardbrand.com",
           "primarySourceUrl": "https://www.beardbrand.com/products/bold-fortune-beard-balm",
           "primaryPrices": [
             {
@@ -2541,6 +2803,8 @@
           "rivalId": "bushii.com-product-beard-balm-bergamot-1rjmsq",
           "rivalName": "Beard Balm - Bergamot",
           "rivalDomain": "bushii.com",
+          "rivalClaimedDomain": "bushii.com",
+          "rivalExpectedDomain": "bushii.com",
           "rivalSourceUrl": "https://bushii.com/products/bergamot-beard-balm",
           "rivalPrices": [
             {
@@ -2560,6 +2824,8 @@
         {
           "primaryId": "beardbrand.com-product-tree-ranger-beard-oil-1ij7gt",
           "primaryName": "Tree Ranger Beard Oil",
+          "primaryClaimedDomain": "beardbrand.com",
+          "primaryExpectedDomain": "beardbrand.com",
           "primarySourceUrl": "https://www.beardbrand.com/products/tree-ranger-beard-oil",
           "primaryPrices": [
             {
@@ -2576,6 +2842,8 @@
           "rivalId": "johnnie-ray.com-product-beard-growth-stimulator-oil-96zmws",
           "rivalName": "Beard Growth Stimulator Oil",
           "rivalDomain": "johnnie-ray.com",
+          "rivalClaimedDomain": "johnnie-ray.com",
+          "rivalExpectedDomain": "johnnie-ray.com",
           "rivalSourceUrl": "https://johnnie-ray.com/products/beard-growth-oil",
           "rivalPrices": [
             {
@@ -2595,6 +2863,8 @@
         {
           "primaryId": "beardbrand.com-product-bold-fortune-beard-oil-7gq69u",
           "primaryName": "Bold Fortune Beard Oil",
+          "primaryClaimedDomain": "beardbrand.com",
+          "primaryExpectedDomain": "beardbrand.com",
           "primarySourceUrl": "https://www.beardbrand.com/products/bold-fortune-beard-oil",
           "primaryPrices": [
             {
@@ -2611,6 +2881,8 @@
           "rivalId": "johnnie-ray.com-product-london-fog-beard-oil-iexn3x",
           "rivalName": "London Fog Beard Oil",
           "rivalDomain": "johnnie-ray.com",
+          "rivalClaimedDomain": "johnnie-ray.com",
+          "rivalExpectedDomain": "johnnie-ray.com",
           "rivalSourceUrl": "https://johnnie-ray.com/products/london-fog-beard-oil",
           "rivalPrices": [
             {
@@ -2630,6 +2902,8 @@
         {
           "primaryId": "beardbrand.com-product-beard-comb-1lxz9q",
           "primaryName": "Beard Comb",
+          "primaryClaimedDomain": "beardbrand.com",
+          "primaryExpectedDomain": "beardbrand.com",
           "primarySourceUrl": "https://www.beardbrand.com/products/beard-combs",
           "primaryPrices": [
             {
@@ -2646,6 +2920,8 @@
           "rivalId": "johnnie-ray.com-product-chicago-comb-model-11-carbon-fiber-beard-comb-7eiv8n",
           "rivalName": "Chicago Comb Model 11 - Carbon Fiber Beard Comb",
           "rivalDomain": "johnnie-ray.com",
+          "rivalClaimedDomain": "johnnie-ray.com",
+          "rivalExpectedDomain": "johnnie-ray.com",
           "rivalSourceUrl": "https://johnnie-ray.com/products/chicago-comb-11",
           "rivalPrices": [
             {
@@ -2755,6 +3031,8 @@
         {
           "primaryId": "brooklinen.com-product-e-gift-card-116gm2",
           "primaryName": "E-Gift Card",
+          "primaryClaimedDomain": "brooklinen.com",
+          "primaryExpectedDomain": "brooklinen.com",
           "primarySourceUrl": "https://www.brooklinen.com/products/rise-ai-giftcard",
           "primaryPrices": [
             {
@@ -2801,6 +3079,8 @@
           "rivalId": "snowehome.com-product-digital-gift-card-1u3rj8",
           "rivalName": "Digital Gift Card",
           "rivalDomain": "snowehome.com",
+          "rivalClaimedDomain": "snowehome.com",
+          "rivalExpectedDomain": "snowehome.com",
           "rivalSourceUrl": "https://snowehome.com/products/gift-card",
           "rivalPrices": [
             {
@@ -2822,6 +3102,8 @@
         {
           "primaryId": "brooklinen.com-product-e-gift-card-116gm2",
           "primaryName": "E-Gift Card",
+          "primaryClaimedDomain": "brooklinen.com",
+          "primaryExpectedDomain": "brooklinen.com",
           "primarySourceUrl": "https://www.brooklinen.com/products/rise-ai-giftcard",
           "primaryPrices": [
             {
@@ -2868,6 +3150,8 @@
           "rivalId": "cozyearth.com-product-digital-gift-card-1q2uzj",
           "rivalName": "Digital Gift Card",
           "rivalDomain": "cozyearth.com",
+          "rivalClaimedDomain": "cozyearth.com",
+          "rivalExpectedDomain": "cozyearth.com",
           "rivalSourceUrl": "https://cozyearth.com/products/gift-card",
           "rivalPrices": [
             {
@@ -2924,6 +3208,8 @@
         {
           "primaryId": "brooklinen.com-product-wool-dryer-balls-1vmqsy",
           "primaryName": "Wool Dryer Balls",
+          "primaryClaimedDomain": "brooklinen.com",
+          "primaryExpectedDomain": "brooklinen.com",
           "primarySourceUrl": "https://www.brooklinen.com/products/wool-dryer-balls",
           "primaryPrices": [
             {
@@ -2935,6 +3221,8 @@
           "rivalId": "cozyearth.com-product-wool-dryer-balls-1tfhbo",
           "rivalName": "Wool Dryer Balls",
           "rivalDomain": "cozyearth.com",
+          "rivalClaimedDomain": "cozyearth.com",
+          "rivalExpectedDomain": "cozyearth.com",
           "rivalSourceUrl": "https://cozyearth.com/products/wool-dryer-balls",
           "rivalPrices": [
             {
@@ -2961,6 +3249,8 @@
         {
           "primaryId": "brooklinen.com-product-down-alternative-comforter-1fijkr",
           "primaryName": "Down Alternative Comforter",
+          "primaryClaimedDomain": "brooklinen.com",
+          "primaryExpectedDomain": "brooklinen.com",
           "primarySourceUrl": "https://www.brooklinen.com/products/down-alternative-comforter",
           "primaryPrices": [
             {
@@ -3007,6 +3297,8 @@
           "rivalId": "cozyearth.com-product-down-alternative-comforter-ks3n16",
           "rivalName": "Down Alternative Comforter",
           "rivalDomain": "cozyearth.com",
+          "rivalClaimedDomain": "cozyearth.com",
+          "rivalExpectedDomain": "cozyearth.com",
           "rivalSourceUrl": "https://cozyearth.com/products/down-alternative-comforter",
           "rivalPrices": [
             {
@@ -3053,6 +3345,8 @@
         {
           "primaryId": "brooklinen.com-product-bedding-insert-bundle-96c1q5",
           "primaryName": "Bedding Insert Bundle",
+          "primaryClaimedDomain": "brooklinen.com",
+          "primaryExpectedDomain": "brooklinen.com",
           "primarySourceUrl": "https://www.brooklinen.com/products/bedding-insert-bundle",
           "primaryPrices": [
             {
@@ -3064,6 +3358,8 @@
           "rivalId": "cozyearth.com-product-down-alternative-insert-bundle-1ioe74",
           "rivalName": "Down Alternative Insert Bundle",
           "rivalDomain": "cozyearth.com",
+          "rivalClaimedDomain": "cozyearth.com",
+          "rivalExpectedDomain": "cozyearth.com",
           "rivalSourceUrl": "https://cozyearth.com/products/down-alternative-insert-bundle",
           "rivalPrices": [
             {
@@ -3110,6 +3406,8 @@
         {
           "primaryId": "brooklinen.com-product-woven-checkerboard-duvet-cover-v7if3a",
           "primaryName": "Woven Checkerboard Duvet Cover",
+          "primaryClaimedDomain": "brooklinen.com",
+          "primaryExpectedDomain": "brooklinen.com",
           "primarySourceUrl": "https://www.brooklinen.com/products/woven-checkerboard-duvet-cover",
           "primaryPrices": [
             {
@@ -3126,6 +3424,8 @@
           "rivalId": "snowehome.com-product-percale-duvet-cover-1ve2vt",
           "rivalName": "Percale Duvet Cover",
           "rivalDomain": "snowehome.com",
+          "rivalClaimedDomain": "snowehome.com",
+          "rivalExpectedDomain": "snowehome.com",
           "rivalSourceUrl": "https://snowehome.com/products/duvet-cover",
           "rivalPrices": [
             {
@@ -3152,11 +3452,15 @@
         {
           "primaryId": "brooklinen.com-product-luxe-sateen-flat-sheet-9xkedj",
           "primaryName": "Luxe Sateen Flat Sheet",
+          "primaryClaimedDomain": "brooklinen.com",
+          "primaryExpectedDomain": "brooklinen.com",
           "primarySourceUrl": "https://www.brooklinen.com/products/luxe-flat-sheet",
           "primaryPrices": [],
           "rivalId": "snowehome.com-product-sateen-sheet-set-qnyshu",
           "rivalName": "Sateen Sheet Set",
           "rivalDomain": "snowehome.com",
+          "rivalClaimedDomain": "snowehome.com",
+          "rivalExpectedDomain": "snowehome.com",
           "rivalSourceUrl": "https://snowehome.com/products/sateen-sheet-set",
           "rivalPrices": [
             {
@@ -3178,11 +3482,15 @@
         {
           "primaryId": "brooklinen.com-product-luxe-sateen-duvet-set-myip9h",
           "primaryName": "Luxe Sateen Duvet Set",
+          "primaryClaimedDomain": "brooklinen.com",
+          "primaryExpectedDomain": "brooklinen.com",
           "primarySourceUrl": "https://www.brooklinen.com/products/luxe-duvet-set",
           "primaryPrices": [],
           "rivalId": "snowehome.com-product-sateen-duvet-cover-18k5gm",
           "rivalName": "Sateen Duvet Cover",
           "rivalDomain": "snowehome.com",
+          "rivalClaimedDomain": "snowehome.com",
+          "rivalExpectedDomain": "snowehome.com",
           "rivalSourceUrl": "https://snowehome.com/products/sateen-duvet-cover",
           "rivalPrices": [
             {
@@ -3204,11 +3512,15 @@
         {
           "primaryId": "brooklinen.com-product-washed-european-linen-duvet-set-13nahb",
           "primaryName": "Washed European Linen Duvet Set",
+          "primaryClaimedDomain": "brooklinen.com",
+          "primaryExpectedDomain": "brooklinen.com",
           "primarySourceUrl": "https://www.brooklinen.com/products/washed-linen-duvet-set",
           "primaryPrices": [],
           "rivalId": "cozyearth.com-product-linen-duvet-set-1wkban",
           "rivalName": "Linen Duvet Set",
           "rivalDomain": "cozyearth.com",
+          "rivalClaimedDomain": "cozyearth.com",
+          "rivalExpectedDomain": "cozyearth.com",
           "rivalSourceUrl": "https://cozyearth.com/products/linen-duvet-set",
           "rivalPrices": [
             {
@@ -3240,6 +3552,8 @@
         {
           "primaryId": "brooklinen.com-product-dreamweave-waffle-robe-2lumjd",
           "primaryName": "Dreamweave Waffle Robe",
+          "primaryClaimedDomain": "brooklinen.com",
+          "primaryExpectedDomain": "brooklinen.com",
           "primarySourceUrl": "https://www.brooklinen.com/products/waffle-robe",
           "primaryPrices": [
             {
@@ -3256,6 +3570,8 @@
           "rivalId": "cozyearth.com-product-waffle-bath-robe-3gv33g",
           "rivalName": "Waffle Bath Robe",
           "rivalDomain": "cozyearth.com",
+          "rivalClaimedDomain": "cozyearth.com",
+          "rivalExpectedDomain": "cozyearth.com",
           "rivalSourceUrl": "https://cozyearth.com/products/waffle-bath-robe",
           "rivalPrices": [
             {
@@ -3277,11 +3593,15 @@
         {
           "primaryId": "brooklinen.com-product-washed-european-linen-duvet-cover-last-call-4sbcc3",
           "primaryName": "Washed European Linen Duvet Cover - Last Call",
+          "primaryClaimedDomain": "brooklinen.com",
+          "primaryExpectedDomain": "brooklinen.com",
           "primarySourceUrl": "https://www.brooklinen.com/products/washed-linen-duvet-cover-last-call",
           "primaryPrices": [],
           "rivalId": "cozyearth.com-product-linen-duvet-cover-last-chance-1pqzoa",
           "rivalName": "Linen Duvet Cover - Last Chance",
           "rivalDomain": "cozyearth.com",
+          "rivalClaimedDomain": "cozyearth.com",
+          "rivalExpectedDomain": "cozyearth.com",
           "rivalSourceUrl": "https://cozyearth.com/products/linen-duvet-cover-last-chance",
           "rivalPrices": [
             {
@@ -3313,11 +3633,15 @@
         {
           "primaryId": "brooklinen.com-product-washed-classic-percale-core-sheet-set-14fy6r",
           "primaryName": "Washed Classic Percale Core Sheet Set",
+          "primaryClaimedDomain": "brooklinen.com",
+          "primaryExpectedDomain": "brooklinen.com",
           "primarySourceUrl": "https://www.brooklinen.com/products/washed-classic-core-sheet-set",
           "primaryPrices": [],
           "rivalId": "snowehome.com-product-percale-sheet-set-1fg031",
           "rivalName": "Percale Sheet Set",
           "rivalDomain": "snowehome.com",
+          "rivalClaimedDomain": "snowehome.com",
+          "rivalExpectedDomain": "snowehome.com",
           "rivalSourceUrl": "https://snowehome.com/products/sheet-set",
           "rivalPrices": [
             {
@@ -3339,6 +3663,8 @@
         {
           "primaryId": "brooklinen.com-product-mulberry-silk-pillowcase-1slhad",
           "primaryName": "Mulberry Silk Pillowcase",
+          "primaryClaimedDomain": "brooklinen.com",
+          "primaryExpectedDomain": "brooklinen.com",
           "primarySourceUrl": "https://www.brooklinen.com/products/mulberry-silk-pillowcase",
           "primaryPrices": [
             {
@@ -3365,6 +3691,8 @@
           "rivalId": "cozyearth.com-product-silk-pillowcase-1064e1",
           "rivalName": "Silk Pillowcase",
           "rivalDomain": "cozyearth.com",
+          "rivalClaimedDomain": "cozyearth.com",
+          "rivalExpectedDomain": "cozyearth.com",
           "rivalSourceUrl": "https://cozyearth.com/products/silk-pillowcase",
           "rivalPrices": [
             {
@@ -3391,6 +3719,8 @@
         {
           "primaryId": "brooklinen.com-product-dreamweave-waffle-bath-towel-bundle-efeal5",
           "primaryName": "Dreamweave Waffle Bath Towel Bundle",
+          "primaryClaimedDomain": "brooklinen.com",
+          "primaryExpectedDomain": "brooklinen.com",
           "primarySourceUrl": "https://www.brooklinen.com/products/waffle-bath-towel-bundle",
           "primaryPrices": [
             {
@@ -3402,6 +3732,8 @@
           "rivalId": "cozyearth.com-product-complete-waffle-bath-bundle-avu66b",
           "rivalName": "Complete Waffle Bath Bundle",
           "rivalDomain": "cozyearth.com",
+          "rivalClaimedDomain": "cozyearth.com",
+          "rivalExpectedDomain": "cozyearth.com",
           "rivalSourceUrl": "https://cozyearth.com/products/complete-waffle-bath-bundle",
           "rivalPrices": [
             {
@@ -3601,6 +3933,8 @@
         {
           "primaryId": "glossier.com-product-lip-gloss-ztpv4k",
           "primaryName": "Lip Gloss",
+          "primaryClaimedDomain": "glossier.com",
+          "primaryExpectedDomain": "glossier.com",
           "primarySourceUrl": "https://www.glossier.com/en-de/products/lip-gloss",
           "primaryPrices": [
             {
@@ -3612,6 +3946,8 @@
           "rivalId": "rarebeauty.com-product-positive-light-luminizing-lip-gloss-r97ujh",
           "rivalName": "Positive Light Luminizing Lip Gloss",
           "rivalDomain": "rarebeauty.com",
+          "rivalClaimedDomain": "rarebeauty.com",
+          "rivalExpectedDomain": "rarebeauty.com",
           "rivalSourceUrl": "https://www.rarebeauty.com/products/positive-light-luminizing-lip-gloss",
           "rivalPrices": [
             {
@@ -3633,6 +3969,8 @@
         {
           "primaryId": "glossier.com-product-boy-brow-arch-tuy3bz",
           "primaryName": "Boy Brow Arch",
+          "primaryClaimedDomain": "glossier.com",
+          "primaryExpectedDomain": "glossier.com",
           "primarySourceUrl": "https://www.glossier.com/en-de/products/boy-brow-arch",
           "primaryPrices": [
             {
@@ -3644,6 +3982,8 @@
           "rivalId": "rarebeauty.com-product-brow-harmony-precision-pencil-ts4qva",
           "rivalName": "Brow Harmony Precision Pencil",
           "rivalDomain": "rarebeauty.com",
+          "rivalClaimedDomain": "rarebeauty.com",
+          "rivalExpectedDomain": "rarebeauty.com",
           "rivalSourceUrl": "https://www.rarebeauty.com/products/brow-harmony-precision-pencil",
           "rivalPrices": [
             {
@@ -3798,11 +4138,15 @@
         {
           "primaryId": "ruggable.com-product-world-map-blue-rug-yo9c2y",
           "primaryName": "World Map Blue Rug",
+          "primaryClaimedDomain": "ruggable.com",
+          "primaryExpectedDomain": "ruggable.com",
           "primarySourceUrl": "https://ruggable.com/products/world-map-blue-tufted-rug",
           "primaryPrices": [],
           "rivalId": "lorenacanals.us-product-rugcycled-washable-rug-world-map-m5j4ey",
           "rivalName": "RugCycled washable rug World Map",
           "rivalDomain": "lorenacanals.us",
+          "rivalClaimedDomain": "lorenacanals.us",
+          "rivalExpectedDomain": "lorenacanals.us",
           "rivalSourceUrl": "https://lorenacanals.us/products/rugcycled-washable-rug-world-map",
           "rivalPrices": [
             {
@@ -3824,11 +4168,15 @@
         {
           "primaryId": "ruggable.com-product-tropical-green-outdoor-rug-1ck1aw",
           "primaryName": "Tropical Green Outdoor Rug",
+          "primaryClaimedDomain": "ruggable.com",
+          "primaryExpectedDomain": "ruggable.com",
           "primarySourceUrl": "https://ruggable.com/products/tropical-green-outdoor-rug",
           "primaryPrices": [],
           "rivalId": "lorenacanals.us-product-washable-rug-tropical-green-199a0n",
           "rivalName": "WASHABLE RUG TROPICAL GREEN",
           "rivalDomain": "lorenacanals.us",
+          "rivalClaimedDomain": "lorenacanals.us",
+          "rivalExpectedDomain": "lorenacanals.us",
           "rivalSourceUrl": "https://lorenacanals.us/products/washable-rug-tropical-green",
           "rivalPrices": [
             {
@@ -3850,11 +4198,15 @@
         {
           "primaryId": "ruggable.com-product-impasto-natural-rug-1d50vz",
           "primaryName": "Impasto Natural Rug",
+          "primaryClaimedDomain": "ruggable.com",
+          "primaryExpectedDomain": "ruggable.com",
           "primarySourceUrl": "https://ruggable.com/products/impasto-natural-tufted-rug",
           "primaryPrices": [],
           "rivalId": "lorenacanals.us-product-handloom-area-rug-natural-1wq8dm",
           "rivalName": "Handloom Area Rug Natural",
           "rivalDomain": "lorenacanals.us",
+          "rivalClaimedDomain": "lorenacanals.us",
+          "rivalExpectedDomain": "lorenacanals.us",
           "rivalSourceUrl": "https://lorenacanals.us/products/handloom-rug-natural",
           "rivalPrices": [
             {
@@ -3876,11 +4228,15 @@
         {
           "primaryId": "ruggable.com-product-valencia-natural-rug-15cp9z",
           "primaryName": "Valencia Natural Rug",
+          "primaryClaimedDomain": "ruggable.com",
+          "primaryExpectedDomain": "ruggable.com",
           "primarySourceUrl": "https://ruggable.com/products/valencia-natural-tufted-rug",
           "primaryPrices": [],
           "rivalId": "lorenacanals.us-product-wool-area-rug-natural-1tlgwt",
           "rivalName": "WOOL AREA RUG NATURAL",
           "rivalDomain": "lorenacanals.us",
+          "rivalClaimedDomain": "lorenacanals.us",
+          "rivalExpectedDomain": "lorenacanals.us",
           "rivalSourceUrl": "https://lorenacanals.us/products/woolable-rug-area-natural",
           "rivalPrices": [
             {
@@ -3902,11 +4258,15 @@
         {
           "primaryId": "ruggable.com-product-meridian-blue-flatwoven-rug-zsu165",
           "primaryName": "Meridian Blue Flatwoven Rug",
+          "primaryClaimedDomain": "ruggable.com",
+          "primaryExpectedDomain": "ruggable.com",
           "primarySourceUrl": "https://ruggable.com/products/meridian-blue",
           "primaryPrices": [],
           "rivalId": "rugsusa.com-product-flatwoven-pip-trellis-with-tassels-rug-blue-1xmvfi",
           "rivalName": "Flatwoven Pip Trellis with Tassels Rug | Blue",
           "rivalDomain": "rugsusa.com",
+          "rivalClaimedDomain": "rugsusa.com",
+          "rivalExpectedDomain": "rugsusa.com",
           "rivalSourceUrl": "https://www.rugsusa.com/products/flatwoven-pip-trellis-with-tassels-rug-blue",
           "rivalPrices": [
             {
@@ -3933,11 +4293,15 @@
         {
           "primaryId": "ruggable.com-product-ophelia-warm-natural-flatwoven-rug-1et95m",
           "primaryName": "Ophelia Warm Natural Flatwoven Rug",
+          "primaryClaimedDomain": "ruggable.com",
+          "primaryExpectedDomain": "ruggable.com",
           "primarySourceUrl": "https://ruggable.com/products/ophelia-warm-natural-rug",
           "primaryPrices": [],
           "rivalId": "lorenacanals.us-product-wool-silhouette-rug-natural-du2eq9",
           "rivalName": "WOOL SILHOUETTE RUG NATURAL",
           "rivalDomain": "lorenacanals.us",
+          "rivalClaimedDomain": "lorenacanals.us",
+          "rivalExpectedDomain": "lorenacanals.us",
           "rivalSourceUrl": "https://lorenacanals.us/products/woolable-rug-silhouette-natural",
           "rivalPrices": [
             {
@@ -3959,11 +4323,15 @@
         {
           "primaryId": "ruggable.com-product-kavi-mosaic-stone-rug-5a1306",
           "primaryName": "Kavi Mosaic Stone Rug",
+          "primaryClaimedDomain": "ruggable.com",
+          "primaryExpectedDomain": "ruggable.com",
           "primarySourceUrl": "https://ruggable.com/products/kavi-mosaic-stone-tufted-rug",
           "primaryPrices": [],
           "rivalId": "lorenacanals.us-product-wool-area-rug-mosaic-sandstone-txh4je",
           "rivalName": "WOOL AREA RUG MOSAIC SANDSTONE",
           "rivalDomain": "lorenacanals.us",
+          "rivalClaimedDomain": "lorenacanals.us",
+          "rivalExpectedDomain": "lorenacanals.us",
           "rivalSourceUrl": "https://lorenacanals.us/products/wool-rug-mosaic-sandstone",
           "rivalPrices": [
             {
@@ -4032,11 +4400,15 @@
         {
           "primaryId": "hexclad.com-product-hybrid-oval-dutch-oven-6-5-qt-1yrfd3",
           "primaryName": "Hybrid Oval Dutch Oven, 6.5-Qt",
+          "primaryClaimedDomain": "hexclad.com",
+          "primaryExpectedDomain": "hexclad.com",
           "primarySourceUrl": "https://hexclad.com/products/6-5qt-hybrid-oval-dutch-oven",
           "primaryPrices": [],
           "rivalId": "carawayhome.com-product-dutch-oven-1i1nhl",
           "rivalName": "Dutch Oven",
           "rivalDomain": "carawayhome.com",
+          "rivalClaimedDomain": "carawayhome.com",
+          "rivalExpectedDomain": "carawayhome.com",
           "rivalSourceUrl": "https://www.carawayhome.com/products/dutch-oven",
           "rivalPrices": [
             {
@@ -4063,11 +4435,15 @@
         {
           "primaryId": "hexclad.com-product-hybrid-oval-dutch-oven-6-5-qt-1yrfd3",
           "primaryName": "Hybrid Oval Dutch Oven, 6.5-Qt",
+          "primaryClaimedDomain": "hexclad.com",
+          "primaryExpectedDomain": "hexclad.com",
           "primarySourceUrl": "https://hexclad.com/products/6-5qt-hybrid-oval-dutch-oven",
           "primaryPrices": [],
           "rivalId": "misen.com-product-6-75-qt-stainless-steel-dutch-oven-1gvt3t",
           "rivalName": "6.75 QT Stainless Steel Dutch Oven",
           "rivalDomain": "misen.com",
+          "rivalClaimedDomain": "misen.com",
+          "rivalExpectedDomain": "misen.com",
           "rivalSourceUrl": "https://misen.com/products/stainless-dutch-oven",
           "rivalPrices": [
             {
@@ -4089,11 +4465,15 @@
         {
           "primaryId": "hexclad.com-product-master-series-damascus-steel-steak-knife-set-4-p-ljbei5",
           "primaryName": "Master Series Damascus Steel Steak Knife Set, 4-pc",
+          "primaryClaimedDomain": "hexclad.com",
+          "primaryExpectedDomain": "hexclad.com",
           "primarySourceUrl": "https://hexclad.com/products/master-series-japanese-damascus-steel-steak-knife-set-4pc",
           "primaryPrices": [],
           "rivalId": "greenpan.us-product-premiere-titanium-cutlery-4-piece-steak-knife-se-u6uuoq",
           "rivalName": "Premiere Titanium Cutlery 4-Piece Steak Knife Set with Walnut Handles",
           "rivalDomain": "greenpan.us",
+          "rivalClaimedDomain": "greenpan.us",
+          "rivalExpectedDomain": "greenpan.us",
           "rivalSourceUrl": "https://www.greenpan.us/products/premiere-titanium-cutlery-4-piece-steak-knife-set",
           "rivalPrices": [
             {
@@ -4115,11 +4495,15 @@
         {
           "primaryId": "hexclad.com-product-master-series-damascus-steel-steak-knife-set-4-p-ljbei5",
           "primaryName": "Master Series Damascus Steel Steak Knife Set, 4-pc",
+          "primaryClaimedDomain": "hexclad.com",
+          "primaryExpectedDomain": "hexclad.com",
           "primarySourceUrl": "https://hexclad.com/products/master-series-japanese-damascus-steel-steak-knife-set-4pc",
           "primaryPrices": [],
           "rivalId": "misen.com-product-4-piece-serrated-steak-knives-german-steel-final-59bdh5",
           "rivalName": "4-Piece Serrated Steak Knives (German Steel) - Final Sale - Gray",
           "rivalDomain": "misen.com",
+          "rivalClaimedDomain": "misen.com",
+          "rivalExpectedDomain": "misen.com",
           "rivalSourceUrl": "https://misen.com/products/steak-knives-serrated-4-piece-gray",
           "rivalPrices": [
             {
@@ -4141,11 +4525,15 @@
         {
           "primaryId": "hexclad.com-product-walnut-cutting-board-medium-1wgh8m",
           "primaryName": "Walnut Cutting Board, Medium",
+          "primaryClaimedDomain": "hexclad.com",
+          "primaryExpectedDomain": "hexclad.com",
           "primarySourceUrl": "https://hexclad.com/products/walnut-medium-cutting-board",
           "primaryPrices": [],
           "rivalId": "carawayhome.com-product-medium-cutting-board-i30qp7",
           "rivalName": "Medium Cutting Board",
           "rivalDomain": "carawayhome.com",
+          "rivalClaimedDomain": "carawayhome.com",
+          "rivalExpectedDomain": "carawayhome.com",
           "rivalSourceUrl": "https://www.carawayhome.com/products/medium-cutting-board",
           "rivalPrices": [
             {
@@ -4167,11 +4555,15 @@
         {
           "primaryId": "hexclad.com-product-hybrid-double-burner-griddle-1bdwrt",
           "primaryName": "Hybrid Double Burner Griddle",
+          "primaryClaimedDomain": "hexclad.com",
+          "primaryExpectedDomain": "hexclad.com",
           "primarySourceUrl": "https://hexclad.com/products/hybrid-double-burner-griddle",
           "primaryPrices": [],
           "rivalId": "carawayhome.com-product-double-burner-griddle-18rq2a",
           "rivalName": "Double Burner Griddle",
           "rivalDomain": "carawayhome.com",
+          "rivalClaimedDomain": "carawayhome.com",
+          "rivalExpectedDomain": "carawayhome.com",
           "rivalSourceUrl": "https://www.carawayhome.com/products/double-burner-griddle",
           "rivalPrices": [
             {
@@ -4198,11 +4590,15 @@
         {
           "primaryId": "hexclad.com-product-tempered-glass-lid-10-pn66dn",
           "primaryName": "Tempered Glass Lid, 10\"",
+          "primaryClaimedDomain": "hexclad.com",
+          "primaryExpectedDomain": "hexclad.com",
           "primarySourceUrl": "https://hexclad.com/products/tempered-glass-lid-10",
           "primaryPrices": [],
           "rivalId": "misen.com-product-10-glass-lid-1seja4",
           "rivalName": "10\" Glass Lid",
           "rivalDomain": "misen.com",
+          "rivalClaimedDomain": "misen.com",
+          "rivalExpectedDomain": "misen.com",
           "rivalSourceUrl": "https://misen.com/products/glass-lid-10-inch",
           "rivalPrices": [
             {
@@ -4224,11 +4620,15 @@
         {
           "primaryId": "hexclad.com-product-walnut-cutting-board-large-qxlf5z",
           "primaryName": "Walnut Cutting Board, Large",
+          "primaryClaimedDomain": "hexclad.com",
+          "primaryExpectedDomain": "hexclad.com",
           "primarySourceUrl": "https://hexclad.com/products/walnut-large-cutting-board",
           "primaryPrices": [],
           "rivalId": "carawayhome.com-product-large-cutting-board-1kdsz1",
           "rivalName": "Large Cutting Board",
           "rivalDomain": "carawayhome.com",
+          "rivalClaimedDomain": "carawayhome.com",
+          "rivalExpectedDomain": "carawayhome.com",
           "rivalSourceUrl": "https://www.carawayhome.com/products/large-cutting-board",
           "rivalPrices": [
             {
@@ -4250,11 +4650,15 @@
         {
           "primaryId": "hexclad.com-product-tempered-glass-lid-12-1nswcs",
           "primaryName": "Tempered Glass Lid, 12\"",
+          "primaryClaimedDomain": "hexclad.com",
+          "primaryExpectedDomain": "hexclad.com",
           "primarySourceUrl": "https://hexclad.com/products/tempered-glass-lid-12",
           "primaryPrices": [],
           "rivalId": "misen.com-product-12-glass-lid-12g92j",
           "rivalName": "12\" Glass Lid",
           "rivalDomain": "misen.com",
+          "rivalClaimedDomain": "misen.com",
+          "rivalExpectedDomain": "misen.com",
           "rivalSourceUrl": "https://misen.com/products/glass-lid-12-inch",
           "rivalPrices": [
             {
@@ -4276,11 +4680,15 @@
         {
           "primaryId": "hexclad.com-product-steak-knife-bistecca-plate-set-8-pc-espresso-11mpbg",
           "primaryName": "Steak Knife & Bistecca Plate Set, 8-pc (Espresso)",
+          "primaryClaimedDomain": "hexclad.com",
+          "primaryExpectedDomain": "hexclad.com",
           "primarySourceUrl": "https://hexclad.com/products/steak-knife-bistecca-plate-set-8-pc-espresso",
           "primaryPrices": [],
           "rivalId": "greenpan.us-product-elite-cutlery-8-piece-steak-knife-set-with-light-5yjs0v",
           "rivalName": "Elite Cutlery 8-Piece Steak Knife Set with Light-Wood Handles",
           "rivalDomain": "greenpan.us",
+          "rivalClaimedDomain": "greenpan.us",
+          "rivalExpectedDomain": "greenpan.us",
           "rivalSourceUrl": "https://www.greenpan.us/products/elite-cutlery-8-piece-steak-knife-set-with-light-wood-handles",
           "rivalPrices": [
             {
@@ -4302,11 +4710,15 @@
         {
           "primaryId": "hexclad.com-product-tempered-glass-lid-8-zkuxur",
           "primaryName": "Tempered Glass Lid, 8\"",
+          "primaryClaimedDomain": "hexclad.com",
+          "primaryExpectedDomain": "hexclad.com",
           "primarySourceUrl": "https://hexclad.com/products/tempered-glass-lid-8",
           "primaryPrices": [],
           "rivalId": "misen.com-product-8-glass-lid-1ok4k4",
           "rivalName": "8\" Glass Lid",
           "rivalDomain": "misen.com",
+          "rivalClaimedDomain": "misen.com",
+          "rivalExpectedDomain": "misen.com",
           "rivalSourceUrl": "https://misen.com/products/glass-lid-8-inch",
           "rivalPrices": [
             {
@@ -4328,11 +4740,15 @@
         {
           "primaryId": "hexclad.com-product-tempered-glass-lid-11-5-emizy2",
           "primaryName": "Tempered Glass Lid, 11.5”",
+          "primaryClaimedDomain": "hexclad.com",
+          "primaryExpectedDomain": "hexclad.com",
           "primarySourceUrl": "https://hexclad.com/products/tempered-glass-lid-11-5",
           "primaryPrices": [],
           "rivalId": "carawayhome.com-product-glass-lid-17ju0r",
           "rivalName": "Glass Lid",
           "rivalDomain": "carawayhome.com",
+          "rivalClaimedDomain": "carawayhome.com",
+          "rivalExpectedDomain": "carawayhome.com",
           "rivalSourceUrl": "https://www.carawayhome.com/products/glass-lid",
           "rivalPrices": [
             {
@@ -4374,11 +4790,15 @@
         {
           "primaryId": "hexclad.com-product-damascus-steel-steak-knife-set-8-pc-espresso-1a29m0",
           "primaryName": "Damascus Steel Steak Knife Set, 8-pc (Espresso)",
+          "primaryClaimedDomain": "hexclad.com",
+          "primaryExpectedDomain": "hexclad.com",
           "primarySourceUrl": "https://hexclad.com/products/damascus-steel-steak-knife-set-8-pc-espresso",
           "primaryPrices": [],
           "rivalId": "greenpan.us-product-elite-cutlery-8-piece-steak-knife-set-16rv6j",
           "rivalName": "Elite Cutlery 8-Piece Steak Knife Set",
           "rivalDomain": "greenpan.us",
+          "rivalClaimedDomain": "greenpan.us",
+          "rivalExpectedDomain": "greenpan.us",
           "rivalSourceUrl": "https://www.greenpan.us/products/elite-cutlery-8-piece-steak-knife-set",
           "rivalPrices": [
             {
@@ -4400,11 +4820,15 @@
         {
           "primaryId": "hexclad.com-product-12-hybrid-wok-with-lid-nhxlk",
           "primaryName": "12\" Hybrid Wok with Lid",
+          "primaryClaimedDomain": "hexclad.com",
+          "primaryExpectedDomain": "hexclad.com",
           "primarySourceUrl": "https://hexclad.com/products/12-hexclad-wok-w-lid",
           "primaryPrices": [],
           "rivalId": "misen.com-product-12-pre-seasoned-carbon-steel-wok-tl0pj2",
           "rivalName": "12\" Pre-Seasoned Carbon Steel Wok",
           "rivalDomain": "misen.com",
+          "rivalClaimedDomain": "misen.com",
+          "rivalExpectedDomain": "misen.com",
           "rivalSourceUrl": "https://misen.com/products/carbon-steel-wok",
           "rivalPrices": [
             {
@@ -4515,11 +4939,15 @@
         {
           "primaryId": "mejuri.com-product-mini-heart-studs-i8nmlg",
           "primaryName": "Mini Heart Studs",
+          "primaryClaimedDomain": "mejuri.com",
+          "primaryExpectedDomain": "mejuri.com",
           "primarySourceUrl": "https://mejuri.com/de/de/products/mini-heart-studs",
           "primaryPrices": [],
           "rivalId": "babygold.com-product-mini-heart-stud-earrings-f2hko4",
           "rivalName": "Mini Heart Stud Earrings",
           "rivalDomain": "babygold.com",
+          "rivalClaimedDomain": "babygold.com",
+          "rivalExpectedDomain": "babygold.com",
           "rivalSourceUrl": "https://www.babygold.com/products/mini-heart-stud-earrings",
           "rivalPrices": [
             {
@@ -4546,11 +4974,15 @@
         {
           "primaryId": "mejuri.com-product-diamond-eternity-band-10dp1u",
           "primaryName": "Diamond Eternity Band",
+          "primaryClaimedDomain": "mejuri.com",
+          "primaryExpectedDomain": "mejuri.com",
           "primarySourceUrl": "https://mejuri.com/de/de/products/diamond-eternity-band",
           "primaryPrices": [],
           "rivalId": "babygold.com-product-diamond-bezel-eternity-band-ojm1vz",
           "rivalName": "Diamond Bezel Eternity Band",
           "rivalDomain": "babygold.com",
+          "rivalClaimedDomain": "babygold.com",
+          "rivalExpectedDomain": "babygold.com",
           "rivalSourceUrl": "https://www.babygold.com/products/14kt-gold-bubble-collection-band",
           "rivalPrices": [
             {
@@ -4572,11 +5004,15 @@
         {
           "primaryId": "mejuri.com-product-zodiac-charm-pendant-1bfcm2",
           "primaryName": "Zodiac Charm Pendant",
+          "primaryClaimedDomain": "mejuri.com",
+          "primaryExpectedDomain": "mejuri.com",
           "primarySourceUrl": "https://mejuri.com/de/de/products/zodiac-charm-pendant",
           "primaryPrices": [],
           "rivalId": "babygold.com-product-zodiac-medallion-charm-5kd5wz",
           "rivalName": "Zodiac Medallion Charm",
           "rivalDomain": "babygold.com",
+          "rivalClaimedDomain": "babygold.com",
+          "rivalExpectedDomain": "babygold.com",
           "rivalSourceUrl": "https://www.babygold.com/products/zodiac-medallion-charm",
           "rivalPrices": [
             {
@@ -4598,11 +5034,15 @@
         {
           "primaryId": "mejuri.com-product-diamond-coil-ring-1pjmc6",
           "primaryName": "Diamond Coil Ring",
+          "primaryClaimedDomain": "mejuri.com",
+          "primaryExpectedDomain": "mejuri.com",
           "primarySourceUrl": "https://mejuri.com/de/de/products/diamond-coil-ring",
           "primaryPrices": [],
           "rivalId": "babygold.com-product-diamond-coil-ring-dg2bwx",
           "rivalName": "Diamond Coil Ring",
           "rivalDomain": "babygold.com",
+          "rivalClaimedDomain": "babygold.com",
+          "rivalExpectedDomain": "babygold.com",
           "rivalSourceUrl": "https://www.babygold.com/products/14k-gold-diamond-coil-ring",
           "rivalPrices": [
             {
@@ -4624,11 +5064,15 @@
         {
           "primaryId": "mejuri.com-product-diamond-letter-charm-11wis3",
           "primaryName": "Diamond Letter Charm",
+          "primaryClaimedDomain": "mejuri.com",
+          "primaryExpectedDomain": "mejuri.com",
           "primarySourceUrl": "https://mejuri.com/de/de/products/diamond-letter-pendant",
           "primaryPrices": [],
           "rivalId": "babygold.com-product-diamond-pave-letter-charm-162l1k",
           "rivalName": "Diamond Pave Letter Charm",
           "rivalDomain": "babygold.com",
+          "rivalClaimedDomain": "babygold.com",
+          "rivalExpectedDomain": "babygold.com",
           "rivalSourceUrl": "https://www.babygold.com/products/diamond-pave-letter-charm",
           "rivalPrices": [
             {
@@ -4660,11 +5104,15 @@
         {
           "primaryId": "mejuri.com-product-diamond-letter-bracelet-p4mbwe",
           "primaryName": "Diamond Letter Bracelet",
+          "primaryClaimedDomain": "mejuri.com",
+          "primaryExpectedDomain": "mejuri.com",
           "primarySourceUrl": "https://mejuri.com/de/de/products/diamond-letter-bracelet",
           "primaryPrices": [],
           "rivalId": "babygold.com-product-diamond-pave-letter-bracelet-10bcsr",
           "rivalName": "Diamond Pave Letter Bracelet",
           "rivalDomain": "babygold.com",
+          "rivalClaimedDomain": "babygold.com",
+          "rivalExpectedDomain": "babygold.com",
           "rivalSourceUrl": "https://www.babygold.com/products/diamond-pave-letter-bracelet",
           "rivalPrices": [
             {
@@ -4721,11 +5169,15 @@
         {
           "primaryId": "mejuri.com-product-pave-diamond-evil-eye-necklace-ayaxza",
           "primaryName": "Pavé Diamond Evil Eye Necklace",
+          "primaryClaimedDomain": "mejuri.com",
+          "primaryExpectedDomain": "mejuri.com",
           "primarySourceUrl": "https://mejuri.com/de/de/products/pave-diamond-evil-eye-necklace",
           "primaryPrices": [],
           "rivalId": "babygold.com-product-pave-diamond-evil-eye-necklace-1fjgqu",
           "rivalName": "Pave Diamond Evil Eye Necklace",
           "rivalDomain": "babygold.com",
+          "rivalClaimedDomain": "babygold.com",
+          "rivalExpectedDomain": "babygold.com",
           "rivalSourceUrl": "https://www.babygold.com/products/pave-diamond-evil-eye-necklace",
           "rivalPrices": [
             {
@@ -4757,11 +5209,15 @@
         {
           "primaryId": "mejuri.com-product-diamond-necklace-sd5vwr",
           "primaryName": "Diamond Necklace",
+          "primaryClaimedDomain": "mejuri.com",
+          "primaryExpectedDomain": "mejuri.com",
           "primarySourceUrl": "https://mejuri.com/de/de/products/diamond-necklace",
           "primaryPrices": [],
           "rivalId": "babygold.com-product-diamond-bezel-strand-necklace-h9zkye",
           "rivalName": "Diamond Bezel Strand Necklace",
           "rivalDomain": "babygold.com",
+          "rivalClaimedDomain": "babygold.com",
+          "rivalExpectedDomain": "babygold.com",
           "rivalSourceUrl": "https://www.babygold.com/products/diamond-bezel-strand-necklace",
           "rivalPrices": [
             {
@@ -4818,11 +5274,15 @@
         {
           "primaryId": "mejuri.com-product-baguette-studs-1ypgor",
           "primaryName": "Baguette Studs",
+          "primaryClaimedDomain": "mejuri.com",
+          "primaryExpectedDomain": "mejuri.com",
           "primarySourceUrl": "https://mejuri.com/de/de/products/mini-baguette-diamond-studs",
           "primaryPrices": [],
           "rivalId": "babygold.com-product-baguette-diamond-stud-earrings-63fiyg",
           "rivalName": "Baguette Diamond Stud Earrings",
           "rivalDomain": "babygold.com",
+          "rivalClaimedDomain": "babygold.com",
+          "rivalExpectedDomain": "babygold.com",
           "rivalSourceUrl": "https://www.babygold.com/products/baguette-diamond-stud-earrings",
           "rivalPrices": [
             {
@@ -4849,11 +5309,15 @@
         {
           "primaryId": "mejuri.com-product-zodiac-pendant-necklace-uu8ez8",
           "primaryName": "Zodiac Pendant Necklace",
+          "primaryClaimedDomain": "mejuri.com",
+          "primaryExpectedDomain": "mejuri.com",
           "primarySourceUrl": "https://mejuri.com/de/de/products/zodiac-pendant-necklace",
           "primaryPrices": [],
           "rivalId": "babygold.com-product-zodiac-medallion-necklace-1dbjdt",
           "rivalName": "Zodiac Medallion Necklace",
           "rivalDomain": "babygold.com",
+          "rivalClaimedDomain": "babygold.com",
+          "rivalExpectedDomain": "babygold.com",
           "rivalSourceUrl": "https://www.babygold.com/products/zodiac-medallion-necklace",
           "rivalPrices": [
             {
@@ -4895,11 +5359,15 @@
         {
           "primaryId": "mejuri.com-product-wishbone-ring-1y4ouo",
           "primaryName": "Wishbone Ring",
+          "primaryClaimedDomain": "mejuri.com",
+          "primaryExpectedDomain": "mejuri.com",
           "primarySourceUrl": "https://mejuri.com/de/de/products/wishbone-ring",
           "primaryPrices": [],
           "rivalId": "babygold.com-product-wishbone-ring-ugtt08",
           "rivalName": "Wishbone Ring",
           "rivalDomain": "babygold.com",
+          "rivalClaimedDomain": "babygold.com",
+          "rivalExpectedDomain": "babygold.com",
           "rivalSourceUrl": "https://www.babygold.com/products/14k-gold-wishbone-ring",
           "rivalPrices": [
             {
@@ -4921,11 +5389,15 @@
         {
           "primaryId": "mejuri.com-product-pave-diamond-signet-pinky-ring-8xiodm",
           "primaryName": "Pavé Diamond Signet Pinky Ring",
+          "primaryClaimedDomain": "mejuri.com",
+          "primaryExpectedDomain": "mejuri.com",
           "primarySourceUrl": "https://mejuri.com/de/de/products/pave-diamond-signet-pinky-ring",
           "primaryPrices": [],
           "rivalId": "babygold.com-product-diamond-heart-pave-signet-ring-1yracs",
           "rivalName": "Diamond Heart Pave Signet Ring",
           "rivalDomain": "babygold.com",
+          "rivalClaimedDomain": "babygold.com",
+          "rivalExpectedDomain": "babygold.com",
           "rivalSourceUrl": "https://www.babygold.com/products/14kt-gold-shapes-collection-pave-heart-ring",
           "rivalPrices": [
             {
@@ -4947,11 +5419,15 @@
         {
           "primaryId": "mejuri.com-product-single-mini-heart-stud-rfysgs",
           "primaryName": "Single Mini Heart Stud",
+          "primaryClaimedDomain": "mejuri.com",
+          "primaryExpectedDomain": "mejuri.com",
           "primarySourceUrl": "https://mejuri.com/de/de/products/mini-heart-stud",
           "primaryPrices": [],
           "rivalId": "babygold.com-product-enamel-heart-shape-studs-4gmplu",
           "rivalName": "Enamel Heart Shape Studs",
           "rivalDomain": "babygold.com",
+          "rivalClaimedDomain": "babygold.com",
+          "rivalExpectedDomain": "babygold.com",
           "rivalSourceUrl": "https://www.babygold.com/products/enamel-heart-shape-studs",
           "rivalPrices": [
             {
@@ -4973,11 +5449,15 @@
         {
           "primaryId": "mejuri.com-product-pave-diamond-slim-signet-19hac3",
           "primaryName": "Pavé Diamond Slim Signet",
+          "primaryClaimedDomain": "mejuri.com",
+          "primaryExpectedDomain": "mejuri.com",
           "primarySourceUrl": "https://mejuri.com/de/de/products/pave-diamond-slim-signet-ring",
           "primaryPrices": [],
           "rivalId": "babygold.com-product-diamond-pave-signet-ring-1dwiay",
           "rivalName": "Diamond Pave Signet Ring",
           "rivalDomain": "babygold.com",
+          "rivalClaimedDomain": "babygold.com",
+          "rivalExpectedDomain": "babygold.com",
           "rivalSourceUrl": "https://www.babygold.com/products/14kt-gold-shapes-collection-pave-oval-ring",
           "rivalPrices": [
             {
@@ -4999,11 +5479,15 @@
         {
           "primaryId": "mejuri.com-product-chain-necklace-r91c7d",
           "primaryName": "Chain Necklace",
+          "primaryClaimedDomain": "mejuri.com",
+          "primaryExpectedDomain": "mejuri.com",
           "primarySourceUrl": "https://mejuri.com/de/de/products/chain-necklace",
           "primaryPrices": [],
           "rivalId": "babygold.com-product-box-chain-necklace-18ub3n",
           "rivalName": "Box Chain Necklace",
           "rivalDomain": "babygold.com",
+          "rivalClaimedDomain": "babygold.com",
+          "rivalExpectedDomain": "babygold.com",
           "rivalSourceUrl": "https://www.babygold.com/products/14k-gold-box-chain-necklace",
           "rivalPrices": [
             {
@@ -5050,11 +5534,15 @@
         {
           "primaryId": "mejuri.com-product-nomad-beaded-bracelet-1n7yyw",
           "primaryName": "Nomad Beaded Bracelet",
+          "primaryClaimedDomain": "mejuri.com",
+          "primaryExpectedDomain": "mejuri.com",
           "primarySourceUrl": "https://mejuri.com/de/de/products/nomad-beaded-bracelet",
           "primaryPrices": [],
           "rivalId": "babygold.com-product-beaded-bubble-bracelet-7h65if",
           "rivalName": "Beaded Bubble Bracelet",
           "rivalDomain": "babygold.com",
+          "rivalClaimedDomain": "babygold.com",
+          "rivalExpectedDomain": "babygold.com",
           "rivalSourceUrl": "https://www.babygold.com/products/beaded-bubble-bracelet",
           "rivalPrices": [
             {
@@ -5076,11 +5564,15 @@
         {
           "primaryId": "mejuri.com-product-nameplate-necklace-15pdaf",
           "primaryName": "Nameplate Necklace",
+          "primaryClaimedDomain": "mejuri.com",
+          "primaryExpectedDomain": "mejuri.com",
           "primarySourceUrl": "https://mejuri.com/de/de/products/nameplate-necklace",
           "primaryPrices": [],
           "rivalId": "babygold.com-product-custom-name-necklace-11qgmw",
           "rivalName": "Custom Name Necklace",
           "rivalDomain": "babygold.com",
+          "rivalClaimedDomain": "babygold.com",
+          "rivalExpectedDomain": "babygold.com",
           "rivalSourceUrl": "https://www.babygold.com/products/custom-name-necklace",
           "rivalPrices": [
             {
@@ -5127,11 +5619,15 @@
         {
           "primaryId": "mejuri.com-product-paperclip-chain-charm-necklace-o8qvun",
           "primaryName": "Paperclip Chain Charm Necklace",
+          "primaryClaimedDomain": "mejuri.com",
+          "primaryExpectedDomain": "mejuri.com",
           "primarySourceUrl": "https://mejuri.com/de/de/products/paperclip-chain-charm-necklace",
           "primaryPrices": [],
           "rivalId": "babygold.com-product-14k-paperclip-chain-necklace-1os9bz",
           "rivalName": "14K Paperclip Chain Necklace",
           "rivalDomain": "babygold.com",
+          "rivalClaimedDomain": "babygold.com",
+          "rivalExpectedDomain": "babygold.com",
           "rivalSourceUrl": "https://www.babygold.com/products/14k-paper-clip-chain-necklace",
           "rivalPrices": [
             {

@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -77,12 +77,67 @@ export function validHttpUrl(value) {
   catch { return false; }
 }
 
-export function validProductSource(product) {
+export function validProductSource(product, expectedDomain = product?.domain) {
   if (!validHttpUrl(product?.sourceUrl)) return false;
-  const expected = String(product?.domain || "").toLowerCase().replace(/^www\./, "");
+  const expected = String(expectedDomain || "").toLowerCase().replace(/^www\./, "");
   if (!expected) return false;
   const hostname = new URL(product.sourceUrl).hostname.toLowerCase().replace(/^www\./, "");
   return hostname === expected || hostname.endsWith(`.${expected}`);
+}
+
+export function validDirectComparison(primary, match) {
+  const comparison = match?.decision?.priceComparison;
+  if (!comparison || typeof comparison !== "object") return false;
+  const primaryPrices = (primary?.priceSignals || []).filter(validPrice);
+  const rivalPrices = (match?.product?.priceSignals || []).filter(validPrice);
+  return primaryPrices.some((primaryPrice) => rivalPrices.some((rivalPrice) => (
+    primaryPrice.currency.toUpperCase() === rivalPrice.currency.toUpperCase()
+    && String(comparison.primaryRaw || "").trim() === primaryPrice.raw.trim()
+    && String(comparison.rivalRaw || "").trim() === rivalPrice.raw.trim()
+  )));
+}
+
+export function isReusableTerminal(item) {
+  return terminalStatuses.has(String(item?.status || "").toLowerCase());
+}
+
+export function localFailureResult(domain, prior, error, finishedAt = now()) {
+  const reportId = String(prior?.reportId || "");
+  return {
+    domain,
+    reportId,
+    reportUrl: reportId ? `${baseUrl}/reports/${reportId}?view=products&layout=table` : "",
+    plan: prior?.plan || "unknown",
+    productLimit: prior?.productLimit ?? null,
+    status: "evaluation_error",
+    currentPhase: prior?.currentPhase || "matrix",
+    errorCode: "matrix_request_failure",
+    errorMessage: String(error?.message || error),
+    createdAt: prior?.createdAt || "",
+    completedAt: finishedAt,
+    runtimeSeconds: null,
+    documentAvailable: false,
+    primaryProducts: null,
+    verifiedCompetitors: null,
+    competitorDomains: [],
+    competitorProducts: null,
+    assessedProducts: null,
+    acceptedMatches: null,
+    acceptedPricedMatches: null,
+    dualPricedMatches: null,
+    directPriceDeltas: null,
+    comparisonUsefulness: "unknown",
+    acceptedPairsWithBothImages: null,
+    imageCoveragePercent: null,
+    suppressedAcceptedPairs: null,
+    missingRivalPriceViolations: null,
+    sourceViolations: null,
+    totalGaps: null,
+    manualReview: { reviewedPairCount: 0, identityViolations: 0, recommendationViolations: 0, findings: [] },
+    acceptedPairEvidence: [],
+    verdict: "FAIL",
+    verdictReasons: [String(error?.message || error)],
+  };
 }
 
 export function summarize(payload, startedAt, finishedAt) {
@@ -92,16 +147,22 @@ export function summarize(payload, startedAt, finishedAt) {
   const comparison = blocks.find((block) => block?.type === "product-comparison") || {};
   const documentAvailable = blocks.length > 0;
   const competitors = blocks.filter((block) => block?.type === "competitor");
+  const competitorDomains = new Set(competitors.map((item) => String(item?.domain || "").toLowerCase().replace(/^www\./, "")).filter(Boolean));
   const rows = Array.isArray(comparison.rows) ? comparison.rows : [];
   const matches = rows.flatMap((row) => (Array.isArray(row?.matches) ? row.matches : [])
     .filter((match) => match?.product)
     .map((match) => ({ primary: row.primary, match })));
   const pricedMatches = matches.filter(({ match }) => (match.product?.priceSignals || []).some(validPrice));
   const dualPricedMatches = pricedMatches.filter(({ primary }) => (primary?.priceSignals || []).some(validPrice));
-  const directPriceDeltas = matches.filter(({ match }) => Boolean(match?.decision?.priceComparison)).length;
+  const directPriceDeltas = matches.filter(({ primary, match }) => validDirectComparison(primary, match)).length;
   const bothImages = matches.filter(({ primary, match }) => validHttpUrl(primary?.imageUrl) && validHttpUrl(match.product?.imageUrl)).length;
   const missingRivalPriceViolations = matches.filter(({ match }) => !(match.product?.priceSignals || []).some(validPrice)).length;
-  const sourceViolations = matches.filter(({ primary, match }) => !validProductSource(primary) || !validProductSource(match.product)).length;
+  const sourceViolations = matches.filter(({ primary, match }) => {
+    const rivalDomain = String(match.product?.domain || match.domain || "").toLowerCase().replace(/^www\./, "");
+    return !validProductSource(primary, run.primaryDomain)
+      || !competitorDomains.has(rivalDomain)
+      || !validProductSource(match.product, rivalDomain);
+  }).length;
   const primaryProducts = documentAvailable ? Number(report?.primaryProducts?.totalCount || comparison?.coverage?.primaryProductsAvailable || 0) : null;
   const competitorProducts = documentAvailable ? Number(comparison?.coverage?.competitorProductsAvailable || 0) : null;
   const assessed = documentAvailable ? Number(comparison?.matching?.primaryProductsAssessed || 0) : null;
@@ -158,17 +219,21 @@ export function summarize(payload, startedAt, finishedAt) {
     acceptedPairEvidence: matches.map(({ primary, match }) => ({
       primaryId: String(primary?.id || ""),
       primaryName: String(primary?.name || ""),
+      primaryClaimedDomain: String(primary?.domain || ""),
+      primaryExpectedDomain: String(run.primaryDomain || ""),
       primarySourceUrl: String(primary?.sourceUrl || ""),
       primaryPrices: (primary?.priceSignals || []).filter(validPrice),
       rivalId: String(match.product?.id || ""),
       rivalName: String(match.product?.name || ""),
       rivalDomain: String(match.product?.domain || match.domain || ""),
+      rivalClaimedDomain: String(match.product?.domain || ""),
+      rivalExpectedDomain: String(match.product?.domain || match.domain || ""),
       rivalSourceUrl: String(match.product?.sourceUrl || ""),
       rivalPrices: (match.product?.priceSignals || []).filter(validPrice),
       verdict: String(match?.assessment?.verdict || ""),
       reasons: Array.isArray(match?.assessment?.reasons) ? match.assessment.reasons : [],
       contradictions: Array.isArray(match?.assessment?.contradictions) ? match.assessment.contradictions : [],
-      directPriceComparison: Boolean(match?.decision?.priceComparison),
+      directPriceComparison: validDirectComparison(primary, match),
       recommendedMove: String(match?.decision?.recommendedMove || ""),
     })),
     verdict,
@@ -177,8 +242,16 @@ export function summarize(payload, startedAt, finishedAt) {
 }
 
 async function loadArtifact() {
-  try { return JSON.parse(await readFile(outputPath, "utf8")); }
-  catch { return { schemaVersion: 1, baseUrl, startedAt: now(), completedAt: null, concurrency, domains, reports: [] }; }
+  try { return parseArtifactText(await readFile(outputPath, "utf8")); }
+  catch (error) {
+    if (error?.code === "ENOENT") return { schemaVersion: 1, baseUrl, startedAt: now(), completedAt: null, concurrency, domains, reports: [] };
+    throw error;
+  }
+}
+
+export function parseArtifactText(text) {
+  try { return JSON.parse(text); }
+  catch (error) { throw new Error(`Evaluation artifact is unreadable; refusing to create duplicate reports: ${error?.message || error}`); }
 }
 
 let persistQueue = Promise.resolve();
@@ -186,14 +259,16 @@ function persist(artifact) {
   const snapshot = `${JSON.stringify(artifact, null, 2)}\n`;
   persistQueue = persistQueue.then(async () => {
     await mkdir(dirname(outputPath), { recursive: true });
-    await writeFile(outputPath, snapshot, "utf8");
+    const temporaryPath = `${outputPath}.${process.pid}.${Date.now()}.tmp`;
+    await writeFile(temporaryPath, snapshot, "utf8");
+    await rename(temporaryPath, outputPath);
   });
   return persistQueue;
 }
 
 async function runDomain(domain, artifact) {
   const existing = artifact.reports.find((item) => item.domain === domain);
-  if (existing && terminalStatuses.has(String(existing.status || "").toLowerCase()) && !refresh) return existing;
+  if (existing && isReusableTerminal(existing) && !refresh) return existing;
   const startedAt = now();
   let publicId = String(existing?.reportId || existingReportIds[domain] || "");
   if (publicId) {
@@ -325,8 +400,7 @@ export async function main() {
       try { await runDomain(domain, artifact); }
       catch (error) {
         const prior = artifact.reports.find((item) => item.domain === domain);
-        const reportId = String(prior?.reportId || "");
-        const result = { domain, reportId, reportUrl: reportId ? `${baseUrl}/reports/${reportId}?view=products&layout=table` : "", plan: prior?.plan || "unknown", productLimit: prior?.productLimit ?? null, status: "failed", currentPhase: "matrix", errorCode: "matrix_request_failure", errorMessage: String(error?.message || error), createdAt: prior?.createdAt || "", completedAt: now(), runtimeSeconds: null, documentAvailable: false, primaryProducts: null, verifiedCompetitors: null, competitorDomains: [], competitorProducts: null, assessedProducts: null, acceptedMatches: null, acceptedPricedMatches: null, dualPricedMatches: null, directPriceDeltas: null, comparisonUsefulness: "unknown", acceptedPairsWithBothImages: null, imageCoveragePercent: null, suppressedAcceptedPairs: null, missingRivalPriceViolations: null, sourceViolations: null, totalGaps: null, manualReview: { reviewedPairCount: 0, identityViolations: 0, recommendationViolations: 0, findings: [] }, acceptedPairEvidence: [], verdict: "FAIL", verdictReasons: [String(error?.message || error)] };
+        const result = localFailureResult(domain, prior, error);
         artifact.reports = [...artifact.reports.filter((item) => item.domain !== domain), result];
         await persist(artifact);
       }
