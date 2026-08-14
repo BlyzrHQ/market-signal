@@ -145,9 +145,9 @@ function currencyAmountExpression(currency: string) {
   return new RegExp(`(?:${token})\\s*(${amount})|(${amount})\\s*(?:${token})`, "giu");
 }
 
-function currencyFromMarkup(value: string) {
+function currenciesFromMarkup(value: string) {
   const decoded = normalizeLocalizedNumbers(decodeEvidence(value).replace(/<[^>]*>/g, " "));
-  return Object.keys(CURRENCY_TOKENS).find((currency) => currencyAmountExpression(currency).test(decoded)) || "";
+  return Object.keys(CURRENCY_TOKENS).filter((currency) => currencyAmountExpression(currency).test(decoded));
 }
 
 function publicImageFromScope(scope: string, sourceUrl: string) {
@@ -212,7 +212,12 @@ function markedAmounts(markup: string, currency: string) {
 
 export function extractScopedProductPageEvidence(document: string, sourceUrl = "https://product.invalid/") {
   const scope = productScope(document);
-  const observedCurrency = currencyFromMarkup(scope) || confirmedProductCurrency(document, { allowStructured: false });
+  const markedCurrencies = currenciesFromMarkup(scope);
+  const observedCurrency = markedCurrencies.length === 1
+    ? markedCurrencies[0]
+    : markedCurrencies.length > 1
+      ? ""
+      : confirmedProductCurrency(document, { allowStructured: false });
   const currency = isSupportedCurrency(observedCurrency) ? observedCurrency.trim().toUpperCase() : "";
   const variationAttribute = scope.match(/data-product_variations\s*=\s*(["'])([\s\S]*?)\1/i)?.[2] || "";
   if (variationAttribute && currency) {

@@ -171,6 +171,12 @@ test("recovers public Shopify variants while preserving a non-comparable price b
   }
 });
 
+test("does not collapse visible multi-currency evidence into a single point price", () => {
+  const evidence = extractScopedProductPageEvidence('<h1>Product</h1><div class="summary"><p class="price">USD 12.50 / EUR 10.99</p></div>');
+  assert.deepEqual(evidence.priceSignals, []);
+  assert.equal(evidence.basis, "unavailable");
+});
+
 test("rejects unsupported or negative scoped price markup", () => {
   const unsupported = extractScopedProductPageEvidence('<html><head><meta property="og:price:currency" content="XXX"></head><body><h1>Product</h1><p class="price">XXX 12.50</p></body></html>');
   const negativePrefix = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">-$12.50</p></body></html>');

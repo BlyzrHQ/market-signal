@@ -46,6 +46,7 @@ test("confirms Shopify currency only from same-page public metadata", () => {
   assert.equal(confirmedProductCurrency('<meta property="product:price:currency" content="GBP">'), "GBP");
   assert.equal(confirmedProductCurrency('<script>Shopify.currency = {"active":"AED","rate":"1.0"}</script>'), "AED");
   assert.equal(confirmedProductCurrency('<meta property="og:price:currency" content="USD"><script>Shopify.currency = {"active":"EUR"}</script>'), "");
+  assert.equal(confirmedProductCurrency('<meta property="product:price:currency" content="USD"><meta property="og:price:currency" content="EUR">'), "");
   assert.equal(confirmedProductCurrency('<script type="application/ld+json">{"priceCurrency":"EUR"}</script>'), "EUR");
   assert.equal(confirmedProductCurrency("Prices in pounds"), "");
 });
@@ -119,6 +120,28 @@ test("keeps unresolved Shopify variant prices non-comparable", () => {
     currency: "GBP",
   });
   assert.deepEqual(result.product?.priceSignals.map((signal) => signal.amount), [2, 3.5]);
+});
+
+test("quantity steering excludes differently sized Shopify variants while preserving same-size choices", () => {
+  const result = parseShopifyProduct({
+    payload: {
+      title: "Acme Tea",
+      handle: "acme-tea",
+      variants: [
+        { title: "100g Red", price: 800 },
+        { title: "100g Blue", price: 850 },
+        { title: "500g", price: 3000 },
+      ],
+    },
+    requestedKey: "acme-tea",
+    sourceUrl: "https://shop.test/products/acme-tea",
+    domain: "shop.test",
+    observedAt: "2026-07-20T10:00:00.000Z",
+    currency: "USD",
+    expectedQuantity: parseCanonicalQuantity("100g") || undefined,
+  });
+  assert.deepEqual(result.product?.priceSignals.map((signal) => signal.amount), [8, 8.5]);
+  assert.equal(result.product?.priceSignals.some((signal) => signal.amount === 30), false);
 });
 
 test("uses Shopify's fixed hundredths contract for zero- and three-decimal currencies", () => {

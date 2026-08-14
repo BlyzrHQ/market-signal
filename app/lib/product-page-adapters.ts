@@ -115,11 +115,13 @@ function isoCurrency(value: unknown) {
 }
 
 export function confirmedProductCurrency(document: string, options: { allowStructured?: boolean } = {}) {
-  const metadata = metaContent(document, "product:price:currency")
-    || metaContent(document, "og:price:currency")
-    || metaContent(document, "priceCurrency");
+  const metadata = [
+    metaContent(document, "product:price:currency"),
+    metaContent(document, "og:price:currency"),
+    metaContent(document, "priceCurrency"),
+  ];
   const shopify = document.match(/Shopify\.currency\s*=\s*\{[^}]*["']active["']\s*:\s*["']([A-Za-z]{3})["']/i)?.[1];
-  const direct = [...new Set([metadata, shopify].map(isoCurrency).filter(Boolean))];
+  const direct = [...new Set([...metadata, shopify].map(isoCurrency).filter(Boolean))];
   if (direct.length > 1) return "";
   if (direct.length === 1) return direct[0];
   if (options.allowStructured === false) return "";
@@ -214,7 +216,7 @@ export function parseShopifyProduct(input: {
   const quantityMatches = input.expectedQuantity
     ? variants.filter((variant) => quantitiesEqual(input.expectedQuantity, shopifyVariantQuantity(name, variant)))
     : [];
-  const selectedVariants = quantityMatches.length === 1 ? quantityMatches : variants;
+  const selectedVariants = input.expectedQuantity && quantityMatches.length > 0 ? quantityMatches : variants;
   const priceSignals = input.currency
     ? [...new Map(selectedVariants.map((variant) => minorUnitPrice(variant.price, input.currency, 2)).filter((value): value is ProductPriceSignal => Boolean(value)).map((signal) => [`${signal.currency}|${signal.amount}`, signal])).values()]
     : [];
