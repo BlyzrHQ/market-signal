@@ -405,6 +405,10 @@ test("rejects an entire current price container when any member is invalid", () 
     const recurringLeadBeforeCurrent = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Phone 15</h1><p class="price">${recurringLead}</p><p class="price">$999.00</p>`);
     assert.deepEqual(recurringLeadBeforeCurrent.priceSignals, [{ raw: "USD 999", currency: "USD", amount: 999 }], recurringLead);
   }
+  for (const billingCycleLead of ['Pay per billing cycle from $20.00', 'Pay every billing cycle from $20.00', 'Pay each billing cycle from $20.00', 'Per billing cycle: $20.00']) {
+    const recurringLeadBeforeCurrent = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Phone 15</h1><p class="price">${billingCycleLead}</p><p class="price">$999.00</p>`);
+    assert.deepEqual(recurringLeadBeforeCurrent.priceSignals, [{ raw: "USD 999", currency: "USD", amount: 999 }], billingCycleLead);
+  }
   for (const modelPrefix of ['RTX 4090', 'SKU 123', '15 PRO']) {
     const recurringModelPrefix = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">${modelPrefix} — Pay monthly from $20.00</p><p class="price">$999.00</p>`);
     assert.deepEqual(recurringModelPrefix.priceSignals, [{ raw: "USD 999", currency: "USD", amount: 999 }], modelPrefix);
@@ -430,6 +434,10 @@ test("rejects an entire current price container when any member is invalid", () 
   for (const markup of ['Save $20.00', 'Save up to $20.00', 'Save an extra $20.00', 'Save an additional $20.00', 'Save as much as $20.00', 'Discount $20.00', 'Coupon value $20.00', 'Deposit $20.00', 'Down payment $20.00', '$20.00 down payment', 'Finance from $20.00/month', 'Only $20.00 / month payment plan', 'Only $20.00 / qtr payment plan', 'As low as $20.00/mo', '$20.00/wk', '$20.00/yr', '$20.00 monthly', 'Only $20.00 billed monthly', 'Only $20.00: billed monthly', 'Only $20.00 — billed monthly', 'Only $20.00 (billed monthly)', 'Only $20.00 — (billed monthly)', 'Only $20.00 billed per month', 'Only $20.00 billed on a monthly basis', 'Only $20.00 charged on the first of each month', 'Only $20.00 paid monthly', 'Only $20.00 payable per month', 'Only $20.00 due each month', 'Only $20.00 due on a monthly basis', 'Only $20.00 on a monthly basis', 'Only $20.00 on the first of each month', 'Pay $20.00 biweekly', 'Pay $20.00 bi-weekly', 'Get a $20.00 gift card', 'Get a $20.00 gift-card', 'Get a $20.00 giftcard', 'Get a $20.00 eGift Card', 'Gift card worth $20.00 now', 'Receive a $20.00 gift certificate', 'Receive a $20.00 voucher', 'Promo code value $20.00', 'Promo-code value $20.00', 'Get $20.00 in the form of store credit', 'Get $20.00 in store-credit', '$20.00 savings', '$20.00 instant savings', '$20.00 rebate', '$20.00 cashback', '$20.00 store credit', 'Get $20.00 in store credit', 'Get $20.00 worth of store credit', '$20.00 reward points']) {
     const labeledDiscount = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">${markup}</p>`);
     assert.deepEqual(labeledDiscount.priceSignals, [], markup);
+  }
+  for (const billingCycleSuffix of ['Only $20.00 per billing cycle', 'Only $20.00 every billing cycle', 'Only $20.00 each billing cycle']) {
+    const recurringPrice = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">${billingCycleSuffix}</p>`);
+    assert.deepEqual(recurringPrice.priceSignals, [], billingCycleSuffix);
   }
   const nestedSecondary = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="sale-price"><span class="regular-price"><span class="discount">$120.00</span></span><span class="current-value">$100.00</span><span class="deposit-price">$20.00</span></div>');
   assert.deepEqual(nestedSecondary.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
