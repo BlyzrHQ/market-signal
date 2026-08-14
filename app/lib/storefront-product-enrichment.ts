@@ -234,7 +234,8 @@ function scopedPriceSignals(currency: string, values: number[]) {
 }
 
 function markedAmounts(markup: string, currency: string) {
-  const decoded = normalizeLocalizedNumbers(decodeEvidence(markup.replace(/<[^>]*>/g, " ")))
+  const withoutSavings = markup.replace(/<(span|div|small|em|strong)\b[^>]*>[\s\S]*?\b(?:save|saving|savings|discount)\b[\s\S]*?<\/\1\s*>/giu, " ");
+  const decoded = normalizeLocalizedNumbers(decodeEvidence(withoutSavings.replace(/<[^>]*>/g, " ")))
     .replace(/[\p{Pd}\u207B\u208B\u2212\u2213\u2238\u2296\u229D\u229F\u2796\u2A29-\u2A2C\u2A3A\u2A41\u2A6C]/gu, "-");
   if (/&#(?:x[0-9a-f]+|\d+)/i.test(decoded)) return [];
   const expression = currencyAmountExpression(currency);
