@@ -375,6 +375,12 @@ test("rejects an entire current price container when any member is invalid", () 
   assert.deepEqual(wholesaleNotSale.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
   const wholesaleSaleNotCurrent = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="wholesale-sale-price">$60.00</div><p class="price">$100.00</p>');
   assert.deepEqual(wholesaleSaleNotCurrent.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const dataClassNotCurrent = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div data-class="sale-price" class="wholesale-price">$60.00</div><p class="price">$100.00</p>');
+  assert.deepEqual(dataClassNotCurrent.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const nestedCurrent = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class=current-price><div class=price-regular>$120.00</div><span class=price-sale>$100.00</span></div>');
+  assert.deepEqual(nestedCurrent.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const nestedBadge = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="sale-price"><div class="badge">$20 OFF</div><span>$100.00</span></div>');
+  assert.deepEqual(nestedBadge.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
   const trailingCurrencyRange = extractScopedProductPageEvidence('<h1>Product</h1><p class="price">100.00 - 120.00 USD</p>');
   assert.deepEqual(trailingCurrencyRange.priceSignals.map((signal) => signal.amount), [100, 120]);
   assert.equal(trailingCurrencyRange.basis, "range");

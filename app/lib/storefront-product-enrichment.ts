@@ -230,15 +230,19 @@ function preferredCurrentPriceMarkup(scope: string) {
   const accepted = new Set(["product-price-sale", "sale-price", "current-price", "price-current"]);
   for (const opening of scope.matchAll(/<(div|span)\b[^>]*>/gi)) {
     const tag = opening[0];
-    const classValue = tag.match(/\bclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+    const classValue = tag.match(/\sclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
     const classes = (classValue?.[1] || classValue?.[2] || classValue?.[3] || "")
       .split(/\s+/)
       .map((value) => value.toLowerCase().replace(/[_-]+/g, "-"));
     if (!classes.some((value) => accepted.has(value))) continue;
     const start = opening.index ?? 0;
-    const closing = new RegExp(`</${opening[1]}\\s*>`, "i").exec(scope.slice(start + tag.length));
-    if (!closing) continue;
-    return scope.slice(start, start + tag.length + (closing.index ?? 0) + closing[0].length);
+    const elementTags = [...scope.slice(start).matchAll(new RegExp(`<\\/?${opening[1]}\\b[^>]*>`, "gi"))];
+    let depth = 0;
+    for (const elementTag of elementTags) {
+      depth += /^<\//.test(elementTag[0]) ? -1 : 1;
+      if (depth !== 0) continue;
+      return scope.slice(start, start + (elementTag.index ?? 0) + elementTag[0].length);
+    }
   }
   return "";
 }
@@ -254,9 +258,9 @@ function markedAmounts(markup: string, currency: string) {
   const withoutSecondaryPrices = markup
     .replace(/<(s|del)\b[^>]*>[\s\S]*?<\/\1\s*>/giu, " ")
     .replace(/<(span|div|small|em|strong)\b[^>]*style\s*=\s*["'][^"']*text-decoration(?:-line)?\s*:\s*line-through[^"']*["'][^>]*>[\s\S]*?<\/\1\s*>/giu, " ")
-    .replace(/<(span|div|small|em|strong)\b[^>]*class\s*=\s*["'][^"']*(?:compare[-_ ]?at|old[-_ ]?price|list[-_ ]?price|saving|savings|discount)[^"']*["'][^>]*>[\s\S]*?<\/\1\s*>/giu, " ")
-    .replace(/<(span|div|small|em|strong)\b[^>]*class\s*=\s*[^\s>"']*(?:compare[-_]?at|old[-_]?price|list[-_]?price|saving|savings|discount)[^\s>"']*[^>]*>[\s\S]*?<\/\1\s*>/giu, " ")
-    .replace(/<(span|div|small|em|strong)\b[^>]*>[\s\S]*?\b(?:save|saving|savings|discount|compare\s+at|was)\b[\s\S]*?<\/\1\s*>/giu, " ");
+    .replace(/<(span|div|small|em|strong)\b[^>]*class\s*=\s*["'][^"']*(?:compare[-_ ]?at|old[-_ ]?price|list[-_ ]?price|regular[-_ ]?price|price[-_ ]?regular|saving|savings|discount)[^"']*["'][^>]*>[\s\S]*?<\/\1\s*>/giu, " ")
+    .replace(/<(span|div|small|em|strong)\b[^>]*class\s*=\s*[^\s>"']*(?:compare[-_]?at|old[-_]?price|list[-_]?price|regular[-_]?price|price[-_]?regular|saving|savings|discount)[^\s>"']*[^>]*>[\s\S]*?<\/\1\s*>/giu, " ")
+    .replace(/<(span|div|small|em|strong)\b[^>]*>[\s\S]*?\b(?:save|saving|savings|discount|compare\s+at|was|off)\b[\s\S]*?<\/\1\s*>/giu, " ");
   const decoded = normalizeLocalizedNumbers(decodeEvidence(withoutSecondaryPrices.replace(/<[^>]*>/g, " ")))
     .replace(/\b(?:save|saving|savings|discount|was|compare\s+at)\b[\s\S]*?\b(now|current(?:\s+price)?)\b/giu, "$1")
     .replace(/\b(?:regular|list|original|was)\b[\s\S]*?\b(sale|now|current(?:\s+price)?)\b/giu, "$1")
