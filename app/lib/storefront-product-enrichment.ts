@@ -294,7 +294,16 @@ function isUnitPriceClassToken(value: string) {
 }
 
 function hasIncentiveLabel(value: string) {
-  return /\b(?:gift\s+(?:card|certificate)|voucher|promo(?:tional)?\s+code|promotional\s+credit|store\s+credit)\b/iu.test(value);
+  const normalized = value
+    .replace(/([\p{Ll}])([\p{Lu}])/gu, "$1 $2")
+    .replace(/[_-]+/g, " ");
+  return /\b(?:(?:e\s*)?gift\s*(?:card|certificate)|voucher|promo(?:tional)?\s+code|promotional\s+credit|store\s*credit)\b/iu.test(normalized);
+}
+
+function hasRecurringPriceLead(value: string) {
+  const recurringAt = value.search(/\b(?:pay\s+)?(?:daily|weekly|biweekly|monthly|quarterly|yearly|annually)\b/iu);
+  const amountAt = value.search(/\d/u);
+  return recurringAt >= 0 && (amountAt < 0 || recurringAt < amountAt);
 }
 
 function elementMarkupByClassTokens(
@@ -339,6 +348,7 @@ function isSecondaryPriceMarkup(markup: string) {
   if (hasNestedSecondaryElement) return false;
   const text = decodeEvidence(markup).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   if (hasIncentiveLabel(text)) return true;
+  if (hasRecurringPriceLead(text)) return true;
   if (/\b(?:now|sale|current)\b/iu.test(text)) return false;
   return /^(?:compare\s+at|was|regular(?:\s+price)?|list\s+price|msrp|rrp|original(?:\s+price)?|retail(?:\s+price)?|deposit|down\s+payment|due\s+today|as\s+low\s+as|financ(?:e|ing)|lease|payment\s+plan|save\b|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|store\s+credit|coupon|rewards?)/iu.test(text);
 }
@@ -446,6 +456,7 @@ function markedAmounts(markup: string, currency: string) {
     const after = priceText.slice((matches[0].index ?? 0) + matches[0][0].length).trim();
     if (/\bsave\b[\s\S]*$/iu.test(before)
       || hasIncentiveLabel(before)
+      || hasRecurringPriceLead(before)
       || /\b(?:compare\s+at|regular\s+price|list\s+price|msrp|rrp|original\s+price|retail\s+price|deposit|down\s+payment|due\s+today|as\s+low\s+as|financ(?:e|ing)|lease|payment\s+plan|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|store\s+credit|coupon|rewards?)\b[\s\S]*$/iu.test(before)
       || /^(?:(?:[\p{L}-]+\s+){0,3})?(?:off|deposit|down\s+payment|due\s+today|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|back|store\s+credit|gift\s+card|credit|coupon|rewards?\s+points?|points?)\b/iu.test(after)
       || (after.length <= 80 && hasIncentiveLabel(after))
