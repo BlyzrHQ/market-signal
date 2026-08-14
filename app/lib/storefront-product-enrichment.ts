@@ -156,14 +156,15 @@ function currencyTokenExpression(currency: string) {
   return new RegExp(`(?:${token})`, "giu");
 }
 
-function currencyRangeExpression(currency: string) {
+function currencyRangeExpression(currency: string, requireCompleteSuffix = true) {
   const token = CURRENCY_TOKENS[currency] || currency.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const amount = `[+-]?${localizedAmountPattern(currency)}(?![\\d.,])`;
   const decimalAmount = `[+-]?${localizedAmountPattern(currency, true)}(?![\\d.,])`;
   const completePriceSuffix = "(?=\\s*(?:$|[.,;)]\\s*$|\\/(?:month|mo|year|yr)\\b|per\\s+(?:month|year)\\b|(?:(?:incl|excl)(?:uding)?\\.?\\s+(?:tax|vat)|(?:tax|vat)\\s+(?:included|excluded)|each|per\\s+item)\\b\\s*[.,;)]?\\s*$))";
   const ordinary = `(?:(?:${token})\\s*(${amount})\\s*(?:-|\\bto\\b)\\s*(${amount})|(${amount})\\s*(?:-|\\bto\\b)\\s*(${amount})\\s*(?:${token}))`;
   const slash = `(?:(?:${token})\\s*(${decimalAmount})\\s*\\/\\s*(${decimalAmount})|(${decimalAmount})\\s*\\/\\s*(${decimalAmount})\\s*(?:${token}))`;
-  return new RegExp(`(?:${ordinary}|${slash})${completePriceSuffix}`, "giu");
+  const suffix = requireCompleteSuffix ? completePriceSuffix : "(?=\\s*(?:$|[^\\p{L}%]))";
+  return new RegExp(`(?:${ordinary}|${slash})${suffix}`, "giu");
 }
 
 function localizedAmount(raw: string, currency: string) {
@@ -249,10 +250,14 @@ function markedAmounts(markup: string, currency: string) {
       ? decoded.slice((firstObservedAmount.index ?? 0) + firstObservedAmount[0].length, secondObservedAmount.index ?? 0)
       : "";
     const hasExplicitTokenRange = Boolean(secondObservedAmount && /^\s*(?:-|\/|to)\s*$/iu.test(between));
-    const hasSharedCurrencyRange = [...productPrefix.matchAll(currencyRangeExpression(currency))].length > 0;
-    priceText = hasExplicitTokenRange || hasSharedCurrencyRange
-      ? productPrefix
-      : decoded.slice(0, firstEnd);
+    const sharedCurrencyRange = [...productPrefix.matchAll(currencyRangeExpression(currency, false))][0];
+    if (hasExplicitTokenRange) {
+      priceText = productPrefix.slice(0, (secondObservedAmount!.index ?? 0) + secondObservedAmount![0].length);
+    } else if (sharedCurrencyRange) {
+      priceText = productPrefix.slice(0, (sharedCurrencyRange.index ?? 0) + sharedCurrencyRange[0].length);
+    } else {
+      priceText = decoded.slice(0, firstEnd);
+    }
   }
   const matches = [...priceText.matchAll(expression)];
   const tokenCount = [...priceText.matchAll(currencyTokenExpression(currency))].length;
