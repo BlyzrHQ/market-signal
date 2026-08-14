@@ -236,11 +236,12 @@ function scopedPriceSignals(currency: string, values: number[]) {
 function markedAmounts(markup: string, currency: string) {
   const withoutSecondaryPrices = markup
     .replace(/<(s|del)\b[^>]*>[\s\S]*?<\/\1\s*>/giu, " ")
+    .replace(/<(span|div|small|em|strong)\b[^>]*style\s*=\s*["'][^"']*text-decoration\s*:\s*line-through[^"']*["'][^>]*>[\s\S]*?<\/\1\s*>/giu, " ")
     .replace(/<(span|div|small|em|strong)\b[^>]*class\s*=\s*["'][^"']*(?:compare[-_ ]?at|old[-_ ]?price|list[-_ ]?price|saving|savings|discount)[^"']*["'][^>]*>[\s\S]*?<\/\1\s*>/giu, " ")
     .replace(/<(span|div|small|em|strong)\b[^>]*class\s*=\s*[^\s>"']*(?:compare[-_]?at|old[-_]?price|list[-_]?price|saving|savings|discount)[^\s>"']*[^>]*>[\s\S]*?<\/\1\s*>/giu, " ")
     .replace(/<(span|div|small|em|strong)\b[^>]*>[\s\S]*?\b(?:save|saving|savings|discount|compare\s+at|was)\b[\s\S]*?<\/\1\s*>/giu, " ");
   const decoded = normalizeLocalizedNumbers(decodeEvidence(withoutSecondaryPrices.replace(/<[^>]*>/g, " ")))
-    .replace(/\b(?:save|saving|savings|discount)\b[\s\S]*?\b(now|current(?:\s+price)?)\b/giu, "$1")
+    .replace(/\b(?:save|saving|savings|discount|was|compare\s+at)\b[\s\S]*?\b(now|current(?:\s+price)?)\b/giu, "$1")
     .replace(/[\p{Pd}\u207B\u208B\u2212\u2213\u2238\u2296\u229D\u229F\u2796\u2A29-\u2A2C\u2A3A\u2A41\u2A6C]/gu, "-");
   if (/&#(?:x[0-9a-f]+|\d+)/i.test(decoded)) return [];
   const expression = currencyAmountExpression(currency);
