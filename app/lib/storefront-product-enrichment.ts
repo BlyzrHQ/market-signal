@@ -232,9 +232,13 @@ function markedAmounts(markup: string, currency: string) {
   const decoded = normalizeLocalizedNumbers(decodeEvidence(markup.replace(/<[^>]*>/g, " ")))
     .replace(/[\p{Pd}\u207B\u208B\u2212\u2213\u2238\u2296\u229D\u229F\u2796\u2A29-\u2A2C\u2A3A\u2A41\u2A6C]/gu, "-");
   if (/&#(?:x[0-9a-f]+|\d+)/i.test(decoded)) return [];
-  const installmentAt = decoded.search(/\b(?:or\s+)?(?:pay\s+in\s+)?\d+\s+(?:interest[- ]free\s+)?(?:payments?|installments?)\b|\b(?:payment|installment)\s+plan\b/iu);
-  const priceText = installmentAt >= 0 ? decoded.slice(0, installmentAt) : decoded;
   const expression = currencyAmountExpression(currency);
+  const installmentAt = decoded.search(/\b(?:payments?|installments?|pay\s+in|payment\s+plan|installment\s+plan)\b/iu);
+  const firstObservedAmount = [...decoded.matchAll(expression)][0];
+  if (installmentAt >= 0 && (!firstObservedAmount || installmentAt < (firstObservedAmount.index ?? 0))) return [];
+  const priceText = installmentAt >= 0 && firstObservedAmount
+    ? decoded.slice(0, (firstObservedAmount.index ?? 0) + firstObservedAmount[0].length)
+    : decoded;
   const matches = [...priceText.matchAll(expression)];
   const tokenCount = [...priceText.matchAll(currencyTokenExpression(currency))].length;
   if (matches.length === 0 || matches.length !== tokenCount) return [];
