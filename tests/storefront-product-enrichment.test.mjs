@@ -198,6 +198,8 @@ test("rejects unsupported or negative scoped price markup", () => {
   const labeledNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">Price: &minus;$12.50</p></body></html>');
   const entityLabeledNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">Price&colon;&minus;$12.50</p></body></html>');
   const equalsEntityNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">Price&equals;&minus;$12.50</p></body></html>');
+  const semicolonlessDecimalNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&#45 $12.50</p></body></html>');
+  const semicolonlessHexNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&#x2d $12.50</p></body></html>');
   assert.deepEqual(unsupported.priceSignals, []);
   assert.deepEqual(negativePrefix.priceSignals, []);
   assert.deepEqual(negativeSpaced.priceSignals, []);
@@ -218,6 +220,8 @@ test("rejects unsupported or negative scoped price markup", () => {
   assert.deepEqual(labeledNegative.priceSignals, []);
   assert.deepEqual(entityLabeledNegative.priceSignals, []);
   assert.deepEqual(equalsEntityNegative.priceSignals, []);
+  assert.deepEqual(semicolonlessDecimalNegative.priceSignals, []);
+  assert.deepEqual(semicolonlessHexNegative.priceSignals, []);
 });
 
 test("preserves both ends of a scoped same-currency price range", () => {
@@ -334,6 +338,53 @@ test("does not label a Shopify adapter price when structured and active storefro
   }
 });
 
+test("does not fall back to structured currency when direct metadata currencies conflict", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({ title: "CornerStone Enhanced Visibility Beanie", handle: "cornerstone-enhanced-visibility-beanie", variants: [{ title: "Default Title", price: 1340 }] }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><meta property="product:price:currency" content="USD"><meta property="og:price:currency" content="EUR"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", offers: { price: "0", priceCurrency: "USD" } })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not infer Shopify adapter currency from a symbol-only zero placeholder", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({ title: "CornerStone Enhanced Visibility Beanie", handle: "cornerstone-enhanced-visibility-beanie", variants: [{ title: "Default Title", price: 1340 }] }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", offers: { price: "$0" } })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not collapse a partial structured range into its positive endpoint", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", offers: { lowPrice: 0, highPrice: 19.99, priceCurrency: "USD" } })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/shop/cornerstone-enhanced-visibility-beanie" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("does not use a recommendation block price as scoped target evidence", async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
@@ -428,7 +479,7 @@ test("does not assign a Shopify fallback price when the matched product exposes 
   };
   try {
     const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
-    assert.deepEqual(result.products[0].priceSignals, [{ raw: "EUR 10", currency: "EUR", amount: 10, period: undefined }]);
+    assert.deepEqual(result.products[0].priceSignals, []);
   } finally {
     globalThis.fetch = originalFetch;
   }

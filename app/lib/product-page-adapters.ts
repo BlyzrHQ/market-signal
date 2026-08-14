@@ -114,14 +114,22 @@ function isoCurrency(value: unknown) {
   return /^[A-Z]{3}$/.test(candidate) ? candidate : "";
 }
 
-export function confirmedProductCurrency(document: string, options: { allowStructured?: boolean } = {}) {
+function directProductCurrencies(document: string) {
   const metadata = [
     metaContent(document, "product:price:currency"),
     metaContent(document, "og:price:currency"),
     metaContent(document, "priceCurrency"),
   ];
   const shopify = document.match(/Shopify\.currency\s*=\s*\{[^}]*["']active["']\s*:\s*["']([A-Za-z]{3})["']/i)?.[1];
-  const direct = [...new Set([...metadata, shopify].map(isoCurrency).filter(Boolean))];
+  return [...new Set([...metadata, shopify].map(isoCurrency).filter(Boolean))];
+}
+
+export function hasConflictingDirectProductCurrency(document: string) {
+  return directProductCurrencies(document).length > 1;
+}
+
+export function confirmedProductCurrency(document: string, options: { allowStructured?: boolean } = {}) {
+  const direct = directProductCurrencies(document);
   if (direct.length > 1) return "";
   if (direct.length === 1) return direct[0];
   if (options.allowStructured === false) return "";

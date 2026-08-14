@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { confirmedProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "../app/lib/product-page-adapters.ts";
+import { confirmedProductCurrency, hasConflictingDirectProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "../app/lib/product-page-adapters.ts";
 import { validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
 import { bilingualNormalize, parseCanonicalQuantity } from "../app/lib/product-normalization.ts";
 
@@ -47,6 +47,8 @@ test("confirms Shopify currency only from same-page public metadata", () => {
   assert.equal(confirmedProductCurrency('<script>Shopify.currency = {"active":"AED","rate":"1.0"}</script>'), "AED");
   assert.equal(confirmedProductCurrency('<meta property="og:price:currency" content="USD"><script>Shopify.currency = {"active":"EUR"}</script>'), "");
   assert.equal(confirmedProductCurrency('<meta property="product:price:currency" content="USD"><meta property="og:price:currency" content="EUR">'), "");
+  assert.equal(hasConflictingDirectProductCurrency('<meta property="product:price:currency" content="USD"><meta property="og:price:currency" content="EUR">'), true);
+  assert.equal(hasConflictingDirectProductCurrency('<meta property="product:price:currency" content="USD"><script type="application/ld+json">{"priceCurrency":"EUR"}</script>'), false);
   assert.equal(confirmedProductCurrency('<script type="application/ld+json">{"priceCurrency":"EUR"}</script>'), "EUR");
   assert.equal(confirmedProductCurrency("Prices in pounds"), "");
 });

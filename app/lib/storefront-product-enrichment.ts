@@ -1,7 +1,7 @@
 import { canonicalDomain, normalizeDomain } from "./domain.ts";
 import { bilingualNormalize, bilingualTokens, parseCanonicalQuantity, quantitiesConflict } from "./product-normalization.ts";
 import { CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX, catalogReplacementAuditAttribute, extractProductsFromHtml, isSupportedCurrency, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "./product-intelligence.ts";
-import { confirmedProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "./product-page-adapters.ts";
+import { confirmedProductCurrency, hasConflictingDirectProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "./product-page-adapters.ts";
 import { sharedRobotsPolicyResolver } from "./robots-policy.ts";
 
 const MAX_DOCUMENT_BYTES = 1_500_000;
@@ -112,8 +112,8 @@ function decodeEvidence(value: string) {
     .replace(/&colon;/gi, ":")
     .replace(/&equals;/gi, "=")
     .replace(/&amp;/gi, "&")
-    .replace(/&#(\d+);/g, (_, code: string) => decodedCodePoint(code, 10))
-    .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => decodedCodePoint(code, 16));
+    .replace(/&#(\d+)(?:;|(?=\s|\p{Sc}))/gu, (_, code: string) => decodedCodePoint(code, 10))
+    .replace(/&#x([0-9a-f]+)(?:;|(?=\s|\p{Sc}))/giu, (_, code: string) => decodedCodePoint(code, 16));
 }
 
 function normalizeLocalizedNumbers(value: string) {
@@ -353,7 +353,9 @@ function isPositivePriceSignal(signal: ProductRecord["priceSignals"][number]) {
 }
 
 function withPositivePrices(product: ProductRecord) {
-  return { ...product, priceSignals: product.priceSignals.filter(isPositivePriceSignal) };
+  const positive = product.priceSignals.filter(isPositivePriceSignal);
+  const removedObservedAmount = product.priceSignals.some((signal) => typeof signal.amount === "number" && Number.isFinite(signal.amount) && !isPositivePriceSignal(signal));
+  return { ...product, priceSignals: removedObservedAmount && product.priceSignals.length > 1 ? [] : positive };
 }
 
 function hasConfirmedPrice(products: ProductRecord[]) {
@@ -361,9 +363,13 @@ function hasConfirmedPrice(products: ProductRecord[]) {
 }
 
 function confirmedAdapterCurrency(document: string, matchedProduct?: ProductRecord) {
+  if (hasConflictingDirectProductCurrency(document)) return "";
   const storefrontCurrency = confirmedProductCurrency(document, { allowStructured: false });
   const matchedCurrencies = [...new Set((matchedProduct?.priceSignals || [])
-    .map((signal) => signal.currency?.trim().toUpperCase() || "")
+    .map((signal) => {
+      const currency = signal.currency?.trim().toUpperCase() || "";
+      return currency && new RegExp(`(?:^|[^A-Z])${currency}(?:[^A-Z]|$)`, "i").test(signal.raw) ? currency : "";
+    })
     .filter(isSupportedCurrency))];
   if (matchedCurrencies.length > 1) return "";
   if (storefrontCurrency && matchedCurrencies.length === 1 && storefrontCurrency !== matchedCurrencies[0]) return "";
