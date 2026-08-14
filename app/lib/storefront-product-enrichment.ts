@@ -376,6 +376,10 @@ function scopedPriceSignals(currency: string, values: number[]) {
     .map((amount) => ({ raw: `${currency} ${amount}`, currency, amount }));
 }
 
+function isRecurringPriceSuffix(value: string) {
+  return /^(?:(?:\/\s*|per\s+|a\s+)?(?:day|daily|week|weekly|wk|month|monthly|mo|quarter|quarterly|year|yearly|annual|annually|yr)s?)\b/iu.test(value.trim());
+}
+
 function markedAmounts(markup: string, currency: string) {
   const withoutSecondaryPrices = removeSecondaryPriceElements(markup)
     .replace(/<(s|del)\b[^>]*>[\s\S]*?<\/\1\s*>/giu, " ")
@@ -393,7 +397,9 @@ function markedAmounts(markup: string, currency: string) {
   if (installmentAt >= 0 && (!firstObservedAmount || installmentAt < (firstObservedAmount.index ?? 0))) return [];
   if (installmentAt >= 0 && firstObservedAmount) {
     const firstEnd = (firstObservedAmount.index ?? 0) + firstObservedAmount[0].length;
-    if (/^\s*(?:down|initial|first|monthly|weekly|biweekly)\s*$/iu.test(decoded.slice(firstEnd, installmentAt))) return [];
+    const beforeInstallment = decoded.slice(firstEnd, installmentAt);
+    if (/^\s*(?:down|initial|first|monthly|weekly|biweekly)\s*$/iu.test(beforeInstallment)
+      || isRecurringPriceSuffix(beforeInstallment)) return [];
   }
   let priceText = decoded;
   if (installmentAt >= 0 && firstObservedAmount) {
@@ -429,7 +435,7 @@ function markedAmounts(markup: string, currency: string) {
     if (/\bsave\b[\s\S]*$/iu.test(before)
       || /\b(?:compare\s+at|regular\s+price|list\s+price|msrp|rrp|original\s+price|retail\s+price|deposit|down\s+payment|due\s+today|as\s+low\s+as|financ(?:e|ing)|lease|payment\s+plan|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|store\s+credit|coupon|rewards?)\b[\s\S]*$/iu.test(before)
       || /^(?:(?:[\p{L}-]+\s+){0,3})?(?:off|deposit|down\s+payment|due\s+today|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|back|store\s+credit|credit|coupon|rewards?\s+points?|points?)\b/iu.test(after)
-      || /^(?:(?:\/|per\s+|a\s+)?(?:day|daily|week|weekly|wk|month|monthly|mo|quarter|quarterly|year|yearly|annual|annually|yr)s?)\b/iu.test(after)) return [];
+      || isRecurringPriceSuffix(after)) return [];
   }
   const validContexts = matches.every((match) => {
       const start = match.index ?? 0;
