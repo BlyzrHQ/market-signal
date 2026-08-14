@@ -275,6 +275,30 @@ function preferredCurrentPriceMarkup(scope: string) {
   return "";
 }
 
+function removeSecondaryPriceElements(markup: string) {
+  const secondary = new Set(["compare-at", "old-price", "list-price", "regular-price", "price-regular", "member-price", "loyalty-price", "saving", "savings", "discount"]);
+  const tags = htmlTagSpans(markup);
+  const ranges: Array<[number, number]> = [];
+  for (let index = 0; index < tags.length; index += 1) {
+    const opening = tags[index];
+    if (opening.closing) continue;
+    const classValue = opening.raw.match(/\sclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+    const classes = (classValue?.[1] || classValue?.[2] || classValue?.[3] || "")
+      .split(/\s+/)
+      .map((value) => value.toLowerCase().replace(/[_-]+/g, "-"));
+    if (!classes.some((value) => secondary.has(value))) continue;
+    let depth = 0;
+    for (const closing of tags.slice(index)) {
+      if (closing.name !== opening.name) continue;
+      depth += closing.closing ? -1 : closing.selfClosing ? 0 : 1;
+      if (depth !== 0) continue;
+      ranges.push([opening.index, closing.end]);
+      break;
+    }
+  }
+  return ranges.sort((left, right) => right[0] - left[0]).reduce((value, [start, end]) => `${value.slice(0, start)} ${value.slice(end)}`, markup);
+}
+
 function scopedPriceSignals(currency: string, values: number[]) {
   if (!currency) return [];
   return [...new Set(values.filter((amount) => Number.isFinite(amount) && amount > 0))]
@@ -283,11 +307,9 @@ function scopedPriceSignals(currency: string, values: number[]) {
 }
 
 function markedAmounts(markup: string, currency: string) {
-  const withoutSecondaryPrices = markup
+  const withoutSecondaryPrices = removeSecondaryPriceElements(markup)
     .replace(/<(s|del)\b[^>]*>[\s\S]*?<\/\1\s*>/giu, " ")
     .replace(/<(span|div|small|em|strong)\b[^>]*\sstyle\s*=\s*["'][^"']*text-decoration(?:-line)?\s*:\s*line-through[^"']*["'][^>]*>[\s\S]*?<\/\1\s*>/giu, " ")
-    .replace(/<(span|div|small|em|strong)\b[^>]*\sclass\s*=\s*["'][^"']*(?:compare[-_ ]?at|old[-_ ]?price|list[-_ ]?price|regular[-_ ]?price|price[-_ ]?regular|member[-_ ]?price|saving|savings|discount)[^"']*["'][^>]*>[\s\S]*?<\/\1\s*>/giu, " ")
-    .replace(/<(span|div|small|em|strong)\b[^>]*\sclass\s*=\s*[^\s>"']*(?:compare[-_]?at|old[-_]?price|list[-_]?price|regular[-_]?price|price[-_]?regular|member[-_]?price|saving|savings|discount)[^\s>"']*[^>]*>[\s\S]*?<\/\1\s*>/giu, " ")
     .replace(/<(span|div|small|em|strong)\b[^>]*>[\s\S]*?\b(?:save|saving|savings|discount|compare\s+at|was|off)\b[\s\S]*?<\/\1\s*>/giu, " ");
   const decoded = normalizeLocalizedNumbers(decodeEvidence(withoutSecondaryPrices.replace(/<[^>]*>/g, " ")))
     .replace(/\b(?:save|saving|savings|discount|was|compare\s+at)\b[\s\S]*?\b(now|current(?:\s+price)?)\b/giu, "$1")
@@ -327,6 +349,11 @@ function markedAmounts(markup: string, currency: string) {
   const matches = [...priceText.matchAll(expression)];
   const tokenCount = [...priceText.matchAll(currencyTokenExpression(currency))].length;
   if (matches.length === 0 || matches.length !== tokenCount) return [];
+  if (matches.length === 1) {
+    const before = priceText.slice(0, matches[0].index ?? 0).trim();
+    const after = priceText.slice((matches[0].index ?? 0) + matches[0][0].length).trim();
+    if (!before && /^(?:off|discount)\b/iu.test(after)) return [];
+  }
   const validContexts = matches.every((match) => {
       const start = match.index ?? 0;
       const before = priceText.slice(0, start);

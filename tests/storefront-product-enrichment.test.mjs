@@ -385,6 +385,10 @@ test("rejects an entire current price container when any member is invalid", () 
   assert.deepEqual(quotedGreaterThan.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
   const dataClassInsideSale = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="sale-price"><span data-class="regular-price" class="current-value">$100.00</span><span class="member-price">$80.00</span></div>');
   assert.deepEqual(dataClassInsideSale.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const nonmemberPublicPrice = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="sale-price"><span class="nonmember-price">$100.00</span><span class="loyalty-price">$80.00</span></div>');
+  assert.deepEqual(nonmemberPublicPrice.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const discountOnly = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">$20.00 OFF</p>');
+  assert.deepEqual(discountOnly.priceSignals, []);
   const trailingCurrencyRange = extractScopedProductPageEvidence('<h1>Product</h1><p class="price">100.00 - 120.00 USD</p>');
   assert.deepEqual(trailingCurrencyRange.priceSignals.map((signal) => signal.amount), [100, 120]);
   assert.equal(trailingCurrencyRange.basis, "range");
