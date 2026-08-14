@@ -105,6 +105,7 @@ function decodeEvidence(value: string) {
     .replace(/&nbsp;/gi, " ")
     .replace(/&dollar;/gi, "$")
     .replace(/&colon;/gi, ":")
+    .replace(/&equals;/gi, "=")
     .replace(/&amp;/gi, "&")
     .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 10)))
     .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 16)));
@@ -198,7 +199,8 @@ function markedAmounts(markup: string, currency: string) {
       const negativePrefix = signPrefix !== null && (!signPrefix || /[:=]\s*$/u.test(signPrefix));
       return !negativePrefix
         && !/\(\s*$/u.test(before)
-        && !/^\s*(?:\)|-)/u.test(after);
+        && !/^\s*\)/u.test(after)
+        && !/^\s*-\s*$/u.test(after);
     })
     .map((match) => Number((match[1] || match[2]).replace(/,/g, "")));
 }
@@ -483,19 +485,24 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
         const replacement = observedCatalogReplacement(item, replacementCandidates, extracted.pageTitle, fetched.url);
         return replacement ? { product: replacement, gap: null } : { product: null, gap: gap(identity.reason, "identity_mismatch", undefined, "identity") };
       }
-      const originalAccepted = strongestInitialProduct
+      const originalIdentityProduct = strongestInitialProduct
         && identity.products.includes(strongestInitialProduct)
-        && hasConfirmedPrice([strongestInitialProduct])
         ? strongestInitialProduct
         : null;
+      const adapterIdentityProduct = adapterEvidenceProduct
+        && identity.products.includes(adapterEvidenceProduct)
+        ? adapterEvidenceProduct
+        : null;
+      const originalAccepted = originalIdentityProduct && hasConfirmedPrice([originalIdentityProduct])
+        ? originalIdentityProduct
+        : null;
       const accepted = originalAccepted
-        ? (!hasSecureImage([originalAccepted]) && adapterEvidenceProduct?.imageUrl
-            ? { ...originalAccepted, imageUrl: adapterEvidenceProduct.imageUrl }
+        ? (!hasSecureImage([originalAccepted]) && adapterIdentityProduct?.imageUrl
+            ? { ...originalAccepted, imageUrl: adapterIdentityProduct.imageUrl }
             : originalAccepted)
-        : adapterEvidenceProduct
-          && identity.products.includes(adapterEvidenceProduct)
-          && hasConfirmedPrice([adapterEvidenceProduct])
-          ? { ...adapterEvidenceProduct, imageUrl: adapterEvidenceProduct.imageUrl || strongestInitialProduct?.imageUrl || "" }
+        : adapterIdentityProduct
+          && hasConfirmedPrice([adapterIdentityProduct])
+          ? { ...adapterIdentityProduct, imageUrl: adapterIdentityProduct.imageUrl || originalIdentityProduct?.imageUrl || "" }
           : identity.products[0];
       const unresolvedAdapterGap = adapterGap && accepted && !hasConfirmedPrice([accepted]) ? adapterGap : "";
       return { product: accepted ? { ...accepted, id: item.productId } : null, gap: unresolvedAdapterGap ? gap(unresolvedAdapterGap, "adapter_limited", undefined, "adapter") : null };

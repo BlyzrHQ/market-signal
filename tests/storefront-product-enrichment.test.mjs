@@ -191,6 +191,7 @@ test("rejects unsupported or negative scoped price markup", () => {
   const accountingNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">($12.50)</p></body></html>');
   const labeledNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">Price: &minus;$12.50</p></body></html>');
   const entityLabeledNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">Price&colon;&minus;$12.50</p></body></html>');
+  const equalsEntityNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">Price&equals;&minus;$12.50</p></body></html>');
   assert.deepEqual(unsupported.priceSignals, []);
   assert.deepEqual(negativePrefix.priceSignals, []);
   assert.deepEqual(negativeSpaced.priceSignals, []);
@@ -210,6 +211,13 @@ test("rejects unsupported or negative scoped price markup", () => {
   assert.deepEqual(accountingNegative.priceSignals, []);
   assert.deepEqual(labeledNegative.priceSignals, []);
   assert.deepEqual(entityLabeledNegative.priceSignals, []);
+  assert.deepEqual(equalsEntityNegative.priceSignals, []);
+});
+
+test("preserves both ends of a scoped same-currency price range", () => {
+  const evidence = extractScopedProductPageEvidence('<h1>Product</h1><div class="summary"><p class="price">USD 12.50 - USD 19.99</p></div>');
+  assert.deepEqual(evidence.priceSignals.map((signal) => signal.amount), [12.5, 19.99]);
+  assert.equal(evidence.basis, "range");
 });
 
 test("replaces a zero Shopify page placeholder with a positive same-domain adapter price", async () => {
@@ -416,6 +424,28 @@ test("uses Shopify only for a missing image when the page already has a valid pr
     const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
     assert.equal(result.products[0].priceSignals[0].amount, 12.5);
     assert.equal(result.products[0].imageUrl, "https://cdn.shop.test/beanie.jpg");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not merge an image from an identity-rejected Shopify fallback", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({
+      title: "Chocolate Cake",
+      handle: "cornerstone-enhanced-visibility-beanie",
+      featured_image: "https://cdn.shop.test/chocolate-cake.jpg",
+      variants: [{ title: "Default Title", price: 1340 }],
+    }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", offers: { price: "12.50", priceCurrency: "USD" } })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
+    assert.equal(result.products[0].priceSignals[0].amount, 12.5);
+    assert.equal(result.products[0].imageUrl, "");
   } finally {
     globalThis.fetch = originalFetch;
   }
