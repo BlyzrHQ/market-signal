@@ -400,7 +400,7 @@ function scopedPriceSignals(currency: string, values: number[]) {
 }
 
 function isRecurringPriceSuffix(value: string) {
-  return /^(?:(?:\/\s*|per\s+|a\s+|every\s+(?:\d+\s+)?|each\s+)?(?:day|daily|week|weekly|wk|fortnight|fortnightly|month|monthly|mo|quarter|quarterly|qtr|year|yearly|annual|annually|yr)s?)\b/iu.test(value.trim());
+  return /^(?:(?:\/\s*|per\s+|a\s+|every\s+(?:\d+\s+)?|each\s+)?(?:day|daily|week|weekly|biweekly|wk|fortnight|fortnightly|month|monthly|mo|quarter|quarterly|qtr|year|yearly|annual|annually|yr)s?)\b/iu.test(value.trim());
 }
 
 function markedAmounts(markup: string, currency: string) {
