@@ -158,10 +158,12 @@ export function summarize(payload, startedAt, finishedAt) {
   const bothImages = matches.filter(({ primary, match }) => validHttpUrl(primary?.imageUrl) && validHttpUrl(match.product?.imageUrl)).length;
   const missingRivalPriceViolations = matches.filter(({ match }) => !(match.product?.priceSignals || []).some(validPrice)).length;
   const sourceViolations = matches.filter(({ primary, match }) => {
-    const rivalDomain = String(match.product?.domain || match.domain || "").toLowerCase().replace(/^www\./, "");
+    const expectedRivalDomain = String(match.domain || "").toLowerCase().replace(/^www\./, "");
+    const claimedRivalDomain = String(match.product?.domain || "").toLowerCase().replace(/^www\./, "");
     return !validProductSource(primary, run.primaryDomain)
-      || !competitorDomains.has(rivalDomain)
-      || !validProductSource(match.product, rivalDomain);
+      || !competitorDomains.has(expectedRivalDomain)
+      || claimedRivalDomain !== expectedRivalDomain
+      || !validProductSource(match.product, expectedRivalDomain);
   }).length;
   const primaryProducts = documentAvailable ? Number(report?.primaryProducts?.totalCount || comparison?.coverage?.primaryProductsAvailable || 0) : null;
   const competitorProducts = documentAvailable ? Number(comparison?.coverage?.competitorProductsAvailable || 0) : null;
@@ -227,7 +229,7 @@ export function summarize(payload, startedAt, finishedAt) {
       rivalName: String(match.product?.name || ""),
       rivalDomain: String(match.product?.domain || match.domain || ""),
       rivalClaimedDomain: String(match.product?.domain || ""),
-      rivalExpectedDomain: String(match.product?.domain || match.domain || ""),
+      rivalExpectedDomain: String(match.domain || ""),
       rivalSourceUrl: String(match.product?.sourceUrl || ""),
       rivalPrices: (match.product?.priceSignals || []).filter(validPrice),
       verdict: String(match?.assessment?.verdict || ""),

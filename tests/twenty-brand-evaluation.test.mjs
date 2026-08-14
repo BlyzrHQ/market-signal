@@ -59,6 +59,7 @@ function reportPayload({ rivalPrice = { amount: 10, raw: "USD 10.00", currency: 
           priceSignals: [{ amount: 12, raw: "USD 12.00", currency: "USD" }],
         },
         matches: [{
+          domain: "rival.example",
           product: {
             id: "b",
             name: "Rival B",
@@ -128,6 +129,18 @@ test("summarizer rejects self-declared source domains outside the report and ver
   row.primary.sourceUrl = "https://attacker.test/a";
   row.matches[0].product.domain = "other.test";
   row.matches[0].product.sourceUrl = "https://other.test/b";
+  const result = summarize(payload, "", "");
+  assert.equal(result.verdict, "FAIL");
+  assert.equal(result.sourceViolations, 1);
+});
+
+test("summarizer rejects a verified rival product placed in another competitor's match slot", () => {
+  const payload = reportPayload();
+  payload.report.document.document.blocks.splice(1, 0, { type: "competitor", domain: "rival-b.example" });
+  const row = payload.report.document.document.blocks[2].rows[0];
+  row.matches[0].domain = "rival.example";
+  row.matches[0].product.domain = "rival-b.example";
+  row.matches[0].product.sourceUrl = "https://rival-b.example/products/b";
   const result = summarize(payload, "", "");
   assert.equal(result.verdict, "FAIL");
   assert.equal(result.sourceViolations, 1);

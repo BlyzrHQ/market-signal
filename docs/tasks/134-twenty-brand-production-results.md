@@ -1,6 +1,6 @@
 # Twenty-brand production evaluation
 
-Captured 2026-08-14T22:03:12.600Z against https://signal.blyzr.com. Persisted plans: 19 starter, 1 agency. MyJam inherited its server-owned Agency entitlement; the other domains used Starter.
+Captured 2026-08-14T22:08:26.422Z against https://signal.blyzr.com. Persisted plans: 19 starter, 1 agency. MyJam inherited its server-owned Agency entitlement; the other domains used Starter.
 
 - PASS: 8
 - LIMITED: 8
