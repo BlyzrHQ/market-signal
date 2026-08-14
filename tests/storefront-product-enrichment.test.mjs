@@ -401,7 +401,7 @@ test("rejects an entire current price container when any member is invalid", () 
   assert.deepEqual(recurringBeforeCurrent.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
   const modelNumberRecurringBeforeCurrent = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Phone 15</h1><p class="price">Phone 15 — Pay monthly from $20.00</p><p class="price">$999.00</p>');
   assert.deepEqual(modelNumberRecurringBeforeCurrent.priceSignals, [{ raw: "USD 999", currency: "USD", amount: 999 }]);
-  for (const recurringLead of ['Pay per month from $20.00', 'Pay every month from $20.00', 'Pay each month from $20.00', 'Pay every 2 weeks from $20.00', 'Pay fortnightly from $20.00', 'Per month: $20.00', 'Per mo: $20.00', 'Per qtr: $20.00']) {
+  for (const recurringLead of ['Pay per month from $20.00', 'Pay every month from $20.00', 'Pay each month from $20.00', 'Pay every 2 weeks from $20.00', 'Pay every two weeks from $20.00', 'Pay fortnightly from $20.00', 'Per month: $20.00', 'Per mo: $20.00', 'Per qtr: $20.00']) {
     const recurringLeadBeforeCurrent = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Phone 15</h1><p class="price">${recurringLead}</p><p class="price">$999.00</p>`);
     assert.deepEqual(recurringLeadBeforeCurrent.priceSignals, [{ raw: "USD 999", currency: "USD", amount: 999 }], recurringLead);
   }
