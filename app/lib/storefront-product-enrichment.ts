@@ -358,7 +358,8 @@ function markedAmounts(markup: string, currency: string) {
   if (matches.length === 1) {
     const before = priceText.slice(0, matches[0].index ?? 0).trim();
     const after = priceText.slice((matches[0].index ?? 0) + matches[0][0].length).trim();
-    if (/\b(?:save|discount|saving|savings)\s*$/iu.test(before) || /^(?:off|discount|saving|savings)\b/iu.test(after)) return [];
+    if (/\b(?:save(?:\s+up\s+to)?|discount|instant\s+savings?|saving|savings|rebate)\s*$/iu.test(before)
+      || /^(?:off|discount|instant\s+savings?|saving|savings|rebate)\b/iu.test(after)) return [];
   }
   const validContexts = matches.every((match) => {
       const start = match.index ?? 0;
