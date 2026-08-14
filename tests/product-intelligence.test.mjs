@@ -75,7 +75,7 @@ test("creates a medium-confidence page signal only with path and page structure"
   assert.equal(result.products[0].extraction, "page-signal");
   assert.equal(result.products[0].confidence, "Medium");
   assert.equal(result.products[0].ownership, "path-inferred");
-  assert.deepEqual(result.products[0].priceSignals[0], { raw: "$20/month", currency: "USD", amount: 20, period: "month" });
+  assert.deepEqual(result.products[0].priceSignals[0], { raw: "$20/month", currency: undefined, amount: 20, period: "month" });
 });
 
 test("extracts authoritative Shopify price metadata and prefers the secure product image", () => {
@@ -144,10 +144,12 @@ test("rejects negative structured and metadata prices instead of making them pos
       { "@type": "Product", name: "Acme Semicolonless Named Currency Contradiction", brand: { name: "Acme" }, offers: { price: "&pound 12.50", priceCurrency: "EUR" } },
       { "@type": "Product", name: "Acme Yen Entity Currency Contradiction", brand: { name: "Acme" }, offers: { price: "&yen;1200", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme MXN Currency Contradiction", brand: { name: "Acme" }, offers: { price: "MXN 1200", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme TRY Currency Contradiction", brand: { name: "Acme" }, offers: { price: "TRY 1200", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme COP Currency Contradiction", brand: { name: "Acme" }, offers: { price: "COP 1200", priceCurrency: "USD" } },
     ])}</script>`,
     sourceUrl: "https://acme.com/products/negative-catalog",
   });
-  assert.equal(structured.products.length, 44);
+  assert.equal(structured.products.length, 46);
   assert.ok(structured.products.every((item) => item.priceSignals.length === 0), structured.products.filter((item) => item.priceSignals.length).map((item) => item.name).join(", "));
 
   const metadata = extraction({
@@ -224,6 +226,14 @@ test("does not infer ISO currencies from lowercase ordinary prose", () => {
     sourceUrl: "https://acme.com/products/prose",
   });
   assert.ok(result.products.every((item) => item.priceSignals.every((signal) => !signal.currency)));
+});
+
+test("does not assign USD to an unqualified structured dollar price", () => {
+  const result = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Acme Dollar", offers: { price: "$19.99" } })}</script>`,
+    sourceUrl: "https://acme.com/products/dollar",
+  });
+  assert.equal(result.products[0].priceSignals[0].currency, undefined);
 });
 
 test("preserves explicitly positive and decorated positive structured prices", () => {

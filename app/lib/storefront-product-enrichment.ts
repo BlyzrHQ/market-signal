@@ -220,7 +220,13 @@ export function extractScopedProductPageEvidence(document: string, sourceUrl = "
   const decodedScope = decodeEvidence(scope);
   const hasDollarSymbol = /\$/.test(decodedScope);
   const dollarCurrencies = new Set(["AUD", "CAD", "HKD", "NZD", "SGD", "USD"]);
-  const observedCurrency = directCurrency && hasDollarSymbol && dollarCurrencies.has(directCurrency)
+  const explicitScopeCurrencies = [...decodedScope.matchAll(/\b[A-Za-z]{3}\b/g)]
+    .map((match) => match[0].toUpperCase())
+    .filter(isSupportedCurrency);
+  const directConflict = Boolean(directCurrency && explicitScopeCurrencies.some((currency) => currency !== directCurrency));
+  const observedCurrency = directConflict
+    ? ""
+    : directCurrency && hasDollarSymbol && dollarCurrencies.has(directCurrency)
     ? directCurrency
     : directCurrency && markedCurrencies.length > 0 && !markedCurrencies.includes(directCurrency)
       ? ""

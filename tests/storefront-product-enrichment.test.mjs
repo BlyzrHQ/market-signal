@@ -214,6 +214,11 @@ test("preserves active product evidence between sibling script blocks", () => {
   assert.equal(evidence.imageUrl, "https://cdn.shop.test/tea.jpg");
 });
 
+test("preserves active product evidence after script text containing fallback markup", () => {
+  const evidence = extractScopedProductPageEvidence('<script>document.write(\'<script src="fallback.js"><\\/script>\')</script><h1>Tea</h1><div class="summary"><p class="price">USD 19.99</p></div>');
+  assert.deepEqual(evidence.priceSignals, [{ raw: "USD 19.99", currency: "USD", amount: 19.99 }]);
+});
+
 test("reconciles visible and direct product currencies before publishing a scoped price", () => {
   const conflicting = extractScopedProductPageEvidence('<meta property="product:price:currency" content="EUR"><h1>Tea</h1><p class="price">USD 19.99</p>');
   assert.deepEqual(conflicting.priceSignals, []);
@@ -223,6 +228,12 @@ test("reconciles visible and direct product currencies before publishing a scope
 
   const ambiguousDollar = extractScopedProductPageEvidence('<h1>Tea</h1><p class="price">$19.99</p>');
   assert.deepEqual(ambiguousDollar.priceSignals, []);
+
+  const cadWithUsd = extractScopedProductPageEvidence('<meta property="product:price:currency" content="CAD"><h1>Tea</h1><p class="price">$19.99 USD</p>');
+  assert.deepEqual(cadWithUsd.priceSignals, []);
+
+  const usdWithCad = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Tea</h1><p class="price">CAD $19.99</p>');
+  assert.deepEqual(usdWithCad.priceSignals, []);
 });
 
 test("does not collapse visible multi-currency evidence into a single point price", () => {

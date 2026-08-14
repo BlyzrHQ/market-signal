@@ -317,7 +317,7 @@ function decodedCodePoint(value: string, radix: number) {
 const AMBIGUOUS_CURRENCY_WORDS = new Set(["ALL", "COP", "CUP", "GEL", "MAD", "PEN", "TOP", "TRY"]);
 const DOLLAR_CURRENCIES = new Set(["AUD", "CAD", "HKD", "NZD", "SGD", "USD"]);
 
-function priceSignal(rawValue: unknown, currencyValue?: unknown): ProductPriceSignal | null {
+function priceSignal(rawValue: unknown, currencyValue?: unknown, options: { allowDefaultUsdDollar?: boolean } = {}): ProductPriceSignal | null {
   const rawText = text(rawValue);
   if (!rawText) return null;
   const explicitCurrency = text(currencyValue).toUpperCase();
@@ -335,7 +335,7 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown): ProductPriceSi
   const hasYenSymbol = /¥/.test(currencyEvidence);
   if (hasDollarSymbol && explicitCurrency && !DOLLAR_CURRENCIES.has(explicitCurrency)) return null;
   if (hasYenSymbol && explicitCurrency && !new Set(["CNY", "JPY"]).has(explicitCurrency)) return null;
-  if (hasDollarSymbol && !explicitCurrency) observedCurrencies.add("USD");
+  if (hasDollarSymbol && !explicitCurrency && options.allowDefaultUsdDollar) observedCurrencies.add("USD");
   if (/₹/.test(currencyEvidence)) observedCurrencies.add("INR");
   if (/₩/.test(currencyEvidence)) observedCurrencies.add("KRW");
   if (/₽/.test(currencyEvidence)) observedCurrencies.add("RUB");
@@ -346,7 +346,12 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown): ProductPriceSi
     const index = match.index ?? 0;
     const amountAdjacent = /^\s*[+-]?\d/.test(currencyEvidence.slice(index + match[0].length))
       || /\d(?:[.,]\d+)?\s*$/.test(currencyEvidence.slice(0, index));
-    if (amountAdjacent && isSupportedCurrency(currency) && !AMBIGUOUS_CURRENCY_WORDS.has(currency)) observedCurrencies.add(currency);
+    if (!amountAdjacent || !isSupportedCurrency(currency)) continue;
+    if (AMBIGUOUS_CURRENCY_WORDS.has(currency)) {
+      if (explicitCurrency && currency !== explicitCurrency) return null;
+      continue;
+    }
+    observedCurrencies.add(currency);
   }
   if (observedCurrencies.size > 1 || (explicitCurrency && [...observedCurrencies].some((currency) => currency !== explicitCurrency))) return null;
   const inferredCurrency = [...observedCurrencies][0];
@@ -557,7 +562,7 @@ function planPrice(value: string) {
   const expression = /(?:[$\u00a3\u20ac]\s?\d+(?:[.,]\d{1,2})?(?:\s*(?:USD|GBP|EUR))?(?:\s*(?:\/\s*|per\s+(?:(?:user|seat|channel|brand|workspace|social\s+set)\s*[,/]?\s*(?:per\s+)?)?)(?:month|mo|year|yr))?|\d+(?:[.,]\d{1,2})?\s*(?:USD|GBP|EUR)(?:\s*\/\s*(?:month|mo|year|yr))?)/gi;
   const raws = [...value.matchAll(expression)].map((match) => clean(match[0])).filter(Boolean);
   const recurring = raws.find((raw) => periodFrom(raw));
-  return priceSignal(recurring || raws[0]);
+  return priceSignal(recurring || raws[0], undefined, { allowDefaultUsdDollar: true });
 }
 
 function planPriceBasis(value: string, price?: ProductPriceSignal) {
