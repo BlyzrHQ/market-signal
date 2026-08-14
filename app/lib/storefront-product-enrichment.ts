@@ -394,7 +394,8 @@ function markedAmounts(markup: string, currency: string) {
   if (matches.length === 1) {
     const before = priceText.slice(0, matches[0].index ?? 0).trim();
     const after = priceText.slice((matches[0].index ?? 0) + matches[0][0].length).trim();
-    if (/\b(?:save(?:\s+(?:up\s+to|an?\s+extra|extra|an?\s+additional|additional|a\s+further|further|another))?|discount|instant\s+savings?|saving|savings|rebate)\s*$/iu.test(before)
+    if (/\bsave\b[\s\S]*$/iu.test(before)
+      || /\b(?:discount|instant\s+savings?|saving|savings|rebate)\s*$/iu.test(before)
       || /^(?:off|discount|instant\s+savings?|saving|savings|rebate)\b/iu.test(after)) return [];
   }
   const validContexts = matches.every((match) => {
@@ -437,14 +438,15 @@ function markedAmounts(markup: string, currency: string) {
 
 export function extractScopedProductPageEvidence(document: string, sourceUrl = "https://product.invalid/") {
   const scope = productScope(document);
+  const unitPriceClasses = new Set(["unit-price", "unitprice", "price-per-unit", "price-unit", "price-per-measure"]);
   const priceMarkup = preferredCurrentPriceMarkup(scope)
     || elementMarkupByClassTokens(
       scope,
       new Set(["p"]),
       new Set(["price"]),
-      new Set(["unit-price", "unitprice", "price-per-unit", "price-unit", "price-per-measure"]),
+      unitPriceClasses,
     )
-    || elementMarkupByClassTokens(scope, new Set(["div", "span"]), new Set(["product-price", "single-product-price"]))
+    || elementMarkupByClassTokens(scope, new Set(["div", "span"]), new Set(["product-price", "single-product-price"]), unitPriceClasses)
     || "";
   const currentMarkup = priceMarkup.match(/<ins\b[^>]*>([\s\S]*?)<\/ins>/i)?.[1]
     || priceMarkup.replace(/<del\b[^>]*>[\s\S]*?<\/del>/gi, " ");
