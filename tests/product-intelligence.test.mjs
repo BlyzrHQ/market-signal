@@ -238,6 +238,21 @@ test("does not assign USD to an unqualified structured dollar price", () => {
   assert.equal(result.products[0].priceSignals[0].currency, undefined);
 });
 
+test("reconciles qualified structured dollar markers with explicit currency", () => {
+  for (const [marker, currency] of [["US $19.99", "USD"], ["C$19.99", "CAD"], ["A$19.99", "AUD"], ["R$19.99", "BRL"], ["RD$19.99", "DOP"]]) {
+    const accepted = extraction({
+      document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: `${currency} Widget`, offers: { price: marker, priceCurrency: currency } })}</script>`,
+      sourceUrl: `https://acme.test/products/${currency.toLowerCase()}-widget`,
+    });
+    assert.deepEqual(accepted.products[0].priceSignals, [{ raw: `${currency} ${marker}`, currency, amount: 19.99, period: undefined }], marker);
+  }
+  const conflict = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Conflict Widget", offers: { price: "US $19.99", priceCurrency: "CAD" } })}</script>`,
+    sourceUrl: "https://acme.test/products/conflict-widget",
+  });
+  assert.deepEqual(conflict.products[0].priceSignals, []);
+});
+
 test("preserves explicitly positive and decorated positive structured prices", () => {
   const result = extraction({
     document: `<script type="application/ld+json">${JSON.stringify([

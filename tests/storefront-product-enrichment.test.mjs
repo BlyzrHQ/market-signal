@@ -256,6 +256,17 @@ test("disambiguates dollar symbols with supported direct dollar currencies", () 
   }
 });
 
+test("reconciles qualified visible dollar markers before a generic dollar", () => {
+  for (const [marker, currency] of [["US $19.99", "USD"], ["C$19.99", "CAD"], ["A$19.99", "AUD"], ["R$19.99", "BRL"], ["RD$19.99", "DOP"]]) {
+    const evidence = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="${currency}"><h1>Product</h1><p class="price">${marker}</p>`);
+    assert.deepEqual(evidence.priceSignals, [{ raw: `${currency} 19.99`, currency, amount: 19.99 }], marker);
+  }
+  const usDollarAsCad = extractScopedProductPageEvidence('<meta property="product:price:currency" content="CAD"><h1>Product</h1><p class="price">US $19.99</p>');
+  assert.deepEqual(usDollarAsCad.priceSignals, []);
+  const canadianDollarAsUsd = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">CA $19.99</p>');
+  assert.deepEqual(canadianDollarAsUsd.priceSignals, []);
+});
+
 test("does not collapse visible multi-currency evidence into a single point price", () => {
   const evidence = extractScopedProductPageEvidence('<h1>Product</h1><div class="summary"><p class="price">USD 12.50 / EUR 10.99</p></div>');
   assert.deepEqual(evidence.priceSignals, []);

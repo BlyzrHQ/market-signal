@@ -225,9 +225,24 @@ export function extractScopedProductPageEvidence(document: string, sourceUrl = "
   const directCurrency = confirmedProductCurrency(document, { allowStructured: false });
   const hasDollarSymbol = /\$/.test(decodedPriceMarkup);
   const dollarCurrencies = new Set([
-    "ARS", "AUD", "BMD", "BND", "BSD", "BZD", "CAD", "CLP", "COP", "FJD", "GYD", "HKD", "JMD", "KYD",
-    "LRD", "MXN", "NAD", "NZD", "SBD", "SGD", "SRD", "TTD", "TWD", "USD", "XCD", "ZWL",
+    "ARS", "AUD", "BMD", "BND", "BRL", "BSD", "BZD", "CAD", "CLP", "COP", "DOP", "FJD", "GYD", "HKD", "JMD",
+    "KYD", "LRD", "MXN", "NAD", "NZD", "SBD", "SGD", "SRD", "TTD", "TWD", "USD", "XCD", "ZWL",
   ]);
+  const qualifiedDollarMarkers: ReadonlyArray<[currency: string, marker: RegExp]> = [
+    ["USD", /(?:^|[^\p{L}\p{N}])US\s*\$\s*[+-]?\d/iu],
+    ["CAD", /(?:^|[^\p{L}\p{N}])(?:CA|C)\s*\$\s*[+-]?\d/iu],
+    ["AUD", /(?:^|[^\p{L}\p{N}])(?:AU|A)\s*\$\s*[+-]?\d/iu],
+    ["BRL", /(?:^|[^\p{L}\p{N}])R\s*\$\s*[+-]?\d/iu],
+    ["DOP", /(?:^|[^\p{L}\p{N}])RD\s*\$\s*[+-]?\d/iu],
+    ["HKD", /(?:^|[^\p{L}\p{N}])HK\s*\$\s*[+-]?\d/iu],
+    ["MXN", /(?:^|[^\p{L}\p{N}])MX\s*\$\s*[+-]?\d/iu],
+    ["NZD", /(?:^|[^\p{L}\p{N}])NZ\s*\$\s*[+-]?\d/iu],
+    ["SGD", /(?:^|[^\p{L}\p{N}])S\s*\$\s*[+-]?\d/iu],
+    ["TWD", /(?:^|[^\p{L}\p{N}])NT\s*\$\s*[+-]?\d/iu],
+  ];
+  const qualifiedDollarCurrencies = qualifiedDollarMarkers
+    .filter(([, marker]) => marker.test(decodedPriceMarkup))
+    .map(([currency]) => currency);
   const explicitPriceCurrencies = [...decodedPriceMarkup.matchAll(/\b[A-Za-z]{3}\b/g)]
     .filter((match) => {
       const index = match.index ?? 0;
@@ -237,7 +252,7 @@ export function extractScopedProductPageEvidence(document: string, sourceUrl = "
     .map((match) => match[0].toUpperCase())
     .filter(isSupportedCurrency);
   const nonDollarMarkedCurrencies = markedCurrencies.filter((currency) => currency !== "USD" || !hasDollarSymbol || /\bUSD\b/i.test(decodedPriceMarkup));
-  const observedPriceCurrencies = [...new Set([...explicitPriceCurrencies, ...nonDollarMarkedCurrencies])];
+  const observedPriceCurrencies = [...new Set([...explicitPriceCurrencies, ...nonDollarMarkedCurrencies, ...qualifiedDollarCurrencies])];
   const directConflict = Boolean(directCurrency && observedPriceCurrencies.some((currency) => currency !== directCurrency));
   const observedCurrency = directConflict
     ? ""
@@ -269,7 +284,9 @@ export function extractScopedProductPageEvidence(document: string, sourceUrl = "
   }
 
   const comparableMarkup = directCurrency && hasDollarSymbol && dollarCurrencies.has(directCurrency)
-    ? currentMarkup.replace(/\$/g, `${directCurrency} `)
+    ? currentMarkup
+      .replace(/\b(?:US|CA|C|AU|A|RD|R|HK|MX|NZ|S|NT)\s*\$/gi, `${directCurrency} `)
+      .replace(/\$/g, `${directCurrency} `)
     : currentMarkup;
   const signals = scopedPriceSignals(currency, markedAmounts(comparableMarkup, currency));
   return {
