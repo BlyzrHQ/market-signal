@@ -408,8 +408,10 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       const initialIdentity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle);
       const replacementCandidates = [...extracted.result.products];
       let adapterGap = "";
+      let adapterEvidenceProduct: ProductRecord | null = null;
       const adapter = storefrontAdapterRequest(item.sourceUrl);
-      if (adapter && (!initialIdentity.accepted || !hasConfirmedPrice(initialIdentity.products) || !hasSecureImage(initialIdentity.products))) {
+      const strongestInitialProduct = initialIdentity.products[0];
+      if (adapter && (!initialIdentity.accepted || !strongestInitialProduct || !hasConfirmedPrice([strongestInitialProduct]) || !hasSecureImage([strongestInitialProduct]))) {
         const adapterLabel = adapter.kind === "shopify" ? "Shopify product" : "WooCommerce Store API";
         try {
           const adapterUrl = new URL(adapter.endpointUrl);
@@ -425,7 +427,10 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
               const adapterResult = adapter.kind === "shopify"
                 ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: confirmedProductCurrency(fetched.text), expectedQuantity: expected.quantity })
                 : parseWooCommerceProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt: new Date().toISOString() });
-              if (adapterResult.product) extracted.result.products.push(withPositivePrices(adapterResult.product));
+              if (adapterResult.product) {
+                adapterEvidenceProduct = withPositivePrices(adapterResult.product);
+                extracted.result.products.push(adapterEvidenceProduct);
+              }
               if (item.allowCatalogReplacement === true && !initialIdentity.accepted) {
                 const replacementAdapterResult = adapter.kind === "shopify"
                   ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: confirmedProductCurrency(fetched.text) })
@@ -444,7 +449,11 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
         const replacement = observedCatalogReplacement(item, replacementCandidates, extracted.pageTitle, fetched.url);
         return replacement ? { product: replacement, gap: null } : { product: null, gap: gap(identity.reason, "identity_mismatch", undefined, "identity") };
       }
-      const accepted = identity.products.find((product) => hasConfirmedPrice([product])) || identity.products[0];
+      const accepted = adapterEvidenceProduct
+        && identity.products.includes(adapterEvidenceProduct)
+        && hasConfirmedPrice([adapterEvidenceProduct])
+        ? adapterEvidenceProduct
+        : identity.products[0];
       const unresolvedAdapterGap = adapterGap && accepted && !hasConfirmedPrice([accepted]) ? adapterGap : "";
       return { product: accepted ? { ...accepted, id: item.productId } : null, gap: unresolvedAdapterGap ? gap(unresolvedAdapterGap, "adapter_limited", undefined, "adapter") : null };
     } catch (error) {

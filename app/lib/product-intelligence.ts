@@ -314,8 +314,15 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown): ProductPriceSi
   const explicitCurrency = text(currencyValue).toUpperCase();
   const inferredCurrency = /£/.test(rawText) ? "GBP" : /€/.test(rawText) ? "EUR" : /\$/.test(rawText) ? "USD" : undefined;
   const currency = explicitCurrency || inferredCurrency;
-  const amountMatch = rawText.replace(/,/g, "").match(/\d+(?:\.\d+)?/);
+  const normalizedAmountText = rawText
+    .replace(/&(?:minus|ndash|mdash);/gi, "-")
+    .replace(/&#(?:8722|8211|8212);/gi, "-")
+    .replace(/&#x(?:2212|2013|2014);/gi, "-")
+    .replace(/[−–—]/gu, "-")
+    .replace(/,/g, "");
+  const amountMatch = normalizedAmountText.match(/[+-]?\d+(?:\.\d+)?/);
   const amount = amountMatch ? Number(amountMatch[0]) : undefined;
+  if (typeof amount === "number" && Number.isFinite(amount) && amount < 0) return null;
   const raw = explicitCurrency && !rawText.toUpperCase().includes(explicitCurrency) ? `${explicitCurrency} ${rawText}` : rawText;
   return { raw: raw.slice(0, 120), currency, amount: Number.isFinite(amount) ? amount : undefined, period: periodFrom(raw) };
 }

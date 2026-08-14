@@ -97,6 +97,31 @@ test("extracts authoritative Shopify price metadata and prefers the secure produ
   assert.equal(result.products[0].imageUrl, "https://cdn.shopify.com/lamb-leg.jpg");
 });
 
+test("rejects negative structured and metadata prices instead of making them positive", () => {
+  const structured = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify([
+      { "@type": "Product", name: "Acme Numeric Negative", brand: { name: "Acme" }, offers: { price: -12.5, priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme String Negative", brand: { name: "Acme" }, offers: { price: "-12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Unicode Negative", brand: { name: "Acme" }, offers: { price: "−12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Encoded Negative", brand: { name: "Acme" }, offers: { price: "&minus;12.50", priceCurrency: "USD" } },
+    ])}</script>`,
+    sourceUrl: "https://acme.com/products/negative-catalog",
+  });
+  assert.equal(structured.products.length, 4);
+  assert.ok(structured.products.every((item) => item.priceSignals.length === 0));
+
+  const metadata = extraction({
+    document: `<head><meta property="og:price:amount" content="-12.50"><meta property="og:price:currency" content="USD"></head><script type="application/ld+json">${JSON.stringify({
+      "@type": "Product", name: "Acme Negative Widget", brand: { name: "Acme" },
+    })}</script>`,
+    sourceUrl: "https://acme.com/products/negative-widget",
+    pageTitle: "Acme Negative Widget",
+    headings: ["Acme Negative Widget"],
+  });
+  assert.equal(metadata.products.length, 1);
+  assert.deepEqual(metadata.products[0].priceSignals, []);
+});
+
 test("prefers an exact product H1 when a marketing-prefixed title contains that identity", () => {
   const document = `<head><meta property="product:price:amount" content="39.05"><meta property="product:price:currency" content="GBP"></head>`;
   const result = extraction({
