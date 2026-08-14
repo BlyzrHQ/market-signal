@@ -52,6 +52,7 @@ test("confirms Shopify currency only from same-page public metadata", () => {
   assert.equal(hasConflictingDirectProductCurrency('<script>Shopify.currency = {"active":"USD"}</script><script>Shopify.currency = {"active":"EUR"}</script>'), true);
   assert.equal(hasConflictingDirectProductCurrency('<meta property="product:price:currency" content="USD"><meta property="product:price:currency" content=EUR>'), true);
   assert.equal(confirmedProductCurrency('<meta data-name="product:price:currency" content="EUR">'), "");
+  assert.equal(confirmedProductCurrency('<!-- <meta property="product:price:currency" content="EUR"> -->'), "");
   assert.equal(hasConflictingDirectProductCurrency('<meta property="product:price:currency" content="USD"><script type="application/ld+json">{"priceCurrency":"EUR"}</script>'), false);
   assert.equal(confirmedProductCurrency('<script type="application/ld+json">{"priceCurrency":"EUR"}</script>'), "EUR");
   assert.equal(confirmedProductCurrency("Prices in pounds"), "");

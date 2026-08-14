@@ -120,9 +120,10 @@ function isoCurrency(value: unknown) {
 }
 
 function directProductCurrencies(document: string) {
+  const activeDocument = document.replace(/<!--[\s\S]*?-->/g, " ");
   const metadata = ["product:price:currency", "og:price:currency", "priceCurrency"]
-    .flatMap((key) => metaContents(document, key));
-  const shopify = [...document.matchAll(/Shopify\.currency\s*=\s*\{[^}]*["']active["']\s*:\s*["']([A-Za-z]{3})["']/gi)]
+    .flatMap((key) => metaContents(activeDocument, key));
+  const shopify = [...activeDocument.matchAll(/Shopify\.currency\s*=\s*\{[^}]*["']active["']\s*:\s*["']([A-Za-z]{3})["']/gi)]
     .map((match) => match[1]);
   return [...new Set([...metadata, ...shopify].map(isoCurrency).filter(Boolean))];
 }

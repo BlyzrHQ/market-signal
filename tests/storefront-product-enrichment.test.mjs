@@ -181,6 +181,16 @@ test("keeps an incomplete WooCommerce variation set non-comparable", () => {
   assert.equal(evidence.basis, "unavailable");
 });
 
+test("keeps malformed and non-array WooCommerce variation payloads non-comparable", () => {
+  const payloads = ["{", JSON.stringify("not-an-array"), JSON.stringify({ display_price: 19.99 })];
+  for (const payload of payloads) {
+    const encoded = payload.replace(/"/g, "&quot;");
+    const evidence = extractScopedProductPageEvidence(`<h1>Tea</h1><form data-product_variations="${encoded}"><p class="price">USD 19.99</p></form>`);
+    assert.deepEqual(evidence.priceSignals, [], payload);
+    assert.equal(evidence.basis, "unavailable", payload);
+  }
+});
+
 test("does not collapse visible multi-currency evidence into a single point price", () => {
   const evidence = extractScopedProductPageEvidence('<h1>Product</h1><div class="summary"><p class="price">USD 12.50 / EUR 10.99</p></div>');
   assert.deepEqual(evidence.priceSignals, []);

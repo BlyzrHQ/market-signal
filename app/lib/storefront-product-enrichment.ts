@@ -224,14 +224,15 @@ export function extractScopedProductPageEvidence(document: string, sourceUrl = "
   if (variationAttribute && currency) {
     try {
       const variations = JSON.parse(decodeEvidence(variationAttribute));
-      const rawAmounts = Array.isArray(variations) ? variations.map((variation) => Number(variation?.display_price)) : [];
-      if (rawAmounts.length && rawAmounts.some((amount) => !Number.isFinite(amount) || amount <= 0)) {
+      if (!Array.isArray(variations) || !variations.length) {
         return { priceSignals: [], basis: "unavailable" as const, imageUrl: publicImageFromScope(scope, sourceUrl) };
       }
+      const rawAmounts = variations.map((variation) => Number(variation?.display_price));
+      if (rawAmounts.some((amount) => !Number.isFinite(amount) || amount <= 0)) return { priceSignals: [], basis: "unavailable" as const, imageUrl: publicImageFromScope(scope, sourceUrl) };
       const amounts = rawAmounts;
       const signals = scopedPriceSignals(currency, amounts);
       if (signals.length) return { priceSignals: signals, basis: signals.length > 1 ? "range" as const : "point" as const, imageUrl: publicImageFromScope(scope, sourceUrl) };
-    } catch { /* Fall through to the visible product-summary price. */ }
+    } catch { return { priceSignals: [], basis: "unavailable" as const, imageUrl: publicImageFromScope(scope, sourceUrl) }; }
   }
 
   const priceMarkup = scope.match(/<p\b[^>]*class\s*=\s*["'][^"']*\bprice\b[^"']*["'][^>]*>[\s\S]*?<\/p>/i)?.[0]

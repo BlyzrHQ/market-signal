@@ -131,10 +131,16 @@ test("rejects negative structured and metadata prices instead of making them pos
       { "@type": "Product", name: "Acme Semicolonless Hex Negative", brand: { name: "Acme" }, offers: { price: "&#x2d $12.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Malformed Entity Negative", brand: { name: "Acme" }, offers: { price: "&#45USD 12.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Contradictory Currency", brand: { name: "Acme" }, offers: { price: "$12.50", priceCurrency: "EUR" } },
+      { "@type": "Product", name: "Acme ISO Contradiction", brand: { name: "Acme" }, offers: { price: "USD 0", priceCurrency: "EUR" } },
+      { "@type": "Product", name: "Acme Trailing ISO Contradiction", brand: { name: "Acme" }, offers: { price: "12.50 GBP", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Named Currency Contradiction", brand: { name: "Acme" }, offers: { price: "&dollar;12.50", priceCurrency: "EUR" } },
+      { "@type": "Product", name: "Acme Numeric Currency Contradiction", brand: { name: "Acme" }, offers: { price: "&#36;12.50", priceCurrency: "EUR" } },
+      { "@type": "Product", name: "Acme Mixed ISO Contradiction", brand: { name: "Acme" }, offers: { price: "USD 12 / EUR 10", priceCurrency: "EUR" } },
+      { "@type": "Product", name: "Acme Incomplete Range With Point", brand: { name: "Acme" }, offers: { price: 19.99, lowPrice: 0, highPrice: 29.99, priceCurrency: "USD" } },
     ])}</script>`,
     sourceUrl: "https://acme.com/products/negative-catalog",
   });
-  assert.equal(structured.products.length, 31);
+  assert.equal(structured.products.length, 37);
   assert.ok(structured.products.every((item) => item.priceSignals.length === 0), structured.products.filter((item) => item.priceSignals.length).map((item) => item.name).join(", "));
 
   const metadata = extraction({
@@ -169,6 +175,21 @@ test("rejects negative structured and metadata prices instead of making them pos
   });
   assert.equal(entityMetadata.products.length, 1);
   assert.deepEqual(entityMetadata.products[0].priceSignals, []);
+});
+
+test("rejects conflicting or inactive Open Graph price metadata", () => {
+  const product = { "@type": "Product", name: "Acme Metadata Widget", brand: { name: "Acme" } };
+  const conflicting = extraction({
+    document: `<head><meta property="product:price:amount" content="12.50"><meta property="product:price:currency" content="USD"><meta property="product:price:currency" content="EUR"></head><script type="application/ld+json">${JSON.stringify(product)}</script>`,
+    sourceUrl: "https://acme.com/products/metadata-widget",
+  });
+  assert.deepEqual(conflicting.products[0].priceSignals, []);
+
+  const commented = extraction({
+    document: `<head><!-- <meta property="product:price:amount" content="77"><meta property="product:price:currency" content="USD"> --></head><script type="application/ld+json">${JSON.stringify(product)}</script>`,
+    sourceUrl: "https://acme.com/products/metadata-widget",
+  });
+  assert.deepEqual(commented.products[0].priceSignals, []);
 });
 
 test("preserves explicitly positive and decorated positive structured prices", () => {

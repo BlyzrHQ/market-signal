@@ -317,8 +317,19 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown): ProductPriceSi
   const rawText = text(rawValue);
   if (!rawText) return null;
   const explicitCurrency = text(currencyValue).toUpperCase();
-  const inferredCurrency = /£/.test(rawText) ? "GBP" : /€/.test(rawText) ? "EUR" : /\$/.test(rawText) ? "USD" : undefined;
-  if (explicitCurrency && inferredCurrency && explicitCurrency !== inferredCurrency) return null;
+  const currencyEvidence = rawText
+    .replace(/&pound;/gi, "£")
+    .replace(/&euro;/gi, "€")
+    .replace(/&dollar;/gi, "$")
+    .replace(/&#(\d+);/g, (_, code: string) => decodedCodePoint(code, 10))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => decodedCodePoint(code, 16));
+  const observedCurrencies = new Set<string>();
+  if (/£/.test(currencyEvidence)) observedCurrencies.add("GBP");
+  if (/€/.test(currencyEvidence)) observedCurrencies.add("EUR");
+  if (/\$/.test(currencyEvidence)) observedCurrencies.add("USD");
+  for (const match of currencyEvidence.toUpperCase().matchAll(/\b[A-Z]{3}\b/g)) if (isSupportedCurrency(match[0])) observedCurrencies.add(match[0]);
+  if (observedCurrencies.size > 1 || (explicitCurrency && [...observedCurrencies].some((currency) => currency !== explicitCurrency))) return null;
+  const inferredCurrency = [...observedCurrencies][0];
   const currency = explicitCurrency || inferredCurrency;
   const normalizedAmountText = rawText
     .replace(/&[a-z0-9]*(?:minus|dash|hyphen|ominus)[a-z0-9]*;/gi, "-")
@@ -352,8 +363,6 @@ function offerSignals(value: unknown): ProductPriceSignal[] {
   const found: ProductPriceSignal[] = [];
   for (const offer of records(value)) {
     const currency = offer.priceCurrency;
-    const price = priceSignal(offer.price, currency);
-    if (price) found.push(price);
     const hasRangeEndpoint = offer.lowPrice !== undefined || offer.highPrice !== undefined;
     if (hasRangeEndpoint) {
       const low = priceSignal(offer.lowPrice, currency);
@@ -363,6 +372,9 @@ function offerSignals(value: unknown): ProductPriceSignal[] {
         && typeof high.amount === "number" && Number.isFinite(high.amount) && high.amount > 0
         && low.currency && low.currency === high.currency;
       if (completePositiveRange) found.push(low, high);
+    } else {
+      const price = priceSignal(offer.price, currency);
+      if (price) found.push(price);
     }
     found.push(...offerSignals(offer.offers));
     found.push(...offerSignals(offer.priceSpecification));
@@ -370,18 +382,31 @@ function offerSignals(value: unknown): ProductPriceSignal[] {
   return [...new Map(found.map((signal) => [signal.raw, signal])).values()].slice(0, 12);
 }
 
+function metaContents(document: string, key: string) {
+  const attributeValue = (tag: string, name: string) => {
+    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = tag.match(new RegExp(`(?:^|\\s)${escapedName}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
+    return clean(match?.[1] || match?.[2] || match?.[3] || "");
+  };
+  const activeDocument = document.replace(/<!--[\s\S]*?-->/g, " ");
+  return [...activeDocument.matchAll(/<meta\b[^>]*>/gi)]
+    .map((match) => match[0])
+    .filter((tag) => ["property", "name", "itemprop"].some((attribute) => attributeValue(tag, attribute) === key))
+    .map((tag) => attributeValue(tag, "content"))
+    .filter(Boolean);
+}
+
 function metaContent(document: string, key: string) {
-  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const identity = `(?:property|name|itemprop)\\s*=\\s*["']${escaped}["']`;
-  const identityFirst = new RegExp(`<meta[^>]+${identity}[^>]+content\\s*=\\s*["']([^"']*)["']`, "i");
-  const contentFirst = new RegExp(`<meta[^>]+content\\s*=\\s*["']([^"']*)["'][^>]+${identity}`, "i");
-  return clean(document.match(identityFirst)?.[1] || document.match(contentFirst)?.[1] || "");
+  return metaContents(document, key)[0] || "";
 }
 
 function openGraphOffer(document: string) {
-  const amount = metaContent(document, "product:price:amount") || metaContent(document, "og:price:amount") || metaContent(document, "price");
-  const currency = metaContent(document, "product:price:currency") || metaContent(document, "og:price:currency") || metaContent(document, "priceCurrency");
-  return amount && currency ? priceSignal(amount, currency) : null;
+  const amounts = [...new Set(["product:price:amount", "og:price:amount", "price"].flatMap((key) => metaContents(document, key)))];
+  const currencies = [...new Set(["product:price:currency", "og:price:currency", "priceCurrency"]
+    .flatMap((key) => metaContents(document, key))
+    .map((value) => value.toUpperCase())
+    .filter(isSupportedCurrency))];
+  return amounts.length === 1 && currencies.length === 1 ? priceSignal(amounts[0], currencies[0]) : null;
 }
 
 function publicImageUrl(value: string, sourceUrl: string) {
