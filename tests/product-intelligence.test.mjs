@@ -120,13 +120,14 @@ test("rejects negative structured and metadata prices instead of making them pos
       { "@type": "Product", name: "Acme Dot Minus Negative", brand: { name: "Acme" }, offers: { price: "\u223812.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Minus Plus Negative", brand: { name: "Acme" }, offers: { price: "\u221312.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Named Ominus Negative", brand: { name: "Acme" }, offers: { price: "&ominus;12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme KWD Negative", brand: { name: "Acme" }, offers: { price: "−د.ك 12", priceCurrency: "KWD" } },
       { "@type": "Product", name: "Acme Spaced Negative", brand: { name: "Acme" }, offers: { price: "- $12.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Accounting Negative", brand: { name: "Acme" }, offers: { price: "($12.50)", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Trailing Negative", brand: { name: "Acme" }, offers: { price: "$12.50-", priceCurrency: "USD" } },
     ])}</script>`,
     sourceUrl: "https://acme.com/products/negative-catalog",
   });
-  assert.equal(structured.products.length, 23);
+  assert.equal(structured.products.length, 24);
   assert.ok(structured.products.every((item) => item.priceSignals.length === 0), structured.products.filter((item) => item.priceSignals.length).map((item) => item.name).join(", "));
 
   const metadata = extraction({
@@ -161,6 +162,19 @@ test("rejects negative structured and metadata prices instead of making them pos
   });
   assert.equal(entityMetadata.products.length, 1);
   assert.deepEqual(entityMetadata.products[0].priceSignals, []);
+});
+
+test("preserves explicitly positive and decorated positive structured prices", () => {
+  const result = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify([
+      { "@type": "Product", name: "Acme Explicit Positive", offers: { price: "+19.99", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Star Price", offers: { price: "★ $19.99", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Approximate Price", offers: { price: "≈$19.99", priceCurrency: "USD" } },
+    ])}</script>`,
+    sourceUrl: "https://acme.com/products/positive-catalog",
+  });
+  assert.equal(result.products.length, 3);
+  assert.ok(result.products.every((item) => item.priceSignals[0]?.amount === 19.99));
 });
 
 test("prefers an exact product H1 when a marketing-prefixed title contains that identity", () => {

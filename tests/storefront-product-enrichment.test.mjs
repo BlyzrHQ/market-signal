@@ -343,6 +343,32 @@ test("does not use an id-based recommendation price as scoped target evidence", 
   }
 });
 
+test("does not use a recommendation custom-element price as scoped target evidence", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({ title: "CornerStone Enhanced Visibility Beanie", handle: "cornerstone-enhanced-visibility-beanie", variants: [{ title: "Default Title", price: 1340 }] }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", offers: { price: "0", priceCurrency: "USD" } })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1><product-recommendations><img class="product-image" src="https://cdn.shop.test/upsell.jpg"><p class="price">USD 89.99</p></product-recommendations><div class="summary"><p class="price">USD 12.50</p></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, [{ raw: "USD 13.4", currency: "USD", amount: 13.4 }]);
+    assert.equal(calls.at(-1), "https://shop.test/products/cornerstone-enhanced-visibility-beanie.js");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("preserves decorated positive scoped prices", () => {
+  for (const markup of ["+19.99 USD", "★ $19.99", "≈$19.99"]) {
+    const evidence = extractScopedProductPageEvidence(`<h1>Product</h1><div class="summary"><p class="price">${markup}</p></div>`);
+    assert.equal(evidence.priceSignals[0]?.amount, 19.99, markup);
+  }
+});
+
 test("prefers a valid adapter price when an exact-name zero placeholder ranks above a compatible longer title", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {

@@ -325,10 +325,9 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown): ProductPriceSi
     .replace(/&#(?:8722|8211|8212);/gi, "-")
     .replace(/&#x(?:2212|2013|2014);/gi, "-")
     .replace(/[−–—]/gu, "-")
-    .replace(/(?!\p{Sc})[\p{S}\p{Pd}]/gu, "-")
+    .replace(/[\p{Pd}\u207B\u208B\u2212\u2213\u2238\u2296\u229D\u229F\u2796\u2A29-\u2A2C\u2A3A\u2A41\u2A6C]/gu, "-")
     .replace(/,/g, "");
-  if (/&[a-z][a-z0-9]+;/i.test(normalizedAmountText)) return null;
-  const separatedNegative = /-\s*(?:[A-Z]{3}\s*|[$£€]\s*)?\d/u.test(normalizedAmountText);
+  const separatedNegative = /-\s*[^\d]{0,24}\d/u.test(normalizedAmountText);
   const accountingNegative = /\(\s*(?:[A-Z]{3}\s*|[$£€]\s*)?\d+(?:\.\d+)?(?:\s*[A-Z]{3})?\s*\)/u.test(normalizedAmountText);
   const trailingNegative = /\d+(?:\.\d+)?\s*-\s*(?:[A-Z]{3})?\s*$/u.test(normalizedAmountText);
   if (separatedNegative || accountingNegative || trailingNegative) return null;

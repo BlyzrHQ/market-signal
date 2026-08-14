@@ -161,7 +161,9 @@ function productScope(document: string) {
   const summaryIndex = document.search(/class\s*=\s*["'][^"']*(?:summary|product-summary)[^"']*["']/i);
   const start = Math.max(0, title?.index ?? summaryIndex);
   const bounded = document.slice(start, Math.min(document.length, start + 160_000));
-  const relatedAt = bounded.search(/<[a-z][\w:-]*\b[^>]*(?:class|id)\s*=\s*["'][^"']*(?:related|upsells|cross-sells|recommend(?:ed|ations?)|you-may-also-like|similar-products)[^"']*["']/i);
+  const attributeBoundary = bounded.search(/<[a-z][\w:-]*\b[^>]*(?:class|id)\s*=\s*["'][^"']*(?:related|upsells|cross-sells|recommend(?:ed|ations?)|you-may-also-like|similar-products)[^"']*["']/i);
+  const customElementBoundary = bounded.search(/<[a-z][\w:-]*(?:recommend|related|upsell|cross-sell|similar)[\w:-]*\b/i);
+  const relatedAt = [attributeBoundary, customElementBoundary].filter((index) => index >= 0).sort((left, right) => left - right)[0] ?? -1;
   return relatedAt >= 0 ? bounded.slice(0, relatedAt) : bounded;
 }
 
@@ -174,7 +176,7 @@ function scopedPriceSignals(currency: string, values: number[]) {
 
 function markedAmounts(markup: string, currency: string) {
   const decoded = normalizeLocalizedNumbers(decodeEvidence(markup.replace(/<[^>]*>/g, " ")))
-    .replace(/(?!\p{Sc})[\p{S}\p{Pd}]/gu, "-");
+    .replace(/[\p{Pd}\u207B\u208B\u2212\u2213\u2238\u2296\u229D\u229F\u2796\u2A29-\u2A2C\u2A3A\u2A41\u2A6C]/gu, "-");
   const expression = currencyAmountExpression(currency);
   return [...decoded.matchAll(expression)]
     .filter((match) => {
@@ -182,9 +184,8 @@ function markedAmounts(markup: string, currency: string) {
       const before = decoded.slice(0, start);
       const after = decoded.slice(start + match[0].length);
       return !/-\s*$/u.test(before)
-        && !/&[a-z][a-z0-9]+;\s*$/iu.test(before)
         && !/\(\s*$/u.test(before)
-        && !/^\s*(?:\)|-|&[a-z][a-z0-9]+;)/iu.test(after);
+        && !/^\s*(?:\)|-)/u.test(after);
     })
     .map((match) => Number((match[1] || match[2]).replace(/,/g, "")));
 }
