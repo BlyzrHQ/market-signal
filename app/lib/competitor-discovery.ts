@@ -108,7 +108,7 @@ function normalizedTokens(value: string) {
 }
 
 function isSimplePluralOf(candidate: string, singular: string) {
-  return singular.length > 3 && !/[aeiou]$/i.test(singular) && candidate === `${singular}s`;
+  return singular.length > 3 && !/[aeious]$/i.test(singular) && candidate === `${singular}s`;
 }
 
 function matchedProductTokens(sourceTokens: string[], productTokens: string[]) {

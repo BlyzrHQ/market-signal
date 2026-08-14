@@ -289,6 +289,28 @@ test("does not collapse an unrelated word ending in s into a product token", () 
   assert.deepEqual(candidatesFromSearchEvidence(payload, profile), []);
 });
 
+test("does not treat a word already ending in s as a singular token", () => {
+  const profile = {
+    domain: "example.com",
+    title: "Example",
+    description: "Custom wall art",
+    region: "United States",
+    language: "en",
+    products: [product("Premium Custom Canvas Design", "https://example.com/products/custom-canvas")],
+  };
+  const payload = {
+    output: [{
+      type: "web_search_call",
+      action: {
+        query: "custom wall art United States",
+        sources: [{ title: "Custom Canvass Services", url: "https://services.example.net/products/custom-canvass" }],
+      },
+    }],
+  };
+
+  assert.deepEqual(candidatesFromSearchEvidence(payload, profile), []);
+});
+
 test("selects a bounded product-search set across distinct name families", () => {
   const products = [
     product("Lamb Leg Halal 2500g", "https://myjam.co.uk/products/lamb-leg"),
