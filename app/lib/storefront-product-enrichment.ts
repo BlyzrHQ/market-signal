@@ -232,14 +232,16 @@ function markedAmounts(markup: string, currency: string) {
   const decoded = normalizeLocalizedNumbers(decodeEvidence(markup.replace(/<[^>]*>/g, " ")))
     .replace(/[\p{Pd}\u207B\u208B\u2212\u2213\u2238\u2296\u229D\u229F\u2796\u2A29-\u2A2C\u2A3A\u2A41\u2A6C]/gu, "-");
   if (/&#(?:x[0-9a-f]+|\d+)/i.test(decoded)) return [];
+  const installmentAt = decoded.search(/\b(?:or\s+)?(?:pay\s+in\s+)?\d+\s+(?:interest[- ]free\s+)?(?:payments?|installments?)\b|\b(?:payment|installment)\s+plan\b/iu);
+  const priceText = installmentAt >= 0 ? decoded.slice(0, installmentAt) : decoded;
   const expression = currencyAmountExpression(currency);
-  const matches = [...decoded.matchAll(expression)];
-  const tokenCount = [...decoded.matchAll(currencyTokenExpression(currency))].length;
+  const matches = [...priceText.matchAll(expression)];
+  const tokenCount = [...priceText.matchAll(currencyTokenExpression(currency))].length;
   if (matches.length === 0 || matches.length !== tokenCount) return [];
   const validContexts = matches.every((match) => {
       const start = match.index ?? 0;
-      const before = decoded.slice(0, start);
-      const after = decoded.slice(start + match[0].length);
+      const before = priceText.slice(0, start);
+      const after = priceText.slice(start + match[0].length);
       const trimmedBefore = before.trimEnd();
       const signPrefix = trimmedBefore.endsWith("-") ? trimmedBefore.slice(0, -1).trimEnd() : null;
       const negativePrefix = signPrefix !== null && (!signPrefix || /[:=]\s*$/u.test(signPrefix));
@@ -250,7 +252,7 @@ function markedAmounts(markup: string, currency: string) {
     });
   if (!validContexts) return [];
   const amounts = matches.map((match) => localizedAmount(match[1] || match[2], currency));
-  for (const range of decoded.matchAll(currencyRangeExpression(currency))) {
+  for (const range of priceText.matchAll(currencyRangeExpression(currency))) {
     const endpoints = [localizedAmount(range[1] || range[3] || range[5] || range[7], currency), localizedAmount(range[2] || range[4] || range[6] || range[8], currency)];
     amounts.push(...endpoints);
   }

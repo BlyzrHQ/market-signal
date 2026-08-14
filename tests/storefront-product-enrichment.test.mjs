@@ -335,6 +335,8 @@ test("rejects an entire current price container when any member is invalid", () 
   }
   const localizedUnit = extractScopedProductPageEvidence('<meta property="product:price:currency" content="EUR"><h1>Product</h1><p class="price">EUR 12,50 / 1,5L</p>');
   assert.deepEqual(localizedUnit.priceSignals, [{ raw: "EUR 12.5", currency: "EUR", amount: 12.5 }]);
+  const installments = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">$100.00 or 4 interest-free payments of $25.00</p>');
+  assert.deepEqual(installments.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
 });
 
 test("rejects unsupported or negative scoped price markup", () => {
