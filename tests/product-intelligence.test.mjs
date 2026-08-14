@@ -269,6 +269,13 @@ test("reconciles qualified structured dollar markers with explicit currency", ()
     sourceUrl: "https://acme.test/products/nicaragua-product",
   });
   assert.deepEqual(explicitCordoba.products[0].priceSignals, [{ raw: "NIO C$19.99", currency: "NIO", amount: 19.99, period: undefined }]);
+  for (const currency of ["USD", "MXN"]) {
+    const conflictCordoba = extraction({
+      document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: `${currency} Conflict`, offers: { price: "C$19.99", priceCurrency: currency } })}</script>`,
+      sourceUrl: `https://acme.test/products/${currency.toLowerCase()}-conflict`,
+    });
+    assert.deepEqual(conflictCordoba.products[0].priceSignals, [], currency);
+  }
 });
 
 test("preserves explicitly positive and decorated positive structured prices", () => {

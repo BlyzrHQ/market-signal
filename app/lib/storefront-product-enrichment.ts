@@ -158,9 +158,10 @@ function currencyTokenExpression(currency: string) {
 
 function currencyRangeExpression(currency: string) {
   const token = CURRENCY_TOKENS[currency] || currency.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const amount = `[+-]?${localizedAmountPattern(currency)}`;
+  const amount = `[+-]?${localizedAmountPattern(currency)}(?![\\d.,])`;
   const separator = "(?:-|/|\\bto\\b)";
-  return new RegExp(`(?:${token})\\s*(${amount})\\s*${separator}\\s*(${amount})|(${amount})\\s*${separator}\\s*(${amount})\\s*(?:${token})`, "giu");
+  const nonPriceSuffix = "(?!\\s*(?:%|\\b(?:off|months?|years?|days?|weeks?|hours?|kg|g|lb|lbs|oz|ml|litres?|liters?|packs?|pcs?|pieces?|units?)\\b))";
+  return new RegExp(`(?:(?:${token})\\s*(${amount})\\s*${separator}\\s*(${amount})|(${amount})\\s*${separator}\\s*(${amount})\\s*(?:${token}))${nonPriceSuffix}`, "giu");
 }
 
 function localizedAmount(raw: string, currency: string) {
@@ -265,6 +266,7 @@ export function extractScopedProductPageEvidence(document: string, sourceUrl = "
   const markedCurrencies = currenciesFromMarkup(currentMarkup);
   const directCurrency = confirmedProductCurrency(document, { allowStructured: false });
   const hasDollarSymbol = /\$/.test(decodedPriceMarkup);
+  const hasAmbiguousCordobaMarker = /(?:^|[^\p{L}\p{N}])C\$\s*[+-]?\d/iu.test(decodedPriceMarkup);
   const dollarCurrencies = new Set([
     "ARS", "AUD", "BMD", "BND", "BRL", "BSD", "BZD", "CAD", "CLP", "COP", "DOP", "FJD", "GYD", "HKD", "JMD",
     "KYD", "LRD", "MXN", "NAD", "NIO", "NZD", "SBD", "SGD", "SRD", "TTD", "TWD", "USD", "XCD", "ZWL",
@@ -294,7 +296,10 @@ export function extractScopedProductPageEvidence(document: string, sourceUrl = "
     .filter(isSupportedCurrency);
   const nonDollarMarkedCurrencies = markedCurrencies.filter((currency) => currency !== "USD" || !hasDollarSymbol || /\bUSD\b/i.test(decodedPriceMarkup));
   const observedPriceCurrencies = [...new Set([...explicitPriceCurrencies, ...nonDollarMarkedCurrencies, ...qualifiedDollarCurrencies])];
-  const directConflict = Boolean(directCurrency && observedPriceCurrencies.some((currency) => currency !== directCurrency));
+  const directConflict = Boolean(directCurrency && (
+    observedPriceCurrencies.some((currency) => currency !== directCurrency)
+    || (hasAmbiguousCordobaMarker && !new Set(["CAD", "NIO"]).has(directCurrency))
+  ));
   const observedCurrency = directConflict
     ? ""
     : directCurrency && hasDollarSymbol && dollarCurrencies.has(directCurrency)
