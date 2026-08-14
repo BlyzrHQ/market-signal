@@ -97,6 +97,17 @@ test("extracts authoritative Shopify price metadata and prefers the secure produ
   assert.equal(result.products[0].imageUrl, "https://cdn.shopify.com/lamb-leg.jpg");
 });
 
+test("does not relabel an ambiguous cordoba SaaS plan price as USD", () => {
+  const result = extraction({
+    document: '<h2>Pro</h2><p>C$19.99 /month</p>',
+    sourceUrl: "https://acme.com/pricing",
+    pageTitle: "Acme pricing",
+    headings: ["Pro"],
+    pagePriceSignals: [],
+  });
+  assert.deepEqual(result.products, []);
+});
+
 test("rejects negative structured and metadata prices instead of making them positive", () => {
   const structured = extraction({
     document: `<script type="application/ld+json">${JSON.stringify([
@@ -276,6 +287,11 @@ test("reconciles qualified structured dollar markers with explicit currency", ()
     });
     assert.deepEqual(conflictCordoba.products[0].priceSignals, [], currency);
   }
+  const spacedCordoba = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Spaced Conflict", offers: { price: "C $19.99", priceCurrency: "USD" } })}</script>`,
+    sourceUrl: "https://acme.test/products/spaced-conflict",
+  });
+  assert.deepEqual(spacedCordoba.products[0].priceSignals, []);
 });
 
 test("preserves explicitly positive and decorated positive structured prices", () => {

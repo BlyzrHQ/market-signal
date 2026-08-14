@@ -273,6 +273,8 @@ test("reconciles qualified visible dollar markers before a generic dollar", () =
     const conflictCordoba = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="${currency}"><h1>Product</h1><p class="price">C$19.99</p>`);
     assert.deepEqual(conflictCordoba.priceSignals, [], currency);
   }
+  const styledCordoba = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">C<span>$</span>19.99</p>');
+  assert.deepEqual(styledCordoba.priceSignals, []);
 });
 
 test("does not collapse visible multi-currency evidence into a single point price", () => {
@@ -317,9 +319,9 @@ test("rejects an entire current price container when any member is invalid", () 
     { raw: "USD 12.5", currency: "USD", amount: 12.5 },
     { raw: "USD 15", currency: "USD", amount: 15 },
   ]);
-  for (const markup of ['USD 10.00 <span>Save 10-12%</span>', '$12.00 <span>Size 12-18 months</span>', 'USD 10.00 - 12% off', 'USD 12.00 - 18 months warranty']) {
+  for (const markup of ['USD 10.00 <span>Save 10-12%</span>', '$12.00 <span>Size 12-18 months</span>', 'USD 10.00 - 12% off', 'USD 10.00 - 12 percent off', 'USD 12.00 - 18 months warranty', 'USD 12.00 - 18-month warranty', 'USD 12.50 / 100g']) {
     const evidence = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">${markup}</p>`);
-    const expected = markup.startsWith("USD 10") ? 10 : 12;
+    const expected = markup.includes("12.50 / 100g") ? 12.5 : markup.startsWith("USD 10") ? 10 : 12;
     assert.deepEqual(evidence.priceSignals, [{ raw: `USD ${expected}`, currency: "USD", amount: expected }], markup);
   }
 });

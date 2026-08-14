@@ -347,8 +347,11 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown, options: { allo
   if (/£/.test(currencyEvidence)) observedCurrencies.add("GBP");
   if (/€/.test(currencyEvidence)) observedCurrencies.add("EUR");
   const hasDollarSymbol = /\$/.test(currencyEvidence);
-  const hasAmbiguousCordobaMarker = /(?:^|[^\p{L}\p{N}])C\$\s*[+-]?\d/iu.test(currencyEvidence);
-  if (hasAmbiguousCordobaMarker && explicitCurrency && !new Set(["CAD", "NIO"]).has(explicitCurrency)) return null;
+  const hasAmbiguousCordobaMarker = /(?:^\s*|\bNIO\s+)C\s*\$\s*[+-]?\d/iu.test(currencyEvidence);
+  if (hasAmbiguousCordobaMarker && (
+    (explicitCurrency && !new Set(["CAD", "NIO"]).has(explicitCurrency))
+    || (!explicitCurrency && options.allowDefaultUsdDollar)
+  )) return null;
   const hasYenSymbol = /¥/.test(currencyEvidence);
   if (hasDollarSymbol && explicitCurrency && !DOLLAR_CURRENCIES.has(explicitCurrency)) return null;
   if (hasYenSymbol && explicitCurrency && !new Set(["CNY", "JPY"]).has(explicitCurrency)) return null;
@@ -580,7 +583,12 @@ function planTier(name: string, price?: ProductPriceSignal): SaasPlanTier | null
 
 function planPrice(value: string) {
   const expression = /(?:[$\u00a3\u20ac]\s?\d+(?:[.,]\d{1,2})?(?:\s*(?:USD|GBP|EUR))?(?:\s*(?:\/\s*|per\s+(?:(?:user|seat|channel|brand|workspace|social\s+set)\s*[,/]?\s*(?:per\s+)?)?)(?:month|mo|year|yr))?|\d+(?:[.,]\d{1,2})?\s*(?:USD|GBP|EUR)(?:\s*\/\s*(?:month|mo|year|yr))?)/gi;
-  const raws = [...value.matchAll(expression)].map((match) => clean(match[0])).filter(Boolean);
+  const raws = [...value.matchAll(expression)].map((match) => {
+    const start = match.index ?? 0;
+    const prefix = value.slice(Math.max(0, start - 5), start)
+      .match(/(?:^|[^\p{L}\p{N}])((?:US|CA|AU|A|R|RD|HK|MX|NZ|S|NT|C)\s*)$/iu)?.[1] || "";
+    return clean(`${prefix}${match[0]}`);
+  }).filter(Boolean);
   const recurring = raws.find((raw) => periodFrom(raw));
   return priceSignal(recurring || raws[0], undefined, { allowDefaultUsdDollar: true });
 }
