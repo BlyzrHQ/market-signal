@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { confirmedProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "../app/lib/product-page-adapters.ts";
+import { confirmedProductCurrency, hasConflictingDirectProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "../app/lib/product-page-adapters.ts";
 import { validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
 import { bilingualNormalize, parseCanonicalQuantity } from "../app/lib/product-normalization.ts";
 
@@ -44,7 +44,27 @@ test("builds exact same-domain Shopify and WooCommerce adapter requests", () => 
 
 test("confirms Shopify currency only from same-page public metadata", () => {
   assert.equal(confirmedProductCurrency('<meta property="product:price:currency" content="GBP">'), "GBP");
-  assert.equal(confirmedProductCurrency('<script>Shopify.currency = {"active":"AED","rate":"1.0"}</script>'), "AED");
+  assert.equal(confirmedProductCurrency('<script>Shopify.currency = {"active":"AED","rate":"1.0"}</script>'), "");
+  assert.equal(confirmedProductCurrency('<meta property="og:price:currency" content="USD"><script>Shopify.currency = {"active":"EUR"}</script>'), "USD");
+  assert.equal(confirmedProductCurrency('<meta property="product:price:currency" content="USD"><meta property="og:price:currency" content="EUR">'), "");
+  assert.equal(hasConflictingDirectProductCurrency('<meta property="product:price:currency" content="USD"><meta property="og:price:currency" content="EUR">'), true);
+  assert.equal(hasConflictingDirectProductCurrency('<meta property="product:price:currency" content="USD"><meta property="product:price:currency" content="EUR">'), true);
+  assert.equal(hasConflictingDirectProductCurrency('<script>Shopify.currency = {"active":"USD"}</script><script>Shopify.currency = {"active":"EUR"}</script>'), false);
+  assert.equal(hasConflictingDirectProductCurrency('<meta property="product:price:currency" content="USD"><meta property="product:price:currency" content=EUR>'), true);
+  assert.equal(confirmedProductCurrency('<meta data-name="product:price:currency" content="EUR">'), "");
+  assert.equal(confirmedProductCurrency('<!-- <meta property="product:price:currency" content="EUR"> -->'), "");
+  assert.equal(confirmedProductCurrency('<script>const example = `<meta property="product:price:currency" content="EUR">`;</script>'), "");
+  assert.equal(confirmedProductCurrency('<template><meta property="product:price:currency" content="EUR"></template>'), "");
+  assert.equal(confirmedProductCurrency('<template><template><meta property="product:price:currency" content="EUR"></template></template>'), "");
+  assert.equal(confirmedProductCurrency('<textarea><meta property="product:price:currency" content="EUR"></textarea>'), "");
+  assert.equal(confirmedProductCurrency('<title><meta property="product:price:currency" content="EUR"></title>'), "");
+  assert.equal(confirmedProductCurrency('<iframe srcdoc="<meta property=\'product:price:currency\' content=\'EUR\'>"></iframe>'), "");
+  assert.equal(confirmedProductCurrency('<xmp><meta property="product:price:currency" content="EUR"></xmp>'), "");
+  assert.equal(confirmedProductCurrency('<script>head()</script><meta property="product:price:currency" content="USD"><script>foot()</script>'), "USD");
+  assert.equal(confirmedProductCurrency('<meta property="product:price:currency" content="USD"><script>middle()</script><meta property="product:price:currency" content="EUR"><script>foot()</script>'), "");
+  assert.equal(confirmedProductCurrency('<script>document.write(\'<script src="fallback.js"><\\/script>\')</script><meta property="product:price:currency" content="USD">'), "USD");
+  assert.equal(confirmedProductCurrency('<!-- <meta property="product:price:currency" content="EUR">'), "");
+  assert.equal(hasConflictingDirectProductCurrency('<meta property="product:price:currency" content="USD"><script type="application/ld+json">{"priceCurrency":"EUR"}</script>'), false);
   assert.equal(confirmedProductCurrency('<script type="application/ld+json">{"priceCurrency":"EUR"}</script>'), "EUR");
   assert.equal(confirmedProductCurrency("Prices in pounds"), "");
 });
@@ -120,6 +140,85 @@ test("keeps unresolved Shopify variant prices non-comparable", () => {
   assert.deepEqual(result.product?.priceSignals.map((signal) => signal.amount), [2, 3.5]);
 });
 
+test("keeps a selected Shopify variant set non-comparable when any selected price is incomplete", () => {
+  const result = parseShopifyProduct({
+    payload: {
+      title: "Orange Juice",
+      handle: "orange-juice",
+      variants: [
+        { title: "500ml Red", price: 200 },
+        { title: "500ml Blue" },
+      ],
+    },
+    requestedKey: "orange-juice",
+    sourceUrl: "https://shop.test/products/orange-juice",
+    domain: "shop.test",
+    observedAt: "2026-07-20T10:00:00.000Z",
+    currency: "GBP",
+    expectedQuantity: parseCanonicalQuantity("500ml") || undefined,
+  });
+  assert.deepEqual(result.product?.priceSignals, []);
+  assert.match(result.gap, /every selected variant/i);
+});
+
+test("accepts only canonical integer minor units from storefront adapters", () => {
+  const parse = (price) => parseShopifyProduct({
+    payload: { title: "Canonical Price", handle: "canonical-price", variants: [{ title: "Default Title", price }] },
+    requestedKey: "canonical-price",
+    sourceUrl: "https://shop.test/products/canonical-price",
+    domain: "shop.test",
+    observedAt: "2026-07-20T10:00:00.000Z",
+    currency: "USD",
+  });
+  for (const value of ["0x10", "1e3", 12.5, "12.5", Number.MAX_SAFE_INTEGER + 1]) {
+    assert.deepEqual(parse(value).product?.priceSignals, [], String(value));
+  }
+  assert.deepEqual(parse("1250").product?.priceSignals, [{ raw: "USD 12.5", currency: "USD", amount: 12.5 }]);
+});
+
+test("quantity steering excludes differently sized Shopify variants while preserving same-size choices", () => {
+  const result = parseShopifyProduct({
+    payload: {
+      title: "Acme Tea",
+      handle: "acme-tea",
+      variants: [
+        { title: "100g Red", price: 800 },
+        { title: "100g Blue", price: 850 },
+        { title: "500g", price: 3000 },
+      ],
+    },
+    requestedKey: "acme-tea",
+    sourceUrl: "https://shop.test/products/acme-tea",
+    domain: "shop.test",
+    observedAt: "2026-07-20T10:00:00.000Z",
+    currency: "USD",
+    expectedQuantity: parseCanonicalQuantity("100g") || undefined,
+  });
+  assert.deepEqual(result.product?.priceSignals.map((signal) => signal.amount), [8, 8.5]);
+  assert.equal(result.product?.priceSignals.some((signal) => signal.amount === 30), false);
+});
+
+test("quantity steering does not fall back to differently sized Shopify variants", () => {
+  const result = parseShopifyProduct({
+    payload: {
+      title: "Acme Tea",
+      handle: "acme-tea",
+      variants: [
+        { title: "500g", price: 1000 },
+        { title: "1kg", price: 1000 },
+      ],
+    },
+    requestedKey: "acme-tea",
+    sourceUrl: "https://shop.test/products/acme-tea",
+    domain: "shop.test",
+    observedAt: "2026-07-20T10:00:00.000Z",
+    currency: "USD",
+    expectedQuantity: parseCanonicalQuantity("100g") || undefined,
+  });
+  assert.deepEqual(result.product?.priceSignals, []);
+  assert.match(result.gap, /every selected variant/i);
+});
+
 test("uses Shopify's fixed hundredths contract for zero- and three-decimal currencies", () => {
   const parse = (currency, price) => parseShopifyProduct({
     payload: { title: "Currency Test Product", handle: "currency-test", variants: [{ title: "Default Title", price }] },
@@ -131,7 +230,7 @@ test("uses Shopify's fixed hundredths contract for zero- and three-decimal curre
   }).product?.priceSignals[0];
   assert.deepEqual(parse("JPY", 100000), { raw: "JPY 1000", currency: "JPY", amount: 1000 });
   assert.deepEqual(parse("KWD", 900), { raw: "KWD 9", currency: "KWD", amount: 9 });
-  assert.deepEqual(parse("GBP", 0), { raw: "GBP 0", currency: "GBP", amount: 0 });
+  assert.equal(parse("GBP", 0), undefined);
 });
 
 test("strips storefront HTML from product descriptions", () => {

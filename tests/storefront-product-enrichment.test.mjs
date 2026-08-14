@@ -171,6 +171,887 @@ test("recovers public Shopify variants while preserving a non-comparable price b
   }
 });
 
+test("keeps an incomplete WooCommerce variation set non-comparable", () => {
+  const variations = JSON.stringify([
+    { display_price: 0, attributes: { attribute_weight: "500g" } },
+    { display_price: 19.99, attributes: { attribute_weight: "1kg" } },
+  ]).replace(/"/g, "&quot;");
+  const evidence = extractScopedProductPageEvidence(`<h1>Tea</h1><form data-product_variations="${variations}"><p class="price">USD 19.99</p></form>`);
+  assert.deepEqual(evidence.priceSignals, []);
+  assert.equal(evidence.basis, "unavailable");
+});
+
+test("keeps malformed and non-array WooCommerce variation payloads non-comparable", () => {
+  const payloads = [
+    "{", JSON.stringify("not-an-array"), JSON.stringify({ display_price: 19.99 }), "", "false",
+    JSON.stringify([{ display_price: true }]),
+    JSON.stringify([{ display_price: "0x10" }]),
+    JSON.stringify([{ display_price: "1e3" }]),
+  ];
+  for (const payload of payloads) {
+    const encoded = payload.replace(/"/g, "&quot;");
+    const attribute = payload === "false" ? "data-product_variations=false" : `data-product_variations="${encoded}"`;
+    const evidence = extractScopedProductPageEvidence(`<h1>Tea</h1><form ${attribute}><p class="price">USD 19.99</p></form>`);
+    assert.deepEqual(evidence.priceSignals, [], payload);
+    assert.equal(evidence.basis, "unavailable", payload);
+  }
+  const booleanEvidence = extractScopedProductPageEvidence('<h1>Tea</h1><form data-product_variations><p class="price">USD 19.99</p></form>');
+  assert.deepEqual(booleanEvidence.priceSignals, []);
+});
+
+test("ignores scoped prices, variations, and images inside inert markup", () => {
+  const variation = JSON.stringify([{ display_price: 19.99 }]).replace(/"/g, "&quot;");
+  for (const [open, close] of [["<script>", "</script>"], ["<template>", "</template>"], ["<textarea>", "</textarea>"], ["<xmp>", "</xmp>"]]) {
+    const evidence = extractScopedProductPageEvidence(`<h1>Tea</h1>${open}<form data-product_variations="${variation}"><p class="price">USD 19.99</p><img class="product-image" src="https://cdn.shop.test/inert.jpg"></form>${close}`);
+    assert.deepEqual(evidence.priceSignals, [], open);
+    assert.equal(evidence.imageUrl, "", open);
+  }
+});
+
+test("preserves active product evidence between sibling script blocks", () => {
+  const evidence = extractScopedProductPageEvidence('<script>head()</script><h1>Tea</h1><div class="summary"><p class="price">USD 19.99</p><img class="product-image" src="https://cdn.shop.test/tea.jpg"></div><script>foot()</script>');
+  assert.deepEqual(evidence.priceSignals, [{ raw: "USD 19.99", currency: "USD", amount: 19.99 }]);
+  assert.equal(evidence.imageUrl, "https://cdn.shop.test/tea.jpg");
+  const quotedImageTemplate = extractScopedProductPageEvidence('<h1>Tea</h1><div class="summary"><p class="price">USD 19.99</p><img class="product-image" data-template="src=\'https://cdn.shop.test/wrong.jpg\'" src="https://cdn.shop.test/right.jpg"></div>');
+  assert.equal(quotedImageTemplate.imageUrl, "https://cdn.shop.test/right.jpg");
+  const imagePlaceholder = extractScopedProductPageEvidence('<h1>Tea</h1><div class="summary"><p class="price">USD 19.99</p><img class="product-image-placeholder" src="https://cdn.shop.test/placeholder.jpg"><img class="product-image" src="https://cdn.shop.test/real.jpg"></div>');
+  assert.equal(imagePlaceholder.imageUrl, "https://cdn.shop.test/real.jpg");
+});
+
+test("preserves active product evidence after script text containing fallback markup", () => {
+  const evidence = extractScopedProductPageEvidence('<script>document.write(\'<script src="fallback.js"><\\/script>\')</script><h1>Tea</h1><div class="summary"><p class="price">USD 19.99</p></div>');
+  assert.deepEqual(evidence.priceSignals, [{ raw: "USD 19.99", currency: "USD", amount: 19.99 }]);
+});
+
+test("reconciles visible and direct product currencies before publishing a scoped price", () => {
+  const conflicting = extractScopedProductPageEvidence('<meta property="product:price:currency" content="EUR"><h1>Tea</h1><p class="price">USD 19.99</p>');
+  assert.deepEqual(conflicting.priceSignals, []);
+
+  const disambiguatedDollar = extractScopedProductPageEvidence('<meta property="product:price:currency" content="CAD"><h1>Tea</h1><p class="price">$19.99</p>');
+  assert.deepEqual(disambiguatedDollar.priceSignals, [{ raw: "CAD 19.99", currency: "CAD", amount: 19.99 }]);
+
+  const ambiguousDollar = extractScopedProductPageEvidence('<h1>Tea</h1><p class="price">$19.99</p>');
+  assert.deepEqual(ambiguousDollar.priceSignals, []);
+
+  const cadWithUsd = extractScopedProductPageEvidence('<meta property="product:price:currency" content="CAD"><h1>Tea</h1><p class="price">$19.99 USD</p>');
+  assert.deepEqual(cadWithUsd.priceSignals, []);
+
+  const usdWithCad = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Tea</h1><p class="price">CAD $19.99</p>');
+  assert.deepEqual(usdWithCad.priceSignals, []);
+
+  const cadWithEuro = extractScopedProductPageEvidence('<meta property="product:price:currency" content="CAD"><h1>Tea</h1><p class="price">$19.99 / &euro;17.99</p>');
+  assert.deepEqual(cadWithEuro.priceSignals, []);
+
+  const usdWithPounds = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Tea</h1><p class="price">$19.99 / &pound;15.99</p>');
+  assert.deepEqual(usdWithPounds.priceSignals, []);
+});
+
+test("ignores ordinary three-letter words outside current price markup", () => {
+  for (const [name, className] of [["All Purpose Cleaner", "top"], ["Try Me Tea", "gel"], ["Gel Pen Set", "product-summary"]]) {
+    const evidence = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>${name}</h1><div class="summary ${className}"><p class="price">USD 19.99</p></div>`);
+    assert.deepEqual(evidence.priceSignals, [{ raw: "USD 19.99", currency: "USD", amount: 19.99 }], name);
+  }
+});
+
+test("disambiguates dollar symbols with supported direct dollar currencies", () => {
+  for (const currency of ["MXN", "ARS", "CLP", "COP"]) {
+    const evidence = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="${currency}"><h1>Product</h1><p class="price">$1200</p>`);
+    assert.deepEqual(evidence.priceSignals, [{ raw: `${currency} 1200`, currency, amount: 1200 }], currency);
+  }
+});
+
+test("reconciles qualified visible dollar markers before a generic dollar", () => {
+  for (const [marker, currency] of [["US $19.99", "USD"], ["C$19.99", "CAD"], ["A$19.99", "AUD"], ["R$19.99", "BRL"], ["RD$19.99", "DOP"]]) {
+    const evidence = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="${currency}"><h1>Product</h1><p class="price">${marker}</p>`);
+    assert.deepEqual(evidence.priceSignals, [{ raw: `${currency} 19.99`, currency, amount: 19.99 }], marker);
+  }
+  const usDollarAsCad = extractScopedProductPageEvidence('<meta property="product:price:currency" content="CAD"><h1>Product</h1><p class="price">US $19.99</p>');
+  assert.deepEqual(usDollarAsCad.priceSignals, []);
+  const canadianDollarAsUsd = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">CA $19.99</p>');
+  assert.deepEqual(canadianDollarAsUsd.priceSignals, []);
+  const nicaraguanCordoba = extractScopedProductPageEvidence('<meta property="product:price:currency" content="NIO"><h1>Product</h1><p class="price">C$19.99</p>');
+  assert.deepEqual(nicaraguanCordoba.priceSignals, [{ raw: "NIO 19.99", currency: "NIO", amount: 19.99 }]);
+  const ambiguousCordoba = extractScopedProductPageEvidence('<h1>Product</h1><p class="price">C$19.99</p>');
+  assert.deepEqual(ambiguousCordoba.priceSignals, []);
+  for (const currency of ["USD", "MXN"]) {
+    const conflictCordoba = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="${currency}"><h1>Product</h1><p class="price">C$19.99</p>`);
+    assert.deepEqual(conflictCordoba.priceSignals, [], currency);
+  }
+  const styledCordoba = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">C<span>$</span>19.99</p>');
+  assert.deepEqual(styledCordoba.priceSignals, []);
+  for (const markup of ['Price: C$19.99', 'From C<span>$</span>19.99', 'Only C<span>$</span>19.99']) {
+    const labeledCordoba = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">${markup}</p>`);
+    assert.deepEqual(labeledCordoba.priceSignals, [], markup);
+  }
+});
+
+test("does not collapse visible multi-currency evidence into a single point price", () => {
+  const evidence = extractScopedProductPageEvidence('<h1>Product</h1><div class="summary"><p class="price">USD 12.50 / EUR 10.99</p></div>');
+  assert.deepEqual(evidence.priceSignals, []);
+  assert.equal(evidence.basis, "unavailable");
+});
+
+test("parses complete localized decimal and grouped prices without suffix matching", () => {
+  const decimalComma = extractScopedProductPageEvidence('<h1>Product</h1><p class="price">12,50 EUR</p>');
+  assert.deepEqual(decimalComma.priceSignals, [{ raw: "EUR 12.5", currency: "EUR", amount: 12.5 }]);
+  const groupedDecimalComma = extractScopedProductPageEvidence('<h1>Product</h1><p class="price">1.234,56 EUR</p>');
+  assert.deepEqual(groupedDecimalComma.priceSignals, [{ raw: "EUR 1234.56", currency: "EUR", amount: 1234.56 }]);
+  const groupedDecimalPoint = extractScopedProductPageEvidence('<h1>Product</h1><p class="price">USD 1,234.56</p>');
+  assert.deepEqual(groupedDecimalPoint.priceSignals, [{ raw: "USD 1234.56", currency: "USD", amount: 1234.56 }]);
+  for (const grouped of ["1 234,56 EUR", "1&nbsp;234,56 EUR", "1\u202F234,56 EUR", "1'234,56 EUR"]) {
+    const evidence = extractScopedProductPageEvidence(`<h1>Product</h1><p class="price">${grouped}</p>`);
+    assert.deepEqual(evidence.priceSignals, [{ raw: "EUR 1234.56", currency: "EUR", amount: 1234.56 }], grouped);
+  }
+  const groupedPoint = extractScopedProductPageEvidence('<h1>Product</h1><p class="price">1.234 EUR</p>');
+  assert.deepEqual(groupedPoint.priceSignals, [{ raw: "EUR 1234", currency: "EUR", amount: 1234 }]);
+});
+
+test("rejects an entire current price container when any member is invalid", () => {
+  for (const markup of ["$0.00 - $12.50", "-$5.00 / $12.50", "$ - $12.50", "$12.50 - 0", "$12.50 - -5"]) {
+    const evidence = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">${markup}</p>`);
+    assert.deepEqual(evidence.priceSignals, [], markup);
+  }
+  const sale = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price"><del>$0.00</del><ins>$12.50</ins></p>');
+  assert.deepEqual(sale.priceSignals, [{ raw: "USD 12.5", currency: "USD", amount: 12.5 }]);
+  assert.equal(sale.basis, "sale");
+
+  const sharedCurrencyRange = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">$12.50 - 19.99</p>');
+  assert.deepEqual(sharedCurrencyRange.priceSignals, [
+    { raw: "USD 12.5", currency: "USD", amount: 12.5 },
+    { raw: "USD 19.99", currency: "USD", amount: 19.99 },
+  ]);
+  assert.equal(sharedCurrencyRange.basis, "range");
+
+  const slashRange = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">USD 12.50 / 15.00</p>');
+  assert.deepEqual(slashRange.priceSignals, [
+    { raw: "USD 12.5", currency: "USD", amount: 12.5 },
+    { raw: "USD 15", currency: "USD", amount: 15 },
+  ]);
+  for (const suffix of ["incl. tax", "incl. VAT", "tax included", "each", "per item"]) {
+    const labeledRange = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">USD 10.00 - 12.00 ${suffix}</p>`);
+    assert.deepEqual(labeledRange.priceSignals.map((signal) => signal.amount), [10, 12], suffix);
+    assert.equal(labeledRange.basis, "range", suffix);
+  }
+  for (const markup of ['USD 10.00 <span>Save 10-12%</span>', '$12.00 <span>Size 12-18 months</span>', 'USD 10.00 - 12% off', 'USD 10.00 - 12 percent off', 'USD 10.00 - 12 per cent off', 'USD 10.00 - 12 pct off', 'USD 12.00 - 18 months warranty', 'USD 12.00 - 18-month warranty', 'USD 12.00 - 18 mos warranty', 'USD 12.00 - 18 mth warranty', 'USD 12.00 - 6 items included', 'USD 12.50 / 100g', 'USD 12.00 / 6 bottles', 'USD 12.50 / 10ct', 'USD 12.50 / 10 count', 'USD 12.50 / 1ea', 'USD 12.50 / 2pk', 'USD 12.50 / 1.5L', 'USD 12.50 / 16.9fl oz']) {
+    const evidence = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">${markup}</p>`);
+    const expected = markup.startsWith("USD 12.50") ? 12.5 : markup.startsWith("USD 10") ? 10 : 12;
+    assert.deepEqual(evidence.priceSignals, [{ raw: `USD ${expected}`, currency: "USD", amount: expected }], markup);
+  }
+  const localizedUnit = extractScopedProductPageEvidence('<meta property="product:price:currency" content="EUR"><h1>Product</h1><p class="price">EUR 12,50 / 1,5L</p>');
+  assert.deepEqual(localizedUnit.priceSignals, [{ raw: "EUR 12.5", currency: "EUR", amount: 12.5 }]);
+  for (const markup of ['$100.00 or 4 interest-free payments of $25.00', '$100.00 or 4 interest-free instalments of $25.00', '$100.00 or 4 easy payments of $25.00', '$100.00 or $25.00 in 4 installments', '$100 with 4 monthly payments of $25', '$100 with four payments of $25']) {
+    const installments = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">${markup}</p>`);
+    assert.deepEqual(installments.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }], markup);
+  }
+  for (const markup of ['$100.00 / $25.00 monthly payments', '$100.00 <span class="savings">Save $20.00</span>']) {
+    const secondaryAmount = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">${markup}</p>`);
+    assert.deepEqual(secondaryAmount.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }], markup);
+  }
+  for (const markup of ['<span class="savings">Save $20.00</span> $100.00', '$100.00 <span>Save $20.00 - 30.00</span>']) {
+    const savingsCopy = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">${markup}</p>`);
+    assert.deepEqual(savingsCopy.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }], markup);
+  }
+  const unwrappedSavings = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">Save $20.00 — now $100.00</p>');
+  assert.deepEqual(unwrappedSavings.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const compareAtRange = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">$100.00 <span>Compare at $120.00 - 140.00</span></p>');
+  assert.deepEqual(compareAtRange.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const classOnlyCompareAt = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price"><span class="compare-at">$120.00</span><span class="current">$100.00</span></p>');
+  assert.deepEqual(classOnlyCompareAt.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const unquotedCompareAt = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price"><span class=compare-at>$120.00</span><span class=current>$100.00</span></p>');
+  assert.deepEqual(unquotedCompareAt.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const struckCompareAt = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="product-price"><s class="compare-at">$120.00</s><span class="current">$100.00</span></div>');
+  assert.deepEqual(struckCompareAt.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const styledStrike = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price"><span style="text-decoration:line-through">$120.00</span><span>$100.00</span></p>');
+  assert.deepEqual(styledStrike.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const styledStrikeLine = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price"><span style="text-decoration-line:line-through">$120.00</span><span>$100.00</span></p>');
+  assert.deepEqual(styledStrikeLine.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const unwrappedWas = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">Was $120.00 — now $100.00</p>');
+  assert.deepEqual(unwrappedWas.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const regularSale = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">Regular $120.00 Sale $100.00</p>');
+  assert.deepEqual(regularSale.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const siblingRegularSale = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="product-price-regular">$120.00</div><div class="product-price-sale">$100.00</div>');
+  assert.deepEqual(siblingRegularSale.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const bemSiblingRegularSale = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="product-price--regular">$120.00</div><div class="product-price--sale">$100.00</div>');
+  assert.deepEqual(bemSiblingRegularSale.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const unquotedBemSale = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="product-price--regular">$120.00</div><div class=product-price--sale>$100.00</div>');
+  assert.deepEqual(unquotedBemSale.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const unitPriceBeforeProductPrice = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="unit-price">$5 / 100 ml</p><p class="price">$100</p>');
+  assert.deepEqual(unitPriceBeforeProductPrice.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const dualClassUnitPrice = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="unit-price price">$5 / 100 ml</p><p class="price">$100</p>');
+  assert.deepEqual(dualClassUnitPrice.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const genericDualClassUnitPrice = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="product-price unit-price">$5 / 100 ml</div><div class="product-price">$100</div>');
+  assert.deepEqual(genericDualClassUnitPrice.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const preferredDualClassUnitPrice = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="current-price unit-price">$5 / 100 ml</div><div class="product-price">$100</div>');
+  assert.deepEqual(preferredDualClassUnitPrice.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const bemUnitPrice = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price unit-price__value">$5 / 100 ml</p><p class="price">$100</p>');
+  assert.deepEqual(bemUnitPrice.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const suffixBemUnitPrice = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><span class="current-price current-price--unit">$5 / 100 ml</span><p class="price">$100</p>');
+  assert.deepEqual(suffixBemUnitPrice.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const dataTemplateClass = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p data-template="&lt;span class=\'price\'&gt;">$20 deposit</p><p class="price">$100</p>');
+  assert.deepEqual(dataTemplateClass.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const compareAtBeforeCurrent = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">Compare at $120.00</p><p class="price">$100.00</p>');
+  assert.deepEqual(compareAtBeforeCurrent.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const msrpBeforeCurrent = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">MSRP $120.00</p><p class="price">$100.00</p>');
+  assert.deepEqual(msrpBeforeCurrent.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const giftCardBeforeCurrent = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">Get a $20 gift card</p><p class="price">$100.00</p>');
+  assert.deepEqual(giftCardBeforeCurrent.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const giftCertificateBeforeCurrent = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">Receive a $20 gift certificate</p><p class="price">$100.00</p>');
+  assert.deepEqual(giftCertificateBeforeCurrent.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const recurringBeforeCurrent = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">Pay monthly from $20.00</p><p class="price">$100.00</p>');
+  assert.deepEqual(recurringBeforeCurrent.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const modelNumberRecurringBeforeCurrent = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Phone 15</h1><p class="price">Phone 15 — Pay monthly from $20.00</p><p class="price">$999.00</p>');
+  assert.deepEqual(modelNumberRecurringBeforeCurrent.priceSignals, [{ raw: "USD 999", currency: "USD", amount: 999 }]);
+  for (const recurringLead of ['Pay per month from $20.00', 'Pay every month from $20.00', 'Pay each month from $20.00', 'Pay every 2 weeks from $20.00', 'Pay every two weeks from $20.00', 'Pay every other week from $20.00', 'Pay once a month from $20.00', 'Pay twice a month from $20.00', 'Pay fortnightly from $20.00', 'Billed every month at $20.00', 'Billed once a month at $20.00', 'Per month: $20.00', 'Per mo: $20.00', 'Per qtr: $20.00']) {
+    const recurringLeadBeforeCurrent = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Phone 15</h1><p class="price">${recurringLead}</p><p class="price">$999.00</p>`);
+    assert.deepEqual(recurringLeadBeforeCurrent.priceSignals, [{ raw: "USD 999", currency: "USD", amount: 999 }], recurringLead);
+  }
+  for (const billingCycleLead of ['Pay per billing cycle from $20.00', 'Pay every billing cycle from $20.00', 'Pay each billing cycle from $20.00', 'Per billing cycle: $20.00']) {
+    const recurringLeadBeforeCurrent = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Phone 15</h1><p class="price">${billingCycleLead}</p><p class="price">$999.00</p>`);
+    assert.deepEqual(recurringLeadBeforeCurrent.priceSignals, [{ raw: "USD 999", currency: "USD", amount: 999 }], billingCycleLead);
+  }
+  for (const modelPrefix of ['RTX 4090', 'SKU 123', '15 PRO']) {
+    const recurringModelPrefix = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">${modelPrefix} — Pay monthly from $20.00</p><p class="price">$999.00</p>`);
+    assert.deepEqual(recurringModelPrefix.priceSignals, [{ raw: "USD 999", currency: "USD", amount: 999 }], modelPrefix);
+  }
+  const wholesaleNotSale = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="wholesale-price">$60.00</div><p class="price">$100.00</p>');
+  assert.deepEqual(wholesaleNotSale.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const wholesaleSaleNotCurrent = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="wholesale-sale-price">$60.00</div><p class="price">$100.00</p>');
+  assert.deepEqual(wholesaleSaleNotCurrent.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const dataClassNotCurrent = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div data-class="sale-price" class="wholesale-price">$60.00</div><p class="price">$100.00</p>');
+  assert.deepEqual(dataClassNotCurrent.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const nestedCurrent = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class=current-price><div class=price-regular>$120.00</div><span class=price-sale>$100.00</span></div>');
+  assert.deepEqual(nestedCurrent.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const nestedBadge = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="sale-price"><div class="badge">$20 OFF</div><span>$100.00</span></div>');
+  assert.deepEqual(nestedBadge.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const quotedGreaterThan = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="product-price--regular">$120.00</div><div data-label="price > regular" class="product-price--sale">$100.00</div>');
+  assert.deepEqual(quotedGreaterThan.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const dataClassInsideSale = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="sale-price"><span data-class="regular-price" class="current-value">$100.00</span><span class="member-price">$80.00</span></div>');
+  assert.deepEqual(dataClassInsideSale.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const nonmemberPublicPrice = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="sale-price"><span class="nonmember-price">$100.00</span><span class="loyalty-price">$80.00</span></div>');
+  assert.deepEqual(nonmemberPublicPrice.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const discountOnly = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">$20.00 OFF</p>');
+  assert.deepEqual(discountOnly.priceSignals, []);
+  for (const markup of ['Save $20.00', 'Save up to $20.00', 'Save an extra $20.00', 'Save an additional $20.00', 'Save as much as $20.00', 'Discount $20.00', 'Coupon value $20.00', 'Deposit $20.00', 'Down payment $20.00', '$20.00 down payment', 'Finance from $20.00/month', 'Only $20.00 / month payment plan', 'Only $20.00 / qtr payment plan', 'As low as $20.00/mo', '$20.00/wk', '$20.00/yr', '$20.00 monthly', 'Only $20.00 billed monthly', 'Only $20.00: billed monthly', 'Only $20.00 — billed monthly', 'Only $20.00 (billed monthly)', 'Only $20.00 — (billed monthly)', 'Only $20.00 billed per month', 'Only $20.00 billed on a monthly basis', 'Only $20.00 charged on the first of each month', 'Only $20.00 paid monthly', 'Only $20.00 payable per month', 'Only $20.00 due each month', 'Only $20.00 due on a monthly basis', 'Only $20.00 on a monthly basis', 'Only $20.00 on the first of each month', 'Pay $20.00 biweekly', 'Pay $20.00 bi-weekly', 'Get a $20.00 gift card', 'Get a $20.00 gift-card', 'Get a $20.00 giftcard', 'Get a $20.00 eGift Card', 'Gift card worth $20.00 now', 'Receive a $20.00 gift certificate', 'Receive a $20.00 voucher', 'Promo code value $20.00', 'Promo-code value $20.00', 'Get $20.00 in the form of store credit', 'Get $20.00 in store-credit', '$20.00 savings', '$20.00 instant savings', '$20.00 rebate', '$20.00 cashback', '$20.00 store credit', 'Get $20.00 in store credit', 'Get $20.00 worth of store credit', '$20.00 reward points']) {
+    const labeledDiscount = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">${markup}</p>`);
+    assert.deepEqual(labeledDiscount.priceSignals, [], markup);
+  }
+  for (const billingCycleSuffix of ['Only $20.00 per billing cycle', 'Only $20.00 every billing cycle', 'Only $20.00 each billing cycle', 'Only $20.00 / billing cycle', 'Only $20.00 once per billing cycle', 'Pay $20.00 at the start of each month']) {
+    const recurringPrice = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">${billingCycleSuffix}</p>`);
+    assert.deepEqual(recurringPrice.priceSignals, [], billingCycleSuffix);
+  }
+  const nestedSecondary = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="sale-price"><span class="regular-price"><span class="discount">$120.00</span></span><span class="current-value">$100.00</span><span class="deposit-price">$20.00</span></div>');
+  assert.deepEqual(nestedSecondary.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const trailingCurrencyRange = extractScopedProductPageEvidence('<h1>Product</h1><p class="price">100.00 - 120.00 USD</p>');
+  assert.deepEqual(trailingCurrencyRange.priceSignals.map((signal) => signal.amount), [100, 120]);
+  assert.equal(trailingCurrencyRange.basis, "range");
+  const financedRange = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">$100.00 - $120.00 or 4 payments of $25.00</p>');
+  assert.deepEqual(financedRange.priceSignals.map((signal) => signal.amount), [100, 120]);
+  assert.equal(financedRange.basis, "range");
+  const financedSharedRange = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">$100.00 - 120.00 or 4 payments of $25.00</p>');
+  assert.deepEqual(financedSharedRange.priceSignals.map((signal) => signal.amount), [100, 120]);
+  assert.equal(financedSharedRange.basis, "range");
+  const stackedFinancedSharedRange = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">$100.00 - 120.00<br>4 interest-free payments of $25.00</p>');
+  assert.deepEqual(stackedFinancedSharedRange.priceSignals.map((signal) => signal.amount), [100, 120]);
+  assert.equal(stackedFinancedSharedRange.basis, "range");
+  const commaFinancedSharedRange = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">$100.00 - 120.00, 4 payments of $25.00</p>');
+  assert.deepEqual(commaFinancedSharedRange.priceSignals.map((signal) => signal.amount), [100, 120]);
+  assert.equal(commaFinancedSharedRange.basis, "range");
+  for (const markup of ['$100.00 - 4 payments of $25.00', '$100.00 - 18 months warranty, 4 payments of $25.00']) {
+    const nonRangeFinancing = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">${markup}</p>`);
+    assert.deepEqual(nonRangeFinancing.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }], markup);
+  }
+});
+
+test("rejects unsupported or negative scoped price markup", () => {
+  const unsupported = extractScopedProductPageEvidence('<html><head><meta property="og:price:currency" content="XXX"></head><body><h1>Product</h1><p class="price">XXX 12.50</p></body></html>');
+  const negativePrefix = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">-$12.50</p></body></html>');
+  const negativeSpaced = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">- $12.50</p></body></html>');
+  const encodedNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&minus;$12.50</p></body></html>');
+  const encodedEnDash = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&ndash;$12.50</p></body></html>');
+  const encodedEmDash = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&mdash;$12.50</p></body></html>');
+  const encodedHyphen = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&hyphen;$12.50</p></body></html>');
+  const encodedDash = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&dash;$12.50</p></body></html>');
+  const numericHyphen = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&#x2010;$12.50</p></body></html>');
+  const superscriptMinus = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&#x207b;$12.50</p></body></html>');
+  const subscriptMinus = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&#x208b;$12.50</p></body></html>');
+  const heavyMinus = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&#x2796;$12.50</p></body></html>');
+  const circledMinus = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&ominus;12.50 USD</p></body></html>');
+  const dotMinus = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">\u223812.50 USD</p></body></html>');
+  const minusPlus = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">\u221312.50 USD</p></body></html>');
+  const trailingNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">$12.50-</p></body></html>');
+  const accountingNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">($12.50)</p></body></html>');
+  const labeledNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">Price: &minus;$12.50</p></body></html>');
+  const entityLabeledNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">Price&colon;&minus;$12.50</p></body></html>');
+  const equalsEntityNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">Price&equals;&minus;$12.50</p></body></html>');
+  const semicolonlessDecimalNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&#45 $12.50</p></body></html>');
+  const semicolonlessHexNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&#x2d $12.50</p></body></html>');
+  const punctuationDecimalNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&#45: USD 12.50</p></body></html>');
+  const punctuationHexNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&#x2d: USD 12.50</p></body></html>');
+  assert.deepEqual(unsupported.priceSignals, []);
+  assert.deepEqual(negativePrefix.priceSignals, []);
+  assert.deepEqual(negativeSpaced.priceSignals, []);
+  assert.deepEqual(encodedNegative.priceSignals, []);
+  assert.deepEqual(encodedEnDash.priceSignals, []);
+  assert.deepEqual(encodedEmDash.priceSignals, []);
+  assert.deepEqual(encodedHyphen.priceSignals, []);
+  assert.deepEqual(encodedDash.priceSignals, []);
+  assert.deepEqual(numericHyphen.priceSignals, []);
+  assert.deepEqual(superscriptMinus.priceSignals, []);
+  assert.deepEqual(subscriptMinus.priceSignals, []);
+  assert.deepEqual(heavyMinus.priceSignals, []);
+  assert.deepEqual(circledMinus.priceSignals, []);
+  assert.deepEqual(dotMinus.priceSignals, []);
+  assert.deepEqual(minusPlus.priceSignals, []);
+  assert.deepEqual(trailingNegative.priceSignals, []);
+  assert.deepEqual(accountingNegative.priceSignals, []);
+  assert.deepEqual(labeledNegative.priceSignals, []);
+  assert.deepEqual(entityLabeledNegative.priceSignals, []);
+  assert.deepEqual(equalsEntityNegative.priceSignals, []);
+  assert.deepEqual(semicolonlessDecimalNegative.priceSignals, []);
+  assert.deepEqual(semicolonlessHexNegative.priceSignals, []);
+  assert.deepEqual(punctuationDecimalNegative.priceSignals, []);
+  assert.deepEqual(punctuationHexNegative.priceSignals, []);
+});
+
+test("preserves both ends of a scoped same-currency price range", () => {
+  const evidence = extractScopedProductPageEvidence('<h1>Product</h1><div class="summary"><p class="price">USD 12.50 - USD 19.99</p></div>');
+  assert.deepEqual(evidence.priceSignals.map((signal) => signal.amount), [12.5, 19.99]);
+  assert.equal(evidence.basis, "range");
+});
+
+test("ignores out-of-range numeric entities in scoped evidence", () => {
+  const evidence = extractScopedProductPageEvidence('<h1>Product</h1><div class="summary"><p class="price">USD &#9999999999;</p></div>');
+  assert.deepEqual(evidence.priceSignals, []);
+});
+
+test("replaces a zero Shopify page placeholder with a positive same-domain adapter price", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({
+      title: "CornerStone Enhanced Visibility Beanie",
+      handle: "cornerstone-enhanced-visibility-beanie",
+      variants: [{ title: "Default Title", price: 1340 }],
+    }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name: "CornerStone Enhanced Visibility Beanie",
+      offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+    })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({
+      expectedName: "CornerStone Enhanced Visibility Beanie",
+      sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie",
+    })], 1);
+    assert.equal(result.products.length, 1);
+    assert.deepEqual(result.products[0].priceSignals, [{ raw: "USD 13.4", currency: "USD", amount: 13.4 }]);
+    assert.deepEqual(calls, [
+      "https://shop.test/robots.txt",
+      "https://shop.test/products/cornerstone-enhanced-visibility-beanie",
+      "https://shop.test/products/cornerstone-enhanced-visibility-beanie.js",
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("replaces a zero structured placeholder with positive scoped visible evidence", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name: "CornerStone Enhanced Visibility Beanie",
+      offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+    })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1><div class="summary"><p class="price">USD 12.50</p></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({
+      expectedName: "CornerStone Enhanced Visibility Beanie",
+      sourceUrl: "https://shop.test/shop/cornerstone-enhanced-visibility-beanie",
+    })], 1);
+    assert.equal(result.products.length, 1);
+    assert.deepEqual(result.products[0].priceSignals, [{ raw: "USD 12.5", currency: "USD", amount: 12.5 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("uses the matched product currency instead of an unrelated structured product currency", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({
+      title: "CornerStone Enhanced Visibility Beanie",
+      handle: "cornerstone-enhanced-visibility-beanie",
+      variants: [{ title: "Default Title", price: 1340 }],
+    }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify([
+      { "@type": "Product", name: "Unrelated Safety Jacket", offers: { price: "50", priceCurrency: "EUR" } },
+      { "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", offers: { price: "0", priceCurrency: "USD" } },
+    ])}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({
+      expectedName: "CornerStone Enhanced Visibility Beanie",
+      sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie",
+    })], 1);
+    assert.equal(result.products.length, 1);
+    assert.deepEqual(result.products[0].priceSignals, [{ raw: "USD 13.4", currency: "USD", amount: 13.4 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("ignores script-only Shopify currency and uses explicit structured product currency", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({ title: "CornerStone Enhanced Visibility Beanie", handle: "cornerstone-enhanced-visibility-beanie", variants: [{ title: "Default Title", price: 1340 }] }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script>Shopify.currency = {"active":"EUR"}</script><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", offers: { price: "0", priceCurrency: "USD" } })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, [{ raw: "USD 13.4", currency: "USD", amount: 13.4 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not fall back to structured currency when direct metadata currencies conflict", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({ title: "CornerStone Enhanced Visibility Beanie", handle: "cornerstone-enhanced-visibility-beanie", variants: [{ title: "Default Title", price: 1340 }] }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><meta property="product:price:currency" content="USD"><meta property="og:price:currency" content="EUR"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", offers: { price: "0", priceCurrency: "USD" } })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not infer Shopify adapter currency from a symbol-only zero placeholder", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({ title: "CornerStone Enhanced Visibility Beanie", handle: "cornerstone-enhanced-visibility-beanie", variants: [{ title: "Default Title", price: 1340 }] }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", offers: { price: "$0" } })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not collapse a partial structured range into its positive endpoint", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", offers: { lowPrice: 0, highPrice: 19.99, priceCurrency: "USD" } })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/shop/cornerstone-enhanced-visibility-beanie" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not collapse malformed or negative structured ranges into a positive endpoint", async () => {
+  const originalFetch = globalThis.fetch;
+  for (const lowPrice of ["N/A", -1, "-1", "NaN"]) {
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+      return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", offers: { lowPrice, highPrice: 19.99, priceCurrency: "USD" } })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+    };
+    const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/shop/cornerstone-enhanced-visibility-beanie" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, [], String(lowPrice));
+    resetSharedRobotsPolicyResolverForTests();
+  }
+  globalThis.fetch = originalFetch;
+});
+
+test("does not merge page and adapter evidence when their observed SKUs conflict", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({
+      title: "CornerStone Enhanced Visibility Beanie",
+      handle: "cornerstone-enhanced-visibility-beanie",
+      featured_image: "https://cdn.shop.test/wrong-sku.jpg",
+      variants: [{ title: "Default Title", price: 1340, sku: "ADAPTER-B" }],
+    }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", sku: "PAGE-A", offers: { price: 12.5, priceCurrency: "USD" } })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
+    assert.equal(result.products[0].identifiers?.sku, "PAGE-A");
+    assert.equal(result.products[0].imageUrl, "");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not replace a zero-price page record with an adapter price from a conflicting SKU", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({
+      title: "CornerStone Enhanced Visibility Beanie",
+      handle: "cornerstone-enhanced-visibility-beanie",
+      variants: [{ title: "Default Title", price: 1340, sku: "ADAPTER-B" }],
+    }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", sku: "PAGE-A", offers: { price: 0, priceCurrency: "USD" } })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1><div class="summary"><img class="product-image" src="https://cdn.shop.test/page-a.jpg"></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
+    assert.equal(result.products[0].identifiers?.sku, "PAGE-A");
+    assert.deepEqual(result.products[0].priceSignals, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not use a recommendation block price as scoped target evidence", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({
+      title: "CornerStone Enhanced Visibility Beanie",
+      handle: "cornerstone-enhanced-visibility-beanie",
+      variants: [{ title: "Default Title", price: 1340 }],
+    }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({
+      "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", offers: { price: "0", priceCurrency: "USD" },
+    })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1><div class="recommendations"><p class="price">USD 89.99</p></div><div class="summary"><img class="product-image" src="https://cdn.shop.test/beanie.jpg"><p class="price">USD 12.50</p></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({
+      expectedName: "CornerStone Enhanced Visibility Beanie",
+      sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie",
+    })], 1);
+    assert.equal(result.products.length, 1);
+    assert.deepEqual(result.products[0].priceSignals, [{ raw: "USD 13.4", currency: "USD", amount: 13.4 }]);
+    assert.equal(calls.at(-1), "https://shop.test/products/cornerstone-enhanced-visibility-beanie.js");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not use an id-based recommendation price as scoped target evidence", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({ title: "CornerStone Enhanced Visibility Beanie", handle: "cornerstone-enhanced-visibility-beanie", variants: [{ title: "Default Title", price: 1340 }] }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", offers: { price: "0", priceCurrency: "USD" } })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1><div id="product-recommendations"><img class="product-image" src="https://cdn.shop.test/upsell.jpg"><p class="price">USD 89.99</p></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, [{ raw: "USD 13.4", currency: "USD", amount: 13.4 }]);
+    assert.equal(calls.at(-1), "https://shop.test/products/cornerstone-enhanced-visibility-beanie.js");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not use a recommendation custom-element price as scoped target evidence", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({ title: "CornerStone Enhanced Visibility Beanie", handle: "cornerstone-enhanced-visibility-beanie", variants: [{ title: "Default Title", price: 1340 }] }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", offers: { price: "0", priceCurrency: "USD" } })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1><product-recommendations><img class="product-image" src="https://cdn.shop.test/upsell.jpg"><p class="price">USD 89.99</p></product-recommendations><div class="summary"><p class="price">USD 12.50</p></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, [{ raw: "USD 13.4", currency: "USD", amount: 13.4 }]);
+    assert.equal(calls.at(-1), "https://shop.test/products/cornerstone-enhanced-visibility-beanie.js");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not use an unquoted related-products class as scoped target evidence", () => {
+  const evidence = extractScopedProductPageEvidence('<h1>Target</h1><div class=related-products><p class="price">USD 89.99</p></div><div class=summary><p class="price">USD 12.50</p></div>');
+  assert.deepEqual(evidence.priceSignals, []);
+});
+
+test("does not confuse unrelated-content with a related-product boundary", () => {
+  const evidence = extractScopedProductPageEvidence('<h1>Target</h1><div class="unrelated-content">Editorial copy</div><div class="summary"><p class="price">USD 12.50</p></div>');
+  assert.deepEqual(evidence.priceSignals, [{ raw: "USD 12.5", currency: "USD", amount: 12.5 }]);
+});
+
+test("preserves decorated and promotional positive scoped prices", () => {
+  for (const markup of ["+19.99 USD", "Sale - USD 19.99", "Now - 19.99 USD"]) {
+    const evidence = extractScopedProductPageEvidence(`<h1>Product</h1><div class="summary"><p class="price">${markup}</p></div>`);
+    assert.equal(evidence.priceSignals[0]?.amount, 19.99, markup);
+  }
+  for (const markup of ["★ $19.99", "≈$19.99", "Promo &ndash; $19.99"]) {
+    const evidence = extractScopedProductPageEvidence(`<h1>Product</h1><div class="summary"><p class="price">${markup}</p></div>`);
+    assert.deepEqual(evidence.priceSignals, [], markup);
+  }
+});
+
+test("does not assign a Shopify fallback price when the matched product exposes multiple currencies", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({ title: "CornerStone Enhanced Visibility Beanie", handle: "cornerstone-enhanced-visibility-beanie", variants: [{ title: "Default Title", price: 1340 }] }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", offers: [{ price: "0", priceCurrency: "USD" }, { price: "10", priceCurrency: "EUR" }] })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("uses Shopify only for a missing image when the page already has a valid price", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({
+      title: "CornerStone Enhanced Visibility Beanie",
+      handle: "cornerstone-enhanced-visibility-beanie",
+      featured_image: "https://cdn.shop.test/beanie.jpg",
+      variants: [{ title: "Default Title", price: 1340 }],
+    }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", offers: { price: "12.50", priceCurrency: "USD" } })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
+    assert.equal(result.products[0].priceSignals[0].amount, 12.5);
+    assert.equal(result.products[0].imageUrl, "https://cdn.shop.test/beanie.jpg");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not merge an image from an identity-rejected Shopify fallback", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({
+      title: "Chocolate Cake",
+      handle: "cornerstone-enhanced-visibility-beanie",
+      featured_image: "https://cdn.shop.test/chocolate-cake.jpg",
+      variants: [{ title: "Default Title", price: 1340 }],
+    }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", offers: { price: "12.50", priceCurrency: "USD" } })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
+    assert.equal(result.products[0].priceSignals[0].amount, 12.5);
+    assert.equal(result.products[0].imageUrl, "");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("uses Shopify only for a missing price when the page already has a valid image", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({ title: "CornerStone Enhanced Visibility Beanie", handle: "cornerstone-enhanced-visibility-beanie", variants: [{ title: "Default Title", price: 1340 }] }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", image: "https://cdn.shop.test/page-beanie.jpg", offers: { price: "0", priceCurrency: "USD" } })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
+    assert.equal(result.products[0].priceSignals[0].amount, 13.4);
+    assert.equal(result.products[0].imageUrl, "https://cdn.shop.test/page-beanie.jpg");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("prefers a valid adapter price when an exact-name zero placeholder ranks above a compatible longer title", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({
+      title: "CornerStone Enhanced Visibility Beanie with Reflective Stripe",
+      handle: "cornerstone-enhanced-visibility-beanie",
+      variants: [{ title: "Default Title", price: 1340 }],
+    }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name: "CornerStone Enhanced Visibility Beanie",
+      offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+    })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({
+      expectedName: "CornerStone Enhanced Visibility Beanie",
+      sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie",
+    })], 1);
+    assert.equal(result.products.length, 1);
+    assert.equal(result.products[0].name, "CornerStone Enhanced Visibility Beanie with Reflective Stripe");
+    assert.deepEqual(result.products[0].priceSignals, [{ raw: "USD 13.4", currency: "USD", amount: 13.4 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not let an unrelated priced product suppress adapter recovery for the matched product", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({
+      title: "CornerStone Enhanced Visibility Beanie",
+      handle: "cornerstone-enhanced-visibility-beanie",
+      variants: [{ title: "Default Title", price: 1340 }],
+    }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify([
+      {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        name: "CornerStone Enhanced Visibility Beanie",
+        offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+      },
+      {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        name: "Unrelated Safety Jacket",
+        image: "https://cdn.shop.test/unrelated.jpg",
+        offers: { "@type": "Offer", price: "89.99", priceCurrency: "USD" },
+      },
+    ])}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({
+      expectedName: "CornerStone Enhanced Visibility Beanie",
+      sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie",
+    })], 1);
+    assert.equal(result.products.length, 1);
+    assert.deepEqual(result.products[0].priceSignals, [{ raw: "USD 13.4", currency: "USD", amount: 13.4 }]);
+    assert.equal(calls.at(-1), "https://shop.test/products/cornerstone-enhanced-visibility-beanie.js");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not let a similarly named priced related product contaminate the strongest matched product", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({
+      title: "CornerStone Enhanced Visibility Beanie",
+      handle: "cornerstone-enhanced-visibility-beanie",
+      variants: [{ title: "Default Title", price: 1340 }],
+    }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify([
+      {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        name: "CornerStone Enhanced Visibility Beanie",
+        offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+      },
+      {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        name: "CornerStone Enhanced Visibility Beanie with Pom",
+        image: "https://cdn.shop.test/related.jpg",
+        offers: { "@type": "Offer", price: "89.99", priceCurrency: "USD" },
+      },
+    ])}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({
+      expectedName: "CornerStone Enhanced Visibility Beanie",
+      sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie",
+    })], 1);
+    assert.equal(result.products.length, 1);
+    assert.equal(result.products[0].name, "CornerStone Enhanced Visibility Beanie");
+    assert.deepEqual(result.products[0].priceSignals, [{ raw: "USD 13.4", currency: "USD", amount: 13.4 }]);
+    assert.equal(calls.at(-1), "https://shop.test/products/cornerstone-enhanced-visibility-beanie.js");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("keeps non-positive, non-finite, or unsupported-currency Shopify prices non-comparable after adapter enrichment", async () => {
+  for (const { priceCurrency, adapterPrice } of [
+    { priceCurrency: "USD", adapterPrice: 0 },
+    { priceCurrency: "USD", adapterPrice: -100 },
+    { priceCurrency: "USD", adapterPrice: "NaN" },
+    { priceCurrency: "USD", adapterPrice: "Infinity" },
+    { priceCurrency: "XXX", adapterPrice: 1340 },
+    { priceCurrency: "   ", adapterPrice: 1340 },
+  ]) {
+    resetSharedRobotsPolicyResolverForTests();
+    const originalFetch = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+      if (url.endsWith(".js")) return Response.json({
+        title: "CornerStone Enhanced Visibility Beanie",
+        handle: "cornerstone-enhanced-visibility-beanie",
+        variants: [{ title: "Default Title", price: adapterPrice }],
+      }, { headers: { "content-type": "text/javascript" } });
+      return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "Product",
+        name: "CornerStone Enhanced Visibility Beanie",
+        offers: { "@type": "Offer", price: "0", priceCurrency },
+      })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+    };
+    try {
+      const result = await enrichProductTargets([target({
+        expectedName: "CornerStone Enhanced Visibility Beanie",
+        sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie",
+      })], 1);
+      assert.equal(result.products.length, 1);
+      assert.deepEqual(result.products[0].priceSignals, []);
+      assert.equal(calls.at(-1), "https://shop.test/products/cornerstone-enhanced-visibility-beanie.js");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+});
+
 test("preserves custom same-domain shop URLs for HTML-only enrichment", async () => {
   const parsed = publicProductTarget(target({ sourceUrl: "https://shop.test/shop/maamoul-pistachio" }));
   assert.ok(parsed);

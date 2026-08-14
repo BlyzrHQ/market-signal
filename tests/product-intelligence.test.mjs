@@ -75,7 +75,7 @@ test("creates a medium-confidence page signal only with path and page structure"
   assert.equal(result.products[0].extraction, "page-signal");
   assert.equal(result.products[0].confidence, "Medium");
   assert.equal(result.products[0].ownership, "path-inferred");
-  assert.deepEqual(result.products[0].priceSignals[0], { raw: "$20/month", currency: "USD", amount: 20, period: "month" });
+  assert.deepEqual(result.products[0].priceSignals[0], { raw: "$20/month", currency: undefined, amount: 20, period: "month" });
 });
 
 test("extracts authoritative Shopify price metadata and prefers the secure product image", () => {
@@ -95,6 +95,238 @@ test("extracts authoritative Shopify price metadata and prefers the secure produ
   assert.equal(result.products.length, 1);
   assert.deepEqual(result.products[0].priceSignals, [{ raw: "GBP 39.05", currency: "GBP", amount: 39.05, period: undefined }]);
   assert.equal(result.products[0].imageUrl, "https://cdn.shopify.com/lamb-leg.jpg");
+});
+
+test("does not relabel an ambiguous cordoba SaaS plan price as USD", () => {
+  const result = extraction({
+    document: '<h2>Pro</h2><p>C$19.99 /month</p>',
+    sourceUrl: "https://acme.com/pricing",
+    pageTitle: "Acme pricing",
+    headings: ["Pro"],
+    pagePriceSignals: [],
+  });
+  assert.deepEqual(result.products, []);
+});
+
+test("rejects negative structured and metadata prices instead of making them positive", () => {
+  const structured = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify([
+      { "@type": "Product", name: "Acme Numeric Negative", brand: { name: "Acme" }, offers: { price: -12.5, priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme String Negative", brand: { name: "Acme" }, offers: { price: "-12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Unicode Negative", brand: { name: "Acme" }, offers: { price: "−12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Encoded Negative", brand: { name: "Acme" }, offers: { price: "&minus;12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Named Hyphen Negative", brand: { name: "Acme" }, offers: { price: "&hyphen;$12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Named Dash Negative", brand: { name: "Acme" }, offers: { price: "&dash;$12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Decimal Entity Negative", brand: { name: "Acme" }, offers: { price: "&#45;12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Hex Entity Negative", brand: { name: "Acme" }, offers: { price: "&#x2d;12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Hyphen Negative", brand: { name: "Acme" }, offers: { price: "\u201012.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Nonbreaking Hyphen Negative", brand: { name: "Acme" }, offers: { price: "\u201112.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Figure Dash Negative", brand: { name: "Acme" }, offers: { price: "\u201212.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Small Hyphen Negative", brand: { name: "Acme" }, offers: { price: "\ufe6312.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Fullwidth Hyphen Negative", brand: { name: "Acme" }, offers: { price: "\uff0d12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Superscript Minus Negative", brand: { name: "Acme" }, offers: { price: "\u207b12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Subscript Minus Negative", brand: { name: "Acme" }, offers: { price: "\u208b12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Heavy Minus Negative", brand: { name: "Acme" }, offers: { price: "\u279612.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Circled Minus Negative", brand: { name: "Acme" }, offers: { price: "\u229612.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Dot Minus Negative", brand: { name: "Acme" }, offers: { price: "\u223812.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Minus Plus Negative", brand: { name: "Acme" }, offers: { price: "\u221312.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Named Ominus Negative", brand: { name: "Acme" }, offers: { price: "&ominus;12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme KWD Negative", brand: { name: "Acme" }, offers: { price: "−د.ك 12", priceCurrency: "KWD" } },
+      { "@type": "Product", name: "Acme Spaced Negative", brand: { name: "Acme" }, offers: { price: "- $12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Accounting Negative", brand: { name: "Acme" }, offers: { price: "($12.50)", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Trailing Negative", brand: { name: "Acme" }, offers: { price: "$12.50-", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Labeled Negative", brand: { name: "Acme" }, offers: { price: "Price: -$12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Entity Labeled Negative", brand: { name: "Acme" }, offers: { price: "Price&colon;&minus;$12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Equals Entity Negative", brand: { name: "Acme" }, offers: { price: "Price&equals;&minus;$12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Semicolonless Decimal Negative", brand: { name: "Acme" }, offers: { price: "&#45 $12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Semicolonless Hex Negative", brand: { name: "Acme" }, offers: { price: "&#x2d $12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Malformed Entity Negative", brand: { name: "Acme" }, offers: { price: "&#45USD 12.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Contradictory Currency", brand: { name: "Acme" }, offers: { price: "$12.50", priceCurrency: "EUR" } },
+      { "@type": "Product", name: "Acme ISO Contradiction", brand: { name: "Acme" }, offers: { price: "USD 0", priceCurrency: "EUR" } },
+      { "@type": "Product", name: "Acme Trailing ISO Contradiction", brand: { name: "Acme" }, offers: { price: "12.50 GBP", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Named Currency Contradiction", brand: { name: "Acme" }, offers: { price: "&dollar;12.50", priceCurrency: "EUR" } },
+      { "@type": "Product", name: "Acme Numeric Currency Contradiction", brand: { name: "Acme" }, offers: { price: "&#36;12.50", priceCurrency: "EUR" } },
+      { "@type": "Product", name: "Acme Mixed ISO Contradiction", brand: { name: "Acme" }, offers: { price: "USD 12 / EUR 10", priceCurrency: "EUR" } },
+      { "@type": "Product", name: "Acme Incomplete Range With Point", brand: { name: "Acme" }, offers: { price: 19.99, lowPrice: 0, highPrice: 29.99, priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Semicolonless Numeric Currency Contradiction", brand: { name: "Acme" }, offers: { price: "&#36 12.50", priceCurrency: "EUR" } },
+      { "@type": "Product", name: "Acme Semicolonless Hex Currency Contradiction", brand: { name: "Acme" }, offers: { price: "&#x24 12.50", priceCurrency: "EUR" } },
+      { "@type": "Product", name: "Acme Yen Currency Contradiction", brand: { name: "Acme" }, offers: { price: "¥1200", priceCurrency: "EUR" } },
+      { "@type": "Product", name: "Acme Lower ISO Currency Contradiction", brand: { name: "Acme" }, offers: { price: "12.50 usd", priceCurrency: "EUR" } },
+      { "@type": "Product", name: "Acme Semicolonless Named Currency Contradiction", brand: { name: "Acme" }, offers: { price: "&pound 12.50", priceCurrency: "EUR" } },
+      { "@type": "Product", name: "Acme Yen Entity Currency Contradiction", brand: { name: "Acme" }, offers: { price: "&yen;1200", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme MXN Currency Contradiction", brand: { name: "Acme" }, offers: { price: "MXN 1200", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme TRY Currency Contradiction", brand: { name: "Acme" }, offers: { price: "TRY 1200", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme COP Currency Contradiction", brand: { name: "Acme" }, offers: { price: "COP 1200", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Ambiguous First Mixed Currency", brand: { name: "Acme" }, offers: { price: "TRY 1200 / USD 40" } },
+      { "@type": "Product", name: "Acme Ambiguous Last Mixed Currency", brand: { name: "Acme" }, offers: { price: "USD 40 / TRY 1200" } },
+    ])}</script>`,
+    sourceUrl: "https://acme.com/products/negative-catalog",
+  });
+  assert.equal(structured.products.length, 48);
+  assert.ok(structured.products.every((item) => item.priceSignals.length === 0), structured.products.filter((item) => item.priceSignals.length).map((item) => item.name).join(", "));
+
+  const metadata = extraction({
+    document: `<head><meta property="og:price:amount" content="-12.50"><meta property="og:price:currency" content="USD"></head><script type="application/ld+json">${JSON.stringify({
+      "@type": "Product", name: "Acme Negative Widget", brand: { name: "Acme" },
+    })}</script>`,
+    sourceUrl: "https://acme.com/products/negative-widget",
+    pageTitle: "Acme Negative Widget",
+    headings: ["Acme Negative Widget"],
+  });
+  assert.equal(metadata.products.length, 1);
+  assert.deepEqual(metadata.products[0].priceSignals, []);
+
+  const accountingMetadata = extraction({
+    document: `<head><meta property="product:price:amount" content="($12.50)"><meta property="product:price:currency" content="USD"></head><script type="application/ld+json">${JSON.stringify({
+      "@type": "Product", name: "Acme Accounting Widget", brand: { name: "Acme" },
+    })}</script>`,
+    sourceUrl: "https://acme.com/products/accounting-widget",
+    pageTitle: "Acme Accounting Widget",
+    headings: ["Acme Accounting Widget"],
+  });
+  assert.equal(accountingMetadata.products.length, 1);
+  assert.deepEqual(accountingMetadata.products[0].priceSignals, []);
+
+  const entityMetadata = extraction({
+    document: `<head><meta property="product:price:amount" content="&#45;12.50"><meta property="product:price:currency" content="USD"></head><script type="application/ld+json">${JSON.stringify({
+      "@type": "Product", name: "Acme Entity Widget", brand: { name: "Acme" },
+    })}</script>`,
+    sourceUrl: "https://acme.com/products/entity-widget",
+    pageTitle: "Acme Entity Widget",
+    headings: ["Acme Entity Widget"],
+  });
+  assert.equal(entityMetadata.products.length, 1);
+  assert.deepEqual(entityMetadata.products[0].priceSignals, []);
+});
+
+test("rejects conflicting or inactive Open Graph price metadata", () => {
+  const product = { "@type": "Product", name: "Acme Metadata Widget", brand: { name: "Acme" } };
+  const conflicting = extraction({
+    document: `<head><meta property="product:price:amount" content="12.50"><meta property="product:price:currency" content="USD"><meta property="product:price:currency" content="EUR"></head><script type="application/ld+json">${JSON.stringify(product)}</script>`,
+    sourceUrl: "https://acme.com/products/metadata-widget",
+  });
+  assert.deepEqual(conflicting.products[0].priceSignals, []);
+
+  const commented = extraction({
+    document: `<head><!-- <meta property="product:price:amount" content="77"><meta property="product:price:currency" content="USD"> --></head><script type="application/ld+json">${JSON.stringify(product)}</script>`,
+    sourceUrl: "https://acme.com/products/metadata-widget",
+  });
+  assert.deepEqual(commented.products[0].priceSignals, []);
+
+  for (const inert of [
+    '<script>const example = `<meta property="product:price:amount" content="77"><meta property="product:price:currency" content="USD">`;</script>',
+    '<template><meta property="product:price:amount" content="77"><meta property="product:price:currency" content="USD"></template>',
+    '<!-- <meta property="product:price:amount" content="77"><meta property="product:price:currency" content="USD">',
+    '<template><template><meta property="product:price:amount" content="77"><meta property="product:price:currency" content="USD"></template></template>',
+    '<textarea><meta property="product:price:amount" content="77"><meta property="product:price:currency" content="USD"></textarea>',
+    '<title><meta property="product:price:amount" content="77"><meta property="product:price:currency" content="USD"></title>',
+    '<iframe srcdoc="<meta property=\'product:price:amount\' content=\'77\'><meta property=\'product:price:currency\' content=\'USD\'>"></iframe>',
+    '<xmp><meta property="product:price:amount" content="77"><meta property="product:price:currency" content="USD"></xmp>',
+  ]) {
+    const result = extraction({ document: `<script type="application/ld+json">${JSON.stringify(product)}</script>${inert}`, sourceUrl: "https://acme.com/products/metadata-widget" });
+    assert.deepEqual(result.products[0].priceSignals, []);
+  }
+});
+
+test("does not infer ISO currencies from lowercase ordinary prose", () => {
+  const result = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify([
+      { "@type": "Product", name: "Acme All", offers: { price: "for all 19.99" } },
+      { "@type": "Product", name: "Acme Try", offers: { price: "try 19.99" } },
+      { "@type": "Product", name: "Acme Upper All", offers: { price: "FOR ALL 19.99" } },
+      { "@type": "Product", name: "Acme Upper Try", offers: { price: "TRY 19.99" } },
+    ])}</script>`,
+    sourceUrl: "https://acme.com/products/prose",
+  });
+  assert.ok(result.products.every((item) => item.priceSignals.every((signal) => !signal.currency)));
+});
+
+test("does not assign USD to an unqualified structured dollar price", () => {
+  const result = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Acme Dollar", offers: { price: "$19.99" } })}</script>`,
+    sourceUrl: "https://acme.com/products/dollar",
+  });
+  assert.equal(result.products[0].priceSignals[0].currency, undefined);
+});
+
+test("reconciles qualified structured dollar markers with explicit currency", () => {
+  for (const [marker, currency] of [["US $19.99", "USD"], ["C$19.99", "CAD"], ["A$19.99", "AUD"], ["R$19.99", "BRL"], ["RD$19.99", "DOP"]]) {
+    const accepted = extraction({
+      document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: `${currency} Widget`, offers: { price: marker, priceCurrency: currency } })}</script>`,
+      sourceUrl: `https://acme.test/products/${currency.toLowerCase()}-widget`,
+    });
+    assert.deepEqual(accepted.products[0].priceSignals, [{ raw: `${currency} ${marker}`, currency, amount: 19.99, period: undefined }], marker);
+  }
+  const conflict = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Conflict Widget", offers: { price: "US $19.99", priceCurrency: "CAD" } })}</script>`,
+    sourceUrl: "https://acme.test/products/conflict-widget",
+  });
+  assert.deepEqual(conflict.products[0].priceSignals, []);
+
+  for (const [name, price] of [["Plan A", "Plan A $19.99"], ["Vitamin C", "Vitamin C $19.99"]]) {
+    const collision = extraction({
+      document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name, offers: { price } })}</script>`,
+      sourceUrl: `https://acme.test/products/${name.toLowerCase().replaceAll(" ", "-")}`,
+    });
+    assert.equal(collision.products[0].priceSignals[0].currency, undefined, price);
+  }
+  const ambiguousCordoba = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Ambiguous Cordoba", offers: { price: "C$19.99" } })}</script>`,
+    sourceUrl: "https://acme.test/products/ambiguous-cordoba",
+  });
+  assert.equal(ambiguousCordoba.products[0].priceSignals[0].currency, undefined);
+  const explicitCordoba = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Nicaragua Product", offers: { price: "C$19.99", priceCurrency: "NIO" } })}</script>`,
+    sourceUrl: "https://acme.test/products/nicaragua-product",
+  });
+  assert.deepEqual(explicitCordoba.products[0].priceSignals, [{ raw: "NIO C$19.99", currency: "NIO", amount: 19.99, period: undefined }]);
+  for (const currency of ["USD", "MXN"]) {
+    const conflictCordoba = extraction({
+      document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: `${currency} Conflict`, offers: { price: "C$19.99", priceCurrency: currency } })}</script>`,
+      sourceUrl: `https://acme.test/products/${currency.toLowerCase()}-conflict`,
+    });
+    assert.deepEqual(conflictCordoba.products[0].priceSignals, [], currency);
+  }
+  const spacedCordoba = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Spaced Conflict", offers: { price: "C $19.99", priceCurrency: "USD" } })}</script>`,
+    sourceUrl: "https://acme.test/products/spaced-conflict",
+  });
+  assert.deepEqual(spacedCordoba.products[0].priceSignals, []);
+  const labeledCordoba = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Labeled Conflict", offers: { price: "Price: C$19.99", priceCurrency: "USD" } })}</script>`,
+    sourceUrl: "https://acme.test/products/labeled-conflict",
+  });
+  assert.deepEqual(labeledCordoba.products[0].priceSignals, []);
+  const ordinaryLabelCordoba = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Ordinary Label Conflict", offers: { price: "Only C $19.99", priceCurrency: "USD" } })}</script>`,
+    sourceUrl: "https://acme.test/products/ordinary-label-conflict",
+  });
+  assert.deepEqual(ordinaryLabelCordoba.products[0].priceSignals, []);
+});
+
+test("preserves explicitly positive and decorated positive structured prices", () => {
+  const result = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify([
+      { "@type": "Product", name: "Acme Explicit Positive", offers: { price: "+19.99", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Star Price", offers: { price: "★ $19.99", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Approximate Price", offers: { price: "≈$19.99", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Sale Price Label", offers: { price: "sale-price USD 19.99", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Sale Separator", offers: { price: "Sale - USD 19.99", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Now Separator", offers: { price: "Now - 19.99 USD", priceCurrency: "USD" } },
+    ])}</script>`,
+    sourceUrl: "https://acme.com/products/positive-catalog",
+  });
+  assert.equal(result.products.length, 6);
+  assert.ok(result.products.every((item) => item.priceSignals[0]?.amount === 19.99));
+});
+
+test("ignores out-of-range numeric price entities without crashing extraction", () => {
+  const result = extraction({
+    document: `<head><meta property="og:price:amount" content="&#9999999999;"><meta property="og:price:currency" content="USD"></head><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Acme Safe Widget", brand: { name: "Acme" } })}</script>`,
+    sourceUrl: "https://acme.com/products/safe-widget",
+  });
+  assert.equal(result.products.length, 1);
+  assert.deepEqual(result.products[0].priceSignals, []);
 });
 
 test("prefers an exact product H1 when a marketing-prefixed title contains that identity", () => {

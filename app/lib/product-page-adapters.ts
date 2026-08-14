@@ -6,6 +6,7 @@ import {
   type CanonicalProductQuantity,
 } from "./product-normalization.ts";
 import type { ProductPriceSignal, ProductRecord } from "./product-intelligence.ts";
+import { stripInactiveHtmlMarkup } from "./active-html-markup.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -101,12 +102,18 @@ export function storefrontAdapterRequest(sourceUrl: string): StorefrontAdapterRe
   return null;
 }
 
-function metaContent(document: string, key: string) {
-  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const identity = `(?:property|name|itemprop)\\s*=\\s*["']${escaped}["']`;
-  const identityFirst = new RegExp(`<meta[^>]+${identity}[^>]+content\\s*=\\s*["']([^"']*)["']`, "i");
-  const contentFirst = new RegExp(`<meta[^>]+content\\s*=\\s*["']([^"']*)["'][^>]+${identity}`, "i");
-  return text(document.match(identityFirst)?.[1] || document.match(contentFirst)?.[1], 20);
+function metaContents(document: string, key: string) {
+  const attributeValue = (tag: string, name: string) => {
+    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = tag.match(new RegExp(`(?:^|\\s)${escapedName}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
+    return text(match?.[1] || match?.[2] || match?.[3], 40);
+  };
+  const activeDocument = stripInactiveHtmlMarkup(document);
+  return [...activeDocument.matchAll(/<meta\b[^>]*>/gi)]
+    .map((match) => match[0])
+    .filter((tag) => ["property", "name", "itemprop"].some((attribute) => attributeValue(tag, attribute) === key))
+    .map((tag) => attributeValue(tag, "content"))
+    .filter(Boolean);
 }
 
 function isoCurrency(value: unknown) {
@@ -114,18 +121,38 @@ function isoCurrency(value: unknown) {
   return /^[A-Z]{3}$/.test(candidate) ? candidate : "";
 }
 
-export function confirmedProductCurrency(document: string) {
-  const metadata = metaContent(document, "product:price:currency")
-    || metaContent(document, "og:price:currency")
-    || metaContent(document, "priceCurrency");
-  const shopify = document.match(/Shopify\.currency\s*=\s*\{[^}]*["']active["']\s*:\s*["']([A-Za-z]{3})["']/i)?.[1];
-  const structured = document.match(/["']priceCurrency["']\s*:\s*["']([A-Za-z]{3})["']/i)?.[1];
-  return isoCurrency(metadata || shopify || structured);
+function directProductCurrencies(document: string) {
+  const metadata = ["product:price:currency", "og:price:currency", "priceCurrency"]
+    .flatMap((key) => metaContents(document, key));
+  return [...new Set(metadata.map(isoCurrency).filter(Boolean))];
+}
+
+export function hasConflictingDirectProductCurrency(document: string) {
+  return directProductCurrencies(document).length > 1;
+}
+
+export function confirmedProductCurrency(document: string, options: { allowStructured?: boolean } = {}) {
+  const direct = directProductCurrencies(document);
+  if (direct.length > 1) return "";
+  if (direct.length === 1) return direct[0];
+  if (options.allowStructured === false) return "";
+  const structured = [...document.matchAll(/["']priceCurrency["']\s*:\s*["']([A-Za-z]{3})["']/gi)]
+    .map((match) => isoCurrency(match[1]))
+    .filter(Boolean);
+  const unique = [...new Set(structured)];
+  return unique.length === 1 ? unique[0] : "";
+}
+
+function canonicalMinorUnits(value: unknown) {
+  if (typeof value === "number") return Number.isSafeInteger(value) && value >= 0 ? value : null;
+  if (typeof value !== "string" || !/^\d+$/.test(value.trim())) return null;
+  const numeric = Number(value.trim());
+  return Number.isSafeInteger(numeric) ? numeric : null;
 }
 
 function minorUnitPrice(value: unknown, currency: string, explicitDigits: unknown): ProductPriceSignal | null {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric < 0 || !currency) return null;
+  const numeric = canonicalMinorUnits(value);
+  if (numeric === null || !currency) return null;
   const digits = Number.isInteger(explicitDigits) && Number(explicitDigits) >= 0 && Number(explicitDigits) <= 4
     ? Number(explicitDigits)
     : 2;
@@ -135,10 +162,8 @@ function minorUnitPrice(value: unknown, currency: string, explicitDigits: unknow
 }
 
 function positiveMinorUnitInput(value: unknown) {
-  if (typeof value === "number") return Number.isFinite(value) && value > 0;
-  if (typeof value !== "string" || !value.trim()) return false;
-  const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric > 0;
+  const numeric = canonicalMinorUnits(value);
+  return numeric !== null && numeric > 0;
 }
 
 function identifierRecord(value: JsonRecord | null) {
@@ -207,8 +232,9 @@ export function parseShopifyProduct(input: {
   const quantityMatches = input.expectedQuantity
     ? variants.filter((variant) => quantitiesEqual(input.expectedQuantity, shopifyVariantQuantity(name, variant)))
     : [];
-  const selectedVariants = quantityMatches.length === 1 ? quantityMatches : variants;
-  const priceSignals = input.currency
+  const selectedVariants = input.expectedQuantity ? quantityMatches : variants;
+  const completeSelectedPricing = selectedVariants.length > 0 && selectedVariants.every((variant) => positiveMinorUnitInput(variant.price));
+  const priceSignals = input.currency && completeSelectedPricing
     ? [...new Map(selectedVariants.map((variant) => minorUnitPrice(variant.price, input.currency, 2)).filter((value): value is ProductPriceSignal => Boolean(value)).map((signal) => [`${signal.currency}|${signal.amount}`, signal])).values()]
     : [];
   const selectedVariant = selectedVariants.length === 1 ? selectedVariants[0] : null;
@@ -229,7 +255,9 @@ export function parseShopifyProduct(input: {
   });
   return {
     product,
-    gap: !input.currency && selectedVariants.some((variant) => Number.isFinite(Number(variant.price)))
+    gap: !completeSelectedPricing
+      ? "Shopify did not expose a positive price for every selected variant, so the product price was not treated as comparable."
+      : !input.currency && selectedVariants.some((variant) => Number.isFinite(Number(variant.price)))
       ? "Shopify exposed a price but no same-page currency, so the price was not treated as comparable."
       : "",
   };

@@ -10,6 +10,7 @@ import {
   type CanonicalProductQuantity,
   type ProductIdentifiers,
 } from "./product-normalization.ts";
+import { stripInactiveHtmlMarkup } from "./active-html-markup.ts";
 
 export type ProductPriceSignal = {
   raw: string;
@@ -47,6 +48,10 @@ const ISO_CURRENCIES = new Set<string>((() => {
   }
 })());
 
+export function isSupportedCurrency(value: unknown) {
+  return ISO_CURRENCIES.has(String(value || "").trim().toUpperCase());
+}
+
 export function hasValidObservedRivalPrice(product: ProductRecord) {
   return product.priceSignals.some((signal) => {
     const currency = String(signal.currency || "").trim().toUpperCase();
@@ -54,7 +59,7 @@ export function hasValidObservedRivalPrice(product: ProductRecord) {
       && Number.isFinite(signal.amount)
       && signal.amount > 0
       && Boolean(String(signal.raw || "").trim())
-      && ISO_CURRENCIES.has(currency);
+      && isSupportedCurrency(currency);
   });
 }
 
@@ -304,14 +309,101 @@ function periodFrom(value: string) {
   return match?.[1]?.toLowerCase();
 }
 
-function priceSignal(rawValue: unknown, currencyValue?: unknown): ProductPriceSignal | null {
+function decodedCodePoint(value: string, radix: number) {
+  const code = Number.parseInt(value, radix);
+  return Number.isInteger(code) && code >= 0 && code <= 0x10FFFF ? String.fromCodePoint(code) : " ";
+}
+
+const AMBIGUOUS_CURRENCY_WORDS = new Set(["ALL", "COP", "CUP", "GEL", "MAD", "PEN", "TOP", "TRY"]);
+const DOLLAR_CURRENCIES = new Set([
+  "ARS", "AUD", "BMD", "BND", "BRL", "BSD", "BZD", "CAD", "CLP", "COP", "DOP", "FJD", "GYD", "HKD", "JMD",
+  "KYD", "LRD", "MXN", "NAD", "NIO", "NZD", "SBD", "SGD", "SRD", "TTD", "TWD", "USD", "XCD", "ZWL",
+]);
+const QUALIFIED_DOLLAR_MARKERS: ReadonlyArray<[currency: string, marker: RegExp]> = [
+  ["USD", /(?:^|[^\p{L}\p{N}])US\s*\$\s*[+-]?\d/iu],
+  ["CAD", /(?:^|[^\p{L}\p{N}])CA\s*\$\s*[+-]?\d/iu],
+  ["AUD", /(?:^|[^\p{L}\p{N}])(?:AU\s*\$|A\$)\s*[+-]?\d/iu],
+  ["BRL", /(?:^|[^\p{L}\p{N}])R\$\s*[+-]?\d/iu],
+  ["DOP", /(?:^|[^\p{L}\p{N}])RD\s*\$\s*[+-]?\d/iu],
+  ["HKD", /(?:^|[^\p{L}\p{N}])HK\s*\$\s*[+-]?\d/iu],
+  ["MXN", /(?:^|[^\p{L}\p{N}])MX\s*\$\s*[+-]?\d/iu],
+  ["NZD", /(?:^|[^\p{L}\p{N}])NZ\s*\$\s*[+-]?\d/iu],
+  ["SGD", /(?:^|[^\p{L}\p{N}])S\$\s*[+-]?\d/iu],
+  ["TWD", /(?:^|[^\p{L}\p{N}])NT\s*\$\s*[+-]?\d/iu],
+];
+
+function priceSignal(rawValue: unknown, currencyValue?: unknown, options: { allowDefaultUsdDollar?: boolean } = {}): ProductPriceSignal | null {
   const rawText = text(rawValue);
   if (!rawText) return null;
   const explicitCurrency = text(currencyValue).toUpperCase();
-  const inferredCurrency = /£/.test(rawText) ? "GBP" : /€/.test(rawText) ? "EUR" : /\$/.test(rawText) ? "USD" : undefined;
+  const currencyEvidence = rawText
+    .replace(/&pound(?:;|(?=\s|\d))/gi, "£")
+    .replace(/&euro(?:;|(?=\s|\d))/gi, "€")
+    .replace(/&dollar(?:;|(?=\s|\d))/gi, "$")
+    .replace(/&yen(?:;|(?=\s|\d))/gi, "¥")
+    .replace(/&#(\d+)(?:;|(?=\s|\p{Sc}))/gu, (_, code: string) => decodedCodePoint(code, 10))
+    .replace(/&#x([0-9a-f]+)(?:;|(?=\s|\p{Sc}))/giu, (_, code: string) => decodedCodePoint(code, 16));
+  const observedCurrencies = new Set<string>();
+  if (/£/.test(currencyEvidence)) observedCurrencies.add("GBP");
+  if (/€/.test(currencyEvidence)) observedCurrencies.add("EUR");
+  const hasDollarSymbol = /\$/.test(currencyEvidence);
+  const hasAmbiguousCordobaMarker = /(?:C\$|\bC\s+\$)\s*[+-]?\d/iu.test(currencyEvidence)
+    && !/\b(?:vitamin|grade|type|model|size|option|plan)\s+C\s+\$\s*[+-]?\d/iu.test(currencyEvidence);
+  if (hasAmbiguousCordobaMarker && (
+    (explicitCurrency && !new Set(["CAD", "NIO"]).has(explicitCurrency))
+    || (!explicitCurrency && options.allowDefaultUsdDollar)
+  )) return null;
+  const hasYenSymbol = /¥/.test(currencyEvidence);
+  if (hasDollarSymbol && explicitCurrency && !DOLLAR_CURRENCIES.has(explicitCurrency)) return null;
+  if (hasYenSymbol && explicitCurrency && !new Set(["CNY", "JPY"]).has(explicitCurrency)) return null;
+  if (hasDollarSymbol && !explicitCurrency && options.allowDefaultUsdDollar) observedCurrencies.add("USD");
+  if (/₹/.test(currencyEvidence)) observedCurrencies.add("INR");
+  if (/₩/.test(currencyEvidence)) observedCurrencies.add("KRW");
+  if (/₽/.test(currencyEvidence)) observedCurrencies.add("RUB");
+  if (/₺/.test(currencyEvidence)) observedCurrencies.add("TRY");
+  if (/₪/.test(currencyEvidence)) observedCurrencies.add("ILS");
+  const qualifiedDollarCurrencies = new Set(QUALIFIED_DOLLAR_MARKERS.filter(([, marker]) => marker.test(currencyEvidence)).map(([currency]) => currency));
+  if (qualifiedDollarCurrencies.size > 1 || (explicitCurrency && [...qualifiedDollarCurrencies].some((currency) => currency !== explicitCurrency))) return null;
+  for (const currency of qualifiedDollarCurrencies) observedCurrencies.add(currency);
+  const amountCurrencies = new Set<string>();
+  for (const match of currencyEvidence.matchAll(/\b[A-Za-z]{3}\b/g)) {
+    const currency = match[0].toUpperCase();
+    const index = match.index ?? 0;
+    const amountAdjacent = /^\s*(?:\p{Sc}\s*)?[+-]?\d/u.test(currencyEvidence.slice(index + match[0].length))
+      || /\d(?:[.,]\d+)?\s*$/.test(currencyEvidence.slice(0, index));
+    if (!amountAdjacent || !isSupportedCurrency(currency)) continue;
+    amountCurrencies.add(currency);
+  }
+  if (amountCurrencies.size > 1 || (explicitCurrency && [...amountCurrencies].some((currency) => currency !== explicitCurrency))) return null;
+  const amountCurrency = [...amountCurrencies][0];
+  if (amountCurrency && !AMBIGUOUS_CURRENCY_WORDS.has(amountCurrency)) observedCurrencies.add(amountCurrency);
+  if (observedCurrencies.size > 1 || (explicitCurrency && [...observedCurrencies].some((currency) => currency !== explicitCurrency))) return null;
+  const inferredCurrency = [...observedCurrencies][0];
   const currency = explicitCurrency || inferredCurrency;
-  const amountMatch = rawText.replace(/,/g, "").match(/\d+(?:\.\d+)?/);
+  const normalizedAmountText = rawText
+    .replace(/&[a-z0-9]*(?:minus|dash|hyphen|ominus)[a-z0-9]*;/gi, "-")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&pound;/gi, "£")
+    .replace(/&euro;/gi, "€")
+    .replace(/&dollar;/gi, "$")
+    .replace(/&colon;/gi, ":")
+    .replace(/&equals;/gi, "=")
+    .replace(/&#(\d+)(?:;|(?=\s|\p{Sc}))/gu, (_, code: string) => decodedCodePoint(code, 10))
+    .replace(/&#x([0-9a-f]+)(?:;|(?=\s|\p{Sc}))/giu, (_, code: string) => decodedCodePoint(code, 16))
+    .replace(/&#(?:8722|8211|8212);/gi, "-")
+    .replace(/&#x(?:2212|2013|2014);/gi, "-")
+    .replace(/[−–—]/gu, "-")
+    .replace(/[\p{Pd}\u207B\u208B\u2212\u2213\u2238\u2296\u229D\u229F\u2796\u2A29-\u2A2C\u2A3A\u2A41\u2A6C]/gu, "-")
+    .replace(/,/g, "");
+  if (/&#(?:x[0-9a-f]+|\d+)/i.test(normalizedAmountText)) return null;
+  const separatedNegative = /^\s*(?:(?:[A-Z]{3}|\p{Sc})\s*)?-\s*[^\d]{0,24}\d/u.test(normalizedAmountText);
+  const labeledNegative = /[:=]\s*-\s*[^\d]{0,24}\d/u.test(normalizedAmountText);
+  const accountingNegative = /\(\s*(?:[A-Z]{3}\s*|[$£€]\s*)?\d+(?:\.\d+)?(?:\s*[A-Z]{3})?\s*\)/u.test(normalizedAmountText);
+  const trailingNegative = /\d+(?:\.\d+)?\s*-\s*(?:[A-Z]{3})?\s*$/u.test(normalizedAmountText);
+  if (separatedNegative || labeledNegative || accountingNegative || trailingNegative) return null;
+  const amountMatch = normalizedAmountText.match(/[+-]?\d+(?:\.\d+)?/);
   const amount = amountMatch ? Number(amountMatch[0]) : undefined;
+  if (typeof amount === "number" && Number.isFinite(amount) && amount < 0) return null;
   const raw = explicitCurrency && !rawText.toUpperCase().includes(explicitCurrency) ? `${explicitCurrency} ${rawText}` : rawText;
   return { raw: raw.slice(0, 120), currency, amount: Number.isFinite(amount) ? amount : undefined, period: periodFrom(raw) };
 }
@@ -320,9 +412,18 @@ function offerSignals(value: unknown): ProductPriceSignal[] {
   const found: ProductPriceSignal[] = [];
   for (const offer of records(value)) {
     const currency = offer.priceCurrency;
-    for (const key of ["price", "lowPrice", "highPrice"] as const) {
-      const signal = priceSignal(offer[key], currency);
-      if (signal) found.push(signal);
+    const hasRangeEndpoint = offer.lowPrice !== undefined || offer.highPrice !== undefined;
+    if (hasRangeEndpoint) {
+      const low = priceSignal(offer.lowPrice, currency);
+      const high = priceSignal(offer.highPrice, currency);
+      const completePositiveRange = low && high
+        && typeof low.amount === "number" && Number.isFinite(low.amount) && low.amount > 0
+        && typeof high.amount === "number" && Number.isFinite(high.amount) && high.amount > 0
+        && low.currency && low.currency === high.currency;
+      if (completePositiveRange) found.push(low, high);
+    } else {
+      const price = priceSignal(offer.price, currency);
+      if (price) found.push(price);
     }
     found.push(...offerSignals(offer.offers));
     found.push(...offerSignals(offer.priceSpecification));
@@ -330,18 +431,31 @@ function offerSignals(value: unknown): ProductPriceSignal[] {
   return [...new Map(found.map((signal) => [signal.raw, signal])).values()].slice(0, 12);
 }
 
+function metaContents(document: string, key: string) {
+  const attributeValue = (tag: string, name: string) => {
+    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = tag.match(new RegExp(`(?:^|\\s)${escapedName}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
+    return clean(match?.[1] || match?.[2] || match?.[3] || "");
+  };
+  const activeDocument = stripInactiveHtmlMarkup(document);
+  return [...activeDocument.matchAll(/<meta\b[^>]*>/gi)]
+    .map((match) => match[0])
+    .filter((tag) => ["property", "name", "itemprop"].some((attribute) => attributeValue(tag, attribute) === key))
+    .map((tag) => attributeValue(tag, "content"))
+    .filter(Boolean);
+}
+
 function metaContent(document: string, key: string) {
-  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const identity = `(?:property|name|itemprop)\\s*=\\s*["']${escaped}["']`;
-  const identityFirst = new RegExp(`<meta[^>]+${identity}[^>]+content\\s*=\\s*["']([^"']*)["']`, "i");
-  const contentFirst = new RegExp(`<meta[^>]+content\\s*=\\s*["']([^"']*)["'][^>]+${identity}`, "i");
-  return clean(document.match(identityFirst)?.[1] || document.match(contentFirst)?.[1] || "");
+  return metaContents(document, key)[0] || "";
 }
 
 function openGraphOffer(document: string) {
-  const amount = metaContent(document, "product:price:amount") || metaContent(document, "og:price:amount") || metaContent(document, "price");
-  const currency = metaContent(document, "product:price:currency") || metaContent(document, "og:price:currency") || metaContent(document, "priceCurrency");
-  return amount && currency ? priceSignal(amount, currency) : null;
+  const amounts = [...new Set(["product:price:amount", "og:price:amount", "price"].flatMap((key) => metaContents(document, key)))];
+  const currencies = [...new Set(["product:price:currency", "og:price:currency", "priceCurrency"]
+    .flatMap((key) => metaContents(document, key))
+    .map((value) => value.toUpperCase())
+    .filter(isSupportedCurrency))];
+  return amounts.length === 1 && currencies.length === 1 ? priceSignal(amounts[0], currencies[0]) : null;
 }
 
 function publicImageUrl(value: string, sourceUrl: string) {
@@ -470,9 +584,14 @@ function planTier(name: string, price?: ProductPriceSignal): SaasPlanTier | null
 
 function planPrice(value: string) {
   const expression = /(?:[$\u00a3\u20ac]\s?\d+(?:[.,]\d{1,2})?(?:\s*(?:USD|GBP|EUR))?(?:\s*(?:\/\s*|per\s+(?:(?:user|seat|channel|brand|workspace|social\s+set)\s*[,/]?\s*(?:per\s+)?)?)(?:month|mo|year|yr))?|\d+(?:[.,]\d{1,2})?\s*(?:USD|GBP|EUR)(?:\s*\/\s*(?:month|mo|year|yr))?)/gi;
-  const raws = [...value.matchAll(expression)].map((match) => clean(match[0])).filter(Boolean);
+  const raws = [...value.matchAll(expression)].map((match) => {
+    const start = match.index ?? 0;
+    const prefix = value.slice(Math.max(0, start - 5), start)
+      .match(/(?:^|[^\p{L}\p{N}])((?:US|CA|AU|A|R|RD|HK|MX|NZ|S|NT|C)\s*)$/iu)?.[1] || "";
+    return clean(`${prefix}${match[0]}`);
+  }).filter(Boolean);
   const recurring = raws.find((raw) => periodFrom(raw));
-  return priceSignal(recurring || raws[0]);
+  return priceSignal(recurring || raws[0], undefined, { allowDefaultUsdDollar: true });
 }
 
 function planPriceBasis(value: string, price?: ProductPriceSignal) {
