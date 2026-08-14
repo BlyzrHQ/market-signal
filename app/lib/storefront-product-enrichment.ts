@@ -193,10 +193,16 @@ function currenciesFromMarkup(value: string) {
 }
 
 function publicImageFromScope(scope: string, sourceUrl: string) {
-  const tags = [...scope.matchAll(/<img\b[^>]*>/gi)].map((match) => match[0]);
+  const tags = htmlTagSpans(scope).filter((tag) => !tag.closing && tag.name === "img");
+  const acceptedClasses = new Set(["wp-post-image", "woocommerce-product-gallery", "product-image", "product-media"]);
   for (const tag of tags) {
-    if (!/(?:wp-post-image|woocommerce-product-gallery|product-image|product__media)/i.test(tag)) continue;
-    const raw = tag.match(/(?:data-large_image|data-lazy-src|data-src|src)\s*=\s*["']([^"']+)["']/i)?.[1] || "";
+    const classes = htmlAttributeValue(tag.raw, "class")
+      .split(/\s+/)
+      .map((value) => value.toLowerCase().replace(/[_-]+/g, "-"));
+    if (!classes.some((value) => [...acceptedClasses].some((token) => value === token || value.startsWith(`${token}-`)))) continue;
+    const raw = ["data-large_image", "data-lazy-src", "data-src", "src"]
+      .map((attribute) => htmlAttributeValue(tag.raw, attribute))
+      .find(Boolean) || "";
     try {
       const url = new URL(decodeEvidence(raw).replace(/^\/\//, "https://"), sourceUrl);
       if (/^https:$/.test(url.protocol)) return url.toString();
@@ -328,6 +334,7 @@ function isSecondaryPriceMarkup(markup: string) {
   if (hasNestedSecondaryElement) return false;
   const text = decodeEvidence(markup).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   if (/\b(?:now|sale|current)\b/iu.test(text)) return false;
+  if (/\b(?:gift\s+card|store\s+credit)\b/iu.test(text)) return true;
   return /^(?:compare\s+at|was|regular(?:\s+price)?|list\s+price|msrp|rrp|original(?:\s+price)?|retail(?:\s+price)?|deposit|down\s+payment|due\s+today|as\s+low\s+as|financ(?:e|ing)|lease|payment\s+plan|save\b|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|store\s+credit|coupon|rewards?)/iu.test(text);
 }
 
@@ -434,7 +441,8 @@ function markedAmounts(markup: string, currency: string) {
     const after = priceText.slice((matches[0].index ?? 0) + matches[0][0].length).trim();
     if (/\bsave\b[\s\S]*$/iu.test(before)
       || /\b(?:compare\s+at|regular\s+price|list\s+price|msrp|rrp|original\s+price|retail\s+price|deposit|down\s+payment|due\s+today|as\s+low\s+as|financ(?:e|ing)|lease|payment\s+plan|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|store\s+credit|coupon|rewards?)\b[\s\S]*$/iu.test(before)
-      || /^(?:(?:[\p{L}-]+\s+){0,3})?(?:off|deposit|down\s+payment|due\s+today|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|back|store\s+credit|credit|coupon|rewards?\s+points?|points?)\b/iu.test(after)
+      || /^(?:(?:[\p{L}-]+\s+){0,3})?(?:off|deposit|down\s+payment|due\s+today|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|back|store\s+credit|gift\s+card|credit|coupon|rewards?\s+points?|points?)\b/iu.test(after)
+      || /^(?:[\s\S]{0,80})\b(?:gift\s+card|store\s+credit)\b/iu.test(after)
       || isRecurringPriceSuffix(after)) return [];
   }
   const validContexts = matches.every((match) => {
