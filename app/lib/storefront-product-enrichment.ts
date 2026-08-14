@@ -233,12 +233,20 @@ function markedAmounts(markup: string, currency: string) {
     .replace(/[\p{Pd}\u207B\u208B\u2212\u2213\u2238\u2296\u229D\u229F\u2796\u2A29-\u2A2C\u2A3A\u2A41\u2A6C]/gu, "-");
   if (/&#(?:x[0-9a-f]+|\d+)/i.test(decoded)) return [];
   const expression = currencyAmountExpression(currency);
-  const installmentAt = decoded.search(/\b(?:payments?|installments?|pay\s+in|payment\s+plan|installment\s+plan)\b/iu);
-  const firstObservedAmount = [...decoded.matchAll(expression)][0];
+  const installmentAt = decoded.search(/\b(?:payments?|instal+ments?|pay\s+in|payment\s+plan|instal+ment\s+plan)\b/iu);
+  const observedAmounts = [...decoded.matchAll(expression)];
+  const firstObservedAmount = observedAmounts[0];
   if (installmentAt >= 0 && (!firstObservedAmount || installmentAt < (firstObservedAmount.index ?? 0))) return [];
-  const priceText = installmentAt >= 0 && firstObservedAmount
-    ? decoded.slice(0, (firstObservedAmount.index ?? 0) + firstObservedAmount[0].length)
-    : decoded;
+  let priceText = decoded;
+  if (installmentAt >= 0 && firstObservedAmount) {
+    const secondObservedAmount = observedAmounts.find((match) => (match.index ?? 0) > (firstObservedAmount.index ?? 0) && (match.index ?? 0) < installmentAt);
+    const between = secondObservedAmount
+      ? decoded.slice((firstObservedAmount.index ?? 0) + firstObservedAmount[0].length, secondObservedAmount.index ?? 0)
+      : "";
+    const hasExplicitRange = Boolean(secondObservedAmount && /^\s*(?:-|\/|to)\s*$/iu.test(between));
+    const lastProductAmount = hasExplicitRange ? secondObservedAmount! : firstObservedAmount;
+    priceText = decoded.slice(0, (lastProductAmount.index ?? 0) + lastProductAmount[0].length);
+  }
   const matches = [...priceText.matchAll(expression)];
   const tokenCount = [...priceText.matchAll(currencyTokenExpression(currency))].length;
   if (matches.length === 0 || matches.length !== tokenCount) return [];

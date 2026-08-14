@@ -335,10 +335,13 @@ test("rejects an entire current price container when any member is invalid", () 
   }
   const localizedUnit = extractScopedProductPageEvidence('<meta property="product:price:currency" content="EUR"><h1>Product</h1><p class="price">EUR 12,50 / 1,5L</p>');
   assert.deepEqual(localizedUnit.priceSignals, [{ raw: "EUR 12.5", currency: "EUR", amount: 12.5 }]);
-  for (const markup of ['$100.00 or 4 interest-free payments of $25.00', '$100.00 or 4 easy payments of $25.00', '$100.00 or $25.00 in 4 installments', '$100 with 4 monthly payments of $25', '$100 with four payments of $25']) {
+  for (const markup of ['$100.00 or 4 interest-free payments of $25.00', '$100.00 or 4 interest-free instalments of $25.00', '$100.00 or 4 easy payments of $25.00', '$100.00 or $25.00 in 4 installments', '$100 with 4 monthly payments of $25', '$100 with four payments of $25']) {
     const installments = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">${markup}</p>`);
     assert.deepEqual(installments.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }], markup);
   }
+  const financedRange = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">$100.00 - $120.00 or 4 payments of $25.00</p>');
+  assert.deepEqual(financedRange.priceSignals.map((signal) => signal.amount), [100, 120]);
+  assert.equal(financedRange.basis, "range");
 });
 
 test("rejects unsupported or negative scoped price markup", () => {
