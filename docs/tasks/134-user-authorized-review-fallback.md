@@ -11,9 +11,10 @@ Document a narrowly scoped way for the user to authorize the existing Codex mult
 - Permit the bypass only for an observable platform usage or capacity error that prevents Fable from returning a verdict; never permit it to override a completed verdict or blocker.
 - Bind the capacity incident and immutable authorization to one task-document path, PR number, exact head SHA, and exact target-base SHA; require fresh explicit user authorization after any scope change.
 - Consume each capacity incident and authorization after one fallback review cycle, and prohibit fallback whenever a completed Fable verdict already exists for the same revision.
+- Give each immutable incident a unique ID, bind authorization to that ID and identical scope, and prohibit fallback after any substantive Fable output, including partial findings or recommendations.
 - Preserve independent review, tests, deployment verification, blocker resolution, product-truth, and security requirements.
 - Require the existing two-reviewer fallback because this policy change is high-risk.
-- Require all fallback reviewers and recorded build, lint, test, and applicable deployment verification to cover the same final head/base pair; invalidate prior PASS decisions after revision or material scope changes.
+- Require all fallback reviewers and passing, recorded build, lint, test, and applicable deployment verification to cover the same final head/base pair; require evidence for any non-applicable gate and invalidate prior PASS decisions after revision or material scope changes.
 
 ## Validation
 
@@ -28,3 +29,4 @@ Document a narrowly scoped way for the user to authorize the existing Codex mult
 - Fallback review round 1: Two independent strict reviewers returned FAIL. Both found that “genuine attempt” could override a completed Fable blocker. They also required immutable authorization scope and exact-head review/verification. The policy was tightened to address all findings; fresh exact-revision reviews are required.
 - Fallback review round 2: Two fresh independent strict reviewers returned FAIL. They required the capacity incident itself to be revision-bound, the authorization record to be immutable rather than rewritable, and the target-base SHA to join the head SHA in every review and verification binding. The policy was tightened accordingly; all prior decisions are stale.
 - Fallback review round 3: One exact-revision reviewer returned PASS and one returned FAIL. The blocker required single-use incident consumption, permanent precedence for any completed Fable verdict on the same revision, PASS invalidation after material scope drift, and explicit recorded build/lint/test gates. The policy now includes each boundary; the earlier PASS is invalidated by this change.
+- Fallback review round 4: Two fresh exact-revision reviewers returned FAIL. They required partial substantive Fable output to prohibit fallback, authorization to reference one uniquely identified immutable incident and scope, and every applicable check to explicitly pass with evidence for non-applicability. The policy now states those requirements; all prior review results are stale.
