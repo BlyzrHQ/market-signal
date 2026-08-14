@@ -328,7 +328,7 @@ function isSecondaryPriceMarkup(markup: string) {
   if (hasNestedSecondaryElement) return false;
   const text = decodeEvidence(markup).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   if (/\b(?:now|sale|current)\b/iu.test(text)) return false;
-  return /^(?:compare\s+at|was|regular(?:\s+price)?|list\s+price|deposit|save\b|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|store\s+credit|coupon|rewards?)/iu.test(text);
+  return /^(?:compare\s+at|was|regular(?:\s+price)?|list\s+price|msrp|rrp|original(?:\s+price)?|retail(?:\s+price)?|deposit|down\s+payment|due\s+today|save\b|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|store\s+credit|coupon|rewards?)/iu.test(text);
 }
 
 function preferredCurrentPriceMarkup(scope: string) {
@@ -391,6 +391,10 @@ function markedAmounts(markup: string, currency: string) {
   const observedAmounts = [...decoded.matchAll(expression)];
   const firstObservedAmount = observedAmounts[0];
   if (installmentAt >= 0 && (!firstObservedAmount || installmentAt < (firstObservedAmount.index ?? 0))) return [];
+  if (installmentAt >= 0 && firstObservedAmount) {
+    const firstEnd = (firstObservedAmount.index ?? 0) + firstObservedAmount[0].length;
+    if (/^\s*(?:down|initial|first|monthly|weekly|biweekly)\s*$/iu.test(decoded.slice(firstEnd, installmentAt))) return [];
+  }
   let priceText = decoded;
   if (installmentAt >= 0 && firstObservedAmount) {
     const firstEnd = (firstObservedAmount.index ?? 0) + firstObservedAmount[0].length;
@@ -423,8 +427,8 @@ function markedAmounts(markup: string, currency: string) {
     const before = priceText.slice(0, matches[0].index ?? 0).trim();
     const after = priceText.slice((matches[0].index ?? 0) + matches[0][0].length).trim();
     if (/\bsave\b[\s\S]*$/iu.test(before)
-      || /\b(?:compare\s+at|regular\s+price|list\s+price|deposit|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|store\s+credit|coupon|rewards?)\b[\s\S]*$/iu.test(before)
-      || /^(?:(?:[\p{L}-]+\s+){0,3})?(?:off|deposit|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|back|store\s+credit|credit|coupon|rewards?\s+points?|points?)\b/iu.test(after)) return [];
+      || /\b(?:compare\s+at|regular\s+price|list\s+price|msrp|rrp|original\s+price|retail\s+price|deposit|down\s+payment|due\s+today|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|store\s+credit|coupon|rewards?)\b[\s\S]*$/iu.test(before)
+      || /^(?:(?:[\p{L}-]+\s+){0,3})?(?:off|deposit|down\s+payment|due\s+today|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|back|store\s+credit|credit|coupon|rewards?\s+points?|points?)\b/iu.test(after)) return [];
   }
   const validContexts = matches.every((match) => {
       const start = match.index ?? 0;
