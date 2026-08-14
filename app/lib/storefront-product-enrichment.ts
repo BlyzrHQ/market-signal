@@ -400,7 +400,8 @@ function scopedPriceSignals(currency: string, values: number[]) {
 }
 
 function isRecurringPriceSuffix(value: string) {
-  return /^(?:(?:\/\s*|per\s+|a\s+|(?:once|twice)\s+(?:a|per)\s+|(?:billed|charged)\s+(?:(?:per|a)\s+|(?:once|twice)\s+(?:a|per)\s+|(?:every|each)\s+(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|other)\s+)?)?|(?:every|each)\s+(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|other)\s+)?)?(?:day|daily|week|weekly|bi[- ]?weekly|wk|fortnight|fortnightly|month|monthly|mo|quarter|quarterly|qtr|year|yearly|annual|annually|yr)s?)\b/iu.test(value.trim());
+  const normalized = value.trim().replace(/^(?:[-:;,—–]\s*|\(\s*)/u, "");
+  return /^(?:(?:\/\s*|per\s+|a\s+|(?:once|twice)\s+(?:a|per)\s+|(?:billed|charged|paid|payable|due)\s+(?:(?:per|a)\s+|(?:once|twice)\s+(?:a|per)\s+|(?:every|each)\s+(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|other)\s+)?)?|(?:every|each)\s+(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|other)\s+)?)?(?:day|daily|week|weekly|bi[- ]?weekly|wk|fortnight|fortnightly|month|monthly|mo|quarter|quarterly|qtr|year|yearly|annual|annually|yr)s?)\b/iu.test(normalized);
 }
 
 function markedAmounts(markup: string, currency: string) {
