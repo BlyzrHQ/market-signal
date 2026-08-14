@@ -302,7 +302,7 @@ function hasIncentiveLabel(value: string) {
 }
 
 function hasRecurringPriceLead(value: string) {
-  const recurringAt = value.search(/\b(?:pay\s+(?:(?:per|a|every|each)\s+)?(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+)?(?:day|week|wk|fortnight|fortnightly|month|mo|quarter|qtr|year|yr)s?|per\s+(?:day|week|wk|fortnight|month|mo|quarter|qtr|year|yr)s?|daily|weekly|biweekly|fortnightly|monthly|quarterly|yearly|annually)\b/iu);
+  const recurringAt = value.search(/\b(?:pay\s+(?:(?:per|a|every|each)\s+)?(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|other)\s+)?(?:day|week|wk|fortnight|fortnightly|month|mo|quarter|qtr|year|yr)s?|per\s+(?:day|week|wk|fortnight|month|mo|quarter|qtr|year|yr)s?|daily|weekly|biweekly|fortnightly|monthly|quarterly|yearly|annually)\b/iu);
   const amountAt = value.search(new RegExp(`(?:[$€£¥₹]\\s*[+-]?\\d|\\b(?:${supportedCurrencyCodesPattern})\\s*[+-]?\\d|[+-]?\\d[\\d\\s.,']*\\s+(?:${supportedCurrencyCodesPattern})\\b)`, "u"));
   return recurringAt >= 0 && (amountAt < 0 || recurringAt < amountAt);
 }
@@ -400,7 +400,7 @@ function scopedPriceSignals(currency: string, values: number[]) {
 }
 
 function isRecurringPriceSuffix(value: string) {
-  return /^(?:(?:\/\s*|per\s+|a\s+|(?:every|each)\s+(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+)?)?(?:day|daily|week|weekly|biweekly|wk|fortnight|fortnightly|month|monthly|mo|quarter|quarterly|qtr|year|yearly|annual|annually|yr)s?)\b/iu.test(value.trim());
+  return /^(?:(?:\/\s*|per\s+|a\s+|(?:every|each)\s+(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|other)\s+)?)?(?:day|daily|week|weekly|biweekly|wk|fortnight|fortnightly|month|monthly|mo|quarter|quarterly|qtr|year|yearly|annual|annually|yr)s?)\b/iu.test(value.trim());
 }
 
 function markedAmounts(markup: string, currency: string) {
