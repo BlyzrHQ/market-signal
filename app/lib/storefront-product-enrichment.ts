@@ -239,13 +239,20 @@ function markedAmounts(markup: string, currency: string) {
   if (installmentAt >= 0 && (!firstObservedAmount || installmentAt < (firstObservedAmount.index ?? 0))) return [];
   let priceText = decoded;
   if (installmentAt >= 0 && firstObservedAmount) {
-    const secondObservedAmount = observedAmounts.find((match) => (match.index ?? 0) > (firstObservedAmount.index ?? 0) && (match.index ?? 0) < installmentAt);
+    const firstEnd = (firstObservedAmount.index ?? 0) + firstObservedAmount[0].length;
+    const financingConnector = [...decoded.slice(firstEnd, installmentAt).matchAll(/\b(?:or|with)\b/giu)].at(-1);
+    const financingStart = financingConnector ? firstEnd + (financingConnector.index ?? 0) : installmentAt;
+    const productPrefix = decoded.slice(0, financingStart).trimEnd();
+    const prefixAmounts = [...productPrefix.matchAll(expression)];
+    const secondObservedAmount = prefixAmounts[1];
     const between = secondObservedAmount
       ? decoded.slice((firstObservedAmount.index ?? 0) + firstObservedAmount[0].length, secondObservedAmount.index ?? 0)
       : "";
-    const hasExplicitRange = Boolean(secondObservedAmount && /^\s*(?:-|\/|to)\s*$/iu.test(between));
-    const lastProductAmount = hasExplicitRange ? secondObservedAmount! : firstObservedAmount;
-    priceText = decoded.slice(0, (lastProductAmount.index ?? 0) + lastProductAmount[0].length);
+    const hasExplicitTokenRange = Boolean(secondObservedAmount && /^\s*(?:-|\/|to)\s*$/iu.test(between));
+    const hasSharedCurrencyRange = [...productPrefix.matchAll(currencyRangeExpression(currency))].length > 0;
+    priceText = hasExplicitTokenRange || hasSharedCurrencyRange
+      ? productPrefix
+      : decoded.slice(0, firstEnd);
   }
   const matches = [...priceText.matchAll(expression)];
   const tokenCount = [...priceText.matchAll(currencyTokenExpression(currency))].length;

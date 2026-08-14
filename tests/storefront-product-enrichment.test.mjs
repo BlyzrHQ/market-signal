@@ -342,6 +342,9 @@ test("rejects an entire current price container when any member is invalid", () 
   const financedRange = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">$100.00 - $120.00 or 4 payments of $25.00</p>');
   assert.deepEqual(financedRange.priceSignals.map((signal) => signal.amount), [100, 120]);
   assert.equal(financedRange.basis, "range");
+  const financedSharedRange = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">$100.00 - 120.00 or 4 payments of $25.00</p>');
+  assert.deepEqual(financedSharedRange.priceSignals.map((signal) => signal.amount), [100, 120]);
+  assert.equal(financedSharedRange.basis, "range");
 });
 
 test("rejects unsupported or negative scoped price markup", () => {
