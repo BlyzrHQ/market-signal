@@ -302,7 +302,7 @@ function hasIncentiveLabel(value: string) {
 
 function hasRecurringPriceLead(value: string) {
   const recurringAt = value.search(/\b(?:pay\s+)?(?:daily|weekly|biweekly|monthly|quarterly|yearly|annually)\b/iu);
-  const amountAt = value.search(/\d/u);
+  const amountAt = value.search(/(?:[$€£¥₹]\s*[+-]?\d|\b[A-Z]{3}\s*[+-]?\d|[+-]?\d[\d\s.,']*\s+[A-Z]{3}\b)/u);
   return recurringAt >= 0 && (amountAt < 0 || recurringAt < amountAt);
 }
 
