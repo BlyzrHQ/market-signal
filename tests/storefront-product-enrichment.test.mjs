@@ -328,11 +328,13 @@ test("rejects an entire current price container when any member is invalid", () 
     assert.deepEqual(labeledRange.priceSignals.map((signal) => signal.amount), [10, 12], suffix);
     assert.equal(labeledRange.basis, "range", suffix);
   }
-  for (const markup of ['USD 10.00 <span>Save 10-12%</span>', '$12.00 <span>Size 12-18 months</span>', 'USD 10.00 - 12% off', 'USD 10.00 - 12 percent off', 'USD 10.00 - 12 pct off', 'USD 12.00 - 18 months warranty', 'USD 12.00 - 18-month warranty', 'USD 12.00 - 18 mos warranty', 'USD 12.50 / 100g', 'USD 12.00 / 6 bottles', 'USD 12.50 / 10ct', 'USD 12.50 / 10 count', 'USD 12.50 / 1ea', 'USD 12.50 / 2pk']) {
+  for (const markup of ['USD 10.00 <span>Save 10-12%</span>', '$12.00 <span>Size 12-18 months</span>', 'USD 10.00 - 12% off', 'USD 10.00 - 12 percent off', 'USD 10.00 - 12 per cent off', 'USD 10.00 - 12 pct off', 'USD 12.00 - 18 months warranty', 'USD 12.00 - 18-month warranty', 'USD 12.00 - 18 mos warranty', 'USD 12.00 - 18 mth warranty', 'USD 12.00 - 6 items included', 'USD 12.50 / 100g', 'USD 12.00 / 6 bottles', 'USD 12.50 / 10ct', 'USD 12.50 / 10 count', 'USD 12.50 / 1ea', 'USD 12.50 / 2pk', 'USD 12.50 / 1.5L', 'USD 12.50 / 16.9fl oz']) {
     const evidence = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">${markup}</p>`);
     const expected = markup.startsWith("USD 12.50") ? 12.5 : markup.startsWith("USD 10") ? 10 : 12;
     assert.deepEqual(evidence.priceSignals, [{ raw: `USD ${expected}`, currency: "USD", amount: expected }], markup);
   }
+  const localizedUnit = extractScopedProductPageEvidence('<meta property="product:price:currency" content="EUR"><h1>Product</h1><p class="price">EUR 12,50 / 1,5L</p>');
+  assert.deepEqual(localizedUnit.priceSignals, [{ raw: "EUR 12.5", currency: "EUR", amount: 12.5 }]);
 });
 
 test("rejects unsupported or negative scoped price markup", () => {

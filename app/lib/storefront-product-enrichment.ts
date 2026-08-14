@@ -160,10 +160,10 @@ function currencyRangeExpression(currency: string) {
   const token = CURRENCY_TOKENS[currency] || currency.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const amount = `[+-]?${localizedAmountPattern(currency)}(?![\\d.,])`;
   const decimalAmount = `[+-]?${localizedAmountPattern(currency, true)}(?![\\d.,])`;
-  const nonPriceSuffix = "(?!\\s*(?:%|pct\\.?|percent\\b|[-\\s]*(?:off|discount|save|months?|mos?\\.?|years?|yrs?\\.?|days?|weeks?|wks?\\.?|hours?|hrs?\\.?|kg|g|lb|lbs|oz|ml|litres?|liters?|packs?|pk|pcs?|pieces?|units?|ct|count|ea|bottles?|cans?|boxes?|dozen|servings?|tablets?|capsules?|pairs?|sets?|warranty)\\b))";
+  const completePriceSuffix = "(?=\\s*(?:$|[.,;)]\\s*$|\\/(?:month|mo|year|yr)\\b|per\\s+(?:month|year)\\b|(?:(?:incl|excl)(?:uding)?\\.?\\s+(?:tax|vat)|(?:tax|vat)\\s+(?:included|excluded)|each|per\\s+item)\\b\\s*[.,;)]?\\s*$))";
   const ordinary = `(?:(?:${token})\\s*(${amount})\\s*(?:-|\\bto\\b)\\s*(${amount})|(${amount})\\s*(?:-|\\bto\\b)\\s*(${amount})\\s*(?:${token}))`;
   const slash = `(?:(?:${token})\\s*(${decimalAmount})\\s*\\/\\s*(${decimalAmount})|(${decimalAmount})\\s*\\/\\s*(${decimalAmount})\\s*(?:${token}))`;
-  return new RegExp(`(?:${ordinary}|${slash})${nonPriceSuffix}`, "giu");
+  return new RegExp(`(?:${ordinary}|${slash})${completePriceSuffix}`, "giu");
 }
 
 function localizedAmount(raw: string, currency: string) {
