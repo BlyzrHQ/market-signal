@@ -183,6 +183,15 @@ test("preserves explicitly positive and decorated positive structured prices", (
   assert.ok(result.products.every((item) => item.priceSignals[0]?.amount === 19.99));
 });
 
+test("ignores out-of-range numeric price entities without crashing extraction", () => {
+  const result = extraction({
+    document: `<head><meta property="og:price:amount" content="&#9999999999;"><meta property="og:price:currency" content="USD"></head><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Acme Safe Widget", brand: { name: "Acme" } })}</script>`,
+    sourceUrl: "https://acme.com/products/safe-widget",
+  });
+  assert.equal(result.products.length, 1);
+  assert.deepEqual(result.products[0].priceSignals, []);
+});
+
 test("prefers an exact product H1 when a marketing-prefixed title contains that identity", () => {
   const document = `<head><meta property="product:price:amount" content="39.05"><meta property="product:price:currency" content="GBP"></head>`;
   const result = extraction({

@@ -119,7 +119,9 @@ export function confirmedProductCurrency(document: string, options: { allowStruc
     || metaContent(document, "og:price:currency")
     || metaContent(document, "priceCurrency");
   const shopify = document.match(/Shopify\.currency\s*=\s*\{[^}]*["']active["']\s*:\s*["']([A-Za-z]{3})["']/i)?.[1];
-  if (metadata || shopify) return isoCurrency(metadata || shopify);
+  const direct = [...new Set([metadata, shopify].map(isoCurrency).filter(Boolean))];
+  if (direct.length > 1) return "";
+  if (direct.length === 1) return direct[0];
   if (options.allowStructured === false) return "";
   const structured = [...document.matchAll(/["']priceCurrency["']\s*:\s*["']([A-Za-z]{3})["']/gi)]
     .map((match) => isoCurrency(match[1]))

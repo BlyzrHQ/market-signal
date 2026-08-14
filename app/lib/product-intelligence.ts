@@ -308,6 +308,11 @@ function periodFrom(value: string) {
   return match?.[1]?.toLowerCase();
 }
 
+function decodedCodePoint(value: string, radix: number) {
+  const code = Number.parseInt(value, radix);
+  return Number.isInteger(code) && code >= 0 && code <= 0x10FFFF ? String.fromCodePoint(code) : " ";
+}
+
 function priceSignal(rawValue: unknown, currencyValue?: unknown): ProductPriceSignal | null {
   const rawText = text(rawValue);
   if (!rawText) return null;
@@ -322,8 +327,8 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown): ProductPriceSi
     .replace(/&dollar;/gi, "$")
     .replace(/&colon;/gi, ":")
     .replace(/&equals;/gi, "=")
-    .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 10)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 16)))
+    .replace(/&#(\d+);/g, (_, code: string) => decodedCodePoint(code, 10))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => decodedCodePoint(code, 16))
     .replace(/&#(?:8722|8211|8212);/gi, "-")
     .replace(/&#x(?:2212|2013|2014);/gi, "-")
     .replace(/[−–—]/gu, "-")

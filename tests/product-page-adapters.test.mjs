@@ -45,6 +45,7 @@ test("builds exact same-domain Shopify and WooCommerce adapter requests", () => 
 test("confirms Shopify currency only from same-page public metadata", () => {
   assert.equal(confirmedProductCurrency('<meta property="product:price:currency" content="GBP">'), "GBP");
   assert.equal(confirmedProductCurrency('<script>Shopify.currency = {"active":"AED","rate":"1.0"}</script>'), "AED");
+  assert.equal(confirmedProductCurrency('<meta property="og:price:currency" content="USD"><script>Shopify.currency = {"active":"EUR"}</script>'), "");
   assert.equal(confirmedProductCurrency('<script type="application/ld+json">{"priceCurrency":"EUR"}</script>'), "EUR");
   assert.equal(confirmedProductCurrency("Prices in pounds"), "");
 });

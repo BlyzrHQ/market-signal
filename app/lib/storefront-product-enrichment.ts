@@ -89,6 +89,11 @@ function clean(value: string) {
   return decode(value.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
 }
 
+function decodedCodePoint(value: string, radix: number) {
+  const code = Number.parseInt(value, radix);
+  return Number.isInteger(code) && code >= 0 && code <= 0x10FFFF ? String.fromCodePoint(code) : " ";
+}
+
 function decodeEvidence(value: string) {
   return value
     .replace(/&quot;/gi, '"')
@@ -107,8 +112,8 @@ function decodeEvidence(value: string) {
     .replace(/&colon;/gi, ":")
     .replace(/&equals;/gi, "=")
     .replace(/&amp;/gi, "&")
-    .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 10)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 16)));
+    .replace(/&#(\d+);/g, (_, code: string) => decodedCodePoint(code, 10))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => decodedCodePoint(code, 16));
 }
 
 function normalizeLocalizedNumbers(value: string) {
@@ -351,12 +356,13 @@ function hasConfirmedPrice(products: ProductRecord[]) {
 }
 
 function confirmedAdapterCurrency(document: string, matchedProduct?: ProductRecord) {
+  const storefrontCurrency = confirmedProductCurrency(document, { allowStructured: false });
   const matchedCurrencies = [...new Set((matchedProduct?.priceSignals || [])
     .map((signal) => signal.currency?.trim().toUpperCase() || "")
     .filter(isSupportedCurrency))];
-  if (matchedCurrencies.length === 1) return matchedCurrencies[0];
   if (matchedCurrencies.length > 1) return "";
-  return confirmedProductCurrency(document, { allowStructured: false });
+  if (storefrontCurrency && matchedCurrencies.length === 1 && storefrontCurrency !== matchedCurrencies[0]) return "";
+  return storefrontCurrency || matchedCurrencies[0] || "";
 }
 
 function hasSecureImage(products: ProductRecord[]) {
