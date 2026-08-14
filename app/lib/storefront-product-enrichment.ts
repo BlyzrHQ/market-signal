@@ -183,6 +183,10 @@ function localizedAmount(raw: string, currency: string) {
   return Number(compact);
 }
 
+function isCompletePriceRangeSuffix(value: string) {
+  return /^\s*(?:|[.,;)]|\/(?:month|mo|year|yr)\b|per\s+(?:month|year)\b|(?:(?:incl|excl)(?:uding)?\.?\s+(?:tax|vat)|(?:tax|vat)\s+(?:included|excluded)|each|per\s+item)\b\s*[.,;)]?)\s*$/iu.test(value);
+}
+
 function currenciesFromMarkup(value: string) {
   const decoded = normalizeLocalizedNumbers(decodeEvidence(value).replace(/<[^>]*>/g, " "));
   return Object.keys(CURRENCY_TOKENS).filter((currency) => currencyAmountExpression(currency).test(decoded));
@@ -250,7 +254,10 @@ function markedAmounts(markup: string, currency: string) {
     const between = secondObservedAmount
       ? decoded.slice((firstObservedAmount.index ?? 0) + firstObservedAmount[0].length, secondObservedAmount.index ?? 0)
       : "";
-    const hasExplicitTokenRange = Boolean(secondObservedAmount && /^\s*(?:-|\/|to)\s*$/iu.test(between));
+    const secondEnd = secondObservedAmount ? (secondObservedAmount.index ?? 0) + secondObservedAmount[0].length : 0;
+    const hasExplicitTokenRange = Boolean(secondObservedAmount
+      && /^\s*(?:-|\/|to)\s*$/iu.test(between)
+      && isCompletePriceRangeSuffix(productPrefix.slice(secondEnd)));
     const sharedCurrencyRange = [...productPrefix.matchAll(currencyRangeExpression(currency))][0];
     if (hasExplicitTokenRange) {
       priceText = productPrefix.slice(0, (secondObservedAmount!.index ?? 0) + secondObservedAmount![0].length);
@@ -277,9 +284,21 @@ function markedAmounts(markup: string, currency: string) {
     });
   if (!validContexts) return [];
   const amounts = matches.map((match) => localizedAmount(match[1] || match[2], currency));
+  const rangeAmounts: number[] = [];
   for (const range of priceText.matchAll(currencyRangeExpression(currency))) {
     const endpoints = [localizedAmount(range[1] || range[3] || range[5] || range[7], currency), localizedAmount(range[2] || range[4] || range[6] || range[8], currency)];
-    amounts.push(...endpoints);
+    rangeAmounts.push(...endpoints);
+  }
+  if (rangeAmounts.length) return rangeAmounts.every((amount) => Number.isFinite(amount) && amount > 0) ? rangeAmounts : [];
+  if (matches.length > 1) {
+    const firstEnd = (matches[0].index ?? 0) + matches[0][0].length;
+    const secondStart = matches[1].index ?? 0;
+    const secondEnd = secondStart + matches[1][0].length;
+    const explicitRange = /^\s*(?:-|\/|to)\s*$/iu.test(priceText.slice(firstEnd, secondStart))
+      && isCompletePriceRangeSuffix(priceText.slice(secondEnd));
+    return explicitRange && amounts.slice(0, 2).every((amount) => Number.isFinite(amount) && amount > 0)
+      ? amounts.slice(0, 2)
+      : Number.isFinite(amounts[0]) && amounts[0] > 0 ? [amounts[0]] : [];
   }
   return amounts.every((amount) => Number.isFinite(amount) && amount > 0) ? amounts : [];
 }
