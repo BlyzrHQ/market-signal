@@ -1,10 +1,10 @@
 import { REPORT_EVALUATION_CAPABILITY } from "./worker-api-contract.ts";
 export { REPORT_EVALUATION_CAPABILITY };
 export const REPORT_EVALUATION_TASK_ID = "market-signal-report-evaluation" as const;
-export const REPORT_EVALUATOR_VERSION = "ecommerce-agent-v2" as const;
+export const REPORT_EVALUATOR_VERSION = "ecommerce-agent-v3" as const;
 export const REPORT_EVALUATION_MODEL = "gpt-5.6-luna" as const;
-export const REPORT_EVALUATION_PROMPT_VERSION = "report-agent-judge-2026-08-09-v2" as const;
-export const REPORT_EVALUATION_SCHEMA_VERSION = "report-agent-output-2026-08-09-v1" as const;
+export const REPORT_EVALUATION_PROMPT_VERSION = "report-agent-judge-2026-08-14-v3" as const;
+export const REPORT_EVALUATION_SCHEMA_VERSION = "report-agent-output-2026-08-14-v2" as const;
 export const REPORT_EVALUATION_EVIDENCE_VERSION = "report-agent-evidence-2026-08-09-v1" as const;
 export const REPORT_EVALUATION_PRICING_VERSION = "openai-gpt-5.6-luna-2026-08-09-v2" as const;
 export const REPORT_EVALUATION_TIMEOUT_MS = 90_000;
@@ -143,7 +143,7 @@ const score = (maximum: number) => ({
   properties: {
     score: { type: "integer", minimum: 0, maximum },
     reason: { type: "string", minLength: 1, maxLength: 200 },
-    evidenceIds: { type: "array", minItems: 1, maxItems: 5, uniqueItems: true, items: { type: "string", pattern: ID_PATTERN.source } },
+    evidenceIds: { type: "array", minItems: 1, maxItems: 5, items: { type: "string", pattern: ID_PATTERN.source } },
   },
 });
 
@@ -161,7 +161,7 @@ const finding = (codes: readonly string[]) => ({
     subjectKind: { type: "string", enum: [...SUBJECT_KINDS] },
     subjectId: { type: "string", pattern: ID_PATTERN.source },
     explanation: { type: "string", minLength: 1, maxLength: 240 },
-    evidenceIds: { type: "array", minItems: 1, maxItems: 5, uniqueItems: true, items: { type: "string", pattern: ID_PATTERN.source } },
+    evidenceIds: { type: "array", minItems: 1, maxItems: 5, items: { type: "string", pattern: ID_PATTERN.source } },
   },
 });
 
@@ -198,7 +198,7 @@ export const REPORT_EVALUATION_OUTPUT_SCHEMA = {
           properties: {
             uncertaintyCode: { type: "string", enum: ["conflicting_evidence", "subjective_usefulness", "insufficient_context", "suspected_factual_error"] },
             question: { type: "string", minLength: 1, maxLength: 240 },
-            evidenceIds: { type: "array", minItems: 1, maxItems: 5, uniqueItems: true, items: { type: "string", pattern: ID_PATTERN.source } },
+            evidenceIds: { type: "array", minItems: 1, maxItems: 5, items: { type: "string", pattern: ID_PATTERN.source } },
           },
         },
       ],
