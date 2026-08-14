@@ -139,10 +139,14 @@ const CURRENCY_TOKENS: Record<string, string> = {
   AUD: "\\bAUD\\b",
 };
 
-function currencyAmountExpression(currency: string) {
+function localizedAmountPattern(currency: string) {
   const decimals = /^(?:KWD|BHD|OMR)$/.test(currency) ? 3 : 2;
-  const whole = "(?:[0-9]{1,3}(?:[.,][0-9]{3})+|[0-9]{1,6})";
-  const amount = `(?<![\\d.,])${whole}(?:[.,][0-9]{1,${decimals}})?(?![\\d.,])`;
+  const whole = "(?:[0-9]{1,3}(?:[.,'\\u00A0\\u202F ][0-9]{3})+|[0-9]{1,6})";
+  return `${whole}(?:[.,][0-9]{1,${decimals}})?`;
+}
+
+function currencyAmountExpression(currency: string) {
+  const amount = `(?<![\\d.,])${localizedAmountPattern(currency)}(?![\\d.,])`;
   const token = CURRENCY_TOKENS[currency] || currency.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(?:${token})\\s*(${amount})|(${amount})\\s*(?:${token})`, "giu");
 }
@@ -154,16 +158,18 @@ function currencyTokenExpression(currency: string) {
 
 function localizedAmount(raw: string, currency: string) {
   const decimals = /^(?:KWD|BHD|OMR)$/.test(currency) ? 3 : 2;
-  const comma = raw.lastIndexOf(",");
-  const dot = raw.lastIndexOf(".");
+  const compact = raw.replace(/[\s\u00A0\u202F']/gu, "");
+  const comma = compact.lastIndexOf(",");
+  const dot = compact.lastIndexOf(".");
   if (comma >= 0 && dot >= 0) {
-    return Number(comma > dot ? raw.replace(/\./g, "").replace(",", ".") : raw.replace(/,/g, ""));
+    return Number(comma > dot ? compact.replace(/\./g, "").replace(",", ".") : compact.replace(/,/g, ""));
   }
   if (comma >= 0) {
-    const fractionLength = raw.length - comma - 1;
-    return Number(fractionLength > 0 && fractionLength <= decimals ? raw.replace(/,/g, ".") : raw.replace(/,/g, ""));
+    const fractionLength = compact.length - comma - 1;
+    return Number(fractionLength > 0 && fractionLength <= decimals ? compact.replace(/,/g, ".") : compact.replace(/,/g, ""));
   }
-  return Number(raw);
+  if (dot >= 0 && compact.length - dot - 1 === 3 && decimals < 3) return Number(compact.replace(/\./g, ""));
+  return Number(compact);
 }
 
 function currenciesFromMarkup(value: string) {
@@ -234,6 +240,13 @@ function markedAmounts(markup: string, currency: string) {
     });
   if (!validContexts) return [];
   const amounts = matches.map((match) => localizedAmount(match[1] || match[2], currency));
+  const rangeAmount = localizedAmountPattern(currency);
+  const sharedRangeExpression = new RegExp(`(?<![\\d.,])([+-]?${rangeAmount})(?![\\d.,])\\s*(?:-|\\bto\\b)\\s*([+-]?${rangeAmount})(?![\\d.,])`, "giu");
+  for (const range of decoded.matchAll(sharedRangeExpression)) {
+    const endpoints = [localizedAmount(range[1], currency), localizedAmount(range[2], currency)];
+    if (!endpoints.some((endpoint) => amounts.includes(endpoint))) continue;
+    amounts.push(...endpoints);
+  }
   return amounts.every((amount) => Number.isFinite(amount) && amount > 0) ? amounts : [];
 }
 
