@@ -279,12 +279,19 @@ function htmlAttributeValue(tag: string, attributeName: string) {
 }
 
 const unitPriceClassTokens = new Set(["unit-price", "unitprice", "price-per-unit", "price-unit", "price-per-measure"]);
+const secondaryPriceClassTokens = new Set(["compare-at", "old-price", "list-price", "regular-price", "price-regular", "member-price", "loyalty-price", "deposit-price", "saving", "savings", "discount"]);
+
+function isUnitPriceClassToken(value: string) {
+  return unitPriceClassTokens.has(value)
+    || (/(?:^|-)price(?:-|$)/u.test(value) && /(?:^|-)(?:unit|measure)(?:-|$)/u.test(value));
+}
 
 function elementMarkupByClassTokens(
   scope: string,
   allowedTags: ReadonlySet<string>,
   accepted: ReadonlySet<string>,
   rejected = new Set<string>(),
+  rejectMarkup: (markup: string) => boolean = () => false,
 ) {
   const tags = htmlTagSpans(scope);
   for (let index = 0; index < tags.length; index += 1) {
@@ -293,7 +300,8 @@ function elementMarkupByClassTokens(
     const classes = htmlAttributeValue(opening.raw, "class")
       .split(/\s+/)
       .map((value) => value.toLowerCase().replace(/[_-]+/g, "-"));
-    const hasRejectedClass = classes.some((value) => [...rejected].some((token) => value === token || value.startsWith(`${token}-`)));
+    const hasRejectedClass = classes.some((value) => [...rejected].some((token) => value === token || value.startsWith(`${token}-`))
+      || (rejected === unitPriceClassTokens && isUnitPriceClassToken(value)));
     if (!classes.some((value) => accepted.has(value)) || hasRejectedClass) continue;
     const start = opening.index;
     let depth = 0;
@@ -301,10 +309,26 @@ function elementMarkupByClassTokens(
       if (elementTag.name !== opening.name) continue;
       depth += elementTag.closing ? -1 : elementTag.selfClosing ? 0 : 1;
       if (depth !== 0) continue;
-      return scope.slice(start, elementTag.end);
+      const markup = scope.slice(start, elementTag.end);
+      if (rejectMarkup(markup)) break;
+      return markup;
     }
   }
   return "";
+}
+
+function isSecondaryPriceMarkup(markup: string) {
+  const hasNestedSecondaryElement = htmlTagSpans(markup).slice(1).some((tag) => {
+    if (tag.closing) return false;
+    const classes = htmlAttributeValue(tag.raw, "class")
+      .split(/\s+/)
+      .map((value) => value.toLowerCase().replace(/[_-]+/g, "-"));
+    return classes.some((value) => secondaryPriceClassTokens.has(value));
+  });
+  if (hasNestedSecondaryElement) return false;
+  const text = decodeEvidence(markup).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  if (/\b(?:now|sale|current)\b/iu.test(text)) return false;
+  return /^(?:compare\s+at|was|regular(?:\s+price)?|list\s+price|deposit|save\b|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|store\s+credit|coupon|rewards?)/iu.test(text);
 }
 
 function preferredCurrentPriceMarkup(scope: string) {
@@ -313,11 +337,11 @@ function preferredCurrentPriceMarkup(scope: string) {
     new Set(["div", "span"]),
     new Set(["product-price-sale", "sale-price", "current-price", "price-current"]),
     unitPriceClassTokens,
+    isSecondaryPriceMarkup,
   );
 }
 
 function removeSecondaryPriceElements(markup: string) {
-  const secondary = new Set(["compare-at", "old-price", "list-price", "regular-price", "price-regular", "member-price", "loyalty-price", "deposit-price", "saving", "savings", "discount"]);
   const tags = htmlTagSpans(markup);
   const ranges: Array<[number, number]> = [];
   for (let index = 0; index < tags.length; index += 1) {
@@ -326,7 +350,7 @@ function removeSecondaryPriceElements(markup: string) {
     const classes = htmlAttributeValue(opening.raw, "class")
       .split(/\s+/)
       .map((value) => value.toLowerCase().replace(/[_-]+/g, "-"));
-    if (!classes.some((value) => secondary.has(value))) continue;
+    if (!classes.some((value) => secondaryPriceClassTokens.has(value))) continue;
     let depth = 0;
     for (const closing of tags.slice(index)) {
       if (closing.name !== opening.name) continue;
@@ -399,8 +423,8 @@ function markedAmounts(markup: string, currency: string) {
     const before = priceText.slice(0, matches[0].index ?? 0).trim();
     const after = priceText.slice((matches[0].index ?? 0) + matches[0][0].length).trim();
     if (/\bsave\b[\s\S]*$/iu.test(before)
-      || /\b(?:discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|store\s+credit|coupon|rewards?)\b[\s\S]*$/iu.test(before)
-      || /^(?:in\s+)?(?:off|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|back|store\s+credit|credit|coupon|rewards?\s+points?|points?)\b/iu.test(after)) return [];
+      || /\b(?:compare\s+at|regular\s+price|list\s+price|deposit|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|store\s+credit|coupon|rewards?)\b[\s\S]*$/iu.test(before)
+      || /^(?:(?:[\p{L}-]+\s+){0,3})?(?:off|deposit|discount|instant\s+savings?|saving|savings|rebate|cash\s*back|cashback|back|store\s+credit|credit|coupon|rewards?\s+points?|points?)\b/iu.test(after)) return [];
   }
   const validContexts = matches.every((match) => {
       const start = match.index ?? 0;
@@ -448,8 +472,9 @@ export function extractScopedProductPageEvidence(document: string, sourceUrl = "
       new Set(["p"]),
       new Set(["price"]),
       unitPriceClassTokens,
+      isSecondaryPriceMarkup,
     )
-    || elementMarkupByClassTokens(scope, new Set(["div", "span"]), new Set(["product-price", "single-product-price"]), unitPriceClassTokens)
+    || elementMarkupByClassTokens(scope, new Set(["div", "span"]), new Set(["product-price", "single-product-price"]), unitPriceClassTokens, isSecondaryPriceMarkup)
     || "";
   const currentMarkup = priceMarkup.match(/<ins\b[^>]*>([\s\S]*?)<\/ins>/i)?.[1]
     || priceMarkup.replace(/<del\b[^>]*>[\s\S]*?<\/del>/gi, " ");

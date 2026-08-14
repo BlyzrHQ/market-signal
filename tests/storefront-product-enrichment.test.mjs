@@ -381,8 +381,12 @@ test("rejects an entire current price container when any member is invalid", () 
   assert.deepEqual(preferredDualClassUnitPrice.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
   const bemUnitPrice = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price unit-price__value">$5 / 100 ml</p><p class="price">$100</p>');
   assert.deepEqual(bemUnitPrice.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const suffixBemUnitPrice = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><span class="current-price current-price--unit">$5 / 100 ml</span><p class="price">$100</p>');
+  assert.deepEqual(suffixBemUnitPrice.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
   const dataTemplateClass = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p data-template="&lt;span class=\'price\'&gt;">$20 deposit</p><p class="price">$100</p>');
   assert.deepEqual(dataTemplateClass.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  const compareAtBeforeCurrent = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">Compare at $120.00</p><p class="price">$100.00</p>');
+  assert.deepEqual(compareAtBeforeCurrent.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
   const wholesaleNotSale = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="wholesale-price">$60.00</div><p class="price">$100.00</p>');
   assert.deepEqual(wholesaleNotSale.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
   const wholesaleSaleNotCurrent = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="wholesale-sale-price">$60.00</div><p class="price">$100.00</p>');
@@ -401,7 +405,7 @@ test("rejects an entire current price container when any member is invalid", () 
   assert.deepEqual(nonmemberPublicPrice.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
   const discountOnly = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">$20.00 OFF</p>');
   assert.deepEqual(discountOnly.priceSignals, []);
-  for (const markup of ['Save $20.00', 'Save up to $20.00', 'Save an extra $20.00', 'Save an additional $20.00', 'Save as much as $20.00', 'Discount $20.00', 'Coupon value $20.00', '$20.00 savings', '$20.00 instant savings', '$20.00 rebate', '$20.00 cashback', '$20.00 store credit', 'Get $20.00 in store credit', '$20.00 reward points']) {
+  for (const markup of ['Save $20.00', 'Save up to $20.00', 'Save an extra $20.00', 'Save an additional $20.00', 'Save as much as $20.00', 'Discount $20.00', 'Coupon value $20.00', 'Deposit $20.00', '$20.00 savings', '$20.00 instant savings', '$20.00 rebate', '$20.00 cashback', '$20.00 store credit', 'Get $20.00 in store credit', 'Get $20.00 worth of store credit', '$20.00 reward points']) {
     const labeledDiscount = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">${markup}</p>`);
     assert.deepEqual(labeledDiscount.priceSignals, [], markup);
   }
