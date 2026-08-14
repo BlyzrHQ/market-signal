@@ -50,6 +50,8 @@ test("confirms Shopify currency only from same-page public metadata", () => {
   assert.equal(hasConflictingDirectProductCurrency('<meta property="product:price:currency" content="USD"><meta property="og:price:currency" content="EUR">'), true);
   assert.equal(hasConflictingDirectProductCurrency('<meta property="product:price:currency" content="USD"><meta property="product:price:currency" content="EUR">'), true);
   assert.equal(hasConflictingDirectProductCurrency('<script>Shopify.currency = {"active":"USD"}</script><script>Shopify.currency = {"active":"EUR"}</script>'), true);
+  assert.equal(hasConflictingDirectProductCurrency('<meta property="product:price:currency" content="USD"><meta property="product:price:currency" content=EUR>'), true);
+  assert.equal(confirmedProductCurrency('<meta data-name="product:price:currency" content="EUR">'), "");
   assert.equal(hasConflictingDirectProductCurrency('<meta property="product:price:currency" content="USD"><script type="application/ld+json">{"priceCurrency":"EUR"}</script>'), false);
   assert.equal(confirmedProductCurrency('<script type="application/ld+json">{"priceCurrency":"EUR"}</script>'), "EUR");
   assert.equal(confirmedProductCurrency("Prices in pounds"), "");
@@ -167,6 +169,27 @@ test("quantity steering excludes differently sized Shopify variants while preser
   });
   assert.deepEqual(result.product?.priceSignals.map((signal) => signal.amount), [8, 8.5]);
   assert.equal(result.product?.priceSignals.some((signal) => signal.amount === 30), false);
+});
+
+test("quantity steering does not fall back to differently sized Shopify variants", () => {
+  const result = parseShopifyProduct({
+    payload: {
+      title: "Acme Tea",
+      handle: "acme-tea",
+      variants: [
+        { title: "500g", price: 1000 },
+        { title: "1kg", price: 1000 },
+      ],
+    },
+    requestedKey: "acme-tea",
+    sourceUrl: "https://shop.test/products/acme-tea",
+    domain: "shop.test",
+    observedAt: "2026-07-20T10:00:00.000Z",
+    currency: "USD",
+    expectedQuantity: parseCanonicalQuantity("100g") || undefined,
+  });
+  assert.deepEqual(result.product?.priceSignals, []);
+  assert.match(result.gap, /every selected variant/i);
 });
 
 test("uses Shopify's fixed hundredths contract for zero- and three-decimal currencies", () => {

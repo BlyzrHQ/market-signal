@@ -193,6 +193,7 @@ function scopedPriceSignals(currency: string, values: number[]) {
 function markedAmounts(markup: string, currency: string) {
   const decoded = normalizeLocalizedNumbers(decodeEvidence(markup.replace(/<[^>]*>/g, " ")))
     .replace(/[\p{Pd}\u207B\u208B\u2212\u2213\u2238\u2296\u229D\u229F\u2796\u2A29-\u2A2C\u2A3A\u2A41\u2A6C]/gu, "-");
+  if (/&#(?:x[0-9a-f]+|\d+)/i.test(decoded)) return [];
   const expression = currencyAmountExpression(currency);
   return [...decoded.matchAll(expression)]
     .filter((match) => {
@@ -223,9 +224,11 @@ export function extractScopedProductPageEvidence(document: string, sourceUrl = "
   if (variationAttribute && currency) {
     try {
       const variations = JSON.parse(decodeEvidence(variationAttribute));
-      const amounts = Array.isArray(variations)
-        ? variations.map((variation) => Number(variation?.display_price)).filter((amount) => Number.isFinite(amount) && amount > 0)
-        : [];
+      const rawAmounts = Array.isArray(variations) ? variations.map((variation) => Number(variation?.display_price)) : [];
+      if (rawAmounts.length && rawAmounts.some((amount) => !Number.isFinite(amount) || amount <= 0)) {
+        return { priceSignals: [], basis: "unavailable" as const, imageUrl: publicImageFromScope(scope, sourceUrl) };
+      }
+      const amounts = rawAmounts;
       const signals = scopedPriceSignals(currency, amounts);
       if (signals.length) return { priceSignals: signals, basis: signals.length > 1 ? "range" as const : "point" as const, imageUrl: publicImageFromScope(scope, sourceUrl) };
     } catch { /* Fall through to the visible product-summary price. */ }
@@ -519,14 +522,16 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       const originalAccepted = originalIdentityProduct && hasConfirmedPrice([originalIdentityProduct])
         ? originalIdentityProduct
         : null;
+      const adapterCompatible = !originalIdentityProduct || productsCanShareEvidence(adapterIdentityProduct, originalIdentityProduct, extracted.pageTitle);
       const accepted = originalAccepted
         ? (!hasSecureImage([originalAccepted]) && adapterIdentityProduct?.imageUrl && productsCanShareEvidence(originalAccepted, adapterIdentityProduct, extracted.pageTitle)
             ? { ...originalAccepted, imageUrl: adapterIdentityProduct.imageUrl }
             : originalAccepted)
         : adapterIdentityProduct
           && hasConfirmedPrice([adapterIdentityProduct])
+          && adapterCompatible
           ? { ...adapterIdentityProduct, imageUrl: adapterIdentityProduct.imageUrl || (productsCanShareEvidence(adapterIdentityProduct, originalIdentityProduct, extracted.pageTitle) ? originalIdentityProduct?.imageUrl : "") || "" }
-          : identity.products[0];
+          : originalIdentityProduct || identity.products[0];
       const unresolvedAdapterGap = adapterGap && accepted && !hasConfirmedPrice([accepted]) ? adapterGap : "";
       return { product: accepted ? { ...accepted, id: item.productId } : null, gap: unresolvedAdapterGap ? gap(unresolvedAdapterGap, "adapter_limited", undefined, "adapter") : null };
     } catch (error) {

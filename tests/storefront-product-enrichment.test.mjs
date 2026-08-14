@@ -171,6 +171,16 @@ test("recovers public Shopify variants while preserving a non-comparable price b
   }
 });
 
+test("keeps an incomplete WooCommerce variation set non-comparable", () => {
+  const variations = JSON.stringify([
+    { display_price: 0, attributes: { attribute_weight: "500g" } },
+    { display_price: 19.99, attributes: { attribute_weight: "1kg" } },
+  ]).replace(/"/g, "&quot;");
+  const evidence = extractScopedProductPageEvidence(`<h1>Tea</h1><form data-product_variations="${variations}"><p class="price">USD 19.99</p></form>`);
+  assert.deepEqual(evidence.priceSignals, []);
+  assert.equal(evidence.basis, "unavailable");
+});
+
 test("does not collapse visible multi-currency evidence into a single point price", () => {
   const evidence = extractScopedProductPageEvidence('<h1>Product</h1><div class="summary"><p class="price">USD 12.50 / EUR 10.99</p></div>');
   assert.deepEqual(evidence.priceSignals, []);
@@ -200,6 +210,8 @@ test("rejects unsupported or negative scoped price markup", () => {
   const equalsEntityNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">Price&equals;&minus;$12.50</p></body></html>');
   const semicolonlessDecimalNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&#45 $12.50</p></body></html>');
   const semicolonlessHexNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&#x2d $12.50</p></body></html>');
+  const punctuationDecimalNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&#45: USD 12.50</p></body></html>');
+  const punctuationHexNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&#x2d: USD 12.50</p></body></html>');
   assert.deepEqual(unsupported.priceSignals, []);
   assert.deepEqual(negativePrefix.priceSignals, []);
   assert.deepEqual(negativeSpaced.priceSignals, []);
@@ -222,6 +234,8 @@ test("rejects unsupported or negative scoped price markup", () => {
   assert.deepEqual(equalsEntityNegative.priceSignals, []);
   assert.deepEqual(semicolonlessDecimalNegative.priceSignals, []);
   assert.deepEqual(semicolonlessHexNegative.priceSignals, []);
+  assert.deepEqual(punctuationDecimalNegative.priceSignals, []);
+  assert.deepEqual(punctuationHexNegative.priceSignals, []);
 });
 
 test("preserves both ends of a scoped same-currency price range", () => {
@@ -417,6 +431,27 @@ test("does not merge page and adapter evidence when their observed SKUs conflict
     const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
     assert.equal(result.products[0].identifiers?.sku, "PAGE-A");
     assert.equal(result.products[0].imageUrl, "");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not replace a zero-price page record with an adapter price from a conflicting SKU", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({
+      title: "CornerStone Enhanced Visibility Beanie",
+      handle: "cornerstone-enhanced-visibility-beanie",
+      variants: [{ title: "Default Title", price: 1340, sku: "ADAPTER-B" }],
+    }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "CornerStone Enhanced Visibility Beanie", sku: "PAGE-A", offers: { price: 0, priceCurrency: "USD" } })}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1><div class="summary"><img class="product-image" src="https://cdn.shop.test/page-a.jpg"></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
+    assert.equal(result.products[0].identifiers?.sku, "PAGE-A");
+    assert.deepEqual(result.products[0].priceSignals, []);
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -102,12 +102,15 @@ export function storefrontAdapterRequest(sourceUrl: string): StorefrontAdapterRe
 }
 
 function metaContents(document: string, key: string) {
-  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const identity = new RegExp(`(?:property|name|itemprop)\\s*=\\s*["']${escaped}["']`, "i");
+  const attributeValue = (tag: string, name: string) => {
+    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = tag.match(new RegExp(`(?:^|\\s)${escapedName}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
+    return text(match?.[1] || match?.[2] || match?.[3], 40);
+  };
   return [...document.matchAll(/<meta\b[^>]*>/gi)]
     .map((match) => match[0])
-    .filter((tag) => identity.test(tag))
-    .map((tag) => text(tag.match(/\bcontent\s*=\s*["']([^"']*)["']/i)?.[1], 20))
+    .filter((tag) => ["property", "name", "itemprop"].some((attribute) => attributeValue(tag, attribute) === key))
+    .map((tag) => attributeValue(tag, "content"))
     .filter(Boolean);
 }
 
@@ -224,7 +227,7 @@ export function parseShopifyProduct(input: {
   const quantityMatches = input.expectedQuantity
     ? variants.filter((variant) => quantitiesEqual(input.expectedQuantity, shopifyVariantQuantity(name, variant)))
     : [];
-  const selectedVariants = input.expectedQuantity && quantityMatches.length > 0 ? quantityMatches : variants;
+  const selectedVariants = input.expectedQuantity ? quantityMatches : variants;
   const completeSelectedPricing = selectedVariants.length > 0 && selectedVariants.every((variant) => positiveMinorUnitInput(variant.price));
   const priceSignals = input.currency && completeSelectedPricing
     ? [...new Map(selectedVariants.map((variant) => minorUnitPrice(variant.price, input.currency, 2)).filter((value): value is ProductPriceSignal => Boolean(value)).map((signal) => [`${signal.currency}|${signal.amount}`, signal])).values()]

@@ -318,6 +318,7 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown): ProductPriceSi
   if (!rawText) return null;
   const explicitCurrency = text(currencyValue).toUpperCase();
   const inferredCurrency = /£/.test(rawText) ? "GBP" : /€/.test(rawText) ? "EUR" : /\$/.test(rawText) ? "USD" : undefined;
+  if (explicitCurrency && inferredCurrency && explicitCurrency !== inferredCurrency) return null;
   const currency = explicitCurrency || inferredCurrency;
   const normalizedAmountText = rawText
     .replace(/&[a-z0-9]*(?:minus|dash|hyphen|ominus)[a-z0-9]*;/gi, "-")
