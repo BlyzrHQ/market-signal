@@ -160,8 +160,8 @@ function currencyRangeExpression(currency: string) {
   const token = CURRENCY_TOKENS[currency] || currency.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const amount = `[+-]?${localizedAmountPattern(currency)}(?![\\d.,])`;
   const separator = "(?:-|/|\\bto\\b)";
-  const completePriceSuffix = "(?=\\s*(?:$|[.,;)]|\\/(?:month|mo|year|yr)\\b|per\\s+(?:month|year)\\b|(?:(?:incl|excl)(?:uding)?\\.?\\s+tax|each)\\b\\s*[.,;)]?\\s*$))";
-  return new RegExp(`(?:(?:${token})\\s*(${amount})\\s*${separator}\\s*(${amount})|(${amount})\\s*${separator}\\s*(${amount})\\s*(?:${token}))${completePriceSuffix}`, "giu");
+  const nonPriceSuffix = "(?!\\s*(?:%|percent\\b|[-\\s]*(?:off|discount|save|months?|years?|days?|weeks?|hours?|kg|g|lb|lbs|oz|ml|litres?|liters?|packs?|pcs?|pieces?|units?|warranty)\\b))";
+  return new RegExp(`(?:(?:${token})\\s*(${amount})\\s*${separator}\\s*(${amount})|(${amount})\\s*${separator}\\s*(${amount})\\s*(?:${token}))${nonPriceSuffix}`, "giu");
 }
 
 function localizedAmount(raw: string, currency: string) {
@@ -266,7 +266,8 @@ export function extractScopedProductPageEvidence(document: string, sourceUrl = "
   const markedCurrencies = currenciesFromMarkup(currentMarkup);
   const directCurrency = confirmedProductCurrency(document, { allowStructured: false });
   const hasDollarSymbol = /\$/.test(decodedPriceMarkup);
-  const hasAmbiguousCordobaMarker = /(?:C\$|(?:^\s*|\b(?:price|from|now|sale)\s*[:=-]?\s*)C\s+\$|\bNIO\s+C\s+\$)\s*[+-]?\d/iu.test(decodedPriceMarkup);
+  const hasAmbiguousCordobaMarker = /(?:C\$|\bC\s+\$)\s*[+-]?\d/iu.test(decodedPriceMarkup)
+    && !/\b(?:vitamin|grade|type|model|size|option|plan)\s+C\s+\$\s*[+-]?\d/iu.test(decodedPriceMarkup);
   const dollarCurrencies = new Set([
     "ARS", "AUD", "BMD", "BND", "BRL", "BSD", "BZD", "CAD", "CLP", "COP", "DOP", "FJD", "GYD", "HKD", "JMD",
     "KYD", "LRD", "MXN", "NAD", "NIO", "NZD", "SBD", "SGD", "SRD", "TTD", "TWD", "USD", "XCD", "ZWL",

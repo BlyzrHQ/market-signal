@@ -347,7 +347,8 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown, options: { allo
   if (/£/.test(currencyEvidence)) observedCurrencies.add("GBP");
   if (/€/.test(currencyEvidence)) observedCurrencies.add("EUR");
   const hasDollarSymbol = /\$/.test(currencyEvidence);
-  const hasAmbiguousCordobaMarker = /(?:C\$|(?:^\s*|\b(?:price|from|now|sale)\s*[:=-]?\s*)C\s+\$|\bNIO\s+C\s+\$)\s*[+-]?\d/iu.test(currencyEvidence);
+  const hasAmbiguousCordobaMarker = /(?:C\$|\bC\s+\$)\s*[+-]?\d/iu.test(currencyEvidence)
+    && !/\b(?:vitamin|grade|type|model|size|option|plan)\s+C\s+\$\s*[+-]?\d/iu.test(currencyEvidence);
   if (hasAmbiguousCordobaMarker && (
     (explicitCurrency && !new Set(["CAD", "NIO"]).has(explicitCurrency))
     || (!explicitCurrency && options.allowDefaultUsdDollar)
