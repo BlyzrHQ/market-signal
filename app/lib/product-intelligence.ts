@@ -315,14 +315,19 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown): ProductPriceSi
   const inferredCurrency = /£/.test(rawText) ? "GBP" : /€/.test(rawText) ? "EUR" : /\$/.test(rawText) ? "USD" : undefined;
   const currency = explicitCurrency || inferredCurrency;
   const normalizedAmountText = rawText
-    .replace(/&(?:minus|ndash|mdash|hyphen|dash);/gi, "-")
+    .replace(/&[a-z0-9]*(?:minus|dash|hyphen|ominus)[a-z0-9]*;/gi, "-")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&pound;/gi, "£")
+    .replace(/&euro;/gi, "€")
+    .replace(/&dollar;/gi, "$")
     .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 10)))
     .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 16)))
     .replace(/&#(?:8722|8211|8212);/gi, "-")
     .replace(/&#x(?:2212|2013|2014);/gi, "-")
     .replace(/[−–—]/gu, "-")
-    .replace(/[\p{Pd}\u207B\u208B\u2212\u2796\u2A2A]/gu, "-")
+    .replace(/(?!\p{Sc})[\p{S}\p{Pd}]/gu, "-")
     .replace(/,/g, "");
+  if (/&[a-z][a-z0-9]+;/i.test(normalizedAmountText)) return null;
   const separatedNegative = /-\s*(?:[A-Z]{3}\s*|[$£€]\s*)?\d/u.test(normalizedAmountText);
   const accountingNegative = /\(\s*(?:[A-Z]{3}\s*|[$£€]\s*)?\d+(?:\.\d+)?(?:\s*[A-Z]{3})?\s*\)/u.test(normalizedAmountText);
   const trailingNegative = /\d+(?:\.\d+)?\s*-\s*(?:[A-Z]{3})?\s*$/u.test(normalizedAmountText);

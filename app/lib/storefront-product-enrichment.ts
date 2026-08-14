@@ -101,6 +101,9 @@ function decodeEvidence(value: string) {
     .replace(/&ndash;/gi, "\u2013")
     .replace(/&mdash;/gi, "\u2014")
     .replace(/&(?:hyphen|dash);/gi, "-")
+    .replace(/&ominus;/gi, "-")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&dollar;/gi, "$")
     .replace(/&amp;/gi, "&")
     .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 10)))
     .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 16)));
@@ -158,7 +161,7 @@ function productScope(document: string) {
   const summaryIndex = document.search(/class\s*=\s*["'][^"']*(?:summary|product-summary)[^"']*["']/i);
   const start = Math.max(0, title?.index ?? summaryIndex);
   const bounded = document.slice(start, Math.min(document.length, start + 160_000));
-  const relatedAt = bounded.search(/<(?:section|div)\b[^>]*class\s*=\s*["'][^"']*(?:related|upsells|cross-sells|recommend(?:ed|ations?)|you-may-also-like|similar-products)[^"']*["']/i);
+  const relatedAt = bounded.search(/<[a-z][\w:-]*\b[^>]*(?:class|id)\s*=\s*["'][^"']*(?:related|upsells|cross-sells|recommend(?:ed|ations?)|you-may-also-like|similar-products)[^"']*["']/i);
   return relatedAt >= 0 ? bounded.slice(0, relatedAt) : bounded;
 }
 
@@ -171,14 +174,17 @@ function scopedPriceSignals(currency: string, values: number[]) {
 
 function markedAmounts(markup: string, currency: string) {
   const decoded = normalizeLocalizedNumbers(decodeEvidence(markup.replace(/<[^>]*>/g, " ")))
-    .replace(/[\p{Pd}\u207B\u208B\u2212\u2796\u2A2A]/gu, "-");
+    .replace(/(?!\p{Sc})[\p{S}\p{Pd}]/gu, "-");
   const expression = currencyAmountExpression(currency);
   return [...decoded.matchAll(expression)]
     .filter((match) => {
       const start = match.index ?? 0;
       const before = decoded.slice(0, start);
       const after = decoded.slice(start + match[0].length);
-      return !/-\s*$/u.test(before) && !/\(\s*$/u.test(before) && !/^\s*(?:\)|-)/u.test(after);
+      return !/-\s*$/u.test(before)
+        && !/&[a-z][a-z0-9]+;\s*$/iu.test(before)
+        && !/\(\s*$/u.test(before)
+        && !/^\s*(?:\)|-|&[a-z][a-z0-9]+;)/iu.test(after);
     })
     .map((match) => Number((match[1] || match[2]).replace(/,/g, "")));
 }

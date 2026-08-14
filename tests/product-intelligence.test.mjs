@@ -116,14 +116,18 @@ test("rejects negative structured and metadata prices instead of making them pos
       { "@type": "Product", name: "Acme Superscript Minus Negative", brand: { name: "Acme" }, offers: { price: "\u207b12.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Subscript Minus Negative", brand: { name: "Acme" }, offers: { price: "\u208b12.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Heavy Minus Negative", brand: { name: "Acme" }, offers: { price: "\u279612.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Circled Minus Negative", brand: { name: "Acme" }, offers: { price: "\u229612.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Dot Minus Negative", brand: { name: "Acme" }, offers: { price: "\u223812.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Minus Plus Negative", brand: { name: "Acme" }, offers: { price: "\u221312.50", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Named Ominus Negative", brand: { name: "Acme" }, offers: { price: "&ominus;12.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Spaced Negative", brand: { name: "Acme" }, offers: { price: "- $12.50", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Accounting Negative", brand: { name: "Acme" }, offers: { price: "($12.50)", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Trailing Negative", brand: { name: "Acme" }, offers: { price: "$12.50-", priceCurrency: "USD" } },
     ])}</script>`,
     sourceUrl: "https://acme.com/products/negative-catalog",
   });
-  assert.equal(structured.products.length, 19);
-  assert.ok(structured.products.every((item) => item.priceSignals.length === 0));
+  assert.equal(structured.products.length, 23);
+  assert.ok(structured.products.every((item) => item.priceSignals.length === 0), structured.products.filter((item) => item.priceSignals.length).map((item) => item.name).join(", "));
 
   const metadata = extraction({
     document: `<head><meta property="og:price:amount" content="-12.50"><meta property="og:price:currency" content="USD"></head><script type="application/ld+json">${JSON.stringify({
