@@ -103,20 +103,20 @@ function lexicalTokens(value: string) {
   return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").split(/\s+/).filter(Boolean);
 }
 
-function canonicalProductToken(token: string) {
-  return token.length > 3 && token.endsWith("s") && !/(?:ss|us|is)$/.test(token) ? token.slice(0, -1) : token;
-}
-
 function normalizedTokens(value: string) {
-  return [...new Set(lexicalTokens(value).map(canonicalProductToken).filter((token) => token.length > 1 && !SEARCH_SOURCE_STOPWORDS.has(token) && !/^\d+(?:\.\d+)?(?:g|kg|ml|l|oz|lb|pk|pack|pcs?)?$/i.test(token)))];
+  return [...new Set(lexicalTokens(value).filter((token) => token.length > 1 && !SEARCH_SOURCE_STOPWORDS.has(token) && !/^\d+(?:\.\d+)?(?:g|kg|ml|l|oz|lb|pk|pack|pcs?)?$/i.test(token)))];
 }
 
-function hasPluralPathVariant(path: string, productName: string) {
-  const productTokens = new Set(normalizedTokens(productName));
-  return lexicalTokens(path).some((token) => {
-    const canonical = canonicalProductToken(token);
-    return canonical !== token && productTokens.has(canonical);
-  });
+function isSimplePluralOf(candidate: string, singular: string) {
+  return singular.length > 3 && !/[aeiou]$/i.test(singular) && candidate === `${singular}s`;
+}
+
+function matchedProductTokens(sourceTokens: string[], productTokens: string[]) {
+  return productTokens.filter((token) => sourceTokens.includes(token) || sourceTokens.some((sourceToken) => isSimplePluralOf(sourceToken, token)));
+}
+
+function hasPluralPathVariant(pathTokens: string[], productTokens: string[]) {
+  return productTokens.some((token) => pathTokens.some((pathToken) => isSimplePluralOf(pathToken, token)));
 }
 
 function domainBrandIdentity(value: string) {
@@ -136,7 +136,7 @@ function productMatchFromSource(title: string, url: string, products: ProductRec
   const sourceTokens = normalizedTokens(`${title} ${pathText}`);
   return products.flatMap((product) => {
     const productTokens = normalizedTokens(product.name);
-    const shared = productTokens.filter((token) => sourceTokens.includes(token));
+    const shared = matchedProductTokens(sourceTokens, productTokens);
     const coverage = shared.length / Math.max(1, Math.min(productTokens.length, sourceTokens.length));
     if (shared.length < 2 || coverage < 0.5) return [];
     return [{ product, score: shared.length * 10 + coverage }];
@@ -159,9 +159,9 @@ function isProductDetailSource(url: string, product: ProductRecord) {
     if (!path || path === "/" || PUBLISHER_PATH.test(path) || !PRODUCT_DETAIL_PATH.test(`${path}/`)) return false;
     const pathTokens = normalizedTokens(path);
     const productTokens = normalizedTokens(product.name);
-    const shared = productTokens.filter((token) => pathTokens.includes(token));
+    const shared = matchedProductTokens(pathTokens, productTokens);
     const coverage = shared.length / Math.max(1, productTokens.length);
-    return shared.length >= 3 || (shared.length >= 2 && (coverage >= 0.6 || (coverage >= 0.5 && hasPluralPathVariant(path, product.name))));
+    return shared.length >= 3 || (shared.length >= 2 && (coverage >= 0.6 || (coverage >= 0.5 && hasPluralPathVariant(pathTokens, productTokens))));
   } catch {
     return false;
   }

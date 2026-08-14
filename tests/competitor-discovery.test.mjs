@@ -267,6 +267,28 @@ test("accepts a pluralized product path for the same Wearform product family", (
   assert.equal(candidates[0].matchedProductUrl, "https://www.customink.com/products/psr-custom-t-shirts");
 });
 
+test("does not collapse an unrelated word ending in s into a product token", () => {
+  const profile = {
+    domain: "example.com",
+    title: "Example",
+    description: "Custom apparel",
+    region: "United States",
+    language: "en",
+    products: [product("Canva Custom Design Shirt", "https://example.com/products/canva-custom-shirt")],
+  };
+  const payload = {
+    output: [{
+      type: "web_search_call",
+      action: {
+        query: "custom apparel United States",
+        sources: [{ title: "Canvas Custom Prints", url: "https://prints.example.net/products/canvas-custom" }],
+      },
+    }],
+  };
+
+  assert.deepEqual(candidatesFromSearchEvidence(payload, profile), []);
+});
+
 test("selects a bounded product-search set across distinct name families", () => {
   const products = [
     product("Lamb Leg Halal 2500g", "https://myjam.co.uk/products/lamb-leg"),
