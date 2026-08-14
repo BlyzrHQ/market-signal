@@ -276,7 +276,7 @@ function preferredCurrentPriceMarkup(scope: string) {
 }
 
 function removeSecondaryPriceElements(markup: string) {
-  const secondary = new Set(["compare-at", "old-price", "list-price", "regular-price", "price-regular", "member-price", "loyalty-price", "saving", "savings", "discount"]);
+  const secondary = new Set(["compare-at", "old-price", "list-price", "regular-price", "price-regular", "member-price", "loyalty-price", "deposit-price", "saving", "savings", "discount"]);
   const tags = htmlTagSpans(markup);
   const ranges: Array<[number, number]> = [];
   for (let index = 0; index < tags.length; index += 1) {
@@ -296,7 +296,13 @@ function removeSecondaryPriceElements(markup: string) {
       break;
     }
   }
-  return ranges.sort((left, right) => right[0] - left[0]).reduce((value, [start, end]) => `${value.slice(0, start)} ${value.slice(end)}`, markup);
+  const merged = ranges.sort((left, right) => left[0] - right[0]).reduce<Array<[number, number]>>((result, range) => {
+    const previous = result.at(-1);
+    if (!previous || range[0] > previous[1]) result.push([...range]);
+    else previous[1] = Math.max(previous[1], range[1]);
+    return result;
+  }, []);
+  return merged.reverse().reduce((value, [start, end]) => `${value.slice(0, start)} ${value.slice(end)}`, markup);
 }
 
 function scopedPriceSignals(currency: string, values: number[]) {
@@ -352,7 +358,7 @@ function markedAmounts(markup: string, currency: string) {
   if (matches.length === 1) {
     const before = priceText.slice(0, matches[0].index ?? 0).trim();
     const after = priceText.slice((matches[0].index ?? 0) + matches[0][0].length).trim();
-    if (!before && /^(?:off|discount)\b/iu.test(after)) return [];
+    if (/\b(?:save|discount|saving|savings)\s*$/iu.test(before) || /^(?:off|discount|saving|savings)\b/iu.test(after)) return [];
   }
   const validContexts = matches.every((match) => {
       const start = match.index ?? 0;
