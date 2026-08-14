@@ -328,9 +328,10 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown): ProductPriceSi
     .replace(/[\p{Pd}\u207B\u208B\u2212\u2213\u2238\u2296\u229D\u229F\u2796\u2A29-\u2A2C\u2A3A\u2A41\u2A6C]/gu, "-")
     .replace(/,/g, "");
   const separatedNegative = /^\s*(?:(?:[A-Z]{3}|\p{Sc})\s*)?-\s*[^\d]{0,24}\d/u.test(normalizedAmountText);
+  const labeledNegative = /[:=]\s*-\s*[^\d]{0,24}\d/u.test(normalizedAmountText);
   const accountingNegative = /\(\s*(?:[A-Z]{3}\s*|[$£€]\s*)?\d+(?:\.\d+)?(?:\s*[A-Z]{3})?\s*\)/u.test(normalizedAmountText);
   const trailingNegative = /\d+(?:\.\d+)?\s*-\s*(?:[A-Z]{3})?\s*$/u.test(normalizedAmountText);
-  if (separatedNegative || accountingNegative || trailingNegative) return null;
+  if (separatedNegative || labeledNegative || accountingNegative || trailingNegative) return null;
   const amountMatch = normalizedAmountText.match(/[+-]?\d+(?:\.\d+)?/);
   const amount = amountMatch ? Number(amountMatch[0]) : undefined;
   if (typeof amount === "number" && Number.isFinite(amount) && amount < 0) return null;

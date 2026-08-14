@@ -192,7 +192,10 @@ function markedAmounts(markup: string, currency: string) {
       const start = match.index ?? 0;
       const before = decoded.slice(0, start);
       const after = decoded.slice(start + match[0].length);
-      return !/^\s*-\s*$/u.test(before)
+      const trimmedBefore = before.trimEnd();
+      const signPrefix = trimmedBefore.endsWith("-") ? trimmedBefore.slice(0, -1).trimEnd() : null;
+      const negativePrefix = signPrefix !== null && (!signPrefix || /[:=]\s*$/u.test(signPrefix));
+      return !negativePrefix
         && !/\(\s*$/u.test(before)
         && !/^\s*(?:\)|-)/u.test(after);
     })
@@ -479,11 +482,20 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
         const replacement = observedCatalogReplacement(item, replacementCandidates, extracted.pageTitle, fetched.url);
         return replacement ? { product: replacement, gap: null } : { product: null, gap: gap(identity.reason, "identity_mismatch", undefined, "identity") };
       }
-      const accepted = adapterEvidenceProduct
-        && identity.products.includes(adapterEvidenceProduct)
-        && hasConfirmedPrice([adapterEvidenceProduct])
-        ? adapterEvidenceProduct
-        : identity.products[0];
+      const originalAccepted = strongestInitialProduct
+        && identity.products.includes(strongestInitialProduct)
+        && hasConfirmedPrice([strongestInitialProduct])
+        ? strongestInitialProduct
+        : null;
+      const accepted = originalAccepted
+        ? (!hasSecureImage([originalAccepted]) && adapterEvidenceProduct?.imageUrl
+            ? { ...originalAccepted, imageUrl: adapterEvidenceProduct.imageUrl }
+            : originalAccepted)
+        : adapterEvidenceProduct
+          && identity.products.includes(adapterEvidenceProduct)
+          && hasConfirmedPrice([adapterEvidenceProduct])
+          ? adapterEvidenceProduct
+          : identity.products[0];
       const unresolvedAdapterGap = adapterGap && accepted && !hasConfirmedPrice([accepted]) ? adapterGap : "";
       return { product: accepted ? { ...accepted, id: item.productId } : null, gap: unresolvedAdapterGap ? gap(unresolvedAdapterGap, "adapter_limited", undefined, "adapter") : null };
     } catch (error) {
