@@ -176,11 +176,15 @@ test("rejects unsupported or negative scoped price markup", () => {
   const negativePrefix = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">-$12.50</p></body></html>');
   const negativeSpaced = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">- $12.50</p></body></html>');
   const encodedNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&minus;$12.50</p></body></html>');
+  const encodedEnDash = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&ndash;$12.50</p></body></html>');
+  const encodedEmDash = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">&mdash;$12.50</p></body></html>');
   const accountingNegative = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">($12.50)</p></body></html>');
   assert.deepEqual(unsupported.priceSignals, []);
   assert.deepEqual(negativePrefix.priceSignals, []);
   assert.deepEqual(negativeSpaced.priceSignals, []);
   assert.deepEqual(encodedNegative.priceSignals, []);
+  assert.deepEqual(encodedEnDash.priceSignals, []);
+  assert.deepEqual(encodedEmDash.priceSignals, []);
   assert.deepEqual(accountingNegative.priceSignals, []);
 });
 
