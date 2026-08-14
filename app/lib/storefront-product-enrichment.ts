@@ -139,10 +139,10 @@ const CURRENCY_TOKENS: Record<string, string> = {
   AUD: "\\bAUD\\b",
 };
 
-function localizedAmountPattern(currency: string) {
+function localizedAmountPattern(currency: string, requireDecimals = false) {
   const decimals = /^(?:KWD|BHD|OMR)$/.test(currency) ? 3 : 2;
   const whole = "(?:[0-9]{1,3}(?:[.,'\\u00A0\\u202F ][0-9]{3})+|[0-9]{1,6})";
-  return `${whole}(?:[.,][0-9]{1,${decimals}})?`;
+  return `${whole}${requireDecimals ? `[.,][0-9]{1,${decimals}}` : `(?:[.,][0-9]{1,${decimals}})?`}`;
 }
 
 function currencyAmountExpression(currency: string) {
@@ -159,9 +159,11 @@ function currencyTokenExpression(currency: string) {
 function currencyRangeExpression(currency: string) {
   const token = CURRENCY_TOKENS[currency] || currency.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const amount = `[+-]?${localizedAmountPattern(currency)}(?![\\d.,])`;
-  const separator = "(?:-|/|\\bto\\b)";
-  const nonPriceSuffix = "(?!\\s*(?:%|percent\\b|[-\\s]*(?:off|discount|save|months?|years?|days?|weeks?|hours?|kg|g|lb|lbs|oz|ml|litres?|liters?|packs?|pcs?|pieces?|units?|warranty)\\b))";
-  return new RegExp(`(?:(?:${token})\\s*(${amount})\\s*${separator}\\s*(${amount})|(${amount})\\s*${separator}\\s*(${amount})\\s*(?:${token}))${nonPriceSuffix}`, "giu");
+  const decimalAmount = `[+-]?${localizedAmountPattern(currency, true)}(?![\\d.,])`;
+  const nonPriceSuffix = "(?!\\s*(?:%|pct\\.?|percent\\b|[-\\s]*(?:off|discount|save|months?|mos?\\.?|years?|yrs?\\.?|days?|weeks?|wks?\\.?|hours?|hrs?\\.?|kg|g|lb|lbs|oz|ml|litres?|liters?|packs?|pk|pcs?|pieces?|units?|ct|count|ea|bottles?|cans?|boxes?|dozen|servings?|tablets?|capsules?|pairs?|sets?|warranty)\\b))";
+  const ordinary = `(?:(?:${token})\\s*(${amount})\\s*(?:-|\\bto\\b)\\s*(${amount})|(${amount})\\s*(?:-|\\bto\\b)\\s*(${amount})\\s*(?:${token}))`;
+  const slash = `(?:(?:${token})\\s*(${decimalAmount})\\s*\\/\\s*(${decimalAmount})|(${decimalAmount})\\s*\\/\\s*(${decimalAmount})\\s*(?:${token}))`;
+  return new RegExp(`(?:${ordinary}|${slash})${nonPriceSuffix}`, "giu");
 }
 
 function localizedAmount(raw: string, currency: string) {
@@ -249,7 +251,7 @@ function markedAmounts(markup: string, currency: string) {
   if (!validContexts) return [];
   const amounts = matches.map((match) => localizedAmount(match[1] || match[2], currency));
   for (const range of decoded.matchAll(currencyRangeExpression(currency))) {
-    const endpoints = [localizedAmount(range[1] || range[3], currency), localizedAmount(range[2] || range[4], currency)];
+    const endpoints = [localizedAmount(range[1] || range[3] || range[5] || range[7], currency), localizedAmount(range[2] || range[4] || range[6] || range[8], currency)];
     amounts.push(...endpoints);
   }
   return amounts.every((amount) => Number.isFinite(amount) && amount > 0) ? amounts : [];
