@@ -407,7 +407,7 @@ test("rejects an entire current price container when any member is invalid", () 
   assert.deepEqual(nonmemberPublicPrice.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
   const discountOnly = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">$20.00 OFF</p>');
   assert.deepEqual(discountOnly.priceSignals, []);
-  for (const markup of ['Save $20.00', 'Save up to $20.00', 'Save an extra $20.00', 'Save an additional $20.00', 'Save as much as $20.00', 'Discount $20.00', 'Coupon value $20.00', 'Deposit $20.00', 'Down payment $20.00', '$20.00 down payment', 'Finance from $20.00/month', '$20.00 savings', '$20.00 instant savings', '$20.00 rebate', '$20.00 cashback', '$20.00 store credit', 'Get $20.00 in store credit', 'Get $20.00 worth of store credit', '$20.00 reward points']) {
+  for (const markup of ['Save $20.00', 'Save up to $20.00', 'Save an extra $20.00', 'Save an additional $20.00', 'Save as much as $20.00', 'Discount $20.00', 'Coupon value $20.00', 'Deposit $20.00', 'Down payment $20.00', '$20.00 down payment', 'Finance from $20.00/month', 'As low as $20.00/mo', '$20.00/wk', '$20.00/yr', '$20.00 monthly', '$20.00 savings', '$20.00 instant savings', '$20.00 rebate', '$20.00 cashback', '$20.00 store credit', 'Get $20.00 in store credit', 'Get $20.00 worth of store credit', '$20.00 reward points']) {
     const labeledDiscount = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price">${markup}</p>`);
     assert.deepEqual(labeledDiscount.priceSignals, [], markup);
   }
