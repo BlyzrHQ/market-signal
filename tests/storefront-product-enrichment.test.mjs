@@ -171,6 +171,15 @@ test("recovers public Shopify variants while preserving a non-comparable price b
   }
 });
 
+test("rejects unsupported or negative scoped price markup", () => {
+  const unsupported = extractScopedProductPageEvidence('<html><head><meta property="og:price:currency" content="XXX"></head><body><h1>Product</h1><p class="price">XXX 12.50</p></body></html>');
+  const negativePrefix = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">-$12.50</p></body></html>');
+  const negativeSpaced = extractScopedProductPageEvidence('<html><body><h1>Product</h1><p class="price">- $12.50</p></body></html>');
+  assert.deepEqual(unsupported.priceSignals, []);
+  assert.deepEqual(negativePrefix.priceSignals, []);
+  assert.deepEqual(negativeSpaced.priceSignals, []);
+});
+
 test("replaces a zero Shopify page placeholder with a positive same-domain adapter price", async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];

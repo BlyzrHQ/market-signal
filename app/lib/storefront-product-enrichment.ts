@@ -168,12 +168,15 @@ function scopedPriceSignals(currency: string, values: number[]) {
 function markedAmounts(markup: string, currency: string) {
   const decoded = normalizeLocalizedNumbers(decodeEvidence(markup.replace(/<[^>]*>/g, " ")));
   const expression = currencyAmountExpression(currency);
-  return [...decoded.matchAll(expression)].map((match) => Number((match[1] || match[2]).replace(/,/g, "")));
+  return [...decoded.matchAll(expression)]
+    .filter((match) => !/[-−–—]\s*$/u.test(decoded.slice(0, match.index ?? 0)))
+    .map((match) => Number((match[1] || match[2]).replace(/,/g, "")));
 }
 
 export function extractScopedProductPageEvidence(document: string, sourceUrl = "https://product.invalid/") {
   const scope = productScope(document);
-  const currency = confirmedProductCurrency(document) || currencyFromMarkup(scope);
+  const observedCurrency = confirmedProductCurrency(document) || currencyFromMarkup(scope);
+  const currency = isSupportedCurrency(observedCurrency) ? observedCurrency.trim().toUpperCase() : "";
   const variationAttribute = scope.match(/data-product_variations\s*=\s*(["'])([\s\S]*?)\1/i)?.[2] || "";
   if (variationAttribute && currency) {
     try {
@@ -391,9 +394,9 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       if (!fetched.ok) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed", fetched.status, "http") };
       if (!/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed", fetched.status, "content") };
       const extracted = pageExtraction(fetched.text, fetched.url, item.domain);
-      extracted.result.products = extracted.result.products.map(withPositivePrices);
       const expected = expectedProduct(item);
       addScopedProductPageEvidence(fetched.text, fetched.url, expected, extracted.result.products, extracted.pageTitle);
+      extracted.result.products = extracted.result.products.map(withPositivePrices);
       const initialIdentity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle);
       const replacementCandidates = [...extracted.result.products];
       let adapterGap = "";
