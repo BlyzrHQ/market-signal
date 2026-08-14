@@ -215,24 +215,39 @@ function markedAmounts(markup: string, currency: string) {
 
 export function extractScopedProductPageEvidence(document: string, sourceUrl = "https://product.invalid/") {
   const scope = productScope(document);
-  const markedCurrencies = currenciesFromMarkup(scope);
+  const priceMarkup = scope.match(/<p\b[^>]*class\s*=\s*["'][^"']*\bprice\b[^"']*["'][^>]*>[\s\S]*?<\/p>/i)?.[0]
+    || scope.match(/<(?:div|span)\b[^>]*class\s*=\s*["'][^"']*(?:product[-_ ]price|single_product_price)[^"']*["'][^>]*>[\s\S]*?<\/(?:div|span)>/i)?.[0]
+    || "";
+  const currentMarkup = priceMarkup.match(/<ins\b[^>]*>([\s\S]*?)<\/ins>/i)?.[1]
+    || priceMarkup.replace(/<del\b[^>]*>[\s\S]*?<\/del>/gi, " ");
+  const decodedPriceMarkup = normalizeLocalizedNumbers(decodeEvidence(currentMarkup).replace(/<[^>]*>/g, " "));
+  const markedCurrencies = currenciesFromMarkup(currentMarkup);
   const directCurrency = confirmedProductCurrency(document, { allowStructured: false });
-  const decodedScope = decodeEvidence(scope);
-  const hasDollarSymbol = /\$/.test(decodedScope);
-  const dollarCurrencies = new Set(["AUD", "CAD", "HKD", "NZD", "SGD", "USD"]);
-  const explicitScopeCurrencies = [...decodedScope.matchAll(/\b[A-Za-z]{3}\b/g)]
+  const hasDollarSymbol = /\$/.test(decodedPriceMarkup);
+  const dollarCurrencies = new Set([
+    "ARS", "AUD", "BMD", "BND", "BSD", "BZD", "CAD", "CLP", "COP", "FJD", "GYD", "HKD", "JMD", "KYD",
+    "LRD", "MXN", "NAD", "NZD", "SBD", "SGD", "SRD", "TTD", "TWD", "USD", "XCD", "ZWL",
+  ]);
+  const explicitPriceCurrencies = [...decodedPriceMarkup.matchAll(/\b[A-Za-z]{3}\b/g)]
+    .filter((match) => {
+      const index = match.index ?? 0;
+      return /^\s*(?:\p{Sc}\s*)?[+-]?\d/u.test(decodedPriceMarkup.slice(index + match[0].length))
+        || /\d(?:[.,]\d+)?\s*$/.test(decodedPriceMarkup.slice(0, index));
+    })
     .map((match) => match[0].toUpperCase())
     .filter(isSupportedCurrency);
-  const directConflict = Boolean(directCurrency && explicitScopeCurrencies.some((currency) => currency !== directCurrency));
+  const nonDollarMarkedCurrencies = markedCurrencies.filter((currency) => currency !== "USD" || !hasDollarSymbol || /\bUSD\b/i.test(decodedPriceMarkup));
+  const observedPriceCurrencies = [...new Set([...explicitPriceCurrencies, ...nonDollarMarkedCurrencies])];
+  const directConflict = Boolean(directCurrency && observedPriceCurrencies.some((currency) => currency !== directCurrency));
   const observedCurrency = directConflict
     ? ""
     : directCurrency && hasDollarSymbol && dollarCurrencies.has(directCurrency)
     ? directCurrency
-    : directCurrency && markedCurrencies.length > 0 && !markedCurrencies.includes(directCurrency)
+    : directCurrency && observedPriceCurrencies.length > 0 && !observedPriceCurrencies.includes(directCurrency)
       ? ""
-      : markedCurrencies.length === 1 && !(hasDollarSymbol && !/\bUSD\b/i.test(decodedScope) && !directCurrency)
-        ? markedCurrencies[0]
-        : markedCurrencies.length > 1
+      : observedPriceCurrencies.length === 1 && !(hasDollarSymbol && !/\bUSD\b/i.test(decodedPriceMarkup) && !directCurrency)
+        ? observedPriceCurrencies[0]
+        : observedPriceCurrencies.length > 1
           ? ""
           : directCurrency;
   const currency = isSupportedCurrency(observedCurrency) ? observedCurrency.trim().toUpperCase() : "";
@@ -253,11 +268,6 @@ export function extractScopedProductPageEvidence(document: string, sourceUrl = "
     } catch { return { priceSignals: [], basis: "unavailable" as const, imageUrl: publicImageFromScope(scope, sourceUrl) }; }
   }
 
-  const priceMarkup = scope.match(/<p\b[^>]*class\s*=\s*["'][^"']*\bprice\b[^"']*["'][^>]*>[\s\S]*?<\/p>/i)?.[0]
-    || scope.match(/<(?:div|span)\b[^>]*class\s*=\s*["'][^"']*(?:product[-_ ]price|single_product_price)[^"']*["'][^>]*>[\s\S]*?<\/(?:div|span)>/i)?.[0]
-    || "";
-  const currentMarkup = priceMarkup.match(/<ins\b[^>]*>([\s\S]*?)<\/ins>/i)?.[1]
-    || priceMarkup.replace(/<del\b[^>]*>[\s\S]*?<\/del>/gi, " ");
   const comparableMarkup = directCurrency && hasDollarSymbol && dollarCurrencies.has(directCurrency)
     ? currentMarkup.replace(/\$/g, `${directCurrency} `)
     : currentMarkup;

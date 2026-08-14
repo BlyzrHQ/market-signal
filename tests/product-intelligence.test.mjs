@@ -146,10 +146,12 @@ test("rejects negative structured and metadata prices instead of making them pos
       { "@type": "Product", name: "Acme MXN Currency Contradiction", brand: { name: "Acme" }, offers: { price: "MXN 1200", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme TRY Currency Contradiction", brand: { name: "Acme" }, offers: { price: "TRY 1200", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme COP Currency Contradiction", brand: { name: "Acme" }, offers: { price: "COP 1200", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Ambiguous First Mixed Currency", brand: { name: "Acme" }, offers: { price: "TRY 1200 / USD 40" } },
+      { "@type": "Product", name: "Acme Ambiguous Last Mixed Currency", brand: { name: "Acme" }, offers: { price: "USD 40 / TRY 1200" } },
     ])}</script>`,
     sourceUrl: "https://acme.com/products/negative-catalog",
   });
-  assert.equal(structured.products.length, 46);
+  assert.equal(structured.products.length, 48);
   assert.ok(structured.products.every((item) => item.priceSignals.length === 0), structured.products.filter((item) => item.priceSignals.length).map((item) => item.name).join(", "));
 
   const metadata = extraction({

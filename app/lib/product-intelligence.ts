@@ -315,7 +315,10 @@ function decodedCodePoint(value: string, radix: number) {
 }
 
 const AMBIGUOUS_CURRENCY_WORDS = new Set(["ALL", "COP", "CUP", "GEL", "MAD", "PEN", "TOP", "TRY"]);
-const DOLLAR_CURRENCIES = new Set(["AUD", "CAD", "HKD", "NZD", "SGD", "USD"]);
+const DOLLAR_CURRENCIES = new Set([
+  "ARS", "AUD", "BMD", "BND", "BSD", "BZD", "CAD", "CLP", "COP", "FJD", "GYD", "HKD", "JMD", "KYD",
+  "LRD", "MXN", "NAD", "NZD", "SBD", "SGD", "SRD", "TTD", "TWD", "USD", "XCD", "ZWL",
+]);
 
 function priceSignal(rawValue: unknown, currencyValue?: unknown, options: { allowDefaultUsdDollar?: boolean } = {}): ProductPriceSignal | null {
   const rawText = text(rawValue);
@@ -341,18 +344,18 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown, options: { allo
   if (/₽/.test(currencyEvidence)) observedCurrencies.add("RUB");
   if (/₺/.test(currencyEvidence)) observedCurrencies.add("TRY");
   if (/₪/.test(currencyEvidence)) observedCurrencies.add("ILS");
+  const amountCurrencies = new Set<string>();
   for (const match of currencyEvidence.matchAll(/\b[A-Za-z]{3}\b/g)) {
     const currency = match[0].toUpperCase();
     const index = match.index ?? 0;
-    const amountAdjacent = /^\s*[+-]?\d/.test(currencyEvidence.slice(index + match[0].length))
+    const amountAdjacent = /^\s*(?:\p{Sc}\s*)?[+-]?\d/u.test(currencyEvidence.slice(index + match[0].length))
       || /\d(?:[.,]\d+)?\s*$/.test(currencyEvidence.slice(0, index));
     if (!amountAdjacent || !isSupportedCurrency(currency)) continue;
-    if (AMBIGUOUS_CURRENCY_WORDS.has(currency)) {
-      if (explicitCurrency && currency !== explicitCurrency) return null;
-      continue;
-    }
-    observedCurrencies.add(currency);
+    amountCurrencies.add(currency);
   }
+  if (amountCurrencies.size > 1 || (explicitCurrency && [...amountCurrencies].some((currency) => currency !== explicitCurrency))) return null;
+  const amountCurrency = [...amountCurrencies][0];
+  if (amountCurrency && !AMBIGUOUS_CURRENCY_WORDS.has(amountCurrency)) observedCurrencies.add(amountCurrency);
   if (observedCurrencies.size > 1 || (explicitCurrency && [...observedCurrencies].some((currency) => currency !== explicitCurrency))) return null;
   const inferredCurrency = [...observedCurrencies][0];
   const currency = explicitCurrency || inferredCurrency;

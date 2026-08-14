@@ -234,6 +234,26 @@ test("reconciles visible and direct product currencies before publishing a scope
 
   const usdWithCad = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Tea</h1><p class="price">CAD $19.99</p>');
   assert.deepEqual(usdWithCad.priceSignals, []);
+
+  const cadWithEuro = extractScopedProductPageEvidence('<meta property="product:price:currency" content="CAD"><h1>Tea</h1><p class="price">$19.99 / &euro;17.99</p>');
+  assert.deepEqual(cadWithEuro.priceSignals, []);
+
+  const usdWithPounds = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Tea</h1><p class="price">$19.99 / &pound;15.99</p>');
+  assert.deepEqual(usdWithPounds.priceSignals, []);
+});
+
+test("ignores ordinary three-letter words outside current price markup", () => {
+  for (const [name, className] of [["All Purpose Cleaner", "top"], ["Try Me Tea", "gel"], ["Gel Pen Set", "product-summary"]]) {
+    const evidence = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="USD"><h1>${name}</h1><div class="summary ${className}"><p class="price">USD 19.99</p></div>`);
+    assert.deepEqual(evidence.priceSignals, [{ raw: "USD 19.99", currency: "USD", amount: 19.99 }], name);
+  }
+});
+
+test("disambiguates dollar symbols with supported direct dollar currencies", () => {
+  for (const currency of ["MXN", "ARS", "CLP", "COP"]) {
+    const evidence = extractScopedProductPageEvidence(`<meta property="product:price:currency" content="${currency}"><h1>Product</h1><p class="price">$1200</p>`);
+    assert.deepEqual(evidence.priceSignals, [{ raw: `${currency} 1200`, currency, amount: 1200 }], currency);
+  }
 });
 
 test("does not collapse visible multi-currency evidence into a single point price", () => {
