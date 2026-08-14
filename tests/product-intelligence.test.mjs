@@ -292,6 +292,11 @@ test("reconciles qualified structured dollar markers with explicit currency", ()
     sourceUrl: "https://acme.test/products/spaced-conflict",
   });
   assert.deepEqual(spacedCordoba.products[0].priceSignals, []);
+  const labeledCordoba = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Labeled Conflict", offers: { price: "Price: C$19.99", priceCurrency: "USD" } })}</script>`,
+    sourceUrl: "https://acme.test/products/labeled-conflict",
+  });
+  assert.deepEqual(labeledCordoba.products[0].priceSignals, []);
 });
 
 test("preserves explicitly positive and decorated positive structured prices", () => {

@@ -160,7 +160,7 @@ function currencyRangeExpression(currency: string) {
   const token = CURRENCY_TOKENS[currency] || currency.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const amount = `[+-]?${localizedAmountPattern(currency)}(?![\\d.,])`;
   const separator = "(?:-|/|\\bto\\b)";
-  const completePriceSuffix = "(?=\\s*(?:$|[.,;)]|\\/(?:month|mo|year|yr)\\b|per\\s+(?:month|year)\\b))";
+  const completePriceSuffix = "(?=\\s*(?:$|[.,;)]|\\/(?:month|mo|year|yr)\\b|per\\s+(?:month|year)\\b|(?:(?:incl|excl)(?:uding)?\\.?\\s+tax|each)\\b\\s*[.,;)]?\\s*$))";
   return new RegExp(`(?:(?:${token})\\s*(${amount})\\s*${separator}\\s*(${amount})|(${amount})\\s*${separator}\\s*(${amount})\\s*(?:${token}))${completePriceSuffix}`, "giu");
 }
 
@@ -266,7 +266,7 @@ export function extractScopedProductPageEvidence(document: string, sourceUrl = "
   const markedCurrencies = currenciesFromMarkup(currentMarkup);
   const directCurrency = confirmedProductCurrency(document, { allowStructured: false });
   const hasDollarSymbol = /\$/.test(decodedPriceMarkup);
-  const hasAmbiguousCordobaMarker = /(?:^\s*|\bNIO\s+)C\s*\$\s*[+-]?\d/iu.test(decodedPriceMarkup);
+  const hasAmbiguousCordobaMarker = /(?:C\$|(?:^\s*|\b(?:price|from|now|sale)\s*[:=-]?\s*)C\s+\$|\bNIO\s+C\s+\$)\s*[+-]?\d/iu.test(decodedPriceMarkup);
   const dollarCurrencies = new Set([
     "ARS", "AUD", "BMD", "BND", "BRL", "BSD", "BZD", "CAD", "CLP", "COP", "DOP", "FJD", "GYD", "HKD", "JMD",
     "KYD", "LRD", "MXN", "NAD", "NIO", "NZD", "SBD", "SGD", "SRD", "TTD", "TWD", "USD", "XCD", "ZWL",
