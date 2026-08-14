@@ -162,8 +162,9 @@ function productScope(document: string) {
   const start = Math.max(0, title?.index ?? summaryIndex);
   const bounded = document.slice(start, Math.min(document.length, start + 160_000));
   const attributeBoundary = bounded.search(/<[a-z][\w:-]*\b[^>]*(?:class|id)\s*=\s*["'][^"']*(?:related|upsells|cross-sells|recommend(?:ed|ations?)|you-may-also-like|similar-products)[^"']*["']/i);
+  const unquotedAttributeBoundary = bounded.search(/<[a-z][\w:-]*\b[^>]*(?:class|id)\s*=\s*[^\s>"']*(?:related|upsells|cross-sells|recommend(?:ed|ations?)|you-may-also-like|similar-products)[^\s>"']*/i);
   const customElementBoundary = bounded.search(/<[a-z][\w:-]*(?:recommend|related|upsell|cross-sell|similar)[\w:-]*\b/i);
-  const relatedAt = [attributeBoundary, customElementBoundary].filter((index) => index >= 0).sort((left, right) => left - right)[0] ?? -1;
+  const relatedAt = [attributeBoundary, unquotedAttributeBoundary, customElementBoundary].filter((index) => index >= 0).sort((left, right) => left - right)[0] ?? -1;
   return relatedAt >= 0 ? bounded.slice(0, relatedAt) : bounded;
 }
 

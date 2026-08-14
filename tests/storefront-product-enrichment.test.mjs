@@ -362,6 +362,11 @@ test("does not use a recommendation custom-element price as scoped target eviden
   }
 });
 
+test("does not use an unquoted related-products class as scoped target evidence", () => {
+  const evidence = extractScopedProductPageEvidence('<h1>Target</h1><div class=related-products><p class="price">USD 89.99</p></div><div class=summary><p class="price">USD 12.50</p></div>');
+  assert.deepEqual(evidence.priceSignals, []);
+});
+
 test("preserves decorated positive scoped prices", () => {
   for (const markup of ["+19.99 USD", "★ $19.99", "≈$19.99"]) {
     const evidence = extractScopedProductPageEvidence(`<h1>Product</h1><div class="summary"><p class="price">${markup}</p></div>`);

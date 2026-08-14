@@ -170,10 +170,11 @@ test("preserves explicitly positive and decorated positive structured prices", (
       { "@type": "Product", name: "Acme Explicit Positive", offers: { price: "+19.99", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Star Price", offers: { price: "★ $19.99", priceCurrency: "USD" } },
       { "@type": "Product", name: "Acme Approximate Price", offers: { price: "≈$19.99", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Acme Sale Price Label", offers: { price: "sale-price USD 19.99", priceCurrency: "USD" } },
     ])}</script>`,
     sourceUrl: "https://acme.com/products/positive-catalog",
   });
-  assert.equal(result.products.length, 3);
+  assert.equal(result.products.length, 4);
   assert.ok(result.products.every((item) => item.priceSignals[0]?.amount === 19.99));
 });
 
