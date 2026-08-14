@@ -254,6 +254,47 @@ test("prefers a valid adapter price when an exact-name zero placeholder ranks ab
   }
 });
 
+test("does not let an unrelated priced product suppress adapter recovery for the matched product", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({
+      title: "CornerStone Enhanced Visibility Beanie",
+      handle: "cornerstone-enhanced-visibility-beanie",
+      variants: [{ title: "Default Title", price: 1340 }],
+    }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>CornerStone Enhanced Visibility Beanie</title><script type="application/ld+json">${JSON.stringify([
+      {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        name: "CornerStone Enhanced Visibility Beanie",
+        offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+      },
+      {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        name: "Unrelated Safety Jacket",
+        image: "https://cdn.shop.test/unrelated.jpg",
+        offers: { "@type": "Offer", price: "89.99", priceCurrency: "USD" },
+      },
+    ])}</script></head><body><h1>CornerStone Enhanced Visibility Beanie</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({
+      expectedName: "CornerStone Enhanced Visibility Beanie",
+      sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie",
+    })], 1);
+    assert.equal(result.products.length, 1);
+    assert.deepEqual(result.products[0].priceSignals, [{ raw: "USD 13.4", currency: "USD", amount: 13.4 }]);
+    assert.equal(calls.at(-1), "https://shop.test/products/cornerstone-enhanced-visibility-beanie.js");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("keeps non-positive, non-finite, or unsupported-currency Shopify prices non-comparable after adapter enrichment", async () => {
   for (const { priceCurrency, adapterPrice } of [
     { priceCurrency: "USD", adapterPrice: 0 },

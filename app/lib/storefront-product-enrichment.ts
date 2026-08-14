@@ -409,7 +409,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       const replacementCandidates = [...extracted.result.products];
       let adapterGap = "";
       const adapter = storefrontAdapterRequest(item.sourceUrl);
-      if (adapter && (!initialIdentity.accepted || !hasConfirmedPrice(extracted.result.products) || !hasSecureImage(extracted.result.products))) {
+      if (adapter && (!initialIdentity.accepted || !hasConfirmedPrice(initialIdentity.products) || !hasSecureImage(initialIdentity.products))) {
         const adapterLabel = adapter.kind === "shopify" ? "Shopify product" : "WooCommerce Store API";
         try {
           const adapterUrl = new URL(adapter.endpointUrl);
