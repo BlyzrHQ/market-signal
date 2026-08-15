@@ -37,6 +37,10 @@ export type UnavailablePrimaryState = {
   observedAt: string;
 };
 
+export function preferredEndpointFailure(first: PublicEndpointFailure, second: PublicEndpointFailure) {
+  return /does not support IPv6-only origins/i.test(first.reason) ? first : second;
+}
+
 export function unavailableAfterBoundedAttempts(first?: PublicEndpointFailure, second?: PublicEndpointFailure): UnavailablePrimaryState | null {
   if (first?.kind !== "network" || second?.kind !== "network") return null;
   try {

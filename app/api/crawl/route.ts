@@ -9,7 +9,7 @@ import { seededCrawlPaths } from "../../lib/crawl-planning.ts";
 import { combineRegionSignals, displayRegion, inferRegion as inferRegionEvidence, type RegionSignal } from "../../lib/region-inference.ts";
 import { forgetRememberedCompetitors, loadRememberedCompetitors, mergeRememberedCandidates, rememberVerifiedCompetitors, type MemoryCandidate } from "../../lib/competitor-memory.ts";
 import { discoverDomainAlternatives, extractStaticClientRedirect, parkingProvider } from "../../lib/domain-recovery.ts";
-import { boundedExtractionDocument, compactCatalogSnapshots, settleWithConcurrency, unavailableAfterBoundedAttempts, unavailablePrimaryMessaging, type PublicEndpointFailure } from "../../lib/crawl-runtime.ts";
+import { boundedExtractionDocument, compactCatalogSnapshots, preferredEndpointFailure, settleWithConcurrency, unavailableAfterBoundedAttempts, unavailablePrimaryMessaging, type PublicEndpointFailure } from "../../lib/crawl-runtime.ts";
 import { fetchPublicText } from "../../lib/public-fetch.ts";
 import { claimablePagePricePatterns, selectPrimaryProductPriceTargets, type ProductEnrichmentCoverage } from "../../lib/storefront-product-enrichment.ts";
 import { enrichProductTargetsWithRecovery, type ProductEnrichmentRecoveryOptions } from "../../lib/product-enrichment-recovery.ts";
@@ -573,7 +573,9 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
     const homepageAccessDenied = attemptedAlternateBase && submittedHomepageResult.status === 403 && homepageResult.status === 403
       ? { status: 403 as const, hosts: [submittedBase.hostname, attemptedAlternateBase.hostname] }
       : null;
-    return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: homepageRequests, pagesFetched: 0, maxPages: maxHtmlPages, robotsChecked: robotsState === "available" }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt, ...(noHostResponded ? { homepageFailure: { kind: homepageResult.failureKind as "network" | "timeout", attemptedUrl: failedUrl, reason: homepageResult.error || "request failed", observedAt: startedAt } } : {}), ...(homepageAccessDenied ? { homepageAccessDenied } : {}) };
+    const submittedFailure = { kind: submittedHomepageResult.failureKind as "network" | "timeout", attemptedUrl: submittedBase.toString(), reason: submittedHomepageResult.error || "request failed", observedAt: startedAt };
+    const finalFailure = { kind: homepageResult.failureKind as "network" | "timeout", attemptedUrl: failedUrl, reason: homepageResult.error || "request failed", observedAt: startedAt };
+    return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: homepageRequests, pagesFetched: 0, maxPages: maxHtmlPages, robotsChecked: robotsState === "available" }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt, ...(noHostResponded ? { homepageFailure: preferredEndpointFailure(submittedFailure, finalFailure) } : {}), ...(homepageAccessDenied ? { homepageAccessDenied } : {}) };
   }
   const homepageHost = new URL(homepageResult.url).hostname.toLowerCase().replace(/^www\./, "");
   if (homepageHost !== domain.replace(/^www\./, "")) {

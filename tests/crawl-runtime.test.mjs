@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { boundedExtractionDocument, compactCatalogSnapshots, interruptedReportRecovery, settleWithConcurrency, unavailableAfterBoundedAttempts, unavailablePrimaryMessaging } from "../app/lib/crawl-runtime.ts";
+import { boundedExtractionDocument, compactCatalogSnapshots, interruptedReportRecovery, preferredEndpointFailure, settleWithConcurrency, unavailableAfterBoundedAttempts, unavailablePrimaryMessaging } from "../app/lib/crawl-runtime.ts";
 
 test("settles every crawl while keeping large-document work within the concurrency limit", async () => {
   let active = 0;
@@ -158,4 +158,12 @@ test("preserves an IPv6-only reason through the final customer messaging", () =>
   assert.match(messaging.explanation, /does not support IPv6-only origins/);
   assert.match(messaging.summaryBody, /Add a public IPv4 A record/);
   assert.match(messaging.error, /^ipv6-only\.example: The public crawler/);
+});
+
+test("prefers the submitted IPv6-only failure over a generic www recovery failure", () => {
+  const observedAt = "2026-08-15T06:00:00.000Z";
+  const submitted = { kind: "network", attemptedUrl: "https://shop.example/", reason: "The public crawler does not support IPv6-only origins. Add a public IPv4 A record and try again.", observedAt };
+  const alternate = { kind: "network", attemptedUrl: "https://www.shop.example/", reason: "The hostname did not resolve to an exclusively public IPv4 address.", observedAt };
+  assert.deepEqual(preferredEndpointFailure(submitted, alternate), submitted);
+  assert.deepEqual(preferredEndpointFailure({ ...submitted, reason: "request failed" }, alternate), alternate);
 });

@@ -176,6 +176,13 @@ such.
   domain-status explanation, summary, gap, and API error. The final focused
   crawl/network suite passes 29/29 and the full suite passes 738/738 with both
   typechecks, production build, and zero lint errors.
+- Exact-head product re-review found that an IPv6-only submitted apex could
+  still lose its specific reason when automatic `www` recovery failed with a
+  generic DNS error. Endpoint failure selection now retains the submitted
+  IPv6-only limitation in that case and otherwise reports the final attempted
+  endpoint. The focused crawl/network suite passes 37/37, the full suite passes
+  739/739, the production build passes, and ESLint has zero errors with the two
+  pre-existing image warnings. Fresh exact-head reviews are required.
 - Compound and multilingual search/listing routes are rejected before the
   generic HTML product-detail fallback.
 - Nested catalog arrays are normalized from bounded prefixes, product IDs must
