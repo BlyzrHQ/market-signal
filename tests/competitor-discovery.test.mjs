@@ -285,10 +285,24 @@ test("rejects translated terminal listing words and pagination-shaped weak produ
   for (const url of [
     "https://health.example/hledat/organic-sidr-honey-500g",
     "https://health.example/szukaj/organic-sidr-honey-500g",
+    "https://health.example/hledat/products/organic-sidr-honey-500g",
+    "https://health.example/szukaj/products/organic-sidr-honey-500g",
   ]) {
     const payload = { output: [{ type: "web_search_call", action: { query: "organic sidr honey 500g", sources: [{ title: "Organic Sidr Honey 500g", url }] } }] };
     assert.deepEqual(candidatesFromSearchEvidence(payload, originalLanguage), [], url);
   }
+});
+
+test("keeps translated query-path admission when the search title matches the original language", () => {
+  const single = { ...profile, products: [product("Beef Sirloin Steak 500g", "https://myjam.co.uk/products/beef-sirloin-steak-500g")] };
+  const payload = { output: [{ type: "web_search_call", action: {
+    query: "rind lende 500g",
+    sources: [{ title: "Beef Sirloin Steak 500g", url: "https://rival.example/produkte/rind-lende-500g" }],
+  } }] };
+  const candidates = candidatesFromSearchEvidence(payload, single);
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].observedAdmission, undefined);
+  assert.equal(candidates[0].inferredProductLeads?.[0].laneQuery, "rind lende 500g");
 });
 
 test("rejects a title-matching collection page on its own domain", () => {
@@ -344,7 +358,7 @@ test("unknown-language entity result paths are rebound to the first-party root",
   assert.deepEqual(candidates.map((candidate) => [candidate.sourceUrl, candidate.evidence[0].url]), [["https://rival.example/", "https://rival.example/"]]);
 });
 
-test("rejects title-only localized, html, and id-only routes", () => {
+test("admits a root html product page but rejects title-only localized and id-only routes", () => {
   const payload = {
     output: [{
       type: "web_search_call",
@@ -360,8 +374,8 @@ test("rejects title-only localized, html, and id-only routes", () => {
   };
 
   const candidates = candidatesFromSearchEvidence(payload, profile);
-  assert.deepEqual(candidates, []);
-  assert.ok(candidates.every((candidate) => /requires first-party crawl verification/.test(candidate.reason)));
+  assert.deepEqual(candidates.map((candidate) => candidate.domain), ["magento.example"]);
+  assert.ok(candidates.every((candidate) => /crawlable product page/.test(candidate.reason)));
 });
 
 test("keeps publisher paths and weak titles outside the broader admission path", () => {

@@ -72,7 +72,7 @@ const SEARCH_SOURCE_STOPWORDS = new Set([
 const NON_COMPANY_HOSTS = ["facebook.com", "gov.uk", "instagram.com", "linkedin.com", "pinterest.com", "reddit.com", "tiktok.com", "wikipedia.org", "youtube.com"];
 const MARKETPLACE_HOSTS = ["aliexpress.com", "amazon.ae", "amazon.ca", "amazon.co.uk", "amazon.com", "amazon.de", "amazon.eg", "amazon.es", "amazon.fr", "amazon.it", "deliveroo.co.uk", "doordash.com", "ebay.co.uk", "ebay.com", "etsy.com", "instacart.com", "just-eat.co.uk", "noon.com", "temu.com", "ubereats.com", "walmart.com"];
 const PUBLISHER_PATH = /\/(?:articles?|blog|guides?|news|recipes?|reviews?|wiki)(?:\/|$)/i;
-const PRODUCT_DETAIL_PATH = /\/(?:items?|p|products?|shop|store)\//i;
+const PRODUCT_CONTAINER_SEGMENT = /^(?:items?|p|products?|produits?|productos?|produtos?|produkte?|prodotti?|shop|store)$/iu;
 const ACCESSORY_ANCHOR = /\b(?:book|cookbook|cup|guide|infuser|mug|scoop|spoon|voucher|whisk)\b/i;
 const GENERIC_ANCHOR_TOKENS = new Set(["basic", "catalog", "collection", "edition", "plan", "pricing", "product", "products", "service", "shop", "store"]);
 const COUNTRY_SECOND_LEVEL_DOMAINS = new Set(["ac", "co", "com", "edu", "gov", "net", "org"]);
@@ -177,10 +177,21 @@ function sourceContainsPrimaryBrand(title: string, url: string, profile: Discove
   return (compactBrand.length >= 5 && compactSource.includes(compactBrand)) || brandTokens.some((token) => normalizedTokens(source).includes(token));
 }
 
+function productDetailPath(url: string) {
+  const path = decodeURIComponent(new URL(url).pathname).replace(/\/+$/, "");
+  const segments = path.split("/").filter(Boolean);
+  const containerIndex = segments.findIndex((segment) => PRODUCT_CONTAINER_SEGMENT.test(segment));
+  const localePrefix = segments.slice(0, containerIndex).every((segment) => /^[a-z]{2,3}(?:-[a-z]{2})?$/i.test(segment));
+  const containerDetail = containerIndex >= 0 && containerIndex === segments.length - 2 && localePrefix;
+  const htmlDetail = /\.(?:html?|aspx?)$/i.test(segments.at(-1) || "")
+    && segments.slice(0, -1).every((segment) => /^[a-z]{2,3}(?:-[a-z]{2})?$/i.test(segment));
+  return { path, containerDetail, htmlDetail };
+}
+
 function isProductDetailSource(url: string, product: ProductRecord) {
   try {
-    const path = decodeURIComponent(new URL(url).pathname).replace(/\/+$/, "");
-    if (!path || path === "/" || PUBLISHER_PATH.test(path) || !PRODUCT_DETAIL_PATH.test(`${path}/`)) return false;
+    const { path, containerDetail, htmlDetail } = productDetailPath(url);
+    if (!path || path === "/" || PUBLISHER_PATH.test(path) || (!containerDetail && !htmlDetail)) return false;
     const pathTokens = normalizedTokens(path);
     return observedProductNames(product).some((name) => {
       const productTokens = normalizedTokens(name);
@@ -225,8 +236,10 @@ function isListingRoute(url: string) {
 
 function isExplicitProductDetailSource(url: string) {
   try {
-    const path = decodeURIComponent(new URL(url).pathname).replace(/\/+$/, "");
+    const detail = productDetailPath(url);
+    const path = detail.path;
     if (!path || path === "/" || isListingRoute(url) || PUBLISHER_PATH.test(path) || !isCrawlableProductLead(url)) return false;
+    if (!detail.containerDetail && !detail.htmlDetail) return false;
     const segments = path.split("/").filter(Boolean);
     const productContainerIndex = segments.findIndex((segment) => /^(?:items?|p|products?|produits?|productos?|produtos?|produkte?|prodotti?|shop|store)$/iu.test(segment));
     if (productContainerIndex >= 0 && productContainerIndex !== segments.length - 2) return false;
@@ -345,10 +358,11 @@ export function candidatesFromSearchEvidence(payload: Record<string, unknown>, p
     if (excludedDomain(domain, primaryDomain)) return [];
     if (isListingRoute(url)) return [];
     const match = productMatchFromSource(source.title, url, profile.products);
-    const inferred = match ? undefined : inferredLeadFromSource(source, url, profile);
-    const boundProduct = match?.product || inferred?.product;
-    if (!boundProduct || !isCrawlableProductLead(url) || sourceContainsPrimaryBrand(source.title, url, profile)) return [];
+    const inferredLead = inferredLeadFromSource(source, url, profile);
     const urlConfirmed = Boolean(match && isProductDetailSource(url, match.product));
+    const inferred = urlConfirmed ? undefined : inferredLead;
+    const boundProduct = urlConfirmed ? match?.product : inferred?.product;
+    if (!boundProduct || !isCrawlableProductLead(url) || sourceContainsPrimaryBrand(source.title, url, profile)) return [];
     if (!urlConfirmed && !inferred) return [];
     return [{
       score: (match?.score || inferred?.score || 0) + (urlConfirmed || inferred ? 100 : 0),

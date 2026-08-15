@@ -81,8 +81,8 @@ such.
   deterministic fallback, identity-bearing URL parameters, ambiguous variants,
   exact-pair provenance, and global pin assignment. Every finding was addressed
   with adversarial regression coverage; re-review is still required.
-- The latest discovery, network, and persistence suites pass 68 focused tests. The full repository command passes
-  both typechecks, production build, and 732 tests with zero failures after
+- The latest discovery, network, and persistence suites pass 69 focused tests. The full repository command passes
+  both typechecks, production build, and 733 tests with zero failures after
   reviewer-requested input and provenance hardening.
 - The latest adversarial pass rejects multilingual listing routes, preserves
   non-tracking identity query parameters, rebinds publication provenance to
@@ -125,6 +125,11 @@ such.
   identity or an atomic translated-query binding, and IPv4-compatible, mapped,
   and well-known NAT64 addresses all inherit the embedded IPv4 public-address
   policy. The fresh full suite passes; exact-head re-review is pending.
+- Product-detail containers are now accepted only at the root or behind
+  locale-shaped path prefixes, closing nested Czech and Polish search-folder
+  variants. Translated query/path inference is evaluated independently from a
+  provider title match, preserving legitimate German-path recovery. The fresh
+  full suite passes again; exact-head re-review remains pending.
 - Compound and multilingual search/listing routes are rejected before the
   generic HTML product-detail fallback.
 - Nested catalog arrays are normalized from bounded prefixes, product IDs must
