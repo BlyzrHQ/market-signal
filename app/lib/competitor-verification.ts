@@ -43,6 +43,7 @@ export type CompetitorVerification = {
   overlapTerms: string[];
   hasProductOverlap: boolean;
   categoryBasis: "observed-core" | "observed-locale-pair" | "verified-exact-product-pair" | "none";
+  exactProductPairVerified: boolean;
   provenPrimaryProduct?: ProductRecord;
   provenRivalProduct?: ProductRecord;
 };
@@ -178,6 +179,7 @@ export function verifyCompetitorEntity(
     overlapTerms,
     hasProductOverlap,
     categoryBasis,
+    exactProductPairVerified: verifiedExactProductPair,
     provenPrimaryProduct: pair?.left,
     provenRivalProduct: pair?.right,
   };

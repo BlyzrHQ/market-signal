@@ -748,7 +748,12 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   const proposals = sanitized.filter((item): item is typeof item & { verdict: "same_product" | "close_substitute" } => (item.verdict === "same_product" || item.verdict === "close_substitute")
       && (isUsefulAssignment(item.primary, item.candidate.product, item.confidence)
         || (item.confidence >= 0.8 && pinnedPairKeys.has(`${item.primary.id}|${canonicalDomain(item.candidate.product.domain)}|${item.candidate.product.id}`))))
-    .sort((left, right) => Number(right.verdict === "same_product") - Number(left.verdict === "same_product") || right.confidence - left.confidence || right.candidate.retrievalScore - left.candidate.retrievalScore || left.candidate.product.id.localeCompare(right.candidate.product.id));
+    .sort((left, right) => Number(pinnedPairKeys.has(`${right.primary.id}|${canonicalDomain(right.candidate.product.domain)}|${right.candidate.product.id}`))
+      - Number(pinnedPairKeys.has(`${left.primary.id}|${canonicalDomain(left.candidate.product.domain)}|${left.candidate.product.id}`))
+      || Number(right.verdict === "same_product") - Number(left.verdict === "same_product")
+      || right.confidence - left.confidence
+      || right.candidate.retrievalScore - left.candidate.retrievalScore
+      || left.candidate.product.id.localeCompare(right.candidate.product.id));
   const assignments = new Map<string, typeof proposals[number]>();
   const usedRivals = new Set<string>();
   for (const proposal of proposals) {

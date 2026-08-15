@@ -36,6 +36,7 @@ export type DiscoveryCandidate = {
   matchedPrimaryProductNames?: string[];
   matchedProductUrls?: string[];
   inferredProductLeads?: InferredProductLead[];
+  observedAdmission?: boolean;
   evidenceMethod?: "model-summarized" | "search-source";
   provenance?: DiscoveryProvenance;
   rememberedVerifiedAt?: string;
@@ -204,10 +205,19 @@ function isCrawlableProductLead(url: string) {
   }
 }
 
+function isListingRoute(url: string) {
+  try {
+    return decodeURIComponent(new URL(url).pathname).split("/").filter(Boolean)
+      .some((segment) => /^(?:search|results?|listing|list|browse|catalog|collections?|categories?|tags?)(?:\.(?:html?|aspx?))?$/iu.test(segment));
+  } catch {
+    return true;
+  }
+}
+
 function isExplicitProductDetailSource(url: string) {
   try {
     const path = decodeURIComponent(new URL(url).pathname).replace(/\/+$/, "");
-    if (!path || path === "/" || PUBLISHER_PATH.test(path) || !isCrawlableProductLead(url)) return false;
+    if (!path || path === "/" || isListingRoute(url) || PUBLISHER_PATH.test(path) || !isCrawlableProductLead(url)) return false;
     return /\/(?:items?|p|products?|produits?|productos?|produtos?|produkte?|prodotti?|shop|store|منتج|منتجات)\/[^/]+/iu.test(`${path}/`)
       || /\/[^/]+\.(?:html?|aspx?)$/i.test(path);
   } catch {
@@ -319,6 +329,7 @@ export function candidatesFromSearchEvidence(payload: Record<string, unknown>, p
     if (!url) return [];
     const domain = canonicalDomain(url);
     if (excludedDomain(domain, primaryDomain)) return [];
+    if (isListingRoute(url)) return [];
     const match = productMatchFromSource(source.title, url, profile.products);
     const inferred = match ? undefined : inferredLeadFromSource(source, url, profile);
     const boundProduct = match?.product || inferred?.product;
@@ -348,6 +359,7 @@ export function candidatesFromSearchEvidence(payload: Record<string, unknown>, p
         matchedPrimaryProductNames: [boundProduct.name],
         matchedProductUrls: [url],
         ...(inferred ? { inferredProductLeads: [inferred.lead] } : {}),
+        ...(!inferred ? { observedAdmission: true } : {}),
         evidenceMethod: "search-source" as const,
       },
     }];
@@ -384,6 +396,7 @@ function entityCandidatesFromSearchEvidence(payload: Record<string, unknown>, bu
       evidence: [{ url, title: source.title || domain, method: lane === "category" ? "category-search" as const : "entity-search" as const }],
       mentionCount: 1,
       evidenceMethod: "search-source" as const,
+      observedAdmission: true,
     }];
   }).slice(0, MAX_CANDIDATES);
 }
@@ -426,6 +439,7 @@ function sanitizeCandidate(value: unknown, primaryDomain: string, lane: SearchLa
       matchedPrimaryProductNames: productMatch ? [productMatch.product.name] : undefined,
       matchedProductUrls: productMatch ? [matchedProductUrl] : undefined,
       evidenceMethod: "model-summarized",
+      observedAdmission: true,
     };
   } catch {
     return null;
@@ -462,6 +476,7 @@ function mergeCandidates(candidates: DiscoveryCandidate[]) {
       matchedPrimaryProductNames: [...new Set([...(current.matchedPrimaryProductNames || (current.matchedPrimaryProductName ? [current.matchedPrimaryProductName] : [])), ...(candidate.matchedPrimaryProductNames || (candidate.matchedPrimaryProductName ? [candidate.matchedPrimaryProductName] : []))])].slice(0, MAX_PRODUCT_SEARCHES),
       matchedProductUrls: [...new Set([...(current.matchedProductUrls || (current.matchedProductUrl ? [current.matchedProductUrl] : [])), ...(candidate.matchedProductUrls || (candidate.matchedProductUrl ? [candidate.matchedProductUrl] : []))])].slice(0, MAX_PRODUCT_SEARCHES),
       ...(inferredProductLeads.length ? { inferredProductLeads } : {}),
+      observedAdmission: Boolean(current.observedAdmission || candidate.observedAdmission),
     });
   }
   const productCoverage = (candidate: DiscoveryCandidate) => new Set(candidate.matchedPrimaryProductNames || (candidate.matchedPrimaryProductName ? [candidate.matchedPrimaryProductName] : [])).size;

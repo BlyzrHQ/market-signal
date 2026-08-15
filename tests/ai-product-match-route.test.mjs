@@ -56,6 +56,20 @@ test("product analysis limits are server-controlled, clamped, and receive scaled
   assert.equal(productAnalysisBudgetMs(1_000), 720_000);
 });
 
+test("catalog bounds retain valid pinned records beyond both ordinary limits", () => {
+  const records = (count, domain, prefix) => Array.from({ length: count }, (_, index) => ({ id: `${prefix}${index}`, name: `Product ${index}`, sourceUrl: `https://${domain}/products/${index}` }));
+  const catalogs = parseCatalogs([
+    { domain: "shop.test", products: records(1_010, "shop.test", "p") },
+    { domain: "rival.test", products: records(610, "rival.test", "r") },
+  ], "shop.test", [{ primaryId: "p1009", rivalDomain: "rival.test", rivalId: "r609" }]);
+
+  assert.equal(catalogs[0].products.length, 1_000);
+  assert.equal(catalogs[1].products.length, 600);
+  assert.ok(catalogs[0].products.some((item) => item.id === "p1009"));
+  assert.ok(catalogs[1].products.some((item) => item.id === "r609"));
+  assert.deepEqual(parsePinnedPairs([{ primaryId: "p1009", rivalDomain: "rival.test", rivalId: "r609" }], catalogs, "shop.test"), [{ primaryId: "p1009", rivalDomain: "rival.test", rivalId: "r609" }]);
+});
+
 test("pinned pairs are bounded, deduplicated, and must reference submitted catalog records", () => {
   const catalogs = parseCatalogs([
     { domain: "shop.test", products: [{ id: "p1", name: "Honey", sourceUrl: "https://shop.test/products/honey" }] },

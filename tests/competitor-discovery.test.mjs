@@ -549,6 +549,18 @@ test("rejects two-token overlap when it covers too little of the anchor product"
   assert.deepEqual(candidatesFromSearchEvidence(payload, longProfile), []);
 });
 
+test("rejects search, browse, and catalog listing routes as inferred exact-product leads", () => {
+  const single = { ...profile, products: [product("Organic Sidr Honey 500g", "https://myjam.co.uk/products/organic-sidr-honey-500g")] };
+  for (const url of [
+    "https://rival.example/search/results.html",
+    "https://rival.example/browse/organic-sidr-honey-500g.html",
+    "https://rival.example/catalog/organic-sidr-honey-500g.html",
+  ]) {
+    const payload = { output: [{ type: "web_search_call", action: { query: "organic sidr honey 500g", sources: [{ title: "Organic Sidr Honey 500g", url }] } }] };
+    assert.deepEqual(candidatesFromSearchEvidence(payload, single), [], url);
+  }
+});
+
 test("ranks product-backed sellers ahead of company-first results", async () => {
   const previousKey = process.env.OPENAI_API_KEY;
   const previousFetch = globalThis.fetch;

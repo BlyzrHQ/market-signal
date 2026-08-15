@@ -87,15 +87,35 @@ function product(value: unknown, catalogDomain: string): ProductRecord | null {
   };
 }
 
-export function parseCatalogs(value: unknown, primaryDomain = "") {
+function requestedPinIds(value: unknown) {
+  const ids = new Map<string, Set<string>>();
+  if (!Array.isArray(value)) return ids;
+  for (const entry of value.slice(0, 12)) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const item = entry as Record<string, unknown>;
+    const primaryId = text(item.primaryId, 300);
+    const rivalDomain = canonicalDomain(text(item.rivalDomain, 300));
+    const rivalId = text(item.rivalId, 300);
+    if (primaryId) ids.set("$primary", new Set([...(ids.get("$primary") || []), primaryId]));
+    if (rivalDomain && rivalId) ids.set(rivalDomain, new Set([...(ids.get(rivalDomain) || []), rivalId]));
+  }
+  return ids;
+}
+
+export function parseCatalogs(value: unknown, primaryDomain = "", requestedPins?: unknown) {
   if (!Array.isArray(value)) return [];
+  const pinIds = requestedPinIds(requestedPins);
   return value.slice(0, MAX_CATALOGS).flatMap((entry) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
     const item = entry as Record<string, unknown>;
     const domain = canonicalDomain(text(item.domain, 300));
     if (!domain || !Array.isArray(item.products)) return [];
     const catalogLimit = domain === canonicalDomain(primaryDomain) ? MAX_PRIMARY_PRODUCTS : MAX_RIVAL_PRODUCTS;
-    const products = item.products.slice(0, catalogLimit).flatMap((value) => {
+    const wanted = pinIds.get(domain === canonicalDomain(primaryDomain) ? "$primary" : domain) || new Set<string>();
+    const pinned = item.products.filter((value) => value && typeof value === "object" && !Array.isArray(value) && wanted.has(text((value as Record<string, unknown>).id, 300)));
+    const pinnedIds = new Set(pinned.map((value) => text((value as Record<string, unknown>).id, 300)));
+    const selected = [...pinned, ...item.products.filter((value) => !value || typeof value !== "object" || Array.isArray(value) || !pinnedIds.has(text((value as Record<string, unknown>).id, 300)))].slice(0, catalogLimit);
+    const products = selected.flatMap((value) => {
       const parsed = product(value, domain);
       return parsed ? [parsed] : [];
     });
@@ -149,7 +169,7 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
       const publicId = text(body.publicId, 32);
       const reportAttempt = Number(body.reportAttempt);
       const primaryDomain = canonicalDomain(text(body.primaryDomain, 300));
-      const catalogs = parseCatalogs(body.catalogs, primaryDomain);
+      const catalogs = parseCatalogs(body.catalogs, primaryDomain, body.pinnedPairs);
       const pinnedPairs = parsePinnedPairs(body.pinnedPairs, catalogs, primaryDomain);
       const hasReportAttempt = Boolean(publicId || body.reportAttempt !== undefined);
       if (hasReportAttempt && (!/^[a-f0-9]{32}$/.test(publicId) || !Number.isInteger(reportAttempt) || reportAttempt < 1)) return Response.json({ ok: false, error: "A complete active report attempt is required for checkpointed matching." }, { status: 400 });

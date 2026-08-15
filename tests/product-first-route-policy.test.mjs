@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { rememberedReverificationFailures, resolvePrimaryDiscoveryPolicy, verifyDiscoveredCompetitor, verifyInferredProductLead } from "../app/api/crawl/route.ts";
+import { rememberedReverificationFailures, resolvePrimaryDiscoveryPolicy, verifiedExactMatchHints, verifyDiscoveredCompetitor, verifyDiscoveredCompetitorWithInferredLeads, verifyInferredProductLead } from "../app/api/crawl/route.ts";
 import { resolveVerificationMarket } from "../app/lib/competitor-verification.ts";
 
 function product(domain, name) {
@@ -156,4 +156,48 @@ test("rejects a listing response that exposes several priced product identities 
   candidate.pages = [{ ...candidate.pages[0], path: "/shop/reishi-honey", sourceUrl, products: [first, second] }];
   const discovery = { ...rememberedCandidate(), domain: "health.example", inferredProductLeads: [{ primaryProductId: primaryProduct.id, primarySourceUrl: primaryProduct.sourceUrl, laneQuery: "reishi honey 500g", candidateDomain: "health.example", candidateSourceUrl: sourceUrl, admission: "inferred-cross-language" }] };
   assert.equal(await verifyInferredProductLead(crawl("noororganicfood.com", [primaryProduct]), candidate, discovery, async () => { throw new Error("judge must not run"); }), undefined);
+});
+
+test("preserves product identity query parameters while ignoring known tracking parameters", async () => {
+  const primaryProduct = { ...product("noororganicfood.com", "Arabic Honey"), id: "primary", sourceUrl: "https://noororganicfood.com/product?id=10" };
+  const rivalProduct = { ...product("health.example", "Organic Honey"), id: "rival", sourceUrl: "https://health.example/product?id=22&utm_source=search", extraction: "json-ld", priceSignals: [{ raw: "KWD 8", currency: "KWD", amount: 8 }] };
+  const candidate = crawl("health.example", [rivalProduct]);
+  const base = { ...rememberedCandidate(), domain: "health.example" };
+  const lead = (url) => ({ ...base, inferredProductLeads: [{ primaryProductId: primaryProduct.id, primarySourceUrl: primaryProduct.sourceUrl, laneQuery: "organic honey", candidateDomain: "health.example", candidateSourceUrl: url, admission: "inferred-cross-language" }] });
+  const judge = async () => ({ rows: [{ primary: primaryProduct, matches: [{ domain: "health.example", product: rivalProduct, confidence: "Medium", assessment: { verdict: "same_product", confidence: 0.95, contradictions: [] } }] }] });
+
+  assert.equal((await verifyInferredProductLead(crawl("noororganicfood.com", [primaryProduct]), candidate, lead("https://health.example/product?id=22&ref=search"), judge))?.rival.id, "rival");
+  assert.equal(await verifyInferredProductLead(crawl("noororganicfood.com", [primaryProduct]), candidate, lead("https://health.example/product?id=21"), async () => { throw new Error("judge must not run"); }), undefined);
+});
+
+test("rejects same-name exact-page variants when price, quantity, or identifiers differ", async () => {
+  const primaryProduct = { ...product("noororganicfood.com", "Arabic Honey"), id: "primary", sourceUrl: "https://noororganicfood.com/product/honey" };
+  const sourceUrl = "https://health.example/products/honey";
+  const first = { ...product("health.example", "Organic Honey"), id: "r1", sourceUrl, extraction: "json-ld", quantity: { kind: "mass", amount: 250, unit: "g" }, identifiers: { gtins: [], sku: "H-250" }, priceSignals: [{ raw: "KWD 8", currency: "KWD", amount: 8 }] };
+  const second = { ...first, id: "r2", quantity: { kind: "mass", amount: 500, unit: "g" }, identifiers: { gtins: [], sku: "H-500" }, priceSignals: [{ raw: "KWD 12", currency: "KWD", amount: 12 }] };
+  const candidate = crawl("health.example", [first]);
+  candidate.pages = [{ ...candidate.pages[0], path: "/products/honey", sourceUrl, products: [first, second] }];
+  const discovery = { ...rememberedCandidate(), domain: "health.example", inferredProductLeads: [{ primaryProductId: primaryProduct.id, primarySourceUrl: primaryProduct.sourceUrl, laneQuery: "organic honey", candidateDomain: "health.example", candidateSourceUrl: sourceUrl, admission: "inferred-cross-language" }] };
+  assert.equal(await verifyInferredProductLead(crawl("noororganicfood.com", [primaryProduct]), candidate, discovery, async () => { throw new Error("judge must not run"); }), undefined);
+});
+
+test("an inference-only failed lead cannot fall through to unrelated deterministic catalog overlap", async () => {
+  const primaryProducts = [product("noororganicfood.com", "Shared Coffee 1kg"), { ...product("noororganicfood.com", "Arabic Honey"), id: "target" }];
+  const rivalProducts = [product("health.example", "Shared Coffee 1kg")];
+  const discovery = { ...rememberedCandidate(), domain: "health.example", inferredProductLeads: [{ primaryProductId: "target", primarySourceUrl: primaryProducts[1].sourceUrl, laneQuery: "organic honey", candidateDomain: "health.example", candidateSourceUrl: "https://health.example/products/missing", admission: "inferred-cross-language" }] };
+  const result = await verifyDiscoveredCompetitorWithInferredLeads(crawl("noororganicfood.com", primaryProducts), crawl("health.example", rivalProducts), discovery, resolveVerificationMarket("United Kingdom", "United Kingdom"), true);
+  assert.equal(result.discovery.accepted, false);
+  assert.equal(result.discovery.hasProductOverlap, false);
+
+  const observed = await verifyDiscoveredCompetitorWithInferredLeads(crawl("noororganicfood.com", primaryProducts), crawl("health.example", rivalProducts), { ...discovery, observedAdmission: true }, resolveVerificationMarket("United Kingdom", "United Kingdom"), true);
+  assert.equal(observed.discovery.hasProductOverlap, true);
+});
+
+test("a verified exact pair emits a pin even when observed core overlap is the displayed basis", () => {
+  const primaryProduct = product("noororganicfood.com", "Organic Honey 500g");
+  const rivalProduct = { ...product("health.example", "Organic Honey 500g"), priceSignals: [{ raw: "KWD 8", currency: "KWD", amount: 8 }] };
+  const verified = verifyDiscoveredCompetitor(crawl("noororganicfood.com", [primaryProduct]), crawl("health.example", [rivalProduct]), { ...rememberedCandidate(), domain: "health.example" }, resolveVerificationMarket("United Kingdom", "United Kingdom"), true, { primary: primaryProduct, rival: rivalProduct, confidence: 0.95 });
+  assert.equal(verified.discovery.categoryBasis, "observed-core");
+  assert.equal(verified.discovery.exactProductPairVerified, true);
+  assert.deepEqual(verifiedExactMatchHints([verified]), [{ primaryId: primaryProduct.id, rivalDomain: "health.example", rivalId: rivalProduct.id }]);
 });

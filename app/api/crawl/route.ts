@@ -177,6 +177,7 @@ export function verifyDiscoveredCompetitor(
       overlapTerms: [],
       hasProductOverlap: false,
       categoryBasis: "none" as const,
+      exactProductPairVerified: false,
     },
   };
   const verification = verifyCompetitorEntity(
@@ -193,10 +194,37 @@ function exactProductPageKey(value: string, expectedDomain: string) {
   try {
     const url = new URL(value);
     if (!/^https?:$/.test(url.protocol) || canonicalDomain(url.hostname) !== canonicalDomain(expectedDomain)) return "";
-    return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, "") || "/"}`;
+    const tracking = /^(?:utm_.+|fbclid|gclid|dclid|msclkid|srsltid|ref|referrer|source|campaign|campaignid)$/i;
+    const identity = [...url.searchParams.entries()]
+      .filter(([key]) => !tracking.test(key))
+      .sort(([leftKey, leftValue], [rightKey, rightValue]) => leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue));
+    const search = new URLSearchParams(identity).toString();
+    return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, "") || "/"}${search ? `?${search}` : ""}`;
   } catch {
     return "";
   }
+}
+
+function exactPageProductFingerprint(product: ProductRecord, expectedDomain: string) {
+  const identifiers: NonNullable<ProductRecord["identifiers"]> = product.identifiers || { gtins: [] };
+  const prices = product.priceSignals.map((signal) => ({
+    amount: signal.amount,
+    currency: String(signal.currency || "").toUpperCase(),
+    period: signal.period || "",
+    raw: signal.raw,
+  })).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  return JSON.stringify({
+    name: product.normalizedName || product.name.toLowerCase().normalize("NFKC"),
+    quantity: product.quantity || null,
+    identifiers: {
+      gtins: [...(identifiers.gtins || [])].sort(),
+      sku: identifiers.sku || "",
+      mpn: identifiers.mpn || "",
+      brand: identifiers.brand || "",
+    },
+    prices,
+    source: exactProductPageKey(product.sourceUrl, expectedDomain),
+  });
 }
 
 type ExactPairJudge = typeof buildAIProductComparison;
@@ -220,8 +248,8 @@ export async function verifyInferredProductLead(
       && (product.extraction === "json-ld" || product.extraction === "storefront-api")
       && hasValidObservedRivalPrice(product));
     const exactPageProducts = selectPreferredProducts(eligiblePageProducts);
-    const identityNames = new Set(eligiblePageProducts.map((product) => product.normalizedName || product.name.toLowerCase().normalize("NFKC")));
-    if (!primaryProduct || exactPageProducts.length !== 1 || identityNames.size !== 1) continue;
+    const identities = new Set(eligiblePageProducts.map((product) => exactPageProductFingerprint(product, candidate.domain)));
+    if (!primaryProduct || exactPageProducts.length !== 1 || identities.size !== 1) continue;
     const rivalProduct = exactPageProducts[0];
     const comparison = await judge(primary.domain, [
       { domain: primary.domain, products: [primaryProduct] },
@@ -258,11 +286,34 @@ export async function verifyDiscoveredCompetitorWithInferredLeads(
   const verifiedExactProductPair = discovery.inferredProductLeads?.length
     ? await verifyInferredProductLead(primary, candidate, discovery)
     : undefined;
-  return verifyDiscoveredCompetitor(primary, candidate, discovery, targetMarket, requireProductOverlap, verifiedExactProductPair);
+  const verified = verifyDiscoveredCompetitor(primary, candidate, discovery, targetMarket, requireProductOverlap, verifiedExactProductPair);
+  if (discovery.inferredProductLeads?.length && !discovery.observedAdmission && !verifiedExactProductPair) return {
+    ...verified,
+    discovery: {
+      ...verified.discovery,
+      accepted: false,
+      verificationScore: 0,
+      confidence: "Low" as const,
+      categoryAlignment: false,
+      hasProductOverlap: false,
+      categoryBasis: "none" as const,
+      exactProductPairVerified: false,
+      overlapTerms: [],
+      provenPrimaryProduct: undefined,
+      provenRivalProduct: undefined,
+    },
+  };
+  return verified;
 }
 
 export function rememberedReverificationFailures(candidates: MemoryCandidate[], results: Array<DomainCrawl | null>) {
   return candidates.filter((candidate, index) => candidate.provenance === "remembered-reverified" && !results[index]?.discovery?.accepted);
+}
+
+export function verifiedExactMatchHints(confirmed: DomainCrawl[]) {
+  return confirmed.flatMap((result) => result.discovery?.exactProductPairVerified && result.discovery.provenPrimaryProduct && result.discovery.provenRivalProduct
+    ? [{ primaryId: result.discovery.provenPrimaryProduct.id, rivalDomain: result.domain, rivalId: result.discovery.provenRivalProduct.id }]
+    : []).slice(0, 12);
 }
 
 function productPathPriority(path: string) {
@@ -910,9 +961,7 @@ export async function POST(request: Request) {
       })),
     };
     const document = compactCatalogSnapshots(buildDocument(results, primaryDomain, discovery, discoveredResults));
-    const matchHints = confirmed.flatMap((result) => result.discovery?.categoryBasis === "verified-exact-product-pair" && result.discovery.provenPrimaryProduct && result.discovery.provenRivalProduct
-      ? [{ primaryId: result.discovery.provenPrimaryProduct.id, rivalDomain: result.domain, rivalId: result.discovery.provenRivalProduct.id }]
-      : []).slice(0, 12);
+    const matchHints = verifiedExactMatchHints(confirmed);
     return Response.json({ ok: true, live: true, primaryDomain, results, discovery, adRequest, matchHints, document, crawl: { maxPagesPerDomain: MAX_HTML_PAGES, maxPagesPerDiscoveredCompetitor: MAX_DISCOVERED_HTML_PAGES, maxPrimaryProductPricePages: MAX_PRIMARY_PRODUCT_PRICE_PAGES, maxMatchedProductEnrichmentPages: MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES, competitorCrawlConcurrency: COMPETITOR_CRAWL_CONCURRENCY, htmlExtractionBytes: MAX_HTML_EXTRACTION_BYTES, robotsAware: true, generatedAt: new Date().toISOString() } });
   } catch (error) {
     return Response.json({ ok: false, live: false, error: error instanceof Error ? error.message : "Unable to crawl the submitted domains." }, { status: 400 });

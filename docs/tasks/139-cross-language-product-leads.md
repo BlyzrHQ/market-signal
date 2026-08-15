@@ -76,8 +76,12 @@ such.
 - Two initial independent Codex reviewers returned blockers around atomic lead
   provenance, pre-verification semantic judging, exact-page price evidence,
   and plan-limit pinning. The implementation was revised around those findings.
-- The focused regression suite passed 127 tests before the exact-page listing
-  hardening; the full repository command subsequently passed typechecks, build,
-  and 701 tests. The post-hardening focused suite and typecheck also pass.
+- Two fresh independent high-risk fallback reviewers then found blockers around
+  bounded-catalog pin retention, listing/search route admission, inference-only
+  deterministic fallback, identity-bearing URL parameters, ambiguous variants,
+  exact-pair provenance, and global pin assignment. Every finding was addressed
+  with adversarial regression coverage; re-review is still required.
+- The final focused suite passes 99 tests. The full repository command passes
+  both typechecks, production build, and 709 tests with zero failures.
 - ESLint reports zero errors and the two pre-existing `no-img-element`
   warnings in the design lab and report page.

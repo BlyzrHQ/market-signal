@@ -176,6 +176,32 @@ test("a validated exact-pair pin survives primary and rival catalog limits", asy
   assert.equal(comparison.rows[0].matches[0].product?.id, pinnedRival.id);
 });
 
+test("an eligible pin wins global rival contention over a higher-confidence unpinned proposal", async () => {
+  const unpinnedPrimary = product("p-unpinned", "shop.test", "Sidr Honey 500g");
+  const pinnedPrimary = product("p-pinned", "shop.test", "عسل سدر ٥٠٠ جرام");
+  const rival = product("r-shared", "rival.test", "Sidr Honey 500g", { price: { raw: "GBP 8", currency: "GBP", amount: 8 } });
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, 0] })) });
+    const request = JSON.parse(body.input[1].content);
+    return response({ output_text: JSON.stringify({ assessments: request.groups.flatMap((group) => group.candidates.map((candidate) => ({
+      primaryId: group.primary.id,
+      candidateId: candidate.id,
+      verdict: group.primary.id === unpinnedPrimary.id ? "same_product" : "close_substitute",
+      confidence: group.primary.id === unpinnedPrimary.id ? 0.99 : 0.82,
+      reason: "Same product family.",
+      contradiction: "",
+    }))) }) });
+  };
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [unpinnedPrimary, pinnedPrimary] },
+    { domain: "rival.test", products: [rival] },
+  ], {}, { apiKey: "test", fetch, maxPrimaryProducts: 2, pinnedPairs: [{ primaryId: pinnedPrimary.id, rivalDomain: "rival.test", rivalId: rival.id }] });
+
+  assert.equal(comparison.rows.find((row) => row.primary.id === pinnedPrimary.id)?.matches[0].product?.id, rival.id);
+  assert.equal(comparison.rows.find((row) => row.primary.id === unpinnedPrimary.id)?.matches[0].product, null);
+});
+
 test("bilingual quantity retrieval reaches the judge when embeddings are unavailable", async () => {
   const quantity = { kind: "mass", amount: 500, unit: "g" };
   const identifiers = { gtins: [], brand: "Sidr House" };
