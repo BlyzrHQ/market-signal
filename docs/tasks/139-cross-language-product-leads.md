@@ -81,8 +81,8 @@ such.
   deterministic fallback, identity-bearing URL parameters, ambiguous variants,
   exact-pair provenance, and global pin assignment. Every finding was addressed
   with adversarial regression coverage; re-review is still required.
-- The final adversarial suite passes 92 tests. The full repository command passes
-  both typechecks, production build, and 722 tests with zero failures after
+- The final adversarial suite passes 93 tests. The full repository command passes
+  both typechecks, production build, and 723 tests with zero failures after
   reviewer-requested input and provenance hardening.
 - The latest adversarial pass rejects multilingual listing routes, preserves
   non-tracking identity query parameters, rebinds publication provenance to
@@ -99,6 +99,9 @@ such.
   routes before either admission path, applies the generic-container veto to
   pinned pairs, and stream-bounds the authenticated matching request before
   JSON parsing.
+- Product-lane model summaries now use the same listing gate as direct search
+  sources, including French, German, Italian, Dutch, Spanish, and Portuguese
+  result-route markers.
 - Compound and multilingual search/listing routes are rejected before the
   generic HTML product-detail fallback.
 - Nested catalog arrays are normalized from bounded prefixes, product IDs must

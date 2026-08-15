@@ -208,7 +208,7 @@ function isListingRoute(url: string) {
     const parsed = new URL(url);
     if ([...parsed.searchParams.keys()].some((key) => /^(?:q|s|search|query|filter|sort|page|pagenumber)$/iu.test(key))) return true;
     const segments = decodeURIComponent(parsed.pathname).split("/").filter(Boolean);
-    if (segments.some((segment) => /^(?:search[-_]?results?|resultados[-_]?busqueda|pesquisa)(?:\.(?:html?|aspx?))?$/iu.test(segment))) return true;
+    if (segments.some((segment) => /^(?:search[-_]?results?|resultados?[-_]?busqueda|r[eé]sultats?[-_]?recherche|suchergebnisse|risultati[-_]?ricerca|zoekresultaten|pesquisa)(?:\.(?:html?|aspx?))?$/iu.test(segment))) return true;
     if (segments.some((segment) => /^(?:page|pages?|pagina|seite|katalog|kategor(?:i|ie|ien|y))$/iu.test(segment))) return true;
     if (segments.some((segment, index) => /^\d+$/.test(segment) && index > 0 && /^(?:page|pages?|pagina|seite)$/iu.test(segments[index - 1]))) return true;
     const listing = /^(?:search|results?|listing|list|product[-_]?list|browse|catalog|collections?|categories?|tags?|recherche|chercher|buscar|b[uú]squeda|suche|suchen|ricerca|cerca|zoeken|zoek|liste|lista|todos|todas|todo|tous|toutes|tutti|tutte|alle|all|index|filter|全部|所有|الكل|بحث|البحث|検索)(?:[-_].*)?(?:\.(?:html?|aspx?))?$/iu;
@@ -408,7 +408,7 @@ function entityCandidatesFromSearchEvidence(payload: Record<string, unknown>, bu
   }).slice(0, MAX_CANDIDATES);
 }
 
-function sanitizeCandidate(value: unknown, primaryDomain: string, lane: SearchLane, profile: DiscoveryProfile): DiscoveryCandidate | null {
+export function sanitizeCandidate(value: unknown, primaryDomain: string, lane: SearchLane, profile: DiscoveryProfile): DiscoveryCandidate | null {
   if (!value || typeof value !== "object") return null;
   const item = value as Record<string, unknown>;
   try {
@@ -419,7 +419,8 @@ function sanitizeCandidate(value: unknown, primaryDomain: string, lane: SearchLa
     const evidenceUrl = cleanSearchUrl(item.evidenceUrl || item.sourceUrl || websiteUrl);
     if (!evidenceUrl || PUBLISHER_PATH.test(new URL(evidenceUrl).pathname)) return null;
     const matchedProductUrl = cleanSearchUrl(item.matchedProductUrl);
-    if (matchedProductUrl && canonicalDomain(matchedProductUrl) !== domain) return null;
+    if (matchedProductUrl && (canonicalDomain(matchedProductUrl) !== domain || isListingRoute(matchedProductUrl))) return null;
+    if (lane === "product" && isListingRoute(evidenceUrl)) return null;
     const productMatch = lane === "product" && matchedProductUrl
       ? productMatchFromSource(String(item.evidenceTitle || ""), matchedProductUrl, profile.products)
       : undefined;

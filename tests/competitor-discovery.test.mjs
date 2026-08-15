@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { candidatesFromSearchEvidence, discoverCompetitors, mergeCandidates, productSearchAnchors } from "../app/lib/competitor-discovery.ts";
+import { candidatesFromSearchEvidence, discoverCompetitors, mergeCandidates, productSearchAnchors, sanitizeCandidate } from "../app/lib/competitor-discovery.ts";
 
 function product(name, sourceUrl) {
   return {
@@ -294,6 +294,17 @@ test("rejects private-address and credential-bearing search sources", () => {
   }
 });
 
+test("model-summarized product candidates cannot bypass the listing-route gate", () => {
+  const candidate = sanitizeCandidate({
+    domain: "rival.example",
+    websiteUrl: "https://rival.example/",
+    evidenceUrl: "https://rival.example/products?search=organic+honey",
+    matchedProductUrl: "https://rival.example/products?search=organic+honey",
+    evidenceTitle: "Organic Honey",
+  }, "myjam.co.uk", "product", { ...profile, products: [product("Organic Honey", "https://myjam.co.uk/products/organic-honey")] });
+  assert.equal(candidate, null);
+});
+
 test("admits localized, html, and id-only product leads when the search title strongly matches", () => {
   const payload = {
     output: [{
@@ -582,6 +593,10 @@ test("rejects search, browse, and catalog listing routes as inferred exact-produ
     "https://rival.example/pt/pesquisa.html",
     "https://rival.example/es/resultados-busqueda.html",
     "https://rival.example/searchResults.html",
+    "https://rival.example/fr/resultats-recherche.html",
+    "https://rival.example/de/suchergebnisse.html",
+    "https://rival.example/it/risultati-ricerca.html",
+    "https://rival.example/nl/zoekresultaten.html",
     "https://rival.example/produits/liste",
     "https://rival.example/produits/tous",
     "https://rival.example/prodotti/tutti",
