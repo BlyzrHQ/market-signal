@@ -39,6 +39,7 @@ type CrawlPage = {
   url: string;
   path: string;
   sourceUrl: string;
+  requestedSourceUrl?: string;
   fetchedAt: string;
   title: string;
   description: string;
@@ -205,6 +206,27 @@ function exactProductPageKey(value: string, expectedDomain: string) {
   }
 }
 
+function redirectedProductIdentityMatches(requested: string, final: string, expectedDomain: string) {
+  const key = (value: string) => {
+    try {
+      const parsed = new URL(value);
+      if (canonicalDomain(parsed.hostname) !== canonicalDomain(expectedDomain)) return [];
+      const segments = decodeURIComponent(parsed.pathname).split("/").filter(Boolean);
+      while (segments.length && /^[a-z]{2,3}(?:-[a-z]{2})?$/i.test(segments[0])) segments.shift();
+      return segments.join(" ").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+        .split(/[^\p{L}\p{N}]+/gu)
+        .filter((token) => token.length > 1 && !/^(?:items?|products?|produits?|productos?|produtos?|produkte?|prodotto|prodotti|shop|store)$/i.test(token));
+    } catch {
+      return [];
+    }
+  };
+  const requestedTokens = [...new Set(key(requested))];
+  const finalTokens = [...new Set(key(final))];
+  const shared = requestedTokens.filter((token) => finalTokens.includes(token));
+  const minimum = Math.min(requestedTokens.length, finalTokens.length);
+  return minimum > 0 && shared.length >= Math.min(2, minimum) && shared.length / minimum >= 0.8;
+}
+
 function exactPageProductFingerprint(product: ProductRecord, expectedDomain: string) {
   const identifiers: NonNullable<ProductRecord["identifiers"]> = product.identifiers || { gtins: [] };
   const prices = product.priceSignals.map((signal) => ({
@@ -241,9 +263,16 @@ export async function verifyInferredProductLead(
     const primaryProduct = primary.products.find((product) => product.id === lead.primaryProductId
       && exactProductPageKey(product.sourceUrl, primary.domain) === exactProductPageKey(lead.primarySourceUrl, primary.domain));
     const candidateKey = exactProductPageKey(lead.candidateSourceUrl, candidate.domain);
-    const exactPage = candidate.pages.find((page) => candidateKey && exactProductPageKey(page.sourceUrl, candidate.domain) === candidateKey);
-    const eligiblePageProducts = (exactPage?.products || []).filter((product) => candidateKey
-      && exactProductPageKey(product.sourceUrl, candidate.domain) === candidateKey
+    const exactPage = candidate.pages.find((page) => {
+      if (!candidateKey) return false;
+      const finalKey = exactProductPageKey(page.sourceUrl, candidate.domain);
+      if (finalKey === candidateKey) return true;
+      const requestedKey = exactProductPageKey(page.requestedSourceUrl || "", candidate.domain);
+      return requestedKey === candidateKey && redirectedProductIdentityMatches(page.requestedSourceUrl || "", page.sourceUrl, candidate.domain);
+    });
+    const finalPageKey = exactPage ? exactProductPageKey(exactPage.sourceUrl, candidate.domain) : "";
+    const eligiblePageProducts = (exactPage?.products || []).filter((product) => finalPageKey
+      && exactProductPageKey(product.sourceUrl, candidate.domain) === finalPageKey
       && product.jsonLdType === "Product"
       && product.ownership !== "third-party-referenced"
       && (product.extraction === "json-ld" || product.extraction === "storefront-api")
@@ -625,11 +654,12 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
     if (!result.ok || !/text\/html|application\/xhtml\+xml/i.test(result.contentType)) { gaps.push({ url, reason: result.error || `page returned HTTP ${result.status} or non-HTML content.`, observedAt: startedAt }); return null; }
     const finalHost = new URL(result.url).hostname.toLowerCase().replace(/^www\./, "");
     if (finalHost !== domain.replace(/^www\./, "")) { gaps.push({ url, reason: "redirected off the submitted domain.", observedAt: startedAt }); return null; }
-    return parsePage(result.text, result.url, new Date().toISOString(), domain, result.truncated, result);
+    const page = await parsePage(result.text, result.url, new Date().toISOString(), domain, result.truncated, result);
+    return { ...page, requestedSourceUrl: url };
   }));
   const seenUrls = new Set<string>();
   const seenHashes = new Set<string>();
-  const pages = [homepage, ...fetchedPages.filter((page): page is CrawlPage => Boolean(page))].filter((page) => {
+  const pages: CrawlPage[] = [homepage, ...(fetchedPages.filter(Boolean) as CrawlPage[])].filter((page) => {
     const normalizedUrl = page.sourceUrl.split("#")[0];
     if (seenUrls.has(normalizedUrl) || seenHashes.has(page.contentHash)) return false;
     seenUrls.add(normalizedUrl);
