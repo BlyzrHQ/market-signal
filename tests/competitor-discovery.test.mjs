@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { candidatesFromSearchEvidence, discoverCompetitors, entityCandidatesFromSearchEvidence, mergeCandidates, productSearchAnchors, sanitizeCandidate } from "../app/lib/competitor-discovery.ts";
+import { candidatesFromSearchEvidence, discoverCompetitors, entityCandidatesFromSearchEvidence, mergeCandidates, productSearchAnchors, publicDiscoverySnapshot, sanitizeCandidate } from "../app/lib/competitor-discovery.ts";
 
 function product(name, sourceUrl) {
   return {
@@ -325,6 +325,30 @@ test("bounds source-first investigations before domain deduplication", () => {
   const candidates = candidatesFromSearchEvidence(payload, arabicProfile);
   assert.equal(candidates.length, 2);
   assert.ok(candidates.every((candidate) => candidate.inferredProductLeads?.[0].admission === "source-first-cross-language"));
+});
+
+test("reserves investigation capacity for attributable candidates across product lanes", () => {
+  const sourceFirst = Array.from({ length: 5 }, (_, index) => ({
+    domain: `opaque-${index}.example`, companyName: `opaque-${index}.example`, reason: "private lead", searchQuery: "translated product", sourceUrl: `https://opaque-${index}.example/products/sku-${index}`, websiteUrl: `https://opaque-${index}.example/`, marketCategory: "", relationship: "adjacent", sharedOfferings: ["Arabic product"], evidence: [], mentionCount: 0, matchedPrimaryProductName: "Arabic product", matchedProductUrl: `https://opaque-${index}.example/products/sku-${index}`, inferredProductLeads: [{ primaryProductId: "p1", primarySourceUrl: "https://primary.example/products/p1", laneQuery: "translated product", candidateDomain: `opaque-${index}.example`, candidateSourceUrl: `https://opaque-${index}.example/products/sku-${index}`, admission: "source-first-cross-language" }],
+  }));
+  const observed = Array.from({ length: 4 }, (_, index) => ({
+    domain: `observed-${index}.example`, companyName: `Observed ${index}`, reason: "observed company", searchQuery: "category", sourceUrl: `https://observed-${index}.example/`, websiteUrl: `https://observed-${index}.example/`, marketCategory: "organic food", relationship: "direct", sharedOfferings: ["organic food"], evidence: [{ url: `https://observed-${index}.example/`, title: `Observed ${index}`, method: "category-search" }], mentionCount: 1, observedAdmission: true,
+  }));
+  const merged = mergeCandidates([...sourceFirst, ...observed]);
+  assert.equal(merged.length, 6);
+  assert.equal(merged.filter((candidate) => candidate.inferredProductLeads?.every((lead) => lead.admission === "source-first-cross-language") && !candidate.observedAdmission).length, 2);
+  assert.equal(merged.filter((candidate) => candidate.observedAdmission).length, 4);
+});
+
+test("raw discovery snapshots publish only accepted candidates and remove private leads", () => {
+  const base = { available: true, provider: "openai-web-search", model: "test", category: "food", region: "Kuwait", businessType: "ecommerce", strategy: "product-first", queries: ["translated product"], candidates: [], gaps: [] };
+  const candidate = {
+    domain: "rival.example", companyName: "Rival", reason: "verified", searchQuery: "translated product", sourceUrl: "https://rival.example/products/verified", websiteUrl: "https://rival.example/", marketCategory: "food", relationship: "direct", sharedOfferings: ["product"], evidence: [{ url: "https://rival.example/products/verified", title: "Verified", method: "product-search" }], mentionCount: 1, accepted: true, inferredProductLeads: [{ primaryProductId: "p1", primarySourceUrl: "https://primary.example/products/p1", laneQuery: "private query", candidateDomain: "rival.example", candidateSourceUrl: "https://rival.example/products/unverified", admission: "source-first-cross-language" }],
+  };
+  const rejected = { ...candidate, domain: "rejected.example", accepted: false };
+  const snapshot = publicDiscoverySnapshot(base, [candidate, rejected]);
+  assert.deepEqual(snapshot.candidates.map((item) => item.domain), ["rival.example"]);
+  assert.equal(snapshot.candidates[0].inferredProductLeads, undefined);
 });
 
 test("rejects translated terminal listing words and pagination-shaped weak product leads without a finite dictionary", () => {

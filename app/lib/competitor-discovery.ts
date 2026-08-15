@@ -533,7 +533,8 @@ export function mergeCandidates(candidates: DiscoveryCandidate[]) {
         && other.primarySourceUrl === lead.primarySourceUrl
         && other.laneQuery === lead.laneQuery
         && other.candidateDomain === lead.candidateDomain
-        && other.candidateSourceUrl === lead.candidateSourceUrl) === index)
+        && other.candidateSourceUrl === lead.candidateSourceUrl
+        && other.admission === lead.admission) === index)
       .slice(0, MAX_PRODUCT_SEARCHES);
     merged.set(candidate.domain, {
       ...preferred,
@@ -553,13 +554,30 @@ export function mergeCandidates(candidates: DiscoveryCandidate[]) {
     });
   }
   const productCoverage = (candidate: DiscoveryCandidate) => new Set(candidate.matchedPrimaryProductNames || (candidate.matchedPrimaryProductName ? [candidate.matchedPrimaryProductName] : [])).size;
+  const sourceFirstOnly = (candidate: DiscoveryCandidate) => !candidate.observedAdmission
+    && Boolean(candidate.inferredProductLeads?.length)
+    && candidate.inferredProductLeads!.every((lead) => lead.admission === "source-first-cross-language");
+  let sourceFirstCandidates = 0;
   return [...merged.values()].sort((left, right) =>
     Number(Boolean(right.matchedProductUrl)) - Number(Boolean(left.matchedProductUrl))
       || productCoverage(right) - productCoverage(left)
       || right.mentionCount - left.mentionCount
       || Number(right.relationship === "direct") - Number(left.relationship === "direct")
       || left.domain.localeCompare(right.domain),
-  ).slice(0, MAX_CANDIDATES);
+  ).filter((candidate) => !sourceFirstOnly(candidate) || sourceFirstCandidates++ < MAX_SOURCE_FIRST_LEADS_PER_SEARCH)
+    .slice(0, MAX_CANDIDATES);
+}
+
+export function publicDiscoverySnapshot(discovery: DiscoveryResult, verifiedCandidates: Array<DiscoveryCandidate & { accepted?: boolean }>): DiscoveryResult {
+  return {
+    ...discovery,
+    candidates: verifiedCandidates.flatMap((candidate) => {
+      if (candidate.accepted !== true) return [];
+      const published: DiscoveryCandidate & { accepted?: boolean } = { ...candidate };
+      delete published.inferredProductLeads;
+      return [published];
+    }),
+  };
 }
 
 function representativeProducts(products: ProductRecord[]) {
