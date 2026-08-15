@@ -3,6 +3,7 @@ import { canonicalDomain, normalizeDomain } from "../../lib/domain.ts";
 import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../lib/internal-auth.ts";
 import type { ProductRecord } from "../../lib/product-intelligence.ts";
 import { canonicalGtin, parseCanonicalQuantity, type ProductIdentifiers } from "../../lib/product-normalization.ts";
+import { publicHttpUrl } from "../../lib/public-url.ts";
 import { loadReportMatchBatchCheckpoints, loadReportProductEntitlement, saveReportMatchBatchCheckpoint } from "../../lib/report-store.ts";
 
 const MAX_CATALOGS = 7;
@@ -22,8 +23,8 @@ function strings(value: unknown, limit: number, itemLimit: number) {
 
 function publicUrl(value: unknown, domain: string) {
   try {
-    const url = new URL(text(value, 1_000));
-    return /^https?:$/.test(url.protocol) && canonicalDomain(url.hostname) === canonicalDomain(domain) ? url.toString() : "";
+    const url = new URL(publicHttpUrl(text(value, 1_000), false, 1_000));
+    return canonicalDomain(url.hostname) === canonicalDomain(domain) ? url.toString() : "";
   } catch {
     return "";
   }
@@ -164,17 +165,19 @@ export function productAnalysisBudgetMs(limit: number) {
 
 export function parsePinnedPairs(value: unknown, catalogs: Array<{ domain: string; products: ProductRecord[] }>, primaryDomain: string): PinnedProductPair[] {
   if (!Array.isArray(value)) return [];
+  if (value.length > 12) return [];
   const primaryIds = new Set(catalogs.find((catalog) => canonicalDomain(catalog.domain) === canonicalDomain(primaryDomain))?.products.map((product) => product.id) || []);
   const rivalIds = new Map(catalogs.filter((catalog) => canonicalDomain(catalog.domain) !== canonicalDomain(primaryDomain)).map((catalog) => [canonicalDomain(catalog.domain), new Set(catalog.products.map((product) => product.id))]));
-  const pairs = value.slice(0, 12).flatMap((entry) => {
+  const pairs: PinnedProductPair[] = [];
+  for (const entry of value) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
     const item = entry as Record<string, unknown>;
     const primaryId = text(item.primaryId, 300);
     const rivalDomain = canonicalDomain(text(item.rivalDomain, 300));
     const rivalId = text(item.rivalId, 300);
     if (!primaryIds.has(primaryId) || !rivalDomain || !rivalIds.get(rivalDomain)?.has(rivalId)) return [];
-    return [{ primaryId, rivalDomain, rivalId }];
-  }).filter((pair, index, all) => all.findIndex((other) => other.primaryId === pair.primaryId && other.rivalDomain === pair.rivalDomain && other.rivalId === pair.rivalId) === index);
+    if (!pairs.some((other) => other.primaryId === primaryId && other.rivalDomain === rivalDomain && other.rivalId === rivalId)) pairs.push({ primaryId, rivalDomain, rivalId });
+  }
   const primaryAssignments = new Set<string>();
   const rivalAssignments = new Set<string>();
   for (const pair of pairs) {

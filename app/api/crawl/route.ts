@@ -792,6 +792,10 @@ export async function enrichPrimaryProductPrices(result: DomainCrawl, recoveryOp
   };
 }
 
+export function investigationGapSourceUrl(candidate: DomainCrawl) {
+  return candidate.homepage?.sourceUrl || (candidate.discovery?.observedAdmission ? candidate.discovery.sourceUrl : "");
+}
+
 function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?: DiscoveryResult, investigated: Array<DomainCrawl | null> = [], ads?: AdIntelligenceResult, productComparison?: ProductComparison): { version: "1"; generatedAt: string; blocks: ReportBlock[] } {
   const discovered = results.filter((result) => result.role === "discovered-competitor" && result.homepage && result.discovery);
   const productMatched = discovered.filter((result) => result.discovery?.hasProductOverlap).length;
@@ -849,7 +853,7 @@ function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?
   for (const candidate of investigated) {
     if (!candidate || results.some((result) => result.domain === candidate.domain)) continue;
     const rememberedPrefix = candidate.discovery?.provenance === "remembered-reverified" ? "Remembered lead was re-crawled, not reconfirmed, and removed from memory: " : "Investigated but not confirmed: ";
-    blocks.push({ type: "gap", id: `investigation-gap-${candidate.domain}`, domain: candidate.domain, url: candidate.homepage?.sourceUrl || candidate.discovery?.sourceUrl || "", reason: candidate.homepage ? (!candidate.discovery?.regionCompatibility ? `${rememberedPrefix}${candidate.discovery?.regionDecisionReason || "first-party evidence placed this company in a different market region."}` : !candidate.discovery?.categoryAlignment ? `${rememberedPrefix}the company's own website did not establish the same core market category.` : discovery?.businessType === "ecommerce" && !candidate.discovery?.hasProductOverlap ? `${rememberedPrefix}the current first-party crawl did not prove a comparable product, so this seller was not included as an ecommerce competitor.` : `${rememberedPrefix}entity verification score ${candidate.discovery?.verificationScore || 0}/100 did not meet the inclusion threshold.`) : `${rememberedPrefix}${candidate.gaps[0]?.reason || "the public site could not be verified."}`, observedAt: candidate.fetchedAt });
+    blocks.push({ type: "gap", id: `investigation-gap-${candidate.domain}`, domain: candidate.domain, url: investigationGapSourceUrl(candidate), reason: candidate.homepage ? (!candidate.discovery?.regionCompatibility ? `${rememberedPrefix}${candidate.discovery?.regionDecisionReason || "first-party evidence placed this company in a different market region."}` : !candidate.discovery?.categoryAlignment ? `${rememberedPrefix}the company's own website did not establish the same core market category.` : discovery?.businessType === "ecommerce" && !candidate.discovery?.hasProductOverlap ? `${rememberedPrefix}the current first-party crawl did not prove a comparable product, so this seller was not included as an ecommerce competitor.` : `${rememberedPrefix}entity verification score ${candidate.discovery?.verificationScore || 0}/100 did not meet the inclusion threshold.`) : `${rememberedPrefix}${candidate.gaps[0]?.reason || "the public site could not be verified."}`, observedAt: candidate.fetchedAt });
   }
   return { version: "1", generatedAt: new Date().toISOString(), blocks };
 }

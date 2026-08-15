@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { rememberedReverificationFailures, resolvePrimaryDiscoveryPolicy, verifiedExactMatchHints, verifyDiscoveredCompetitor, verifyDiscoveredCompetitorWithInferredLeads, verifyInferredProductLead } from "../app/api/crawl/route.ts";
+import { investigationGapSourceUrl, rememberedReverificationFailures, resolvePrimaryDiscoveryPolicy, verifiedExactMatchHints, verifyDiscoveredCompetitor, verifyDiscoveredCompetitorWithInferredLeads, verifyInferredProductLead } from "../app/api/crawl/route.ts";
 import { resolveVerificationMarket } from "../app/lib/competitor-verification.ts";
 
 function product(domain, name) {
@@ -228,4 +228,17 @@ test("publication provenance is rebound atomically to the exact inferred lead th
   assert.equal(result.discovery.searchQuery, "right query");
   assert.equal(result.discovery.matchedProductUrl, rivalProduct.sourceUrl);
   assert.deepEqual(result.discovery.evidence.map((item) => item.url), [rivalProduct.sourceUrl]);
+});
+
+test("failed inference-only investigations never publish provisional search-result URLs", () => {
+  const candidate = crawl("health.example", []);
+  candidate.homepage = null;
+  candidate.discovery = {
+    ...rememberedCandidate(),
+    sourceUrl: "https://health.example/products/unverified-honey",
+    observedAdmission: false,
+  };
+  assert.equal(investigationGapSourceUrl(candidate), "");
+  candidate.discovery.observedAdmission = true;
+  assert.equal(investigationGapSourceUrl(candidate), "https://health.example/products/unverified-honey");
 });

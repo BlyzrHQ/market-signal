@@ -210,6 +210,8 @@ function isListingRoute(url: string) {
     const parsed = new URL(url);
     if ([...parsed.searchParams.keys()].some((key) => /^(?:q|s|search|query|filter|sort|page|pagenumber)$/iu.test(key))) return true;
     const segments = decodeURIComponent(parsed.pathname).split("/").filter(Boolean);
+    if (segments.some((segment) => /^(?:page|kategor(?:i|ie|ien|y))$/iu.test(segment))) return true;
+    if (segments.some((segment, index) => /^\d+$/.test(segment) && index > 0 && /^(?:page|pages?)$/iu.test(segments[index - 1]))) return true;
     const listing = /^(?:search|results?|listing|list|product[-_]?list|browse|catalog|collections?|categories?|tags?|recherche|chercher|buscar|b[uú]squeda|suche|suchen|ricerca|cerca|zoeken|zoek|liste|lista|todos|todas|todo|tous|toutes|tutti|tutte|alle|all|index|filter|全部|所有|الكل|بحث|البحث|検索)(?:[-_].*)?(?:\.(?:html?|aspx?))?$/iu;
     const productContainer = /^(?:products?|produits?|productos?|produtos?|produkte?|prodotti?|shop|store|منتج|منتجات|商品)$/iu;
     const genericTail = /^(?:all|index|filter|liste|lista|todos|todas|todo|tous|toutes|tutti|tutte|alle|全部|所有|الكل)$/iu;

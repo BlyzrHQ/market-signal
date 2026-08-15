@@ -129,7 +129,7 @@ test("rejects conflicting pins instead of silently dropping assignment contentio
   assert.deepEqual(parsePinnedPairs([{ primaryId: "p1", rivalDomain: "rival.test", rivalId: "r1" }, { primaryId: "p2", rivalDomain: "rival.test", rivalId: "r1" }], catalogs, "shop.test"), []);
 });
 
-test("pinned pairs are bounded, deduplicated, and must reference submitted catalog records", () => {
+test("pinned pairs reject mixed valid and invalid records without partial admission", () => {
   const catalogs = parseCatalogs([
     { domain: "shop.test", products: [{ id: "p1", name: "Honey", sourceUrl: "https://shop.test/products/honey" }] },
     { domain: "rival.test", products: [{ id: "r1", name: "Honey", sourceUrl: "https://rival.test/products/honey" }] },
@@ -141,7 +141,11 @@ test("pinned pairs are bounded, deduplicated, and must reference submitted catal
     { primaryId: "p1", rivalDomain: "shop.test", rivalId: "p1" },
     { primaryId: "p1", rivalDomain: "evil.test", rivalId: "r1" },
   ], catalogs, "shop.test");
-  assert.deepEqual(pins, [{ primaryId: "p1", rivalDomain: "rival.test", rivalId: "r1" }]);
+  assert.deepEqual(pins, []);
+  assert.deepEqual(parsePinnedPairs([
+    { primaryId: "p1", rivalDomain: "rival.test", rivalId: "r1" },
+    { primaryId: "p1", rivalDomain: "rival.test", rivalId: "r1" },
+  ], catalogs, "shop.test"), [{ primaryId: "p1", rivalDomain: "rival.test", rivalId: "r1" }]);
 });
 
 test("authenticated matching binds durable judge checkpoints to the active report attempt", async () => {
@@ -213,6 +217,16 @@ test("AI matching input rejects missing and off-domain product sources", () => {
   ] }]);
 
   assert.equal(catalogs[0].products.length, 0);
+});
+
+test("AI matching input rejects private and credential-bearing product sources", () => {
+  const catalogs = parseCatalogs([{ domain: "shop.test", products: [
+    { id: "private", name: "Private", sourceUrl: "http://127.0.0.1/secret" },
+    { id: "credentials", name: "Credentials", sourceUrl: "https://secret:pass@shop.test/products/secret" },
+    { id: "public", name: "Public", sourceUrl: "https://shop.test/products/public" },
+  ] }], "shop.test");
+
+  assert.deepEqual(catalogs[0].products.map((item) => item.id), ["public"]);
 });
 
 test("AI matching input revalidates identifiers and recomputes canonical quantity", () => {

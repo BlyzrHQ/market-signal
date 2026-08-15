@@ -563,6 +563,8 @@ test("rejects search, browse, and catalog listing routes as inferred exact-produ
     "https://rival.example/products/all",
     "https://rival.example/products/index",
     "https://rival.example/products/filter",
+    "https://rival.example/products/page/2",
+    "https://rival.example/products/kategori/organic-sidr-honey-500g",
     "https://rival.example/produits/liste",
     "https://rival.example/produits/tous",
     "https://rival.example/prodotti/tutti",
