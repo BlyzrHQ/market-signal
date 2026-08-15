@@ -194,6 +194,16 @@ such.
   node suite passes 741/741, both typechecks and the production build pass, and
   ESLint has zero errors with the same two pre-existing warnings. Fresh
   exact-head reviews are required after commit.
+- The next security pass found that selected-product HTML and storefront adapter
+  enrichment still used a separate raw-fetch implementation. That path could
+  rebind after robots approval, buffered the full body before slicing, and did
+  not cancel redirect bodies. It now uses the same fresh-DNS, pinned,
+  stream-bounded public transport as crawling. Non-success bodies can be
+  cancelled without reading, final same-origin redirect URLs remain available
+  to identity validation, and explicit fetch/robots dependencies are confined
+  to tests. The focused route, enrichment, transport, and storefront suites pass
+  105/105; the integrated suite passes 742/742 with both typechecks and the
+  production build; ESLint has zero errors with the two pre-existing warnings.
 - Compound and multilingual search/listing routes are rejected before the
   generic HTML product-detail fallback.
 - Nested catalog arrays are normalized from bounded prefixes, product IDs must

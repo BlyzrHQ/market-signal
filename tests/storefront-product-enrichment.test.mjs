@@ -1145,12 +1145,10 @@ test("classifies a successful response body-read failure as content, not network
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
     if (String(input).endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
-    return {
-      ok: true,
+    return new Response(new ReadableStream({ pull() { throw new Error("body stream failed"); } }), {
       status: 200,
-      headers: new Headers({ "content-type": "text/html" }),
-      arrayBuffer: async () => { throw new Error("body stream failed"); },
-    };
+      headers: { "content-type": "text/html" },
+    });
   };
   try {
     const result = await enrichProductTargets([target()], 1);

@@ -14,6 +14,7 @@ export type PublicFetchOptions = {
   userAgent: string;
   fetchImpl?: FetchLike;
   dnsFetchImpl?: FetchLike;
+  readErrorBody?: boolean;
 };
 
 class PublicFetchTransportError extends Error {
@@ -178,6 +179,23 @@ export async function fetchPublicText(url: string, accept: string, options: Publ
       currentUrl = nextUrl.toString();
     }
     if (!response) throw new Error("request failed");
+    if (!response.ok && options.readErrorBody === false) {
+      await response.body?.cancel();
+      await closePinnedTransport?.();
+      closePinnedTransport = null;
+      return {
+        ok: false,
+        status: response.status,
+        contentType: response.headers.get("content-type") ?? "",
+        url: response.url || currentUrl,
+        text: "",
+        truncated: false,
+        responseTimeMs: Date.now() - startedAt,
+        responseBytes: 0,
+        redirectCount,
+        failureKind: "" as const,
+      };
+    }
     const { text, truncated, responseBytes } = await boundedResponseText(response, options.maxDocumentBytes);
     await closePinnedTransport?.();
     closePinnedTransport = null;
@@ -186,7 +204,7 @@ export async function fetchPublicText(url: string, accept: string, options: Publ
       ok: response.ok,
       status: response.status,
       contentType: response.headers.get("content-type") ?? "",
-      url: response.url || url,
+      url: response.url || currentUrl,
       text,
       truncated,
       responseTimeMs: Date.now() - startedAt,

@@ -1,7 +1,8 @@
-import { canonicalDomain, normalizeDomain } from "./domain.ts";
+import { canonicalDomain } from "./domain.ts";
 import { bilingualNormalize, bilingualTokens, parseCanonicalQuantity, quantitiesConflict } from "./product-normalization.ts";
 import { CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX, catalogReplacementAuditAttribute, extractProductsFromHtml, isSupportedCurrency, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "./product-intelligence.ts";
 import { confirmedProductCurrency, hasConflictingDirectProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "./product-page-adapters.ts";
+import { fetchPublicText } from "./public-fetch.ts";
 import { sharedRobotsPolicyResolver } from "./robots-policy.ts";
 import { stripInactiveHtmlMarkup } from "./active-html-markup.ts";
 
@@ -43,43 +44,19 @@ class ProductFetchFailure extends Error {
   }
 }
 
-async function fetchSameDomain(url: string, domain: string, accept: string, fetchImpl: typeof fetch) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    let current = url;
-    for (let redirect = 0; redirect <= 3; redirect += 1) {
-      const checked = new URL(current);
-      normalizeDomain(checked.hostname);
-      if (canonicalDomain(checked.hostname) !== canonicalDomain(domain)) throw new ProductFetchFailure("redirected off the product domain", "redirect");
-      let response: Response;
-      try {
-        response = await fetchImpl(current, { redirect: "manual", signal: controller.signal, headers: { Accept: accept, "User-Agent": USER_AGENT } });
-      } catch (error) {
-        throw new ProductFetchFailure(error instanceof Error ? error.message : "network request failed", "network");
-      }
-      if ([301, 302, 303, 307, 308].includes(response.status)) {
-        const location = response.headers.get("location");
-        if (!location || redirect === 3) throw new ProductFetchFailure("redirect limit reached", "redirect");
-        current = new URL(location, current).toString();
-        continue;
-      }
-      const contentType = response.headers.get("content-type") || "";
-      if (!response.ok) return { ok: false, status: response.status, contentType, url: current, text: "" };
-      let bytes: ArrayBuffer;
-      try { bytes = await response.arrayBuffer(); } catch { throw new ProductFetchFailure("response body could not be read", "content"); }
-      return {
-        ok: true,
-        status: response.status,
-        contentType,
-        url: current,
-        text: new TextDecoder().decode(bytes.slice(0, MAX_DOCUMENT_BYTES)),
-      };
-    }
-    throw new ProductFetchFailure("redirect limit reached", "redirect");
-  } finally {
-    clearTimeout(timeout);
-  }
+async function fetchSameDomain(url: string, domain: string, accept: string, fetchImpl?: typeof fetch) {
+  const result = await fetchPublicText(url, accept, {
+    expectedDomain: domain,
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    maxDocumentBytes: MAX_DOCUMENT_BYTES,
+    userAgent: USER_AGENT,
+    readErrorBody: false,
+    ...(fetchImpl ? { fetchImpl } : {}),
+  });
+  if (result.redirectDomain || /redirected off the submitted domain/i.test(result.error || "")) throw new ProductFetchFailure("redirected off the product domain", "redirect");
+  if (result.failureKind === "network" || result.failureKind === "timeout") throw new ProductFetchFailure(result.error || "network request failed", "network");
+  if (result.status === 0) throw new ProductFetchFailure(result.error || "response body could not be read", "content");
+  return result;
 }
 
 function decode(value: string) {
@@ -792,7 +769,7 @@ export function claimablePagePricePatterns(values: string[]) {
   return values.filter((value) => priceAmount(value) !== 0);
 }
 
-type EnrichmentDependencies = {
+export type EnrichmentDependencies = {
   fetchImpl?: typeof fetch;
   robotsResolver?: Pick<typeof sharedRobotsPolicyResolver, "resolve">;
 };
@@ -800,7 +777,7 @@ type EnrichmentDependencies = {
 export async function enrichProductTargets(targets: ProductEnrichmentTarget[], maxPages = 24, dependencies: EnrichmentDependencies = {}) {
   const boundedMax = Math.max(0, Math.min(MAX_ENRICHMENT_TARGETS, Math.floor(maxPages)));
   const selected = targets.slice(0, boundedMax);
-  const fetchImpl = dependencies.fetchImpl || fetch;
+  const fetchImpl = dependencies.fetchImpl;
   const robotsResolver = dependencies.robotsResolver || sharedRobotsPolicyResolver;
   const robotsByDomain = new Map<string, Awaited<ReturnType<typeof sharedRobotsPolicyResolver.resolve>>>();
   await Promise.all([...new Set(selected.map((item) => item.domain))].map(async (domain) => {

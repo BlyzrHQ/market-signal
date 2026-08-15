@@ -11,7 +11,7 @@ import { forgetRememberedCompetitors, loadRememberedCompetitors, mergeRemembered
 import { discoverDomainAlternatives, extractStaticClientRedirect, parkingProvider } from "../../lib/domain-recovery.ts";
 import { boundedExtractionDocument, compactCatalogSnapshots, preferredEndpointFailure, settleWithConcurrency, unavailableAfterBoundedAttempts, unavailablePrimaryMessaging, type PublicEndpointFailure } from "../../lib/crawl-runtime.ts";
 import { fetchPublicText } from "../../lib/public-fetch.ts";
-import { claimablePagePricePatterns, selectPrimaryProductPriceTargets, type ProductEnrichmentCoverage } from "../../lib/storefront-product-enrichment.ts";
+import { claimablePagePricePatterns, selectPrimaryProductPriceTargets, type EnrichmentDependencies, type ProductEnrichmentCoverage } from "../../lib/storefront-product-enrichment.ts";
 import { enrichProductTargetsWithRecovery, type ProductEnrichmentRecoveryOptions } from "../../lib/product-enrichment-recovery.ts";
 import { buildExperienceBenchmark } from "../../lib/experience-benchmark.ts";
 import { hasObservedAddToCartControl } from "../../lib/experience-signals.ts";
@@ -677,14 +677,14 @@ function comparisonSourceUrls(results: DomainCrawl[], primaryDomain: string) {
   return required;
 }
 
-export async function reconcilePreliminaryPrimaryCatalog(results: DomainCrawl[], primaryDomain: string, recoveryOptions?: ProductEnrichmentRecoveryOptions) {
+export async function reconcilePreliminaryPrimaryCatalog(results: DomainCrawl[], primaryDomain: string, recoveryOptions?: ProductEnrichmentRecoveryOptions, localDependencies?: EnrichmentDependencies) {
   const preliminary = buildProductComparison(primaryDomain, results.map((result) => ({ domain: result.domain, products: result.products })), comparisonSourceUrls(results, primaryDomain));
   const primary = results.find((result) => result.domain === primaryDomain);
   if (!primary) return results;
   const plan = planPreliminaryCatalogReconciliation(preliminary, primary.products, MAX_CATALOG_RECONCILIATION_PAGES);
   const targets = plan.targets;
   if (!targets.length) return results;
-  const enrichment = await enrichProductTargetsWithRecovery(targets, MAX_CATALOG_RECONCILIATION_PAGES, recoveryOptions);
+  const enrichment = await enrichProductTargetsWithRecovery(targets, MAX_CATALOG_RECONCILIATION_PAGES, recoveryOptions, localDependencies);
   const observedAt = new Date().toISOString();
   return results.map((result) => result.domain === primaryDomain ? {
     ...result,
@@ -780,10 +780,10 @@ async function crawlPrimaryDomain(domain: string) {
   };
 }
 
-export async function enrichPrimaryProductPrices(result: DomainCrawl, recoveryOptions?: ProductEnrichmentRecoveryOptions) {
+export async function enrichPrimaryProductPrices(result: DomainCrawl, recoveryOptions?: ProductEnrichmentRecoveryOptions, localDependencies?: EnrichmentDependencies) {
   const targets = selectPrimaryProductPriceTargets(result.products, result.domain, MAX_PRIMARY_PRODUCT_PRICE_PAGES);
   if (!targets.length) return { ...result, primaryPriceEnrichment: { pagesRequested: 0, pagesFetched: 0, maxPages: MAX_PRIMARY_PRODUCT_PRICE_PAGES } };
-  const enrichment = await enrichProductTargetsWithRecovery(targets, MAX_PRIMARY_PRODUCT_PRICE_PAGES, recoveryOptions);
+  const enrichment = await enrichProductTargetsWithRecovery(targets, MAX_PRIMARY_PRODUCT_PRICE_PAGES, recoveryOptions, localDependencies);
   const observedAt = new Date().toISOString();
   return {
     ...result,

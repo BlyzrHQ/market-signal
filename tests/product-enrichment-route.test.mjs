@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { POST } from "../app/api/enrich-products/route.ts";
+import { handleProductEnrichmentRequest } from "../app/api/enrich-products/route.ts";
 import { EDGE_PRODUCT_ENRICHMENT_MARKER } from "../app/lib/edge-product-enrichment-recovery.ts";
 import { resetSharedRobotsPolicyResolverForTests } from "../app/lib/robots-policy.ts";
 
 test.beforeEach(() => resetSharedRobotsPolicyResolverForTests());
+
+function POST(request) {
+  return handleProductEnrichmentRequest(request, { fetchImpl: globalThis.fetch });
+}
 
 test("retries only a typed robots-unreachable target through the configured edge", async () => {
   const originalFetch = globalThis.fetch;

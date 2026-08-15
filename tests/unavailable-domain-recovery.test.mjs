@@ -244,3 +244,24 @@ test("public fetch skips empty overflow-probe chunks and cancels a longer body",
   assert.equal(result.truncated, true);
   assert.equal(cancelled, true);
 });
+
+test("public fetch can skip and cancel an unsuccessful response body", async () => {
+  let pulled = 0;
+  let cancelled = false;
+  const stream = new ReadableStream({
+    pull(controller) { pulled += 1; controller.enqueue(new Uint8Array(100_000)); },
+    cancel() { cancelled = true; },
+  });
+  const result = await fetchPublicText("https://error-body.example/", "text/html", {
+    timeoutMs: 1_000,
+    maxDocumentBytes: 8,
+    userAgent: "test",
+    readErrorBody: false,
+    async fetchImpl() { return new Response(stream, { status: 503 }); },
+  });
+  assert.equal(result.status, 503);
+  assert.equal(result.text, "");
+  assert.equal(result.responseBytes, 0);
+  assert.equal(cancelled, true);
+  assert.ok(pulled <= 1);
+});
