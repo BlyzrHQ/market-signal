@@ -17,7 +17,7 @@ export type InferredProductLead = {
   laneQuery: string;
   candidateDomain: string;
   candidateSourceUrl: string;
-  admission: "inferred-cross-language" | "source-first-cross-language";
+  admission: "inferred-cross-language" | "source-first-cross-language" | "model-structured-cross-language";
 };
 
 export type DiscoveryCandidate = {
@@ -67,6 +67,7 @@ const MAX_CANDIDATES = 6;
 const MAX_PRODUCT_SEARCHES = 4;
 const MAX_SOURCE_FIRST_LEADS_PER_SEARCH = 2;
 const MAX_SOURCE_FIRST_CANDIDATES = 2;
+const MAX_MODEL_STRUCTURED_LEADS_PER_LANE = 1;
 const SEARCH_TIMEOUT_MS = 24_000;
 const SEARCH_SOURCE_STOPWORDS = new Set([
   "apx", "approximately", "buy", "delivered", "delivery", "fresh", "halal", "home", "online", "order", "price", "product", "products", "shop", "store", "uk",
@@ -515,6 +516,52 @@ export function sanitizeCandidate(value: unknown, primaryDomain: string, lane: S
   }
 }
 
+export function structuredProductLeadCandidate(value: unknown, primaryDomain: string, profile: DiscoveryProfile): DiscoveryCandidate | null {
+  if (!value || typeof value !== "object" || profile.products.length !== 1) return null;
+  const item = value as Record<string, unknown>;
+  try {
+    const domain = canonicalDomain(String(item.domain || item.websiteUrl || ""));
+    if (excludedDomain(domain, primaryDomain)) return null;
+    const websiteUrl = cleanSearchUrl(item.websiteUrl || `https://${domain}/`);
+    const evidenceUrl = cleanSearchUrl(item.evidenceUrl);
+    const matchedProductUrl = cleanSearchUrl(item.matchedProductUrl);
+    if (!websiteUrl || !evidenceUrl || !matchedProductUrl) return null;
+    if ([websiteUrl, evidenceUrl, matchedProductUrl].some((url) => canonicalDomain(url) !== domain)) return null;
+    const candidateSourceUrl = isExplicitProductDetailSource(matchedProductUrl)
+      ? matchedProductUrl
+      : isExplicitProductDetailSource(evidenceUrl)
+        ? evidenceUrl
+        : "";
+    if (!candidateSourceUrl || sourceContainsPrimaryBrand(String(item.evidenceTitle || ""), candidateSourceUrl, profile)) return null;
+    const product = profile.products[0];
+    const laneQuery = String(item.searchQuery || productSearchLabel(product)).slice(0, 180);
+    return {
+      domain,
+      companyName: domain,
+      reason: `A structured product search returned an exact first-party detail URL for a possible comparison with “${product.name}”. It remains a private investigation lead until the exact live page passes product, price, region, identity, and semantic verification.`,
+      searchQuery: laneQuery,
+      sourceUrl: new URL("/", websiteUrl).toString(),
+      websiteUrl: new URL("/", websiteUrl).toString(),
+      marketCategory: "",
+      relationship: "adjacent",
+      sharedOfferings: [product.name],
+      evidence: [],
+      mentionCount: 0,
+      inferredProductLeads: [{
+        primaryProductId: product.id,
+        primarySourceUrl: product.sourceUrl,
+        laneQuery,
+        candidateDomain: domain,
+        candidateSourceUrl,
+        admission: "model-structured-cross-language",
+      }],
+      evidenceMethod: "model-summarized",
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function mergeCandidates(candidates: DiscoveryCandidate[]) {
   const merged = new Map<string, DiscoveryCandidate>();
   for (const candidate of candidates) {
@@ -555,23 +602,40 @@ export function mergeCandidates(candidates: DiscoveryCandidate[]) {
     });
   }
   const productCoverage = (candidate: DiscoveryCandidate) => new Set(candidate.matchedPrimaryProductNames || (candidate.matchedPrimaryProductName ? [candidate.matchedPrimaryProductName] : [])).size;
-  const sourceFirstOnly = (candidate: DiscoveryCandidate) => !candidate.observedAdmission
+  const boundedPrivateOnly = (candidate: DiscoveryCandidate) => !candidate.observedAdmission
     && Boolean(candidate.inferredProductLeads?.length)
-    && candidate.inferredProductLeads!.every((lead) => lead.admission === "source-first-cross-language");
-  let sourceFirstCandidates = 0;
+    && candidate.inferredProductLeads!.every((lead) => lead.admission === "source-first-cross-language" || lead.admission === "model-structured-cross-language");
+  let boundedPrivateCandidates = 0;
   return [...merged.values()].sort((left, right) =>
-    Number(Boolean(right.matchedProductUrl)) - Number(Boolean(left.matchedProductUrl))
+    Number(Boolean(right.observedAdmission)) - Number(Boolean(left.observedAdmission))
+      || Number(Boolean(right.matchedProductUrl)) - Number(Boolean(left.matchedProductUrl))
       || productCoverage(right) - productCoverage(left)
       || right.mentionCount - left.mentionCount
       || Number(right.relationship === "direct") - Number(left.relationship === "direct")
       || left.domain.localeCompare(right.domain),
-  ).filter((candidate) => !sourceFirstOnly(candidate) || sourceFirstCandidates++ < MAX_SOURCE_FIRST_CANDIDATES)
+  ).filter((candidate) => !boundedPrivateOnly(candidate) || boundedPrivateCandidates++ < MAX_SOURCE_FIRST_CANDIDATES)
     .slice(0, MAX_CANDIDATES);
 }
 
 export function publicDiscoveryCandidate<T extends DiscoveryCandidate>(candidate: T): T {
+  const privateOnly = !candidate.observedAdmission && Boolean(candidate.inferredProductLeads?.length);
   const published = { ...candidate };
   delete published.inferredProductLeads;
+  if (privateOnly && (candidate as DiscoveryCandidate & { accepted?: boolean }).accepted !== true) {
+    published.companyName = published.domain;
+    published.reason = "A private product lead was investigated but did not pass independent verification.";
+    published.searchQuery = "";
+    published.sourceUrl = published.websiteUrl;
+    published.marketCategory = "";
+    published.relationship = "adjacent";
+    published.sharedOfferings = [];
+    published.evidence = [];
+    published.mentionCount = 0;
+    delete published.matchedPrimaryProductName;
+    delete published.matchedProductUrl;
+    delete published.matchedPrimaryProductNames;
+    delete published.matchedProductUrls;
+  }
   return published;
 }
 
@@ -666,9 +730,15 @@ async function runLane(endpoint: string, apiKey: string, model: string, lane: Se
     }
     const queries = (Array.isArray(parsed.queries) ? parsed.queries : []).map(String).filter(Boolean).slice(0, 8);
     const rawCandidates = Array.isArray(parsed.candidates) ? parsed.candidates : [];
-    const modelCandidates = (lane === "product" ? [] : rawCandidates).flatMap((item) => {
+    let privateStructuredLeads = 0;
+    const modelCandidates = rawCandidates.flatMap((item) => {
       const candidate = sanitizeCandidate(item, business.domain, lane, profile);
-      return candidate ? [candidate] : [];
+      if (candidate) return [candidate];
+      if (lane !== "product" || privateStructuredLeads >= MAX_MODEL_STRUCTURED_LEADS_PER_LANE) return [];
+      const privateLead = structuredProductLeadCandidate(item, business.domain, profile);
+      if (!privateLead) return [];
+      privateStructuredLeads += 1;
+      return [privateLead];
     });
     const inferredCategory = String(parsed.category || business.category).slice(0, 180);
     const recovered = lane === "product" ? candidatesFromSearchEvidence(payload, profile, queries) : entityCandidatesFromSearchEvidence(payload, business, lane, inferredCategory);
@@ -676,7 +746,9 @@ async function runLane(endpoint: string, apiKey: string, model: string, lane: Se
     const rejectedGap = candidates.length
       ? undefined
       : rawCandidates.length
-        ? `${lane} search returned ${rawCandidates.length} structured candidate${rawCandidates.length === 1 ? "" : "s"}, but none survived attributable first-party source validation.`
+        ? lane === "product"
+          ? `${lane} search returned ${rawCandidates.length} structured suggestion${rawCandidates.length === 1 ? "" : "s"}, but none qualified for attributable admission or a bounded private exact-page investigation.`
+          : `${lane} search returned ${rawCandidates.length} structured candidate${rawCandidates.length === 1 ? "" : "s"}, but none survived attributable first-party source validation.`
         : `${lane} search returned no attributable company or exact seller source.`;
     return {
       lane,
