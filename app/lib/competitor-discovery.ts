@@ -138,8 +138,9 @@ function productMatchFromSource(title: string, url: string, products: ProductRec
     const productTokens = normalizedTokens(product.name);
     const shared = matchedProductTokens(sourceTokens, productTokens);
     const coverage = shared.length / Math.max(1, Math.min(productTokens.length, sourceTokens.length));
+    const productCoverage = shared.length / Math.max(1, productTokens.length);
     if (shared.length < 2 || coverage < 0.5) return [];
-    return [{ product, score: shared.length * 10 + coverage }];
+    return [{ product, score: shared.length * 10 + coverage, productCoverage }];
   }).sort((left, right) => right.score - left.score || left.product.name.localeCompare(right.product.name))[0];
 }
 
@@ -162,6 +163,15 @@ function isProductDetailSource(url: string, product: ProductRecord) {
     const shared = matchedProductTokens(pathTokens, productTokens);
     const coverage = shared.length / Math.max(1, productTokens.length);
     return shared.length >= 3 || (shared.length >= 2 && (coverage >= 0.6 || (coverage >= 0.5 && hasPluralPathVariant(pathTokens, productTokens))));
+  } catch {
+    return false;
+  }
+}
+
+function isCrawlableProductLead(url: string) {
+  try {
+    const path = decodeURIComponent(new URL(url).pathname).replace(/\/+$/, "");
+    return Boolean(path && path !== "/" && !PUBLISHER_PATH.test(path));
   } catch {
     return false;
   }
@@ -249,13 +259,17 @@ export function candidatesFromSearchEvidence(payload: Record<string, unknown>, p
     const domain = canonicalDomain(url);
     if (excludedDomain(domain, primaryDomain)) return [];
     const match = productMatchFromSource(source.title, url, profile.products);
-    if (!match || !isProductDetailSource(url, match.product) || sourceContainsPrimaryBrand(source.title, url, profile)) return [];
+    if (!match || !isCrawlableProductLead(url) || sourceContainsPrimaryBrand(source.title, url, profile)) return [];
+    const urlConfirmed = isProductDetailSource(url, match.product);
+    if (!urlConfirmed && match.productCoverage <= 0.5) return [];
     return [{
-      score: match.score,
+      score: match.score + (urlConfirmed ? 100 : 0),
       candidate: {
         domain,
         companyName: domain,
-        reason: `A current product search returned the crawlable page “${(source.title || new URL(url).pathname).slice(0, 180)}”, matching “${match.product.name}”.`,
+        reason: urlConfirmed
+          ? `A current product search returned the crawlable product page “${(source.title || new URL(url).pathname).slice(0, 180)}”, matching “${match.product.name}”.`
+          : `A current product search returned the non-root first-party page “${(source.title || new URL(url).pathname).slice(0, 180)}”; its title matches “${match.product.name}” and the page still requires first-party crawl verification.`,
         searchQuery: (source.query || queries.find((query) => normalizedTokens(query).some((token) => normalizedTokens(match.product.name).includes(token))) || `“${match.product.name}” ${profile.region}`).slice(0, 180),
         sourceUrl: url,
         websiteUrl: new URL("/", url).toString(),
@@ -321,14 +335,18 @@ function sanitizeCandidate(value: unknown, primaryDomain: string, lane: SearchLa
     const matchedProductUrl = cleanSearchUrl(item.matchedProductUrl);
     if (matchedProductUrl && canonicalDomain(matchedProductUrl) !== domain) return null;
     const productMatch = lane === "product" && matchedProductUrl
-      ? productMatchFromSource(`${String(item.evidenceTitle || "")} ${String(item.matchedPrimaryProductName || "")}`, matchedProductUrl, profile.products)
+      ? productMatchFromSource(String(item.evidenceTitle || ""), matchedProductUrl, profile.products)
       : undefined;
-    if (lane === "product" && (!matchedProductUrl || !productMatch || !isProductDetailSource(matchedProductUrl, productMatch.product) || sourceContainsPrimaryBrand(String(item.evidenceTitle || ""), matchedProductUrl, profile))) return null;
+    if (lane === "product" && (!matchedProductUrl || !productMatch || !isCrawlableProductLead(matchedProductUrl) || sourceContainsPrimaryBrand(String(item.evidenceTitle || ""), matchedProductUrl, profile))) return null;
+    const productUrlConfirmed = Boolean(productMatch && isProductDetailSource(matchedProductUrl, productMatch.product));
+    if (lane === "product" && !productUrlConfirmed && (productMatch?.productCoverage || 0) <= 0.5) return null;
     const method: DiscoveryEvidence["method"] = lane === "category" ? "category-search" : lane === "product" ? "product-search" : "entity-search";
     return {
       domain,
       companyName: String(item.companyName || domain).slice(0, 100),
-      reason: String(item.reason || "Appeared in a current same-category market search.").slice(0, 360),
+      reason: String(lane === "product" && productMatch && !productUrlConfirmed
+        ? `A current product search returned a non-root first-party page whose title matches “${productMatch.product.name}”; the page still requires first-party crawl verification.`
+        : item.reason || "Appeared in a current same-category market search.").slice(0, 360),
       searchQuery: String(item.searchQuery || "regional competitor search").slice(0, 180),
       sourceUrl: evidenceUrl,
       websiteUrl,

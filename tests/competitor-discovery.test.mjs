@@ -60,7 +60,7 @@ test("sanitizes, deduplicates, and excludes the primary domain from model candid
     assert.deepEqual(request.tools, [{ type: "web_search" }]);
     assert.equal(request.text.format.type, "json_schema");
     return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "International grocery delivery", region: "United Kingdom", queries: ["international grocery delivery UK"], candidates: [
-      { domain: "https://rival.example/shop", companyName: "Rival", reason: "Sells Halal Lamb Chops 500g", searchQuery: "Halal Lamb Chops 500g UK", sourceUrl: "https://rival.example/products/halal-lamb-chops", matchedPrimaryProductName: "Halal Lamb Chops 500g", matchedProductUrl: "https://rival.example/products/halal-lamb-chops" },
+      { domain: "https://rival.example/shop", companyName: "Rival", reason: "Sells Halal Lamb Chops 500g", searchQuery: "Halal Lamb Chops 500g UK", sourceUrl: "https://rival.example/products/halal-lamb-chops", evidenceTitle: "Halal Lamb Chops 500g", matchedPrimaryProductName: "Halal Lamb Chops 500g", matchedProductUrl: "https://rival.example/products/halal-lamb-chops" },
       { domain: "myjam.us", companyName: "MyJam US", reason: "Same brand storefront", searchQuery: "same", sourceUrl: "https://myjam.us/products/beef-sirloin-steak-halal-500g", matchedPrimaryProductName: "Beef Sirloin Steak Halal 500g", matchedProductUrl: "https://myjam.us/products/beef-sirloin-steak-halal-500g" },
       { domain: "which.co.uk", companyName: "Which?", reason: "Review publisher", searchQuery: "same", websiteUrl: "https://which.co.uk/", evidenceUrl: "https://which.co.uk/reviews/food-and-drink/article/best-grocery-delivery", evidenceTitle: "Best grocery delivery services reviewed" },
       { domain: "rival.example", companyName: "Duplicate", reason: "Duplicate", searchQuery: "same", sourceUrl: "https://rival.example/", matchedPrimaryProductName: "", matchedProductUrl: "https://rival.example/" },
@@ -219,7 +219,7 @@ test("caps ranked candidate investigations to six companies", () => {
   assert.deepEqual(candidates.map((candidate) => candidate.domain), Array.from({ length: 6 }, (_, index) => `rival-${index + 1}.co.uk`));
 });
 
-test("rejects homepages and category pages even when their text repeats a product name", () => {
+test("rejects homepages and ranks URL-confirmed product pages over weaker same-domain leads", () => {
   const payload = {
     output: [{
       type: "web_search_call",
@@ -236,6 +236,46 @@ test("rejects homepages and category pages even when their text repeats a produc
   assert.deepEqual(candidatesFromSearchEvidence(payload, profile).map((candidate) => candidate.matchedProductUrl), [
     "https://grocer.example/products/halal-beef-sirloin-steak-500g",
   ]);
+});
+
+test("admits localized, html, and id-only product leads when the search title strongly matches", () => {
+  const payload = {
+    output: [{
+      type: "web_search_call",
+      action: {
+        query: "beef sirloin steak halal 500g",
+        sources: [
+          { title: "Beef Sirloin Steak Halal 500g | Metzgerei", url: "https://metzgerei.example/produkt/rind-lende-500g" },
+          { title: "Beef Sirloin Steak Halal 500g | Magento Shop", url: "https://magento.example/beef-sirloin-steak-500g.html" },
+          { title: "Beef Sirloin Steak Halal 500g | Local Grocer", url: "https://local.example/goods/81492" },
+        ],
+      },
+    }],
+  };
+
+  const candidates = candidatesFromSearchEvidence(payload, profile);
+  assert.deepEqual(candidates.map((candidate) => candidate.domain), [
+    "local.example",
+    "magento.example",
+    "metzgerei.example",
+  ]);
+  assert.ok(candidates.every((candidate) => /requires first-party crawl verification/.test(candidate.reason)));
+});
+
+test("keeps publisher paths and weak titles outside the broader admission path", () => {
+  const payload = {
+    output: [{
+      type: "web_search_call",
+      action: {
+        sources: [
+          { title: "Beef Sirloin Steak Halal 500g review", url: "https://publisher.example/reviews/beef-steak" },
+          { title: "Premium meat selection", url: "https://grocer.example/goods/81492" },
+        ],
+      },
+    }],
+  };
+
+  assert.deepEqual(candidatesFromSearchEvidence(payload, profile), []);
 });
 
 test("accepts a pluralized product path for the same Wearform product family", () => {
