@@ -146,6 +146,36 @@ test("embedding retrieval gives a cross-language pair to the structured judge", 
   assert.equal(calls.find((call) => call.url.endsWith("/responses"))?.body.max_output_tokens, 6_000);
 });
 
+test("a validated exact-pair pin survives primary and rival catalog limits", async () => {
+  const strongestPrimary = product("p-strong", "shop.test", "Popular Coffee Beans 1kg", { price: { raw: "GBP 12", currency: "GBP", amount: 12 } });
+  const pinnedPrimary = product("p-ar", "shop.test", "عسل الريشي 500 غرام");
+  const strongestRival = product("r-strong", "rival.test", "Popular Coffee Beans 1kg", { price: { raw: "GBP 10", currency: "GBP", amount: 10 } });
+  const pinnedRival = product("r-en", "rival.test", "Organic Reishi Honey 500g", { price: { raw: "GBP 8", currency: "GBP", amount: 8 } });
+  const judged = [];
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [0, 0] })) });
+    const request = JSON.parse(body.input[1].content);
+    judged.push(...request.groups);
+    return response({ output_text: JSON.stringify({ assessments: request.groups.flatMap((group) => group.candidates.map((candidate) => ({ primaryId: group.primary.id, candidateId: candidate.id, verdict: "close_substitute", confidence: 0.9, reason: "Same customer product family.", contradiction: "" }))) }) });
+  };
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [strongestPrimary, pinnedPrimary] },
+    { domain: "rival.test", products: [strongestRival, pinnedRival] },
+  ], {}, {
+    apiKey: "test",
+    fetch,
+    maxPrimaryProducts: 1,
+    maxProductsPerCompetitor: 1,
+    maxCandidatesPerPrimary: 1,
+    pinnedPairs: [{ primaryId: pinnedPrimary.id, rivalDomain: "rival.test", rivalId: pinnedRival.id }],
+  });
+  assert.deepEqual(judged.map((group) => group.primary.id), [pinnedPrimary.id]);
+  assert.deepEqual(judged[0].candidates.map((candidate) => candidate.id), [pinnedRival.id]);
+  assert.equal(comparison.rows[0].primary.id, pinnedPrimary.id);
+  assert.equal(comparison.rows[0].matches[0].product?.id, pinnedRival.id);
+});
+
 test("bilingual quantity retrieval reaches the judge when embeddings are unavailable", async () => {
   const quantity = { kind: "mass", amount: 500, unit: "g" };
   const identifiers = { gtins: [], brand: "Sidr House" };

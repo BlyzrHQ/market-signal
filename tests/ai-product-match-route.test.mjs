@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createMatchHandler, parseCatalogs, productAnalysisBudgetMs, productAnalysisLimit } from "../app/api/match/route.ts";
+import { createMatchHandler, parseCatalogs, parsePinnedPairs, productAnalysisBudgetMs, productAnalysisLimit } from "../app/api/match/route.ts";
 
 test("AI matching input keeps a broad but bounded first-party catalog", () => {
   const products = Array.from({ length: 605 }, (_, index) => ({
@@ -54,6 +54,21 @@ test("product analysis limits are server-controlled, clamped, and receive scaled
   assert.equal(productAnalysisBudgetMs(60), 45_000);
   assert.equal(productAnalysisBudgetMs(500), 360_000);
   assert.equal(productAnalysisBudgetMs(1_000), 720_000);
+});
+
+test("pinned pairs are bounded, deduplicated, and must reference submitted catalog records", () => {
+  const catalogs = parseCatalogs([
+    { domain: "shop.test", products: [{ id: "p1", name: "Honey", sourceUrl: "https://shop.test/products/honey" }] },
+    { domain: "rival.test", products: [{ id: "r1", name: "Honey", sourceUrl: "https://rival.test/products/honey" }] },
+  ], "shop.test");
+  const pins = parsePinnedPairs([
+    { primaryId: "p1", rivalDomain: "rival.test", rivalId: "r1" },
+    { primaryId: "p1", rivalDomain: "rival.test", rivalId: "r1" },
+    { primaryId: "missing", rivalDomain: "rival.test", rivalId: "r1" },
+    { primaryId: "p1", rivalDomain: "shop.test", rivalId: "p1" },
+    { primaryId: "p1", rivalDomain: "evil.test", rivalId: "r1" },
+  ], catalogs, "shop.test");
+  assert.deepEqual(pins, [{ primaryId: "p1", rivalDomain: "rival.test", rivalId: "r1" }]);
 });
 
 test("authenticated matching binds durable judge checkpoints to the active report attempt", async () => {

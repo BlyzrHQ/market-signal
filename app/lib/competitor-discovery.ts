@@ -10,6 +10,15 @@ export type DiscoveryEvidence = {
 
 export type DiscoveryProvenance = "discovered-this-run" | "remembered-reverified";
 
+export type InferredProductLead = {
+  primaryProductId: string;
+  primarySourceUrl: string;
+  laneQuery: string;
+  candidateDomain: string;
+  candidateSourceUrl: string;
+  admission: "inferred-cross-language";
+};
+
 export type DiscoveryCandidate = {
   domain: string;
   companyName: string;
@@ -26,6 +35,7 @@ export type DiscoveryCandidate = {
   matchedProductUrl?: string;
   matchedPrimaryProductNames?: string[];
   matchedProductUrls?: string[];
+  inferredProductLeads?: InferredProductLead[];
   evidenceMethod?: "model-summarized" | "search-source";
   provenance?: DiscoveryProvenance;
   rememberedVerifiedAt?: string;
@@ -48,7 +58,7 @@ export type DiscoveryResult = {
 };
 
 type SearchLane = "entity" | "category" | "product";
-type SearchSource = { url: string; title: string; query: string };
+type SearchSource = { url: string; title: string; query: string; queryCount: number };
 type LaneResult = { lane: SearchLane; category: string; region: string; queries: string[]; candidates: DiscoveryCandidate[]; gap?: string };
 
 const MAX_CANDIDATES = 6;
@@ -194,6 +204,39 @@ function isCrawlableProductLead(url: string) {
   }
 }
 
+function isExplicitProductDetailSource(url: string) {
+  try {
+    const path = decodeURIComponent(new URL(url).pathname).replace(/\/+$/, "");
+    if (!path || path === "/" || PUBLISHER_PATH.test(path) || !isCrawlableProductLead(url)) return false;
+    return /\/(?:items?|p|products?|produits?|productos?|produtos?|produkte?|prodotti?|shop|store|منتج|منتجات)\/[^/]+/iu.test(`${path}/`)
+      || /\/[^/]+\.(?:html?|aspx?)$/i.test(path);
+  } catch {
+    return false;
+  }
+}
+
+function inferredLeadFromSource(source: SearchSource, url: string, profile: DiscoveryProfile) {
+  if (profile.products.length !== 1 || source.queryCount !== 1 || !source.query || !isExplicitProductDetailSource(url)) return undefined;
+  const product = profile.products[0];
+  const queryTokens = normalizedTokens(source.query);
+  const sourceTokens = normalizedTokens(`${source.title} ${decodeURIComponent(new URL(url).pathname)}`);
+  const shared = matchedProductTokens(sourceTokens, queryTokens);
+  const coverage = shared.length / Math.max(1, Math.min(queryTokens.length, sourceTokens.length));
+  if (shared.length < 2 || coverage < 0.5) return undefined;
+  return {
+    product,
+    score: shared.length * 10 + coverage,
+    lead: {
+      primaryProductId: product.id,
+      primarySourceUrl: product.sourceUrl,
+      laneQuery: source.query.slice(0, 180),
+      candidateDomain: canonicalDomain(url),
+      candidateSourceUrl: url,
+      admission: "inferred-cross-language" as const,
+    },
+  };
+}
+
 export function productSearchAnchors(products: ProductRecord[], maxSearches = MAX_PRODUCT_SEARCHES, brandName = "") {
   const limit = Math.max(0, Math.min(6, Math.floor(maxSearches)));
   if (!limit) return [];
@@ -241,11 +284,12 @@ function searchSources(payload: Record<string, unknown>): SearchSource[] {
     const record = item as Record<string, unknown>;
     if (record.type === "web_search_call" && record.action && typeof record.action === "object") {
       const action = record.action as Record<string, unknown>;
-      const query = typeof action.query === "string" ? action.query : Array.isArray(action.queries) ? action.queries.map(String).join("; ") : "";
+      const actionQueries = typeof action.query === "string" ? [action.query] : Array.isArray(action.queries) ? action.queries.map(String).filter(Boolean) : [];
+      const query = actionQueries.join("; ");
       for (const source of Array.isArray(action.sources) ? action.sources : []) {
         if (!source || typeof source !== "object") continue;
         const value = source as Record<string, unknown>;
-        found.push({ url: String(value.url || ""), title: String(value.title || ""), query });
+        found.push({ url: String(value.url || ""), title: String(value.title || ""), query, queryCount: actionQueries.length });
       }
     }
     if (record.type !== "message") continue;
@@ -254,7 +298,7 @@ function searchSources(payload: Record<string, unknown>): SearchSource[] {
       for (const annotation of Array.isArray((part as Record<string, unknown>).annotations) ? (part as { annotations: unknown[] }).annotations : []) {
         if (!annotation || typeof annotation !== "object" || (annotation as Record<string, unknown>).type !== "url_citation") continue;
         const value = annotation as Record<string, unknown>;
-        found.push({ url: String(value.url || ""), title: String(value.title || ""), query: "" });
+        found.push({ url: String(value.url || ""), title: String(value.title || ""), query: "", queryCount: 0 });
       }
     }
   }
@@ -276,29 +320,34 @@ export function candidatesFromSearchEvidence(payload: Record<string, unknown>, p
     const domain = canonicalDomain(url);
     if (excludedDomain(domain, primaryDomain)) return [];
     const match = productMatchFromSource(source.title, url, profile.products);
-    if (!match || !isCrawlableProductLead(url) || sourceContainsPrimaryBrand(source.title, url, profile)) return [];
-    const urlConfirmed = isProductDetailSource(url, match.product);
-    if (!urlConfirmed && match.productCoverage <= 0.5) return [];
+    const inferred = match ? undefined : inferredLeadFromSource(source, url, profile);
+    const boundProduct = match?.product || inferred?.product;
+    if (!boundProduct || !isCrawlableProductLead(url) || sourceContainsPrimaryBrand(source.title, url, profile)) return [];
+    const urlConfirmed = Boolean(match && isProductDetailSource(url, match.product));
+    if (match && !urlConfirmed && match.productCoverage <= 0.5) return [];
     return [{
-      score: match.score + (urlConfirmed ? 100 : 0),
+      score: (match?.score || inferred?.score || 0) + (urlConfirmed || inferred ? 100 : 0),
       candidate: {
         domain,
         companyName: domain,
-        reason: urlConfirmed
-          ? `A current product search returned the crawlable product page “${(source.title || new URL(url).pathname).slice(0, 180)}”, matching “${match.product.name}”.`
-          : `A current product search returned the non-root first-party page “${(source.title || new URL(url).pathname).slice(0, 180)}”; its title matches “${match.product.name}” and the page still requires first-party crawl verification.`,
-        searchQuery: (source.query || queries.find((query) => normalizedTokens(query).some((token) => normalizedTokens(match.product.name).includes(token))) || `“${match.product.name}” ${profile.region}`).slice(0, 180),
+        reason: inferred
+          ? `An inferred cross-language query for “${boundProduct.name}” returned a first-party product-detail lead; it is not a verified competitor until the exact page and pair pass crawl, price, identity, region, and semantic checks.`
+          : urlConfirmed
+            ? `A current product search returned the crawlable product page “${(source.title || new URL(url).pathname).slice(0, 180)}”, matching “${boundProduct.name}”.`
+            : `A current product search returned the non-root first-party page “${(source.title || new URL(url).pathname).slice(0, 180)}”; its title matches “${boundProduct.name}” and the page still requires first-party crawl verification.`,
+        searchQuery: (source.query || queries.find((query) => normalizedTokens(query).some((token) => normalizedTokens(boundProduct.name).includes(token))) || `“${boundProduct.name}” ${profile.region}`).slice(0, 180),
         sourceUrl: url,
         websiteUrl: new URL("/", url).toString(),
         marketCategory: "",
         relationship: "adjacent" as const,
-        sharedOfferings: [match.product.name],
+        sharedOfferings: [boundProduct.name],
         evidence: [{ url, title: source.title || domain, method: "product-search" as const }],
         mentionCount: 1,
-        matchedPrimaryProductName: match.product.name,
+        matchedPrimaryProductName: boundProduct.name,
         matchedProductUrl: url,
-        matchedPrimaryProductNames: [match.product.name],
+        matchedPrimaryProductNames: [boundProduct.name],
         matchedProductUrls: [url],
+        ...(inferred ? { inferredProductLeads: [inferred.lead] } : {}),
         evidenceMethod: "search-source" as const,
       },
     }];
@@ -392,6 +441,13 @@ function mergeCandidates(candidates: DiscoveryCandidate[]) {
       continue;
     }
     const evidence = [...current.evidence, ...candidate.evidence].filter((item, index, all) => all.findIndex((other) => other.url === item.url) === index);
+    const inferredProductLeads = [...(current.inferredProductLeads || []), ...(candidate.inferredProductLeads || [])]
+      .filter((lead, index, all) => all.findIndex((other) => other.primaryProductId === lead.primaryProductId
+        && other.primarySourceUrl === lead.primarySourceUrl
+        && other.laneQuery === lead.laneQuery
+        && other.candidateDomain === lead.candidateDomain
+        && other.candidateSourceUrl === lead.candidateSourceUrl) === index)
+      .slice(0, MAX_PRODUCT_SEARCHES);
     merged.set(candidate.domain, {
       ...current,
       companyName: current.companyName === current.domain ? candidate.companyName : current.companyName,
@@ -405,6 +461,7 @@ function mergeCandidates(candidates: DiscoveryCandidate[]) {
       matchedProductUrl: current.matchedProductUrl || candidate.matchedProductUrl,
       matchedPrimaryProductNames: [...new Set([...(current.matchedPrimaryProductNames || (current.matchedPrimaryProductName ? [current.matchedPrimaryProductName] : [])), ...(candidate.matchedPrimaryProductNames || (candidate.matchedPrimaryProductName ? [candidate.matchedPrimaryProductName] : []))])].slice(0, MAX_PRODUCT_SEARCHES),
       matchedProductUrls: [...new Set([...(current.matchedProductUrls || (current.matchedProductUrl ? [current.matchedProductUrl] : [])), ...(candidate.matchedProductUrls || (candidate.matchedProductUrl ? [candidate.matchedProductUrl] : []))])].slice(0, MAX_PRODUCT_SEARCHES),
+      ...(inferredProductLeads.length ? { inferredProductLeads } : {}),
     });
   }
   const productCoverage = (candidate: DiscoveryCandidate) => new Set(candidate.matchedPrimaryProductNames || (candidate.matchedPrimaryProductName ? [candidate.matchedPrimaryProductName] : [])).size;

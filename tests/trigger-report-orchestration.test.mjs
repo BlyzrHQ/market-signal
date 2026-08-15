@@ -191,6 +191,18 @@ test("successful orchestration persists ordered heartbeats and a complete docume
   assert.deepEqual(compaction.factCounts, { companies: 1, products: 1, matches: 0, ads: 0 });
 });
 
+test("orchestration forwards crawl-validated exact product pins to every match attempt", async () => {
+  const pin = { primaryId: "p1", rivalDomain: "rival.example", rivalId: "r1" };
+  const seen = [];
+  const base = mockPort();
+  const port = mockPort({
+    async crawl() { return { ...await base.crawl(), matchHints: [pin] }; },
+    async match(input) { seen.push(input.pinnedPairs); return { ok: true, comparison: comparison() }; },
+  });
+  await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port, () => new Date("2026-07-20T10:00:00.000Z"));
+  assert.deepEqual(seen, [[pin]]);
+});
+
 test("non-terminal orchestration preflights before its first mutation", async () => {
   const order = [];
   const port = mockPort({

@@ -1,4 +1,4 @@
-import { buildAIProductComparison, type JudgeBatchCheckpoint, type JudgeBatchCheckpointKey } from "../../lib/ai-product-matching.ts";
+import { buildAIProductComparison, type JudgeBatchCheckpoint, type JudgeBatchCheckpointKey, type PinnedProductPair } from "../../lib/ai-product-matching.ts";
 import { canonicalDomain, normalizeDomain } from "../../lib/domain.ts";
 import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../lib/internal-auth.ts";
 import type { ProductRecord } from "../../lib/product-intelligence.ts";
@@ -112,6 +112,21 @@ export function productAnalysisBudgetMs(limit: number) {
   return limit <= 60 ? 45_000 : limit <= 500 ? 360_000 : 720_000;
 }
 
+export function parsePinnedPairs(value: unknown, catalogs: Array<{ domain: string; products: ProductRecord[] }>, primaryDomain: string): PinnedProductPair[] {
+  if (!Array.isArray(value)) return [];
+  const primaryIds = new Set(catalogs.find((catalog) => canonicalDomain(catalog.domain) === canonicalDomain(primaryDomain))?.products.map((product) => product.id) || []);
+  const rivalIds = new Map(catalogs.filter((catalog) => canonicalDomain(catalog.domain) !== canonicalDomain(primaryDomain)).map((catalog) => [canonicalDomain(catalog.domain), new Set(catalog.products.map((product) => product.id))]));
+  return value.slice(0, 12).flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const item = entry as Record<string, unknown>;
+    const primaryId = text(item.primaryId, 300);
+    const rivalDomain = canonicalDomain(text(item.rivalDomain, 300));
+    const rivalId = text(item.rivalId, 300);
+    if (!primaryIds.has(primaryId) || !rivalDomain || !rivalIds.get(rivalDomain)?.has(rivalId)) return [];
+    return [{ primaryId, rivalDomain, rivalId }];
+  }).filter((pair, index, all) => all.findIndex((other) => other.primaryId === pair.primaryId && other.rivalDomain === pair.rivalDomain && other.rivalId === pair.rivalId) === index);
+}
+
 type MatchServices = {
   build: typeof buildAIProductComparison;
   loadCheckpoints: typeof loadReportMatchBatchCheckpoints;
@@ -130,11 +145,12 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
   return async function matchHandler(request: Request) {
     if (!await hasValidInternalAuthorization(request.headers.get("authorization"), expectedToken)) return unauthorizedInternalResponse();
     try {
-      const body = await request.json() as { publicId?: unknown; reportAttempt?: unknown; primaryDomain?: unknown; productLimit?: unknown; catalogs?: unknown };
+      const body = await request.json() as { publicId?: unknown; reportAttempt?: unknown; primaryDomain?: unknown; productLimit?: unknown; catalogs?: unknown; pinnedPairs?: unknown };
       const publicId = text(body.publicId, 32);
       const reportAttempt = Number(body.reportAttempt);
       const primaryDomain = canonicalDomain(text(body.primaryDomain, 300));
       const catalogs = parseCatalogs(body.catalogs, primaryDomain);
+      const pinnedPairs = parsePinnedPairs(body.pinnedPairs, catalogs, primaryDomain);
       const hasReportAttempt = Boolean(publicId || body.reportAttempt !== undefined);
       if (hasReportAttempt && (!/^[a-f0-9]{32}$/.test(publicId) || !Number.isInteger(reportAttempt) || reportAttempt < 1)) return Response.json({ ok: false, error: "A complete active report attempt is required for checkpointed matching." }, { status: 400 });
       if (!primaryDomain || !catalogs.some((catalog) => catalog.domain === primaryDomain && catalog.products.length)) return Response.json({ ok: false, error: "A crawled primary product catalog is required." }, { status: 400 });
@@ -159,6 +175,7 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
       const comparison = await services.build(primaryDomain, catalogs, {
         maxPrimaryProducts,
         totalBudgetMs: productAnalysisBudgetMs(maxPrimaryProducts),
+        pinnedPairs,
         ...checkpointOptions,
       });
       return Response.json({ ok: true, comparison });

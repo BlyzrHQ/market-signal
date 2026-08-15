@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { rememberedReverificationFailures, resolvePrimaryDiscoveryPolicy, verifyDiscoveredCompetitor } from "../app/api/crawl/route.ts";
+import { rememberedReverificationFailures, resolvePrimaryDiscoveryPolicy, verifyDiscoveredCompetitor, verifyInferredProductLead } from "../app/api/crawl/route.ts";
 import { resolveVerificationMarket } from "../app/lib/competitor-verification.ts";
 
 function product(domain, name) {
@@ -48,12 +48,13 @@ function page(domain) {
 }
 
 function crawl(domain, products) {
-  const homepage = page(domain);
+  const homepage = { ...page(domain), products: [] };
+  const productPages = products.map((item) => ({ ...homepage, path: new URL(item.sourceUrl).pathname, sourceUrl: item.sourceUrl, products: [item] }));
   return {
     domain,
     role: domain === "myjam.co.uk" ? "primary" : "discovered-competitor",
     homepage,
-    pages: [homepage],
+    pages: [homepage, ...productPages],
     products,
     candidates: [],
     gaps: [],
@@ -108,4 +109,51 @@ test("route policy keeps ecommerce overlap mandatory when discovery is unavailab
   assert.equal(investigated.discovery.hasProductOverlap, false);
   assert.equal(investigated.discovery.accepted, false);
   assert.deepEqual(rememberedReverificationFailures([candidate], [investigated]).map((item) => item.domain), ["rival.example"]);
+});
+
+test("promotes only the exact structured, priced inferred product page after semantic acceptance", async () => {
+  const primaryProduct = { ...product("noororganicfood.com", "عسل الريشي 500 غرام"), id: "primary-ar", sourceUrl: "https://noororganicfood.com/product/reishi-honey" };
+  const rivalProduct = { ...product("health.example", "Organic Reishi Honey 500g"), id: "rival-en", sourceUrl: "https://health.example/products/reishi-honey-500g?ref=search", extraction: "json-ld", ownership: "self-declared-brand", priceSignals: [{ raw: "KWD 8.00", currency: "KWD", amount: 8 }] };
+  const primary = crawl("noororganicfood.com", [primaryProduct]);
+  const rival = crawl("health.example", [rivalProduct, { ...rivalProduct, id: "borrowed", sourceUrl: "https://health.example/products/other" }]);
+  const discovery = { ...rememberedCandidate(), domain: "health.example", inferredProductLeads: [{ primaryProductId: primaryProduct.id, primarySourceUrl: primaryProduct.sourceUrl, laneQuery: "reishi honey 500g kuwait", candidateDomain: "health.example", candidateSourceUrl: "https://health.example/products/reishi-honey-500g", admission: "inferred-cross-language" }] };
+  let calls = 0;
+  let judgeOptions;
+  const accepted = await verifyInferredProductLead(primary, rival, discovery, async (_domain, _catalogs, options) => {
+    calls += 1;
+    judgeOptions = options;
+    return { rows: [{ primary: primaryProduct, matches: [{ domain: "health.example", product: rivalProduct, confidence: "Medium", assessment: { verdict: "close_substitute", confidence: 0.91, contradictions: [] } }] }] };
+  });
+  assert.equal(calls, 1);
+  assert.deepEqual(judgeOptions.pinnedPairs, [{ primaryId: primaryProduct.id, rivalDomain: "health.example", rivalId: rivalProduct.id }]);
+  assert.equal(accepted?.primary.id, primaryProduct.id);
+  assert.equal(accepted?.rival.id, rivalProduct.id);
+
+  const unpriced = crawl("health.example", [{ ...rivalProduct, priceSignals: [] }]);
+  const rejected = await verifyInferredProductLead(primary, unpriced, discovery, async () => { throw new Error("judge must not run"); });
+  assert.equal(rejected, undefined);
+});
+
+test("rejects inferred leads when the exact page is absent or the one-pair judge declines", async () => {
+  const primaryProduct = { ...product("noororganicfood.com", "عسل الريشي 500 غرام"), id: "primary-ar", sourceUrl: "https://noororganicfood.com/product/reishi-honey" };
+  const rivalProduct = { ...product("health.example", "Organic Reishi Honey 500g"), id: "rival-en", sourceUrl: "https://health.example/products/other", extraction: "json-ld", priceSignals: [{ raw: "KWD 8", currency: "KWD", amount: 8 }] };
+  const discovery = { ...rememberedCandidate(), domain: "health.example", inferredProductLeads: [{ primaryProductId: primaryProduct.id, primarySourceUrl: primaryProduct.sourceUrl, laneQuery: "reishi honey 500g", candidateDomain: "health.example", candidateSourceUrl: "https://health.example/products/reishi-honey-500g", admission: "inferred-cross-language" }] };
+  assert.equal(await verifyInferredProductLead(crawl("noororganicfood.com", [primaryProduct]), crawl("health.example", [rivalProduct]), discovery, async () => { throw new Error("judge must not run"); }), undefined);
+  const exact = { ...rivalProduct, sourceUrl: "https://health.example/products/reishi-honey-500g" };
+  assert.equal(await verifyInferredProductLead(crawl("noororganicfood.com", [primaryProduct]), crawl("health.example", [exact]), discovery, async () => ({ rows: [{ primary: primaryProduct, matches: [{ domain: "health.example", product: exact, confidence: "Medium", assessment: { verdict: "no_match", confidence: 0.99, contradictions: [] } }] }] })), undefined);
+  for (const assessment of [
+    { verdict: "close_substitute", confidence: 0.79, contradictions: [] },
+    { verdict: "same_product", confidence: 0.99, contradictions: ["Observed quantity conflicts."] },
+  ]) assert.equal(await verifyInferredProductLead(crawl("noororganicfood.com", [primaryProduct]), crawl("health.example", [exact]), discovery, async () => ({ rows: [{ primary: primaryProduct, matches: [{ domain: "health.example", product: exact, confidence: "Medium", assessment }] }] })), undefined);
+});
+
+test("rejects a listing response that exposes several priced product identities at the seeded URL", async () => {
+  const primaryProduct = { ...product("noororganicfood.com", "عسل الريشي 500 غرام"), id: "primary-ar", sourceUrl: "https://noororganicfood.com/product/reishi-honey" };
+  const sourceUrl = "https://health.example/shop/reishi-honey";
+  const first = { ...product("health.example", "Organic Reishi Honey 500g"), id: "r1", sourceUrl, extraction: "json-ld", priceSignals: [{ raw: "KWD 8", currency: "KWD", amount: 8 }] };
+  const second = { ...product("health.example", "Organic Lion Mane Honey 500g"), id: "r2", sourceUrl, extraction: "json-ld", priceSignals: [{ raw: "KWD 9", currency: "KWD", amount: 9 }] };
+  const candidate = crawl("health.example", [first]);
+  candidate.pages = [{ ...candidate.pages[0], path: "/shop/reishi-honey", sourceUrl, products: [first, second] }];
+  const discovery = { ...rememberedCandidate(), domain: "health.example", inferredProductLeads: [{ primaryProductId: primaryProduct.id, primarySourceUrl: primaryProduct.sourceUrl, laneQuery: "reishi honey 500g", candidateDomain: "health.example", candidateSourceUrl: sourceUrl, admission: "inferred-cross-language" }] };
+  assert.equal(await verifyInferredProductLead(crawl("noororganicfood.com", [primaryProduct]), candidate, discovery, async () => { throw new Error("judge must not run"); }), undefined);
 });

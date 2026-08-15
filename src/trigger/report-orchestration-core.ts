@@ -28,6 +28,7 @@ import {
 import { buildReportFactBundle } from "../shared/report-facts.ts";
 import { compactTerminalReportDocument } from "../shared/report-document-compaction.ts";
 import type { ReportFactChunkInput, ReportFactManifestInput } from "../../app/lib/report-store.ts";
+import type { PinnedProductPair } from "../../app/lib/ai-product-matching.ts";
 
 export const MAX_OPERATION_TIMEOUT_MS = 13 * 60 * 1000;
 export const FINAL_ENRICHMENT_BATCH_SIZE = 64;
@@ -45,7 +46,7 @@ type StoredReport = {
 type JsonBlock = { type: string; id: string } & Record<string, unknown>;
 type JsonDocument = { blocks: JsonBlock[] } & Record<string, unknown>;
 type CrawlResult = { domain: string; homepage?: unknown; products: ProductRecord[]; role?: string; discovery?: { verificationScore?: number } };
-type CrawlSuccess = { ok: true; primaryDomain: string; results: CrawlResult[]; adRequest: unknown; document: JsonDocument };
+type CrawlSuccess = { ok: true; primaryDomain: string; results: CrawlResult[]; adRequest: unknown; matchHints?: PinnedProductPair[]; document: JsonDocument };
 type ParkedDomainOutcome = { ok: false; code: "parked-domain"; primaryDomain: string; error: string; document: JsonDocument };
 type UnavailableDomainOutcome = { ok: false; code: "unavailable-domain"; primaryDomain: string; error: string; document: JsonDocument };
 type CrawlOutcome = CrawlSuccess | ParkedDomainOutcome | UnavailableDomainOutcome;
@@ -59,7 +60,7 @@ export interface ReportOrchestrationPort {
   crawl(input: { primary: string; domains: string[] }): Promise<CrawlOutcome>;
   brief(input: { primary: string; domains: string[] }): Promise<unknown>;
   ads(input: unknown): Promise<{ ok: true; block: JsonBlock }>;
-  match(input: { publicId: string; reportAttempt: number; primaryDomain: string; productLimit: number; catalogs: Array<{ domain: string; products: ProductRecord[] }> }): Promise<{ ok: true; comparison: ProductComparison }>;
+  match(input: { publicId: string; reportAttempt: number; primaryDomain: string; productLimit: number; catalogs: Array<{ domain: string; products: ProductRecord[] }>; pinnedPairs?: PinnedProductPair[] }): Promise<{ ok: true; comparison: ProductComparison }>;
   enrich(input: { targets: unknown[] }): Promise<{ ok: true; products: ProductRecord[]; coverage: NonNullable<ProductComparison["enrichment"]> }>;
   actions(input: { inputs: ProductActionInput[] }): Promise<{ ok: true; result: ProductActionPlanningResult }>;
   persistFactChunk(publicId: string, input: ReportFactChunkInput): Promise<void>;
@@ -232,7 +233,7 @@ export async function orchestrateReport(
     let transportFailed = false;
     try {
       requestCount += 1;
-      const first = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, primaryDomain: crawl.primaryDomain, productLimit: payload.productLimit, catalogs });
+      const first = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, primaryDomain: crawl.primaryDomain, productLimit: payload.productLimit, catalogs, pinnedPairs: crawl.matchHints });
       attempts.push(first.comparison);
     } catch {
       transportFailed = true;
@@ -241,7 +242,7 @@ export async function orchestrateReport(
       try {
         await port.appendEvent(payload.publicId, event("matching-retry-started", "matching", "Resuming only incomplete product judge batches from durable checkpoints."));
         requestCount += 1;
-        const retry = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, primaryDomain: crawl.primaryDomain, productLimit: payload.productLimit, catalogs });
+        const retry = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, primaryDomain: crawl.primaryDomain, productLimit: payload.productLimit, catalogs, pinnedPairs: crawl.matchHints });
         attempts.push(retry.comparison);
       } catch { /* the bounded second application attempt remains a visible gap */ }
     }

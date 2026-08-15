@@ -238,6 +238,40 @@ test("rejects homepages and ranks URL-confirmed product pages over weaker same-d
   ]);
 });
 
+test("keeps a single translated product search result as an atomic inferred lead", () => {
+  const arabicProfile = {
+    ...profile,
+    domain: "noororganicfood.com",
+    title: "نور للأغذية العضوية",
+    products: [product("عسل الريشي 500 غرام", "https://noororganicfood.com/product/reishi-honey-500g")],
+  };
+  const payload = { output: [{ type: "web_search_call", action: {
+    query: "reishi honey 500g kuwait buy",
+    sources: [{ title: "Organic Reishi Honey 500g", url: "https://health.example/products/organic-reishi-honey-500g" }],
+  } }] };
+  const candidates = candidatesFromSearchEvidence(payload, arabicProfile);
+  assert.equal(candidates.length, 1);
+  assert.deepEqual(candidates[0].inferredProductLeads, [{
+    primaryProductId: "عسل الريشي 500 غرام",
+    primarySourceUrl: "https://noororganicfood.com/product/reishi-honey-500g",
+    laneQuery: "reishi honey 500g kuwait buy",
+    candidateDomain: "health.example",
+    candidateSourceUrl: "https://health.example/products/organic-reishi-honey-500g",
+    admission: "inferred-cross-language",
+  }]);
+  assert.deepEqual(candidates[0].sharedOfferings, ["عسل الريشي 500 غرام"]);
+});
+
+test("does not infer a product lead from a multi-query action, citation, or collection page", () => {
+  const arabicProfile = { ...profile, products: [product("عسل الريشي 500 غرام", "https://myjam.co.uk/products/reishi-honey")] };
+  const payload = { output: [
+    { type: "web_search_call", action: { queries: ["reishi honey 500g", "organic honey kuwait"], sources: [{ title: "Reishi Honey 500g", url: "https://health.example/products/reishi-honey-500g" }] } },
+    { type: "web_search_call", action: { query: "reishi honey 500g", sources: [{ title: "Reishi Honey 500g", url: "https://health.example/collections/honey" }] } },
+    { type: "message", content: [{ type: "output_text", text: "", annotations: [{ type: "url_citation", title: "Reishi Honey 500g", url: "https://health.example/products/reishi-honey-500g" }] }] },
+  ] };
+  assert.deepEqual(candidatesFromSearchEvidence(payload, arabicProfile), []);
+});
+
 test("rejects a title-matching collection page on its own domain", () => {
   const payload = { output: [{ type: "web_search_call", action: { sources: [
     { title: "Halal Beef Sirloin Steak 500g", url: "https://collection.example/collections/halal-beef-sirloin-steak-500g" },
