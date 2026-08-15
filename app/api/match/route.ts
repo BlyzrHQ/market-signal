@@ -106,11 +106,23 @@ function requestedPinIds(value: unknown) {
 export function parseCatalogs(value: unknown, primaryDomain = "", requestedPins?: unknown) {
   if (!Array.isArray(value)) return [];
   const pinIds = requestedPinIds(requestedPins);
+  const rawProductIds = new Set<string>();
+  const catalogDomains = new Set<string>();
+  let invalidIdentity = false;
   const catalogs = value.slice(0, MAX_CATALOGS).flatMap((entry) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
     const item = entry as Record<string, unknown>;
     const domain = canonicalDomain(text(item.domain, 300));
     if (!domain || !Array.isArray(item.products) || item.products.length > MAX_SUBMITTED_PRODUCTS_PER_CATALOG) return [];
+    if (catalogDomains.has(domain)) invalidIdentity = true;
+    catalogDomains.add(domain);
+    for (const value of item.products) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const id = text((value as Record<string, unknown>).id, 300);
+      if (!id) continue;
+      if (rawProductIds.has(id)) invalidIdentity = true;
+      rawProductIds.add(id);
+    }
     const catalogLimit = domain === canonicalDomain(primaryDomain) ? MAX_PRIMARY_PRODUCTS : MAX_RIVAL_PRODUCTS;
     const wanted = pinIds.get(domain === canonicalDomain(primaryDomain) ? "$primary" : domain) || new Set<string>();
     const pinned: unknown[] = [];
@@ -132,6 +144,7 @@ export function parseCatalogs(value: unknown, primaryDomain = "", requestedPins?
     });
     return [{ domain, products }];
   });
+  if (invalidIdentity) return [];
   const productIds = new Set<string>();
   for (const catalog of catalogs) for (const item of catalog.products) {
     if (productIds.has(item.id)) return [];
@@ -153,7 +166,7 @@ export function parsePinnedPairs(value: unknown, catalogs: Array<{ domain: strin
   if (!Array.isArray(value)) return [];
   const primaryIds = new Set(catalogs.find((catalog) => canonicalDomain(catalog.domain) === canonicalDomain(primaryDomain))?.products.map((product) => product.id) || []);
   const rivalIds = new Map(catalogs.filter((catalog) => canonicalDomain(catalog.domain) !== canonicalDomain(primaryDomain)).map((catalog) => [canonicalDomain(catalog.domain), new Set(catalog.products.map((product) => product.id))]));
-  return value.slice(0, 12).flatMap((entry) => {
+  const pairs = value.slice(0, 12).flatMap((entry) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
     const item = entry as Record<string, unknown>;
     const primaryId = text(item.primaryId, 300);
@@ -162,6 +175,16 @@ export function parsePinnedPairs(value: unknown, catalogs: Array<{ domain: strin
     if (!primaryIds.has(primaryId) || !rivalDomain || !rivalIds.get(rivalDomain)?.has(rivalId)) return [];
     return [{ primaryId, rivalDomain, rivalId }];
   }).filter((pair, index, all) => all.findIndex((other) => other.primaryId === pair.primaryId && other.rivalDomain === pair.rivalDomain && other.rivalId === pair.rivalId) === index);
+  const primaryAssignments = new Set<string>();
+  const rivalAssignments = new Set<string>();
+  for (const pair of pairs) {
+    const primaryKey = `${pair.primaryId}|${pair.rivalDomain}`;
+    const rivalKey = `${pair.rivalDomain}|${pair.rivalId}`;
+    if (primaryAssignments.has(primaryKey) || rivalAssignments.has(rivalKey)) return [];
+    primaryAssignments.add(primaryKey);
+    rivalAssignments.add(rivalKey);
+  }
+  return pairs;
 }
 
 type MatchServices = {
@@ -188,6 +211,7 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
       const primaryDomain = canonicalDomain(text(body.primaryDomain, 300));
       const catalogs = parseCatalogs(body.catalogs, primaryDomain, body.pinnedPairs);
       const pinnedPairs = parsePinnedPairs(body.pinnedPairs, catalogs, primaryDomain);
+      if (Array.isArray(body.pinnedPairs) && body.pinnedPairs.length && !pinnedPairs.length) return Response.json({ ok: false, error: "Pinned product pairs must reference unique catalog records and form one-to-one assignments." }, { status: 400 });
       const hasReportAttempt = Boolean(publicId || body.reportAttempt !== undefined);
       if (hasReportAttempt && (!/^[a-f0-9]{32}$/.test(publicId) || !Number.isInteger(reportAttempt) || reportAttempt < 1)) return Response.json({ ok: false, error: "A complete active report attempt is required for checkpointed matching." }, { status: 400 });
       if (!primaryDomain || !catalogs.some((catalog) => catalog.domain === primaryDomain && catalog.products.length)) return Response.json({ ok: false, error: "A crawled primary product catalog is required." }, { status: 400 });

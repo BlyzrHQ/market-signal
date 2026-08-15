@@ -207,10 +207,14 @@ function isCrawlableProductLead(url: string) {
 
 function isListingRoute(url: string) {
   try {
-    const segments = decodeURIComponent(new URL(url).pathname).split("/").filter(Boolean);
-    const listing = /^(?:search|results?|listing|list|product[-_]?list|browse|catalog|collections?|categories?|tags?|recherche|chercher|buscar|b[uú]squeda|suche|suchen|ricerca|cerca|zoeken|zoek|liste|lista|todos|alle|all|全部|所有|الكل|بحث|البحث|検索)(?:[-_].*)?(?:\.(?:html?|aspx?))?$/iu;
+    const parsed = new URL(url);
+    if ([...parsed.searchParams.keys()].some((key) => /^(?:q|s|search|query|filter|sort|page|pagenumber)$/iu.test(key))) return true;
+    const segments = decodeURIComponent(parsed.pathname).split("/").filter(Boolean);
+    const listing = /^(?:search|results?|listing|list|product[-_]?list|browse|catalog|collections?|categories?|tags?|recherche|chercher|buscar|b[uú]squeda|suche|suchen|ricerca|cerca|zoeken|zoek|liste|lista|todos|todas|todo|tous|toutes|tutti|tutte|alle|all|index|filter|全部|所有|الكل|بحث|البحث|検索)(?:[-_].*)?(?:\.(?:html?|aspx?))?$/iu;
+    const productContainer = /^(?:products?|produits?|productos?|produtos?|produkte?|prodotti?|shop|store|منتج|منتجات|商品)$/iu;
+    const genericTail = /^(?:all|index|filter|liste|lista|todos|todas|todo|tous|toutes|tutti|tutte|alle|全部|所有|الكل)$/iu;
     return segments.some((segment, index) => listing.test(segment)
-      && (index === 0 || /^(?:products?|produits?|productos?|produtos?|produkte?|prodotti?|shop|store)$/iu.test(segments[index - 1]) || !/^(?:all|liste|lista|todos|alle|全部|所有|الكل)$/iu.test(segment)));
+      && (index === 0 || productContainer.test(segments[index - 1]) || !genericTail.test(segment)));
   } catch {
     return true;
   }

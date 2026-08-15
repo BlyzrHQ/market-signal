@@ -96,6 +96,39 @@ test("rejects duplicate caller-controlled product IDs across the submitted catal
   ], "shop.test"), []);
 });
 
+test("rejects duplicate IDs before a requested pin can discard the conflicting record", () => {
+  const catalogs = parseCatalogs([
+    { domain: "shop.test", products: [{ id: "p1", name: "Honey", sourceUrl: "https://shop.test/products/honey" }] },
+    { domain: "rival.test", products: [
+      { id: "r1", name: "Wrong", sourceUrl: "https://rival.test/products/wrong" },
+      { id: "r1", name: "Exact", sourceUrl: "https://rival.test/products/exact" },
+    ] },
+  ], "shop.test", [{ primaryId: "p1", rivalDomain: "rival.test", rivalId: "r1" }]);
+  assert.deepEqual(catalogs, []);
+});
+
+test("rejects duplicate canonical catalog domains", () => {
+  assert.deepEqual(parseCatalogs([
+    { domain: "rival.test", products: [{ id: "r1", name: "Honey", sourceUrl: "https://rival.test/products/honey" }] },
+    { domain: "www.rival.test", products: [{ id: "r2", name: "Oil", sourceUrl: "https://www.rival.test/products/oil" }] },
+  ], "shop.test"), []);
+});
+
+test("rejects conflicting pins instead of silently dropping assignment contention", () => {
+  const catalogs = parseCatalogs([
+    { domain: "shop.test", products: [
+      { id: "p1", name: "Honey", sourceUrl: "https://shop.test/products/honey" },
+      { id: "p2", name: "Oil", sourceUrl: "https://shop.test/products/oil" },
+    ] },
+    { domain: "rival.test", products: [
+      { id: "r1", name: "Honey", sourceUrl: "https://rival.test/products/honey" },
+      { id: "r2", name: "Oil", sourceUrl: "https://rival.test/products/oil" },
+    ] },
+  ], "shop.test");
+  assert.deepEqual(parsePinnedPairs([{ primaryId: "p1", rivalDomain: "rival.test", rivalId: "r1" }, { primaryId: "p1", rivalDomain: "rival.test", rivalId: "r2" }], catalogs, "shop.test"), []);
+  assert.deepEqual(parsePinnedPairs([{ primaryId: "p1", rivalDomain: "rival.test", rivalId: "r1" }, { primaryId: "p2", rivalDomain: "rival.test", rivalId: "r1" }], catalogs, "shop.test"), []);
+});
+
 test("pinned pairs are bounded, deduplicated, and must reference submitted catalog records", () => {
   const catalogs = parseCatalogs([
     { domain: "shop.test", products: [{ id: "p1", name: "Honey", sourceUrl: "https://shop.test/products/honey" }] },

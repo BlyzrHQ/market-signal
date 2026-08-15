@@ -194,7 +194,7 @@ function exactProductPageKey(value: string, expectedDomain: string) {
   try {
     const url = new URL(value);
     if (!/^https?:$/.test(url.protocol) || canonicalDomain(url.hostname) !== canonicalDomain(expectedDomain)) return "";
-    const tracking = /^(?:utm_.+|fbclid|gclid|dclid|msclkid|srsltid|ref|referrer|source|campaign|campaignid)$/i;
+    const tracking = /^(?:utm_.+|fbclid|gclid|dclid|msclkid|srsltid)$/i;
     const identity = [...url.searchParams.entries()]
       .filter(([key]) => !tracking.test(key))
       .sort(([leftKey, leftValue], [rightKey, rightValue]) => leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue));
@@ -272,7 +272,7 @@ export async function verifyInferredProductLead(
     if (!match?.product || match.confidence !== "Medium" || !match.assessment
       || (match.assessment.verdict !== "same_product" && match.assessment.verdict !== "close_substitute")
       || match.assessment.confidence < 0.8 || match.assessment.contradictions.length) continue;
-    return { primary: primaryProduct, rival: rivalProduct, confidence: match.assessment.confidence };
+    return { primary: primaryProduct, rival: rivalProduct, confidence: match.assessment.confidence, lead };
   }
   return undefined;
 }
@@ -283,11 +283,25 @@ export async function verifyDiscoveredCompetitorWithInferredLeads(
   discovery: DiscoveryCandidate,
   targetMarket: VerificationMarket,
   requireProductOverlap = false,
+  judge: ExactPairJudge = buildAIProductComparison,
 ) {
   const verifiedExactProductPair = discovery.inferredProductLeads?.length
-    ? await verifyInferredProductLead(primary, candidate, discovery)
+    ? await verifyInferredProductLead(primary, candidate, discovery, judge)
     : undefined;
-  const verified = verifyDiscoveredCompetitor(primary, candidate, discovery, targetMarket, requireProductOverlap, verifiedExactProductPair);
+  const verificationDiscovery = verifiedExactProductPair ? {
+    ...discovery,
+    reason: `The exact seeded product page exposed a priced first-party Product and the targeted semantic judge verified it against “${verifiedExactProductPair.primary.name}”.`,
+    searchQuery: verifiedExactProductPair.lead.laneQuery,
+    sourceUrl: verifiedExactProductPair.lead.candidateSourceUrl,
+    sharedOfferings: [verifiedExactProductPair.primary.name],
+    evidence: [{ url: verifiedExactProductPair.lead.candidateSourceUrl, title: verifiedExactProductPair.rival.name, method: "product-search" as const }],
+    mentionCount: 1,
+    matchedPrimaryProductName: verifiedExactProductPair.primary.name,
+    matchedProductUrl: verifiedExactProductPair.rival.sourceUrl,
+    matchedPrimaryProductNames: [verifiedExactProductPair.primary.name],
+    matchedProductUrls: [verifiedExactProductPair.rival.sourceUrl],
+  } : discovery;
+  const verified = verifyDiscoveredCompetitor(primary, candidate, verificationDiscovery, targetMarket, requireProductOverlap, verifiedExactProductPair);
   if (discovery.inferredProductLeads?.length && !discovery.observedAdmission && !verifiedExactProductPair) return {
     ...verified,
     discovery: {
