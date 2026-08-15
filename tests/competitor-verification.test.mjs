@@ -57,6 +57,58 @@ test("accepts a company-level rival from its own category evidence without a mat
   assert.equal(result.hasProductOverlap, false);
 });
 
+test("uses observed first-party aliases for cross-language category and product verification", () => {
+  const arabicProduct = {
+    ...product("noor.example", "تين مجفف طبيعي 500 جم", "فواكه مجففة"),
+    aliases: [{ name: "Natural Dried Figs 500g", normalizedName: "natural dried figs 500g", locale: "en", sourceUrl: "https://noor.example/en/products/natural-dried-figs-500g", extraction: "sitemap" }],
+  };
+  const rivalProduct = product("rival.example", "Natural Dried Figs 500g", "dried fruit");
+  const primary = site("noor.example", "نور", "منتجات عضوية", "Not enough public signal", [arabicProduct]);
+  const rival = site("rival.example", "Natural organic foods", "Natural dried fruit shop", "Not enough public signal", [rivalProduct]);
+  const withAlias = verifyCompetitorEntity(primary, rival, discovery({ marketCategory: "natural organic foods", sharedOfferings: ["natural dried figs"] }), undefined, { requireProductOverlap: true });
+  const withoutAlias = verifyCompetitorEntity({ ...primary, products: [{ ...arabicProduct, aliases: [] }] }, rival, discovery({ marketCategory: "natural organic foods", sharedOfferings: ["natural dried figs"] }), undefined, { requireProductOverlap: true });
+
+  assert.equal(withAlias.categoryAlignment, true);
+  assert.equal(withAlias.hasProductOverlap, true);
+  assert.equal(withAlias.accepted, true);
+  assert.equal(withoutAlias.accepted, false);
+});
+
+test("does not align unrelated companies solely because localized catalogs share product words", () => {
+  const primaryProduct = {
+    ...product("software.example", "عنصر مشترك", "برمجيات"),
+    aliases: [{ name: "Natural Dried Figs 500g", normalizedName: "natural dried figs 500g", locale: "en", sourceUrl: "https://software.example/en/products/natural-dried-figs-500g", extraction: "sitemap" }],
+  };
+  const candidateProduct = product("bakery.example", "Natural Dried Figs 500g", "fresh bakery item");
+  const result = verifyCompetitorEntity(
+    site("software.example", "Alpha software consulting", "Enterprise IT services", "Not enough public signal", [primaryProduct]),
+    site("bakery.example", "Beta Bakery", "Fresh bread baked daily", "Not enough public signal", [candidateProduct]),
+    discovery({ domain: "bakery.example", websiteUrl: "https://bakery.example/", marketCategory: "enterprise software consulting", sharedOfferings: ["software services"] }),
+  );
+
+  assert.equal(result.hasProductOverlap, true);
+  assert.equal(result.categoryAlignment, false);
+  assert.equal(result.accepted, false);
+});
+
+test("ties a locale bridge to the matched pair instead of any aliased product on the site", () => {
+  const unrelatedLocalizedProduct = {
+    ...product("software.example", "منتج مختلف", "برمجيات"),
+    aliases: [{ name: "Natural Dried Figs 500g", normalizedName: "natural dried figs 500g", locale: "en", sourceUrl: "https://software.example/en/products/natural-dried-figs-500g", extraction: "sitemap" }],
+  };
+  const primaryPair = product("software.example", "Golden Anchor Device", "software tool");
+  const candidatePair = product("widgets.example", "Golden Anchor Device", "business widget");
+  const result = verifyCompetitorEntity(
+    site("software.example", "Alpha software consulting", "Enterprise IT services", "Not enough public signal", [unrelatedLocalizedProduct, primaryPair]),
+    site("widgets.example", "Premium widgets shop", "Business widget solutions", "Not enough public signal", [candidatePair]),
+    discovery({ domain: "widgets.example", websiteUrl: "https://widgets.example/", marketCategory: "premium widget solutions", sharedOfferings: ["business widgets"] }),
+  );
+
+  assert.equal(result.hasProductOverlap, true);
+  assert.equal(result.categoryAlignment, false);
+  assert.equal(result.accepted, false);
+});
+
 test("requires observed product overlap when product-led ecommerce discovery requests it", () => {
   const result = verifyCompetitorEntity(
     site("myjam.co.uk", "MyJam cultural grocery marketplace", "Halal meat and cultural groceries delivered across the UK", "United Kingdom (inferred)"),

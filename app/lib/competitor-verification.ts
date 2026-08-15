@@ -67,12 +67,21 @@ const GENERIC = new Set([
 ]);
 const ACCESSORY = /\b(?:accessories|accessory|bags?|cases?|chargers?|covers?|holders?|mounts?|parts?|straps?)\b/i;
 
+function observedProductTerms(products: ProductRecord[]) {
+  return products.slice(0, 30).flatMap((product) => [
+    product.name,
+    ...(product.aliases || []).map((alias) => alias.name),
+    product.category,
+    product.description,
+  ]);
+}
+
 function siteTerms(site: VerificationSite) {
   return new Set(profileTerms([
     site.title,
     site.description,
     ...(site.headings || []).slice(0, 12),
-    ...site.products.slice(0, 30).flatMap((product) => [product.name, product.category, product.description]),
+    ...observedProductTerms(site.products),
   ].join(" ")).filter((term) => !GENERIC.has(term)));
 }
 
@@ -102,7 +111,9 @@ export function verifyCompetitorEntity(
   const candidateCore = profileTerms(`${candidate.title} ${candidate.description} ${(candidate.headings || []).slice(0, 8).join(" ")}`).filter((term) => !GENERIC.has(term));
   const coreOverlap = primaryCore.filter((term) => candidateCore.includes(term));
   const accessoryOnly = ACCESSORY.test(`${candidate.title} ${candidate.description}`) && coreOverlap.length < 2;
-  const categoryAlignment = !accessoryOnly && coreOverlap.length >= 2;
+  const matchedPairHasLocaleBridge = Boolean(pair && [pair.left, pair.right].some((product) => (product.aliases || []).some((alias) => alias.locale !== "und" && alias.normalizedName !== product.normalizedName)));
+  const localizedProductBridge = matchedPairHasLocaleBridge && ownSiteDiscoveryOverlap.length >= 2;
+  const categoryAlignment = !accessoryOnly && (coreOverlap.length >= 2 || localizedProductBridge);
 
   const primaryRegion = targetMarket.regionCode;
   const candidateCombinedRegion = regionCode(candidate.region);

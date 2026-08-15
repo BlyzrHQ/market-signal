@@ -83,7 +83,21 @@ function productPrices(value: unknown) {
   }), 8_000);
 }
 
-function productMetadata(value: unknown) {
+function productAliases(value: unknown, productDomain: string) {
+  return (Array.isArray(value) ? value : []).slice(0, 8).flatMap((item) => {
+    const source = record(item);
+    const name = text(source.name, 160);
+    const normalizedName = text(source.normalizedName, 160);
+    const sourceUrl = safeUrl(source.sourceUrl);
+    const extraction = source.extraction === "json-ld" || source.extraction === "sitemap" ? source.extraction : "";
+    let sourceDomain = "";
+    try { sourceDomain = canonicalDomain(new URL(sourceUrl).hostname); } catch { sourceDomain = ""; }
+    if (!name || !normalizedName || !sourceUrl || !extraction || sourceDomain !== productDomain) return [];
+    return [{ name, normalizedName, locale: text(source.locale, 20) || "und", sourceUrl, extraction }];
+  });
+}
+
+function productMetadata(value: unknown, productDomain: string) {
   const source = record(value);
   const identifiers = record(source.identifiers);
   const quantity = record(source.quantity);
@@ -96,6 +110,7 @@ function productMetadata(value: unknown) {
     extraction: text(source.extraction, 80),
     confidence: text(source.confidence, 40),
     claimIds: strings(source.claimIds, 100, 160),
+    aliases: productAliases(source.aliases, productDomain),
     identifiers: { gtins: strings(identifiers.gtins, 20, 32), sku: text(identifiers.sku, 120), mpn: text(identifiers.mpn, 120), brand: text(identifiers.brand, 240) },
     quantity: { kind: text(quantity.kind, 20), amount: finite(quantity.amount), unit: text(quantity.unit, 20) },
   });
@@ -149,7 +164,7 @@ export function canonicalReportFact(kind: ReportFactKind, item: JsonRecord) {
   if (kind === "products") return {
     domain: canonicalDomain(text(item.domain, 253)), productId: text(item.productId, 240), name: text(item.name, 500),
     normalizedName: text(item.normalizedName, 500), sourceUrl: safeUrl(item.sourceUrl, false), imageUrl: safeUrl(item.imageUrl),
-    prices: productPrices(item.prices), metadata: productMetadata(item.metadata), observedAt: observedAt(item.observedAt, ""),
+    prices: productPrices(item.prices), metadata: productMetadata(item.metadata, canonicalDomain(text(item.domain, 253))), observedAt: observedAt(item.observedAt, ""),
   };
   if (kind === "matches") return {
     id: text(item.id, 500), primaryProductId: text(item.primaryProductId, 240), rivalProductId: text(item.rivalProductId, 240),
@@ -231,6 +246,7 @@ function productFact(product: ProductRecord, fallbackObservedAt: string) {
       extraction: product.extraction,
       confidence: product.confidence,
       claimIds: product.claimIds,
+      aliases: product.aliases,
       identifiers: product.identifiers,
       quantity: product.quantity,
     },

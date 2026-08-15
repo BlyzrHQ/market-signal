@@ -238,6 +238,17 @@ test("rejects homepages and ranks URL-confirmed product pages over weaker same-d
   ]);
 });
 
+test("rejects a title-matching collection page on its own domain", () => {
+  const payload = { output: [{ type: "web_search_call", action: { sources: [
+    { title: "Halal Beef Sirloin Steak 500g", url: "https://collection.example/collections/halal-beef-sirloin-steak-500g" },
+    { title: "Halal Beef Sirloin Steak 500g", url: "https://woocommerce.example/product-category/halal-beef-sirloin-steak-500g" },
+    { title: "Halal Beef Sirloin Steak 500g", url: "https://german.example/kategorie/halal-beef-sirloin-steak-500g" },
+    { title: "Halal Beef Sirloin Steak 500g", url: "https://french.example/categorie/halal-beef-sirloin-steak-500g" },
+    { title: "Halal Beef Sirloin Steak 500g", url: "https://arabic.example/تصنيف/halal-beef-sirloin-steak-500g" },
+  ] } }] };
+  assert.deepEqual(candidatesFromSearchEvidence(payload, profile), []);
+});
+
 test("admits localized, html, and id-only product leads when the search title strongly matches", () => {
   const payload = {
     output: [{
@@ -276,6 +287,20 @@ test("keeps publisher paths and weak titles outside the broader admission path",
   };
 
   assert.deepEqual(candidatesFromSearchEvidence(payload, profile), []);
+});
+
+test("uses an observed first-party locale alias to admit a cross-language product lead", () => {
+  const localizedProduct = {
+    ...product("تين مجفف طبيعي 500 جم", "https://noor.example/ar/products/natural-dried-figs-500g"),
+    aliases: [{ name: "Natural Dried Figs 500g", normalizedName: "natural dried figs 500g", locale: "en", sourceUrl: "https://noor.example/en/products/natural-dried-figs-500g", extraction: "sitemap" }],
+  };
+  const localizedProfile = { ...profile, domain: "noor.example", title: "Noor", language: "ar", products: [localizedProduct] };
+  const payload = { output: [{ type: "web_search_call", action: { sources: [{ title: "Natural Dried Figs 500g", url: "https://rival.example/products/natural-dried-figs-500g" }] } }] };
+
+  const candidates = candidatesFromSearchEvidence(payload, localizedProfile);
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].domain, "rival.example");
+  assert.equal(candidates[0].matchedPrimaryProductName, localizedProduct.name);
 });
 
 test("accepts a pluralized product path for the same Wearform product family", () => {
