@@ -1,6 +1,8 @@
 import { canonicalDomain, normalizeDomain } from "./domain.ts";
+import { isPublicHostname } from "./public-url.ts";
 
 type FetchLike = typeof fetch;
+const platformFetch = globalThis.fetch;
 
 export type PublicFetchOptions = {
   expectedDomain?: string;
@@ -28,6 +30,29 @@ function isCloudflareOriginDnsFailure(response: Response, text: string) {
     || (/\berror\s+1016\b/i.test(text) && /\b(?:cloudflare|origin\s+dns\s+error)\b/i.test(text));
 }
 
+const resolutionCache = new Map<string, { public: boolean; expiresAt: number }>();
+
+export async function resolvesToPublicAddress(hostname: string, fetchImpl: FetchLike = fetch, signal?: AbortSignal) {
+  if (!isPublicHostname(hostname)) return false;
+  if (/^[\d.]+$/.test(hostname) || hostname.includes(":")) return true;
+  const cached = resolutionCache.get(hostname);
+  if (cached && cached.expiresAt > Date.now()) return cached.public;
+  try {
+    const answers = await Promise.all([1, 28].map(async (type) => {
+      const response = await fetchImpl(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=${type}`, { signal, headers: { Accept: "application/dns-json" } });
+      if (!response.ok) throw new Error("DNS resolution failed");
+      const payload = await response.json() as { Answer?: Array<{ type?: unknown; data?: unknown }> };
+      return (payload.Answer || []).filter((answer) => answer.type === type && typeof answer.data === "string").map((answer) => answer.data as string);
+    }));
+    const addresses = answers.flat();
+    const isPublic = addresses.length > 0 && addresses.every(isPublicHostname);
+    resolutionCache.set(hostname, { public: isPublic, expiresAt: Date.now() + 300_000 });
+    return isPublic;
+  } catch {
+    return false;
+  }
+}
+
 export async function fetchPublicText(url: string, accept: string, options: PublicFetchOptions) {
   const startedAt = Date.now();
   const controller = new AbortController();
@@ -40,6 +65,7 @@ export async function fetchPublicText(url: string, accept: string, options: Publ
     for (let redirect = 0; redirect <= 3; redirect += 1) {
       const checked = normalizeDomain(currentUrl);
       if (options.expectedDomain && canonicalDomain(checked.hostname) !== canonicalDomain(options.expectedDomain)) throw new Error("redirected off the submitted domain");
+      if (!options.fetchImpl && globalThis.fetch === platformFetch && !await resolvesToPublicAddress(checked.hostname, platformFetch, controller.signal)) throw new Error("hostname did not resolve exclusively to public addresses");
       try {
         response = await fetchImpl(currentUrl, { redirect: "manual", signal: controller.signal, headers: { Accept: accept, "User-Agent": options.userAgent } });
       } catch (error) {

@@ -206,8 +206,10 @@ function isCrawlableProductLead(url: string) {
 function isListingRoute(url: string) {
   try {
     const parsed = new URL(url);
-    if ([...parsed.searchParams.keys()].some((key) => /^(?:q|s|search|query|filter|sort|page|pagenumber)$/iu.test(key))) return true;
+    if ([...parsed.searchParams.keys()].some((key) => /^(?:q|s|search|query|filter|sort|page|pagenumber|pagina|seite|recherche|ricerca|zoeken|pesquisa)$/iu.test(key))) return true;
     const segments = decodeURIComponent(parsed.pathname).split("/").filter(Boolean);
+    const normalizedSegments = segments.map((segment) => segment.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase());
+    if (normalizedSegments.some((segment) => /(?:^|[-_])(?:search|results?|resultados?|busqueda|pesquisa|pesquisar|resultats?|recherche|suchergebnisse|risultati|ricerca|zoekresultaten|catalogo|katalog|pagina|seite)(?:$|[-_])/u.test(segment))) return true;
     if (segments.some((segment) => /^(?:search[-_]?results?|resultados?[-_]?busqueda|r[eé]sultats?[-_]?recherche|suchergebnisse|risultati[-_]?ricerca|zoekresultaten|pesquisa)(?:\.(?:html?|aspx?))?$/iu.test(segment))) return true;
     if (segments.some((segment) => /^(?:page|pages?|pagina|seite|katalog|kategor(?:i|ie|ien|y))$/iu.test(segment))) return true;
     if (segments.some((segment, index) => /^\d+$/.test(segment) && index > 0 && /^(?:page|pages?|pagina|seite)$/iu.test(segments[index - 1]))) return true;
@@ -379,14 +381,14 @@ export function candidatesFromSearchEvidence(payload: Record<string, unknown>, p
   }).slice(0, MAX_CANDIDATES);
 }
 
-function entityCandidatesFromSearchEvidence(payload: Record<string, unknown>, business: BusinessProfile, lane: SearchLane) {
+export function entityCandidatesFromSearchEvidence(payload: Record<string, unknown>, business: BusinessProfile, lane: SearchLane) {
   const primaryDomain = canonicalDomain(business.domain);
   const categoryTerms = new Set(business.categoryTerms);
   return searchSources(payload).flatMap((source) => {
     const url = cleanSearchUrl(source.url);
     if (!url) return [];
     const domain = canonicalDomain(url);
-    if (excludedDomain(domain, primaryDomain) || PUBLISHER_PATH.test(new URL(url).pathname)) return [];
+    if (excludedDomain(domain, primaryDomain) || PUBLISHER_PATH.test(new URL(url).pathname) || isListingRoute(url)) return [];
     const titleTerms = profileTerms(source.title);
     const overlap = titleTerms.filter((term) => categoryTerms.has(term));
     if (overlap.length < 2) return [];

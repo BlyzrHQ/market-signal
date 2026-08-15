@@ -29,7 +29,7 @@ export function isPublicHostname(value: string) {
   if (host.includes(":")) {
     const mapped = mappedIpv4(host);
     if (mapped !== null) return mapped !== "invalid" && publicIpv4(mapped);
-    if (host === "::" || host === "::1" || /^(?:fc|fd|fe[89ab]|ff)/i.test(host) || /^2001:(?:db8|0?10):/i.test(host)) return false;
+    if (host === "::" || host === "::1" || /^(?:fc|fd|fe[89a-f]|ff)/i.test(host) || /^2001:(?:db8|0?10):/i.test(host) || /^64:ff9b:1:/i.test(host)) return false;
     return /^[0-9a-f:]+$/i.test(host);
   }
   return host.includes(".") && /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i.test(host) && !host.includes("..") && host.length <= 253;

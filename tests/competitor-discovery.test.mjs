@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { candidatesFromSearchEvidence, discoverCompetitors, mergeCandidates, productSearchAnchors, sanitizeCandidate } from "../app/lib/competitor-discovery.ts";
+import { candidatesFromSearchEvidence, discoverCompetitors, entityCandidatesFromSearchEvidence, mergeCandidates, productSearchAnchors, sanitizeCandidate } from "../app/lib/competitor-discovery.ts";
 
 function product(name, sourceUrl) {
   return {
@@ -305,6 +305,13 @@ test("model-summarized product candidates cannot bypass the listing-route gate",
   assert.equal(candidate, null);
 });
 
+test("entity and category search sources cannot publish listing routes", () => {
+  const payload = { output: [{ type: "web_search_call", action: { sources: [{ title: "Organic Sidr Honey Grocery", url: "https://rival.example/ar/search?q=organic+honey" }] } }] };
+  const business = { domain: "myjam.co.uk", categoryTerms: ["organic", "grocery"], category: "organic grocery", region: "United Kingdom" };
+  assert.deepEqual(entityCandidatesFromSearchEvidence(payload, business, "entity"), []);
+  assert.deepEqual(entityCandidatesFromSearchEvidence(payload, business, "category"), []);
+});
+
 test("admits localized, html, and id-only product leads when the search title strongly matches", () => {
   const payload = {
     output: [{
@@ -597,6 +604,11 @@ test("rejects search, browse, and catalog listing routes as inferred exact-produ
     "https://rival.example/de/suchergebnisse.html",
     "https://rival.example/it/risultati-ricerca.html",
     "https://rival.example/nl/zoekresultaten.html",
+    "https://rival.example/products/página/2/organic-sidr-honey-500g",
+    "https://rival.example/products/catalogo/organic-sidr-honey-500g",
+    "https://rival.example/products/resultados-de-busqueda/organic-sidr-honey-500g",
+    "https://rival.example/products/pesquisar/organic-sidr-honey-500g",
+    "https://rival.example/products/honey?pagina=2",
     "https://rival.example/produits/liste",
     "https://rival.example/produits/tous",
     "https://rival.example/prodotti/tutti",

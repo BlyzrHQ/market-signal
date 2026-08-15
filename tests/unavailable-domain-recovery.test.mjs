@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { fetchPublicText } from "../app/lib/public-fetch.ts";
+import { fetchPublicText, resolvesToPublicAddress } from "../app/lib/public-fetch.ts";
 
 test("the crawl API returns a typed unavailable-domain result before market discovery", async () => {
   const route = await readFile(new URL("../app/api/crawl/route.ts", import.meta.url), "utf8");
@@ -115,4 +115,14 @@ test("a 530 page merely mentioning 1016 without the exact Cloudflare error shape
   });
   assert.equal(result.failureKind, "");
   assert.equal(result.status, 530);
+});
+
+test("public fetch DNS preflight rejects any private resolution", async () => {
+  const resolve = async (url) => Response.json({ Answer: String(url).includes("type=1") ? [{ type: 1, data: "127.0.0.1" }] : [] });
+  assert.equal(await resolvesToPublicAddress("private-resolution.example", resolve), false);
+});
+
+test("public fetch DNS preflight accepts exclusively public resolutions", async () => {
+  const resolve = async (url) => Response.json({ Answer: String(url).includes("type=1") ? [{ type: 1, data: "93.184.216.34" }] : [{ type: 28, data: "2606:2800:220:1:248:1893:25c8:1946" }] });
+  assert.equal(await resolvesToPublicAddress("public-resolution.example", resolve), true);
 });
