@@ -12,64 +12,15 @@ function publicIpv4(host: string) {
   return true;
 }
 
-function ipv6Words(host: string) {
-  let source = host;
-  if (source.includes(".")) {
-    const separator = source.lastIndexOf(":");
-    const parts = source.slice(separator + 1).split(".").map(Number);
-    if (separator < 0 || parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return null;
-    source = `${source.slice(0, separator)}:${((parts[0] << 8) | parts[1]).toString(16)}:${((parts[2] << 8) | parts[3]).toString(16)}`;
-  }
-  if ((source.match(/::/g) || []).length > 1) return null;
-  const [leftText, rightText] = source.split("::");
-  const left = leftText ? leftText.split(":") : [];
-  const right = rightText ? rightText.split(":") : [];
-  if ([...left, ...right].some((word) => !/^[0-9a-f]{1,4}$/i.test(word))) return null;
-  const omitted = source.includes("::") ? 8 - left.length - right.length : 0;
-  if (omitted < 0 || (!source.includes("::") && left.length !== 8)) return null;
-  const words = [...left, ...Array.from({ length: omitted }, () => "0"), ...right].map((word) => Number.parseInt(word, 16));
-  return words.length === 8 ? words : null;
-}
-
-function embeddedIpv4(host: string) {
-  const words = ipv6Words(host);
-  if (!words) return null;
-  const mapped = words.slice(0, 5).every((word) => word === 0) && words[5] === 0xffff;
-  const compatible = words.slice(0, 6).every((word) => word === 0);
-  const translated = words.slice(0, 4).every((word) => word === 0) && words[4] === 0xffff && words[5] === 0;
-  const wellKnownNat64 = words[0] === 0x64 && words[1] === 0xff9b && words.slice(2, 6).every((word) => word === 0);
-  if (words[0] === 0x2002) return [words[1] >>> 8, words[1] & 255, words[2] >>> 8, words[2] & 255].join(".");
-  if (!mapped && !compatible && !translated && !wellKnownNat64) return null;
-  return [words[6] >>> 8, words[6] & 255, words[7] >>> 8, words[7] & 255].join(".");
-}
-
-function publicIpv6(host: string) {
-  const words = ipv6Words(host);
-  if (!words || embeddedIpv4(host) !== null) return false;
-  // IANA IPv6 Global Unicast Address Space, last checked 2025-10-10.
-  // Unlisted 2000::/3 space is reserved, so this is deliberately an allocation
-  // allowlist rather than an architectural-range test.
-  const allocatedFirstWord12 = new Set([0x2400, 0x2410, 0x2600, 0x2630, 0x2800, 0x2a00, 0x2a10, 0x2c00]);
-  if (allocatedFirstWord12.has(words[0] & 0xfff0)) return true;
-  if ((words[0] === 0x2610 || words[0] === 0x2620) && (words[1] & 0xfe00) === 0) return true;
-  if (words[0] === 0x2003) return (words[1] & 0xc000) === 0;
-  if (words[0] !== 0x2001 || words[1] === 0x0db8) return false;
-  const allocated2001: Array<[number, number]> = [
-    [0x0200, 0xfe00], [0x0400, 0xfe00], [0x0600, 0xfe00], [0x0800, 0xfc00],
-    [0x0c00, 0xfe00], [0x0e00, 0xfe00], [0x1200, 0xfe00], [0x1400, 0xfc00],
-    [0x1800, 0xfe00], [0x1a00, 0xfe00], [0x1c00, 0xfc00], [0x2000, 0xe000],
-    [0x4000, 0xfe00], [0x4200, 0xfe00], [0x4400, 0xfe00], [0x4600, 0xfe00],
-    [0x4800, 0xfe00], [0x4a00, 0xfe00], [0x4c00, 0xfe00], [0x5000, 0xf000],
-    [0x8000, 0xe000], [0xa000, 0xf000], [0xb000, 0xf000],
-  ];
-  return allocated2001.some(([prefix, mask]) => (words[1] & mask) === prefix);
-}
-
 export function isPublicHostname(value: string) {
   const host = value.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
   if (!host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return false;
   if (/^\d+(?:\.\d+){3}$/.test(host)) return publicIpv4(host);
-  if (host.includes(":")) return publicIpv6(host);
+  // Market Signal accepts public DNS names and IPv4 literals. Direct IPv6
+  // literals are outside the domain-in product contract and are rejected
+  // because organization-specific NAT64 and ISATAP routes cannot be inferred
+  // safely from an address alone.
+  if (host.includes(":")) return false;
   return host.includes(".") && /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i.test(host) && !host.includes("..") && host.length <= 253;
 }
 

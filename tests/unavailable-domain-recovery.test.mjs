@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { fetchPublicText, resolvesToPublicAddress } from "../app/lib/public-fetch.ts";
+import { fetchPublicText, resolvePublicAddresses, resolvesToPublicAddress } from "../app/lib/public-fetch.ts";
 
 test("the crawl API returns a typed unavailable-domain result before market discovery", async () => {
   const route = await readFile(new URL("../app/api/crawl/route.ts", import.meta.url), "utf8");
@@ -134,11 +134,22 @@ test("public fetch DNS preflight accepts exclusively public resolutions", async 
   assert.equal(await resolvesToPublicAddress("public-resolution.example", resolve), true);
 });
 
-test("public fetch DNS preflight accepts every current IANA allocation boundary", async () => {
+test("public fetch DNS preflight rejects IPv6-only targets even in allocated space", async () => {
   for (const address of ["2410::1", "2610::1", "2620::1", "2630::1", "2a10::1"]) {
     const resolve = async (url) => Response.json({ Answer: String(url).includes("type=28") ? [{ type: 28, data: address }] : [] });
-    assert.equal(await resolvesToPublicAddress("public-allocation.example", resolve), true, address);
+    assert.equal(await resolvesToPublicAddress("public-allocation.example", resolve), false, address);
   }
+});
+
+test("public fetch pins only public IPv4 when an unused AAAA answer is unsafe", async () => {
+  const requestedTypes = [];
+  const resolve = async (url) => {
+    const type = Number(new URL(url).searchParams.get("type"));
+    requestedTypes.push(type);
+    return Response.json({ Answer: type === 1 ? [{ type: 1, data: "93.184.216.34" }] : [{ type: 28, data: "2001:4860:4860:1:0:0:a00:1" }] });
+  };
+  assert.deepEqual(await resolvePublicAddresses("public-resolution.example", resolve), ["93.184.216.34"]);
+  assert.deepEqual(requestedTypes, [1]);
 });
 
 test("public fetch DNS preflight never trusts a stale public resolution", async () => {

@@ -155,6 +155,14 @@ such.
   boundary tests alongside the reserved-neighbor negatives. The focused
   network/persistence suite passes 32/32, the full suite passes 735/735, both
   typechecks and the production build pass, and lint remains at zero errors.
+- Final network review demonstrated that organization-specific RFC 6052 NAT64
+  and ISATAP routes cannot be classified safely from an IPv6 address alone.
+  Because Market Signal is a domain-in product, direct IPv6 literals are now
+  outside the accepted URL boundary and production HTTP fetches pin only fresh
+  exclusively public IPv4 A answers. AAAA-only domains surface as coverage
+  gaps instead of creating an ambiguous SSRF route. Focused multilingual,
+  persistence, adapter, and network tests pass 88/88; the full suite passes
+  736/736, both typechecks and production build pass, and lint has zero errors.
 - Compound and multilingual search/listing routes are rejected before the
   generic HTML product-detail fallback.
 - Nested catalog arrays are normalized from bounded prefixes, product IDs must

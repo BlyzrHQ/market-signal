@@ -35,7 +35,10 @@ export async function resolvePublicAddresses(hostname: string, fetchImpl: FetchL
   if (!isPublicHostname(hostname)) return [];
   if (/^[\d.]+$/.test(hostname) || hostname.includes(":")) return [hostname];
   try {
-    const answers = await Promise.all([1, 28].map(async (type) => {
+    // Pin only observed public A records. An AAAA address can be routed through
+    // a deployment-specific NAT64 or ISATAP translator whose private IPv4
+    // destination cannot be identified reliably from the address alone.
+    const answers = await Promise.all([1].map(async (type) => {
       const response = await fetchImpl(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=${type}`, { signal, headers: { Accept: "application/dns-json" } });
       if (!response.ok) throw new Error("DNS resolution failed");
       const payload = await response.json() as { Answer?: Array<{ type?: unknown; data?: unknown }> };
