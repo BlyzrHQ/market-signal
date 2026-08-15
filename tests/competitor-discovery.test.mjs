@@ -277,6 +277,11 @@ test("rejects translated terminal listing words and pagination-shaped weak produ
   for (const url of [
     "https://health.example/products/hledat",
     "https://health.example/products/honey?strona=2",
+    "https://health.example/products/organic-sidr-honey-500g?offset=24",
+    "https://health.example/products/organic-sidr-honey-500g?limit=24",
+    "https://health.example/products/organic-sidr-honey-500g?cursor=next-page",
+    "https://health.example/products/organic-sidr-honey-500g?start=24",
+    "https://health.example/products/organic-sidr-honey-500g?from=24",
   ]) {
     const payload = { output: [{ type: "web_search_call", action: { query: "reishi honey 500g", sources: [{ title: "Reishi Honey 500g", url }] } }] };
     assert.deepEqual(candidatesFromSearchEvidence(payload, arabicProfile), [], url);

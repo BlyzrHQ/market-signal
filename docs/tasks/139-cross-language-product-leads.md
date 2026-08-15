@@ -204,6 +204,11 @@ such.
   to tests. The focused route, enrichment, transport, and storefront suites pass
   105/105; the integrated suite passes 742/742 with both typechecks and the
   production build; ESLint has zero errors with the two pre-existing warnings.
+- Exact-head product re-review reproduced five additional listing-query forms
+  (`offset`, `limit`, `cursor`, `start`, and `from`) that could otherwise carry
+  a single structured product and be mistaken for a detail page. They now share
+  the existing pagination/listing veto before lead admission and publication,
+  with a regression for every reported form.
 - Compound and multilingual search/listing routes are rejected before the
   generic HTML product-detail fallback.
 - Nested catalog arrays are normalized from bounded prefixes, product IDs must

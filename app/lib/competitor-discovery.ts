@@ -217,7 +217,7 @@ function isCrawlableProductLead(url: string) {
 function isListingRoute(url: string) {
   try {
     const parsed = new URL(url);
-    if ([...parsed.searchParams.keys()].some((key) => /^(?:q|s|search|query|filter|sort|page|pagenumber|pagina|seite|sayfa|recherche|ricerca|zoeken|pesquisa)$/iu.test(key))) return true;
+    if ([...parsed.searchParams.keys()].some((key) => /^(?:q|s|search|query|filter|sort|page|pagenumber|pagina|seite|sayfa|recherche|ricerca|zoeken|pesquisa|offset|limit|cursor|start|from)$/iu.test(key))) return true;
     const segments = decodeURIComponent(parsed.pathname).split("/").filter(Boolean);
     const normalizedSegments = segments.map((segment) => segment.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase());
     if (normalizedSegments.some((segment) => /(?:^|[-_])(?:search|results?|resultados?|busqueda|pesquisa|pesquisar|resultats?|recherche|suchergebnisse|risultati|ricerca|zoekresultaten|catalogo|katalog|pagina|seite|arama|wyniki|wyszukiwania)(?:$|[-_])/u.test(segment))) return true;
