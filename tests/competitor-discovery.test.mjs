@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { candidatesFromSearchEvidence, discoverCompetitors, productSearchAnchors } from "../app/lib/competitor-discovery.ts";
+import { candidatesFromSearchEvidence, discoverCompetitors, entityCandidatesFromSearchEvidence, mergeCandidates, productSearchAnchors, sanitizeCandidate } from "../app/lib/competitor-discovery.ts";
 
 function product(name, sourceUrl) {
   return {
@@ -238,6 +238,112 @@ test("rejects homepages and ranks URL-confirmed product pages over weaker same-d
   ]);
 });
 
+test("keeps a single translated product search result as an atomic inferred lead", () => {
+  const arabicProfile = {
+    ...profile,
+    domain: "noororganicfood.com",
+    title: "نور للأغذية العضوية",
+    products: [product("عسل الريشي 500 غرام", "https://noororganicfood.com/product/reishi-honey-500g")],
+  };
+  const payload = { output: [{ type: "web_search_call", action: {
+    query: "reishi honey 500g kuwait buy",
+    sources: [{ title: "Organic Reishi Honey 500g", url: "https://health.example/products/organic-reishi-honey-500g" }],
+  } }] };
+  const candidates = candidatesFromSearchEvidence(payload, arabicProfile);
+  assert.equal(candidates.length, 1);
+  assert.deepEqual(candidates[0].inferredProductLeads, [{
+    primaryProductId: "عسل الريشي 500 غرام",
+    primarySourceUrl: "https://noororganicfood.com/product/reishi-honey-500g",
+    laneQuery: "reishi honey 500g kuwait buy",
+    candidateDomain: "health.example",
+    candidateSourceUrl: "https://health.example/products/organic-reishi-honey-500g",
+    admission: "inferred-cross-language",
+  }]);
+  assert.deepEqual(candidates[0].sharedOfferings, ["عسل الريشي 500 غرام"]);
+});
+
+test("does not infer a product lead from a multi-query action, citation, or collection page", () => {
+  const arabicProfile = { ...profile, products: [product("عسل الريشي 500 غرام", "https://myjam.co.uk/products/reishi-honey")] };
+  const payload = { output: [
+    { type: "web_search_call", action: { queries: ["reishi honey 500g", "organic honey kuwait"], sources: [{ title: "Reishi Honey 500g", url: "https://health.example/products/reishi-honey-500g" }] } },
+    { type: "web_search_call", action: { query: "reishi honey 500g", sources: [{ title: "Reishi Honey 500g", url: "https://health.example/collections/honey" }] } },
+    { type: "message", content: [{ type: "output_text", text: "", annotations: [{ type: "url_citation", title: "Reishi Honey 500g", url: "https://health.example/products/reishi-honey-500g" }] }] },
+  ] };
+  assert.deepEqual(candidatesFromSearchEvidence(payload, arabicProfile), []);
+});
+
+test("rejects translated terminal listing words and pagination-shaped weak product leads without a finite dictionary", () => {
+  const arabicProfile = { ...profile, products: [product("Ø¹Ø³Ù„ Ø§Ù„Ø±ÙŠØ´ÙŠ 500 ØºØ±Ø§Ù…", "https://myjam.co.uk/products/reishi-honey")] };
+  for (const url of [
+    "https://health.example/products/hledat",
+    "https://health.example/products/honey?strona=2",
+    "https://health.example/products/organic-sidr-honey-500g?offset=24",
+    "https://health.example/products/organic-sidr-honey-500g?limit=24",
+    "https://health.example/products/organic-sidr-honey-500g?cursor=next-page",
+    "https://health.example/products/organic-sidr-honey-500g?start=24",
+    "https://health.example/products/organic-sidr-honey-500g?from=24",
+    "https://health.example/products/organic-sidr-honey-500g?skip=24",
+    "https://health.example/products/organic-sidr-honey-500g?take=24",
+    "https://health.example/products/organic-sidr-honey-500g?per_page=24",
+    "https://health.example/products/organic-sidr-honey-500g?page_size=24",
+    "https://health.example/products/organic-sidr-honey-500g?pagesize=24",
+    "https://health.example/products/organic-sidr-honey-500g?startIndex=24",
+    "https://health.example/products/organic-sidr-honey-500g?after=opaque-cursor",
+  ]) {
+    const payload = { output: [{ type: "web_search_call", action: { query: "reishi honey 500g", sources: [{ title: "Reishi Honey 500g", url }] } }] };
+    assert.deepEqual(candidatesFromSearchEvidence(payload, arabicProfile), [], url);
+  }
+  const originalLanguage = { ...profile, products: [product("Organic Sidr Honey 500g", "https://myjam.co.uk/products/organic-sidr-honey-500g")] };
+  for (const url of [
+    "https://health.example/hledat/organic-sidr-honey-500g",
+    "https://health.example/szukaj/organic-sidr-honey-500g",
+    "https://health.example/hledat/products/organic-sidr-honey-500g",
+    "https://health.example/szukaj/products/organic-sidr-honey-500g",
+  ]) {
+    const payload = { output: [{ type: "web_search_call", action: { query: "organic sidr honey 500g", sources: [{ title: "Organic Sidr Honey 500g", url }] } }] };
+    assert.deepEqual(candidatesFromSearchEvidence(payload, originalLanguage), [], url);
+  }
+});
+
+test("permits only recognized product-identity query keys on detail routes", () => {
+  const single = { ...profile, products: [product("Organic Sidr Honey 500g", "https://myjam.co.uk/products/organic-sidr-honey-500g")] };
+  for (const url of [
+    "https://health.example/products/organic-sidr-honey-500g?variant=123",
+    "https://health.example/products/organic-sidr-honey-500g?id=123",
+    "https://health.example/products/organic-sidr-honey-500g?attribute_pa_size=500g",
+  ]) {
+    const payload = { output: [{ type: "web_search_call", action: { query: "organic sidr honey 500g", sources: [{ title: "Organic Sidr Honey 500g", url }] } }] };
+    assert.equal(candidatesFromSearchEvidence(payload, single).length, 1, url);
+  }
+});
+
+test("keeps translated query-path admission when the search title matches the original language", () => {
+  const single = { ...profile, products: [product("Beef Sirloin Steak 500g", "https://myjam.co.uk/products/beef-sirloin-steak-500g")] };
+  const payload = { output: [{ type: "web_search_call", action: {
+    query: "rind lende 500g",
+    sources: [{ title: "Beef Sirloin Steak 500g", url: "https://rival.example/produkte/rind-lende-500g" }],
+  } }] };
+  const candidates = candidatesFromSearchEvidence(payload, single);
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].observedAdmission, undefined);
+  assert.equal(candidates[0].inferredProductLeads?.[0].laneQuery, "rind lende 500g");
+});
+
+test("admits Arabic, Chinese, and Italian-singular product-detail containers", () => {
+  for (const example of [
+    { name: "عسل ريشي عضوي", query: "عسل ريشي عضوي", url: "https://rival.example/منتج/عسل-ريشي-عضوي", observed: true },
+    { name: "有机 灵芝 蜂蜜", query: "有机 灵芝 蜂蜜", url: "https://rival.example/商品/有机-灵芝-蜂蜜", observed: true },
+    { name: "Organic Reishi Honey", query: "miele reishi biologico", url: "https://rival.example/prodotto/miele-reishi-biologico", observed: false },
+  ]) {
+    const single = { ...profile, products: [product(example.name, `https://myjam.co.uk/products/${encodeURIComponent(example.name)}`)] };
+    const payload = { output: [{ type: "web_search_call", action: { query: example.query, sources: [{ title: example.name, url: example.url }] } }] };
+    const candidates = candidatesFromSearchEvidence(payload, single);
+    assert.equal(candidates.length, 1, example.url);
+    assert.equal(Boolean(candidates[0].observedAdmission), example.observed, example.url);
+    assert.equal(Boolean(candidates[0].inferredProductLeads?.length), !example.observed, example.url);
+  }
+});
+
 test("rejects a title-matching collection page on its own domain", () => {
   const payload = { output: [{ type: "web_search_call", action: { sources: [
     { title: "Halal Beef Sirloin Steak 500g", url: "https://collection.example/collections/halal-beef-sirloin-steak-500g" },
@@ -249,7 +355,49 @@ test("rejects a title-matching collection page on its own domain", () => {
   assert.deepEqual(candidatesFromSearchEvidence(payload, profile), []);
 });
 
-test("admits localized, html, and id-only product leads when the search title strongly matches", () => {
+test("rejects private-address and credential-bearing search sources", () => {
+  const single = { ...profile, products: [product("Organic Sidr Honey 500g", "https://myjam.co.uk/products/organic-sidr-honey-500g")] };
+  for (const url of [
+    "http://[::ffff:127.0.0.1]/products/organic-sidr-honey-500g",
+    "https://secret:pass@rival.example/products/organic-sidr-honey-500g",
+  ]) {
+    const payload = { output: [{ type: "web_search_call", action: { query: "organic sidr honey 500g", sources: [{ title: "Organic Sidr Honey 500g", url }] } }] };
+    assert.deepEqual(candidatesFromSearchEvidence(payload, single), [], url);
+  }
+});
+
+test("model-summarized product candidates cannot bypass the listing-route gate", () => {
+  const candidate = sanitizeCandidate({
+    domain: "rival.example",
+    websiteUrl: "https://rival.example/",
+    evidenceUrl: "https://rival.example/products?search=organic+honey",
+    matchedProductUrl: "https://rival.example/products?search=organic+honey",
+    evidenceTitle: "Organic Honey",
+  }, "myjam.co.uk", "product", { ...profile, products: [product("Organic Honey", "https://myjam.co.uk/products/organic-honey")] });
+  assert.equal(candidate, null);
+  for (const lane of ["entity", "category"]) {
+    assert.equal(sanitizeCandidate({ domain: "rival.example", websiteUrl: "https://rival.example/", evidenceUrl: "https://rival.example/ar/search?q=organic+honey" }, "myjam.co.uk", lane, profile), null);
+  }
+});
+
+test("entity and category search sources cannot publish listing routes", () => {
+  const payload = { output: [{ type: "web_search_call", action: { sources: [{ title: "Organic Sidr Honey Grocery", url: "https://rival.example/ar/search?q=organic+honey" }] } }] };
+  const business = { domain: "myjam.co.uk", categoryTerms: ["organic", "grocery"], category: "organic grocery", region: "United Kingdom" };
+  assert.deepEqual(entityCandidatesFromSearchEvidence(payload, business, "entity"), []);
+  assert.deepEqual(entityCandidatesFromSearchEvidence(payload, business, "category"), []);
+});
+
+test("unknown-language entity result paths are rebound to the first-party root", () => {
+  const payload = { output: [{ type: "web_search_call", action: { sources: [
+    { title: "Organic Sidr Honey Grocery", url: "https://rival.example/products/hledat" },
+    { title: "Organic Sidr Honey Grocery", url: "https://second.example/catalog?strona=2" },
+  ] } }] };
+  const business = { domain: "myjam.co.uk", categoryTerms: ["organic", "grocery"], category: "organic grocery", region: "United Kingdom" };
+  const candidates = entityCandidatesFromSearchEvidence(payload, business, "entity");
+  assert.deepEqual(candidates.map((candidate) => [candidate.sourceUrl, candidate.evidence[0].url]), [["https://rival.example/", "https://rival.example/"]]);
+});
+
+test("admits a root html product page but rejects title-only localized and id-only routes", () => {
   const payload = {
     output: [{
       type: "web_search_call",
@@ -265,12 +413,8 @@ test("admits localized, html, and id-only product leads when the search title st
   };
 
   const candidates = candidatesFromSearchEvidence(payload, profile);
-  assert.deepEqual(candidates.map((candidate) => candidate.domain), [
-    "local.example",
-    "magento.example",
-    "metzgerei.example",
-  ]);
-  assert.ok(candidates.every((candidate) => /requires first-party crawl verification/.test(candidate.reason)));
+  assert.deepEqual(candidates.map((candidate) => candidate.domain), ["magento.example"]);
+  assert.ok(candidates.every((candidate) => /crawlable product page/.test(candidate.reason)));
 });
 
 test("keeps publisher paths and weak titles outside the broader admission path", () => {
@@ -513,6 +657,66 @@ test("rejects two-token overlap when it covers too little of the anchor product"
   const longProfile = { ...profile, products: [product("Organic Crunchy Peanut Butter", "https://myjam.co.uk/products/organic-crunchy-peanut-butter")] };
   const payload = { output: [{ type: "web_search_call", action: { sources: [{ title: "Peanut Butter", url: "https://rival.example/products/peanut-butter" }] } }] };
   assert.deepEqual(candidatesFromSearchEvidence(payload, longProfile), []);
+});
+
+test("rejects search, browse, and catalog listing routes as inferred exact-product leads", () => {
+  const single = { ...profile, products: [product("Organic Sidr Honey 500g", "https://myjam.co.uk/products/organic-sidr-honey-500g")] };
+  for (const url of [
+    "https://rival.example/search/results.html",
+    "https://rival.example/search-results.html",
+    "https://rival.example/product-list.html",
+    "https://rival.example/browse/organic-sidr-honey-500g.html",
+    "https://rival.example/catalog/organic-sidr-honey-500g.html",
+    "https://rival.example/fr/recherche.html",
+    "https://rival.example/de/suche.html",
+    "https://rival.example/ar/بحث.html",
+    "https://rival.example/products/all",
+    "https://rival.example/products/index",
+    "https://rival.example/products/filter",
+    "https://rival.example/products/page/2",
+    "https://rival.example/products/kategori/organic-sidr-honey-500g",
+    "https://rival.example/products/pagina/2",
+    "https://rival.example/products/seite/2",
+    "https://rival.example/products/katalog/organic-sidr-honey-500g",
+    "https://rival.example/pt/pesquisa.html",
+    "https://rival.example/es/resultados-busqueda.html",
+    "https://rival.example/searchResults.html",
+    "https://rival.example/fr/resultats-recherche.html",
+    "https://rival.example/de/suchergebnisse.html",
+    "https://rival.example/it/risultati-ricerca.html",
+    "https://rival.example/nl/zoekresultaten.html",
+    "https://rival.example/products/página/2/organic-sidr-honey-500g",
+    "https://rival.example/products/catalogo/organic-sidr-honey-500g",
+    "https://rival.example/products/resultados-de-busqueda/organic-sidr-honey-500g",
+    "https://rival.example/products/pesquisar/organic-sidr-honey-500g",
+    "https://rival.example/products/honey?pagina=2",
+    "https://rival.example/products/arama/organic-sidr-honey-500g",
+    "https://rival.example/products/wyniki-wyszukiwania/organic-sidr-honey-500g",
+    "https://rival.example/products/honey?sayfa=2",
+    "https://rival.example/produits/liste",
+    "https://rival.example/produits/tous",
+    "https://rival.example/prodotti/tutti",
+    "https://rival.example/منتجات/الكل",
+    "https://rival.example/products/honey?q=honey",
+  ]) {
+    const payload = { output: [{ type: "web_search_call", action: { query: "organic sidr honey 500g", sources: [{ title: "Organic Sidr Honey 500g", url }] } }] };
+    assert.deepEqual(candidatesFromSearchEvidence(payload, single), [], url);
+  }
+});
+
+test("observed company evidence replaces provisional inferred publication fields without dropping the private lead", () => {
+  const inferred = {
+    domain: "rival.example", companyName: "rival.example", reason: "inferred lead", searchQuery: "translated honey", sourceUrl: "https://rival.example/products/honey", websiteUrl: "https://rival.example/", marketCategory: "", relationship: "adjacent", sharedOfferings: ["Arabic honey"], evidence: [{ url: "https://rival.example/products/honey", title: "Honey", method: "product-search" }], mentionCount: 1, matchedPrimaryProductName: "Arabic honey", matchedProductUrl: "https://rival.example/products/honey", matchedPrimaryProductNames: ["Arabic honey"], matchedProductUrls: ["https://rival.example/products/honey"], inferredProductLeads: [{ primaryProductId: "p1", primarySourceUrl: "https://shop.test/products/honey", laneQuery: "translated honey", candidateDomain: "rival.example", candidateSourceUrl: "https://rival.example/products/honey", admission: "inferred-cross-language" }], evidenceMethod: "search-source",
+  };
+  const observed = {
+    domain: "rival.example", companyName: "Rival Foods", reason: "observed category company", searchQuery: "organic food competitors", sourceUrl: "https://rival.example/about", websiteUrl: "https://rival.example/", marketCategory: "organic food", relationship: "direct", sharedOfferings: ["organic food"], evidence: [{ url: "https://rival.example/about", title: "Rival Foods", method: "category-search" }], mentionCount: 1, evidenceMethod: "search-source", observedAdmission: true,
+  };
+  const [merged] = mergeCandidates([inferred, observed]);
+  assert.equal(merged.sourceUrl, observed.sourceUrl);
+  assert.equal(merged.searchQuery, observed.searchQuery);
+  assert.deepEqual(merged.evidence, observed.evidence);
+  assert.equal(merged.matchedProductUrl, undefined);
+  assert.deepEqual(merged.inferredProductLeads, inferred.inferredProductLeads);
 });
 
 test("ranks product-backed sellers ahead of company-first results", async () => {

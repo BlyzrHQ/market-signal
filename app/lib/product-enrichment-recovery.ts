@@ -4,7 +4,7 @@ import {
   recoverProductEnrichmentThroughEdge,
 } from "./edge-product-enrichment-recovery.ts";
 import type { ProductEnrichmentTarget, ProductRecord } from "./product-intelligence.ts";
-import { enrichProductTargets, type ProductEnrichmentCoverage } from "./storefront-product-enrichment.ts";
+import { enrichProductTargets, type EnrichmentDependencies, type ProductEnrichmentCoverage } from "./storefront-product-enrichment.ts";
 
 const EDGE_PROVIDER = "market-signal.abdulla617931.chatgpt.site";
 
@@ -20,8 +20,9 @@ export async function enrichProductTargetsWithRecovery(
   targets: ProductEnrichmentTarget[],
   maxPages: number,
   options?: ProductEnrichmentRecoveryOptions,
+  localDependencies?: EnrichmentDependencies,
 ): Promise<{ products: ProductRecord[]; coverage: ProductEnrichmentCoverage }> {
-  const local = await enrichProductTargets(targets, maxPages);
+  const local = await enrichProductTargets(targets, maxPages, localDependencies);
   if (!options) return local;
   const eligibleTargets = edgeRecoverableProductTargets(local, targets);
   const recovered = await recoverProductEnrichmentThroughEdge(eligibleTargets, options);

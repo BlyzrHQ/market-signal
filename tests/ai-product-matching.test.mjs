@@ -71,6 +71,7 @@ test("falls back honestly without an API key", async () => {
   assert.match(comparison.matching?.gaps[0] || "", /not configured/i);
   assert.equal(comparison.rows[0].matches[0].product, null);
   assert.equal(comparison.coverage.assignedPairCount, 0);
+
 });
 
 test("an incomplete Responses API output is visible and never exposes a fallback pair", async () => {
@@ -146,6 +147,74 @@ test("embedding retrieval gives a cross-language pair to the structured judge", 
   assert.equal(calls.find((call) => call.url.endsWith("/responses"))?.body.max_output_tokens, 6_000);
 });
 
+test("a validated exact-pair pin survives primary and rival catalog limits", async () => {
+  const strongestPrimary = product("p-strong", "shop.test", "Popular Coffee Beans 1kg", { price: { raw: "GBP 12", currency: "GBP", amount: 12 } });
+  const pinnedPrimary = product("p-ar", "shop.test", "عسل الريشي 500 غرام");
+  const strongestRival = product("r-strong", "rival.test", "Popular Coffee Beans 1kg", { price: { raw: "GBP 10", currency: "GBP", amount: 10 } });
+  const pinnedRival = product("r-en", "rival.test", "Organic Reishi Honey 500g", { price: { raw: "GBP 8", currency: "GBP", amount: 8 } });
+  const judged = [];
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [0, 0] })) });
+    const request = JSON.parse(body.input[1].content);
+    judged.push(...request.groups);
+    return response({ output_text: JSON.stringify({ assessments: request.groups.flatMap((group) => group.candidates.map((candidate) => ({ primaryId: group.primary.id, candidateId: candidate.id, verdict: "close_substitute", confidence: 0.9, reason: "Same customer product family.", contradiction: "" }))) }) });
+  };
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [strongestPrimary, pinnedPrimary] },
+    { domain: "rival.test", products: [strongestRival, pinnedRival] },
+  ], {}, {
+    apiKey: "test",
+    fetch,
+    maxPrimaryProducts: 1,
+    maxProductsPerCompetitor: 1,
+    maxCandidatesPerPrimary: 1,
+    pinnedPairs: [{ primaryId: pinnedPrimary.id, rivalDomain: "rival.test", rivalId: pinnedRival.id }],
+  });
+  assert.deepEqual(judged.map((group) => group.primary.id), [pinnedPrimary.id]);
+  assert.deepEqual(judged[0].candidates.map((candidate) => candidate.id), [pinnedRival.id]);
+  assert.equal(comparison.rows[0].primary.id, pinnedPrimary.id);
+  assert.equal(comparison.rows[0].matches[0].product?.id, pinnedRival.id);
+});
+
+test("an eligible pin wins global rival contention over a higher-confidence unpinned proposal", async () => {
+  const unpinnedPrimary = product("p-unpinned", "shop.test", "Sidr Honey 500g");
+  const pinnedPrimary = product("p-pinned", "shop.test", "عسل سدر ٥٠٠ جرام");
+  const rival = product("r-shared", "rival.test", "Sidr Honey 500g", { price: { raw: "GBP 8", currency: "GBP", amount: 8 } });
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, 0] })) });
+    const request = JSON.parse(body.input[1].content);
+    return response({ output_text: JSON.stringify({ assessments: request.groups.flatMap((group) => group.candidates.map((candidate) => ({
+      primaryId: group.primary.id,
+      candidateId: candidate.id,
+      verdict: group.primary.id === unpinnedPrimary.id ? "same_product" : "close_substitute",
+      confidence: group.primary.id === unpinnedPrimary.id ? 0.99 : 0.82,
+      reason: "Same product family.",
+      contradiction: "",
+    }))) }) });
+  };
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [unpinnedPrimary, pinnedPrimary] },
+    { domain: "rival.test", products: [rival] },
+  ], {}, { apiKey: "test", fetch, maxPrimaryProducts: 2, pinnedPairs: [{ primaryId: pinnedPrimary.id, rivalDomain: "rival.test", rivalId: rival.id }] });
+
+  assert.equal(comparison.rows.find((row) => row.primary.id === pinnedPrimary.id)?.matches[0].product?.id, rival.id);
+  assert.equal(comparison.rows.find((row) => row.primary.id === unpinnedPrimary.id)?.matches[0].product, null);
+});
+
+test("a pinned deterministic pair still requires semantic confidence of at least 0.80", async () => {
+  const primary = product("p-low-pin", "shop.test", "Sidr Honey 500g");
+  const rival = product("r-low-pin", "rival.test", "Sidr Honey 500g", { price: { raw: "GBP 8", currency: "GBP", amount: 8 } });
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, 0] })) });
+    return response({ output_text: JSON.stringify({ assessments: [{ primaryId: primary.id, candidateId: rival.id, verdict: "close_substitute", confidence: 0.2, reason: "Weak model guess.", contradiction: "" }] }) });
+  };
+  const comparison = await buildAIProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "rival.test", products: [rival] }], {}, { apiKey: "test", fetch, pinnedPairs: [{ primaryId: primary.id, rivalDomain: "rival.test", rivalId: rival.id }] });
+  assert.equal(comparison.rows[0].matches[0].product, null);
+});
+
 test("bilingual quantity retrieval reaches the judge when embeddings are unavailable", async () => {
   const quantity = { kind: "mass", amount: 500, unit: "g" };
   const identifiers = { gtins: [], brand: "Sidr House" };
@@ -207,6 +276,13 @@ test("generic bilingual container words cannot produce an accepted battle", asyn
 
   assert.equal(comparison.rows[0].matches[0].product, null);
   assert.equal(comparison.coverage.assignedPairCount, 0);
+
+  const pinned = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [primary] },
+    { domain: "rival.test", products: [rival] },
+  ], {}, { apiKey: "test", fetch, pinnedPairs: [{ primaryId: primary.id, rivalDomain: "rival.test", rivalId: rival.id }] });
+  assert.equal(pinned.rows[0].matches[0].product, null);
+  assert.equal(pinned.coverage.assignedPairCount, 0);
 });
 
 test("low-confidence close substitutes are not assigned without deterministic identity", async () => {

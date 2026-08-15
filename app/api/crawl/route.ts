@@ -1,5 +1,5 @@
 import { canonicalDomain, normalizeDomain } from "../../lib/domain.ts";
-import { applyPreMatchCatalogEnrichment, buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, planPreliminaryCatalogReconciliation, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity, type ProductComparison, type ProductRecord } from "../../lib/product-intelligence.ts";
+import { applyPreMatchCatalogEnrichment, buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, hasValidObservedRivalPrice, planPreliminaryCatalogReconciliation, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity, type ProductComparison, type ProductRecord } from "../../lib/product-intelligence.ts";
 import { sharedRobotsPolicyResolver } from "../../lib/robots-policy.ts";
 import { discoverCompetitors, type DiscoveryCandidate, type DiscoveryResult } from "../../lib/competitor-discovery.ts";
 import { attributableFacebookUrl, type AdIntelligenceResult } from "../../lib/ad-intelligence.ts";
@@ -9,15 +9,16 @@ import { seededCrawlPaths } from "../../lib/crawl-planning.ts";
 import { combineRegionSignals, displayRegion, inferRegion as inferRegionEvidence, type RegionSignal } from "../../lib/region-inference.ts";
 import { forgetRememberedCompetitors, loadRememberedCompetitors, mergeRememberedCandidates, rememberVerifiedCompetitors, type MemoryCandidate } from "../../lib/competitor-memory.ts";
 import { discoverDomainAlternatives, extractStaticClientRedirect, parkingProvider } from "../../lib/domain-recovery.ts";
-import { boundedExtractionDocument, compactCatalogSnapshots, settleWithConcurrency, unavailableAfterBoundedAttempts, type PublicEndpointFailure } from "../../lib/crawl-runtime.ts";
+import { boundedExtractionDocument, compactCatalogSnapshots, preferredEndpointFailure, settleWithConcurrency, unavailableAfterBoundedAttempts, unavailablePrimaryMessaging, type PublicEndpointFailure } from "../../lib/crawl-runtime.ts";
 import { fetchPublicText } from "../../lib/public-fetch.ts";
-import { claimablePagePricePatterns, selectPrimaryProductPriceTargets, type ProductEnrichmentCoverage } from "../../lib/storefront-product-enrichment.ts";
+import { claimablePagePricePatterns, selectPrimaryProductPriceTargets, type EnrichmentDependencies, type ProductEnrichmentCoverage } from "../../lib/storefront-product-enrichment.ts";
 import { enrichProductTargetsWithRecovery, type ProductEnrichmentRecoveryOptions } from "../../lib/product-enrichment-recovery.ts";
 import { buildExperienceBenchmark } from "../../lib/experience-benchmark.ts";
 import { hasObservedAddToCartControl } from "../../lib/experience-signals.ts";
 import { EDGE_CRAWL_MARKER, isEdgeRecoveryEligible, recoverCrawlThroughEdge } from "../../lib/edge-crawl-recovery.ts";
 import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../lib/internal-auth.ts";
 import { runtimeEnvironmentValue } from "../../lib/runtime-env.ts";
+import { buildAIProductComparison } from "../../lib/ai-product-matching.ts";
 
 type ClaimType = "Observed" | "Inferred";
 type Confidence = "High" | "Medium" | "Low";
@@ -145,7 +146,14 @@ export function resolvePrimaryDiscoveryPolicy(primary: DomainCrawl) {
   };
 }
 
-export function verifyDiscoveredCompetitor(primary: DomainCrawl, candidate: DomainCrawl, discovery: DiscoveryCandidate, targetMarket: VerificationMarket, requireProductOverlap = false) {
+export function verifyDiscoveredCompetitor(
+  primary: DomainCrawl,
+  candidate: DomainCrawl,
+  discovery: DiscoveryCandidate,
+  targetMarket: VerificationMarket,
+  requireProductOverlap = false,
+  verifiedExactProductPair?: { primary: ProductRecord; rival: ProductRecord; confidence: number },
+) {
   if (!primary.homepage || !candidate.homepage) return {
     ...candidate,
     discovery: {
@@ -168,6 +176,8 @@ export function verifyDiscoveredCompetitor(primary: DomainCrawl, candidate: Doma
       regionDecisionReason: `Target market ${targetMarket.regionCode || "unknown"} (${targetMarket.source}); candidate region could not be observed because its public homepage was unavailable.`,
       overlapTerms: [],
       hasProductOverlap: false,
+      categoryBasis: "none" as const,
+      exactProductPairVerified: false,
     },
   };
   const verification = verifyCompetitorEntity(
@@ -175,13 +185,150 @@ export function verifyDiscoveredCompetitor(primary: DomainCrawl, candidate: Doma
     { domain: candidate.domain, title: candidate.homepage.title, description: candidate.homepage.description, region: candidate.homepage.region, regionEvidenceSource: firstPartyRegionSource(candidate.homepage), countryTldRegionCode: candidate.homepage.regionSignals.find((signal) => signal.kind === "tld")?.countryCode || "", headings: candidate.pages.flatMap((page) => page.headings), products: candidate.products },
     discovery,
     targetMarket,
-    { requireProductOverlap },
+    { requireProductOverlap, verifiedExactProductPair },
   );
   return { ...candidate, discovery: { ...discovery, ...verification } };
 }
 
+function exactProductPageKey(value: string, expectedDomain: string) {
+  try {
+    const url = new URL(value);
+    if (!/^https?:$/.test(url.protocol) || canonicalDomain(url.hostname) !== canonicalDomain(expectedDomain)) return "";
+    const tracking = /^(?:utm_.+|fbclid|gclid|dclid|msclkid|srsltid)$/i;
+    const identity = [...url.searchParams.entries()]
+      .filter(([key]) => !tracking.test(key))
+      .sort(([leftKey, leftValue], [rightKey, rightValue]) => leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue));
+    const search = new URLSearchParams(identity).toString();
+    return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, "") || "/"}${search ? `?${search}` : ""}`;
+  } catch {
+    return "";
+  }
+}
+
+function exactPageProductFingerprint(product: ProductRecord, expectedDomain: string) {
+  const identifiers: NonNullable<ProductRecord["identifiers"]> = product.identifiers || { gtins: [] };
+  const prices = product.priceSignals.map((signal) => ({
+    amount: signal.amount,
+    currency: String(signal.currency || "").toUpperCase(),
+    period: signal.period || "",
+    raw: signal.raw,
+  })).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  return JSON.stringify({
+    name: product.normalizedName || product.name.toLowerCase().normalize("NFKC"),
+    quantity: product.quantity || null,
+    identifiers: {
+      gtins: [...(identifiers.gtins || [])].sort(),
+      sku: identifiers.sku || "",
+      mpn: identifiers.mpn || "",
+      brand: identifiers.brand || "",
+    },
+    prices,
+    attributes: [...product.attributes].map((value) => value.toLowerCase().normalize("NFKC").trim()).filter(Boolean).sort(),
+    source: exactProductPageKey(product.sourceUrl, expectedDomain),
+  });
+}
+
+type ExactPairJudge = typeof buildAIProductComparison;
+
+export async function verifyInferredProductLead(
+  primary: DomainCrawl,
+  candidate: DomainCrawl,
+  discovery: DiscoveryCandidate,
+  judge: ExactPairJudge = buildAIProductComparison,
+) {
+  for (const lead of discovery.inferredProductLeads || []) {
+    if (canonicalDomain(lead.candidateDomain) !== canonicalDomain(candidate.domain)) continue;
+    const primaryProduct = primary.products.find((product) => product.id === lead.primaryProductId
+      && exactProductPageKey(product.sourceUrl, primary.domain) === exactProductPageKey(lead.primarySourceUrl, primary.domain));
+    const candidateKey = exactProductPageKey(lead.candidateSourceUrl, candidate.domain);
+    const exactPage = candidate.pages.find((page) => candidateKey && exactProductPageKey(page.sourceUrl, candidate.domain) === candidateKey);
+    const eligiblePageProducts = (exactPage?.products || []).filter((product) => candidateKey
+      && exactProductPageKey(product.sourceUrl, candidate.domain) === candidateKey
+      && product.jsonLdType === "Product"
+      && product.ownership !== "third-party-referenced"
+      && (product.extraction === "json-ld" || product.extraction === "storefront-api")
+      && hasValidObservedRivalPrice(product));
+    const exactPageProducts = selectPreferredProducts(eligiblePageProducts);
+    const identities = new Set(eligiblePageProducts.map((product) => exactPageProductFingerprint(product, candidate.domain)));
+    if (!primaryProduct || exactPageProducts.length !== 1 || identities.size !== 1) continue;
+    const rivalProduct = exactPageProducts[0];
+    const comparison = await judge(primary.domain, [
+      { domain: primary.domain, products: [primaryProduct] },
+      { domain: candidate.domain, products: [rivalProduct] },
+    ], {
+      maxPrimaryProducts: 1,
+      maxCandidatesPerPrimary: 1,
+      maxCandidatesPerDomain: 1,
+      maxProductsPerCompetitor: 1,
+      maxRetrievalPoolPerDomain: 1,
+      primaryProductsPerJudgeCall: 1,
+      maxPairsPerJudgeCall: 1,
+      concurrency: 1,
+      totalBudgetMs: 35_000,
+      pinnedPairs: [{ primaryId: primaryProduct.id, rivalDomain: candidate.domain, rivalId: rivalProduct.id }],
+    });
+    const match = comparison.rows.find((row) => row.primary.id === primaryProduct.id)?.matches
+      .find((item) => item.product?.id === rivalProduct.id && canonicalDomain(item.domain) === canonicalDomain(candidate.domain));
+    if (!match?.product || match.confidence !== "Medium" || !match.assessment
+      || (match.assessment.verdict !== "same_product" && match.assessment.verdict !== "close_substitute")
+      || match.assessment.confidence < 0.8 || match.assessment.contradictions.length) continue;
+    return { primary: primaryProduct, rival: rivalProduct, confidence: match.assessment.confidence, lead };
+  }
+  return undefined;
+}
+
+export async function verifyDiscoveredCompetitorWithInferredLeads(
+  primary: DomainCrawl,
+  candidate: DomainCrawl,
+  discovery: DiscoveryCandidate,
+  targetMarket: VerificationMarket,
+  requireProductOverlap = false,
+  judge: ExactPairJudge = buildAIProductComparison,
+) {
+  const verifiedExactProductPair = discovery.inferredProductLeads?.length
+    ? await verifyInferredProductLead(primary, candidate, discovery, judge)
+    : undefined;
+  const verificationDiscovery = verifiedExactProductPair ? {
+    ...discovery,
+    reason: `The exact seeded product page exposed a priced first-party Product and the targeted semantic judge verified it against “${verifiedExactProductPair.primary.name}”.`,
+    searchQuery: verifiedExactProductPair.lead.laneQuery,
+    sourceUrl: verifiedExactProductPair.lead.candidateSourceUrl,
+    sharedOfferings: [verifiedExactProductPair.primary.name],
+    evidence: [{ url: verifiedExactProductPair.lead.candidateSourceUrl, title: verifiedExactProductPair.rival.name, method: "product-search" as const }],
+    mentionCount: 1,
+    matchedPrimaryProductName: verifiedExactProductPair.primary.name,
+    matchedProductUrl: verifiedExactProductPair.rival.sourceUrl,
+    matchedPrimaryProductNames: [verifiedExactProductPair.primary.name],
+    matchedProductUrls: [verifiedExactProductPair.rival.sourceUrl],
+  } : discovery;
+  const verified = verifyDiscoveredCompetitor(primary, candidate, verificationDiscovery, targetMarket, requireProductOverlap, verifiedExactProductPair);
+  if (discovery.inferredProductLeads?.length && !discovery.observedAdmission && !verifiedExactProductPair) return {
+    ...verified,
+    discovery: {
+      ...verified.discovery,
+      accepted: false,
+      verificationScore: 0,
+      confidence: "Low" as const,
+      categoryAlignment: false,
+      hasProductOverlap: false,
+      categoryBasis: "none" as const,
+      exactProductPairVerified: false,
+      overlapTerms: [],
+      provenPrimaryProduct: undefined,
+      provenRivalProduct: undefined,
+    },
+  };
+  return verified;
+}
+
 export function rememberedReverificationFailures(candidates: MemoryCandidate[], results: Array<DomainCrawl | null>) {
   return candidates.filter((candidate, index) => candidate.provenance === "remembered-reverified" && !results[index]?.discovery?.accepted);
+}
+
+export function verifiedExactMatchHints(confirmed: DomainCrawl[]) {
+  return confirmed.flatMap((result) => result.discovery?.exactProductPairVerified && result.discovery.provenPrimaryProduct && result.discovery.provenRivalProduct
+    ? [{ primaryId: result.discovery.provenPrimaryProduct.id, rivalDomain: result.domain, rivalId: result.discovery.provenRivalProduct.id }]
+    : []).slice(0, 12);
 }
 
 function productPathPriority(path: string) {
@@ -302,12 +449,12 @@ function parseSitemapUrls(text: string, domain: string) {
   }), 500);
 }
 
-async function collectSitemapEvidence(sitemapUrl: string, domain: string, observedAt: string, maxDocuments = MAX_SITEMAP_DOCUMENTS) {
-  const root = await fetchText(sitemapUrl, "application/xml,text/xml,text/plain", domain);
+async function collectSitemapEvidence(sitemapUrl: string, domain: string, observedAt: string, maxDocuments = MAX_SITEMAP_DOCUMENTS, fetchPage = fetchText) {
+  const root = await fetchPage(sitemapUrl, "application/xml,text/xml,text/plain", domain);
   if (!root.ok) return { paths: [] as string[], products: [] as ProductRecord[] };
   const rootUrls = parseSitemapUrls(root.text, domain);
   const childSitemaps = rootUrls.filter((value) => /sitemap[^/]*\.xml/i.test(new URL(value).pathname)).sort((left, right) => Number(!/products?/i.test(left)) - Number(!/products?/i.test(right))).slice(0, maxDocuments);
-  const documents = childSitemaps.length ? await Promise.all(childSitemaps.map(async (url) => ({ url, result: await fetchText(url, "application/xml,text/xml,text/plain", domain) }))) : [{ url: sitemapUrl, result: root }];
+  const documents = childSitemaps.length ? await Promise.all(childSitemaps.map(async (url) => ({ url, result: await fetchPage(url, "application/xml,text/xml,text/plain", domain) }))) : [{ url: sitemapUrl, result: root }];
   const urls = documents.flatMap(({ result }) => result.ok ? parseSitemapUrls(result.text, domain) : []);
   const products = documents.flatMap(({ result }) => result.ok ? extractProductsFromSitemap(result.text, domain, observedAt) : []);
   return { paths: unique(urls.flatMap((value) => { try { return [new URL(value).pathname]; } catch { return []; } }), 500), products: selectPreferredProducts(products) };
@@ -362,8 +509,15 @@ async function parsePage(document: string, sourceUrl: string, fetchedAt: string,
   return { ok: true, live: true, domain, url: sourceUrl, path: url.pathname, sourceUrl, fetchedAt, title, description: description || "No meta description was exposed on the public page.", language: language || "unknown", region: displayRegion(regionInference), regionCountryCode: regionInference.countryCode, regionConfidence: regionInference.confidence, regionSignals: regionInference.signals, headings, prices: claimablePriceSignals, socialLinks: socialLinks(extractionDocument, url), internalLinks, wordCount: readable ? readable.split(/\s+/).length : 0, truncated, contentHash: await hash(document), claims, products: productExtraction.products, productGaps: productExtraction.gaps, thirdPartyProductCount: productExtraction.thirdPartyReferenced.length, responseTimeMs: transport.responseTimeMs, responseBytes: transport.responseBytes, imageCount: imageTags.length, imagesWithAlt, responsiveImageCount, hasViewport, hasDocumentLanguage: language !== "unknown", productLinkCount, hasProductPath, hasAddToCart, hasCartLink, hasCheckoutLink, trustSignals };
 }
 
-export async function crawlDomain(input: string, role: DomainCrawl["role"], seededProductUrls: string[] = []): Promise<DomainCrawl> {
+type CrawlDomainDependencies = {
+  fetchText?: typeof fetchText;
+  robotsResolver?: Pick<typeof sharedRobotsPolicyResolver, "resolve">;
+};
+
+export async function crawlDomain(input: string, role: DomainCrawl["role"], seededProductUrls: string[] = [], dependencies: CrawlDomainDependencies = {}): Promise<DomainCrawl> {
   const startedAt = new Date().toISOString();
+  const fetchPage = dependencies.fetchText || fetchText;
+  const robotsResolver = dependencies.robotsResolver || sharedRobotsPolicyResolver;
   const maxHtmlPages = role === "discovered-competitor" ? MAX_DISCOVERED_HTML_PAGES : MAX_HTML_PAGES;
   const maxSitemapDocuments = role === "discovered-competitor" ? MAX_DISCOVERED_SITEMAP_DOCUMENTS : MAX_SITEMAP_DOCUMENTS;
   let base: URL;
@@ -375,7 +529,7 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
   }
   const domain = canonicalDomain(base.hostname);
   const gaps: Gap[] = [];
-  let robotsResult = await sharedRobotsPolicyResolver.resolve(domain, base.hostname);
+  let robotsResult = await robotsResolver.resolve(domain, base.hostname);
   let robotsState = robotsResult.availability;
   let robots = robotsResult.policy;
   if (robotsState === "available" && !robots.allows("/")) {
@@ -384,7 +538,7 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
   }
   let homepageRequests = 1;
   const submittedBase = new URL(base.toString());
-  const submittedHomepageResult = await fetchText(base.toString(), "text/html,application/xhtml+xml", domain);
+  const submittedHomepageResult = await fetchPage(base.toString(), "text/html,application/xhtml+xml", domain);
   let homepageResult = submittedHomepageResult;
   const alternateBase = alternateHomepageBase(base, domain);
   let attemptedAlternateBase: URL | null = null;
@@ -392,7 +546,7 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
   if (!robotsThrottled && !isHtmlHomepage(homepageResult) && alternateBase && canRecoverHomepageOnAlternateHost(homepageResult)) {
     const robotsRefusedSubmittedHost = robotsState === "unreachable" && [401, 403, 407, 451].includes(robotsResult.status);
     if (robotsRefusedSubmittedHost) {
-      robotsResult = await sharedRobotsPolicyResolver.resolve(domain, alternateBase.hostname);
+      robotsResult = await robotsResolver.resolve(domain, alternateBase.hostname);
       robotsState = robotsResult.availability;
       robots = robotsResult.policy;
     }
@@ -404,7 +558,7 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
       }
       homepageRequests += 1;
       attemptedAlternateBase = alternateBase;
-      homepageResult = await fetchText(alternateBase.toString(), "text/html,application/xhtml+xml", domain);
+      homepageResult = await fetchPage(alternateBase.toString(), "text/html,application/xhtml+xml", domain);
       if (isHtmlHomepage(homepageResult)) {
         gaps.push({
           url: submittedBase.toString(),
@@ -426,7 +580,9 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
     const homepageAccessDenied = attemptedAlternateBase && submittedHomepageResult.status === 403 && homepageResult.status === 403
       ? { status: 403 as const, hosts: [submittedBase.hostname, attemptedAlternateBase.hostname] }
       : null;
-    return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: homepageRequests, pagesFetched: 0, maxPages: maxHtmlPages, robotsChecked: robotsState === "available" }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt, ...(noHostResponded ? { homepageFailure: { kind: homepageResult.failureKind as "network" | "timeout", attemptedUrl: failedUrl, reason: homepageResult.error || "request failed", observedAt: startedAt } } : {}), ...(homepageAccessDenied ? { homepageAccessDenied } : {}) };
+    const submittedFailure = { kind: submittedHomepageResult.failureKind as "network" | "timeout", attemptedUrl: submittedBase.toString(), reason: submittedHomepageResult.error || "request failed", observedAt: startedAt };
+    const finalFailure = { kind: homepageResult.failureKind as "network" | "timeout", attemptedUrl: failedUrl, reason: homepageResult.error || "request failed", observedAt: startedAt };
+    return { domain, role, homepage: null, pages: [], products: [], candidates: [], gaps, coverage: { pagesRequested: homepageRequests, pagesFetched: 0, maxPages: maxHtmlPages, robotsChecked: robotsState === "available" }, productCoverage: { scannedPages: 0, catalogProductsDiscovered: 0, thirdPartyReferenced: 0 }, fetchedAt: startedAt, ...(noHostResponded ? { homepageFailure: preferredEndpointFailure(submittedFailure, finalFailure) } : {}), ...(homepageAccessDenied ? { homepageAccessDenied } : {}) };
   }
   const homepageHost = new URL(homepageResult.url).hostname.toLowerCase().replace(/^www\./, "");
   if (homepageHost !== domain.replace(/^www\./, "")) {
@@ -435,7 +591,7 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
   }
   const clientRedirect = extractStaticClientRedirect(homepageResult.text, homepageResult.url);
   if (clientRedirect) {
-    const redirectResult = await fetchText(clientRedirect, "text/html,application/xhtml+xml", domain);
+    const redirectResult = await fetchPage(clientRedirect, "text/html,application/xhtml+xml", domain);
     const provider = redirectResult.redirectDomain ? parkingProvider(redirectResult.redirectDomain) : "";
     if (provider) {
       gaps.push({ url: clientRedirect, reason: `${domain} redirects to a ${provider} domain-for-sale service; no company report was generated.`, observedAt: startedAt });
@@ -449,7 +605,7 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
   let sitemapProducts: ProductRecord[] = [];
   const sitemapUrl = (() => { try { const candidate = new URL(robots.sitemaps[0] || "/sitemap.xml", base); return canonicalDomain(candidate.hostname) === canonicalDomain(domain) && /^https?:$/.test(candidate.protocol) ? candidate.toString() : new URL("/sitemap.xml", base).toString(); } catch { return new URL("/sitemap.xml", base).toString(); } })();
   if (robotsState !== "unreachable") {
-    const sitemapEvidence = await collectSitemapEvidence(sitemapUrl, domain, startedAt, maxSitemapDocuments);
+    const sitemapEvidence = await collectSitemapEvidence(sitemapUrl, domain, startedAt, maxSitemapDocuments, fetchPage);
     sitemapPaths = sitemapEvidence.paths;
     sitemapProducts = sitemapEvidence.products;
   }
@@ -465,7 +621,7 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
   for (const path of expandablePaths) if (!robots.allows(new URL(path, base).pathname)) gaps.push({ url: new URL(path, base).toString(), reason: "robots.txt disallows this crawl path.", observedAt: startedAt });
   const fetchedPages = await Promise.all(paths.map(async (path) => {
     const url = new URL(path, base).toString();
-    const result = await fetchText(url, "text/html,application/xhtml+xml", domain);
+    const result = await fetchPage(url, "text/html,application/xhtml+xml", domain);
     if (!result.ok || !/text\/html|application\/xhtml\+xml/i.test(result.contentType)) { gaps.push({ url, reason: result.error || `page returned HTTP ${result.status} or non-HTML content.`, observedAt: startedAt }); return null; }
     const finalHost = new URL(result.url).hostname.toLowerCase().replace(/^www\./, "");
     if (finalHost !== domain.replace(/^www\./, "")) { gaps.push({ url, reason: "redirected off the submitted domain.", observedAt: startedAt }); return null; }
@@ -521,14 +677,14 @@ function comparisonSourceUrls(results: DomainCrawl[], primaryDomain: string) {
   return required;
 }
 
-export async function reconcilePreliminaryPrimaryCatalog(results: DomainCrawl[], primaryDomain: string, recoveryOptions?: ProductEnrichmentRecoveryOptions) {
+export async function reconcilePreliminaryPrimaryCatalog(results: DomainCrawl[], primaryDomain: string, recoveryOptions?: ProductEnrichmentRecoveryOptions, localDependencies?: EnrichmentDependencies) {
   const preliminary = buildProductComparison(primaryDomain, results.map((result) => ({ domain: result.domain, products: result.products })), comparisonSourceUrls(results, primaryDomain));
   const primary = results.find((result) => result.domain === primaryDomain);
   if (!primary) return results;
   const plan = planPreliminaryCatalogReconciliation(preliminary, primary.products, MAX_CATALOG_RECONCILIATION_PAGES);
   const targets = plan.targets;
   if (!targets.length) return results;
-  const enrichment = await enrichProductTargetsWithRecovery(targets, MAX_CATALOG_RECONCILIATION_PAGES, recoveryOptions);
+  const enrichment = await enrichProductTargetsWithRecovery(targets, MAX_CATALOG_RECONCILIATION_PAGES, recoveryOptions, localDependencies);
   const observedAt = new Date().toISOString();
   return results.map((result) => result.domain === primaryDomain ? {
     ...result,
@@ -624,10 +780,10 @@ async function crawlPrimaryDomain(domain: string) {
   };
 }
 
-export async function enrichPrimaryProductPrices(result: DomainCrawl, recoveryOptions?: ProductEnrichmentRecoveryOptions) {
+export async function enrichPrimaryProductPrices(result: DomainCrawl, recoveryOptions?: ProductEnrichmentRecoveryOptions, localDependencies?: EnrichmentDependencies) {
   const targets = selectPrimaryProductPriceTargets(result.products, result.domain, MAX_PRIMARY_PRODUCT_PRICE_PAGES);
   if (!targets.length) return { ...result, primaryPriceEnrichment: { pagesRequested: 0, pagesFetched: 0, maxPages: MAX_PRIMARY_PRODUCT_PRICE_PAGES } };
-  const enrichment = await enrichProductTargetsWithRecovery(targets, MAX_PRIMARY_PRODUCT_PRICE_PAGES, recoveryOptions);
+  const enrichment = await enrichProductTargetsWithRecovery(targets, MAX_PRIMARY_PRODUCT_PRICE_PAGES, recoveryOptions, localDependencies);
   const observedAt = new Date().toISOString();
   return {
     ...result,
@@ -643,6 +799,10 @@ export async function enrichPrimaryProductPrices(result: DomainCrawl, recoveryOp
       ...(enrichment.coverage.edgeRecovery ? { edgeRecovery: enrichment.coverage.edgeRecovery } : {}),
     },
   };
+}
+
+export function investigationGapSourceUrl(candidate: DomainCrawl) {
+  return candidate.homepage?.sourceUrl || (candidate.discovery?.observedAdmission ? candidate.discovery.sourceUrl : "");
 }
 
 function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?: DiscoveryResult, investigated: Array<DomainCrawl | null> = [], ads?: AdIntelligenceResult, productComparison?: ProductComparison): { version: "1"; generatedAt: string; blocks: ReportBlock[] } {
@@ -702,7 +862,7 @@ function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?
   for (const candidate of investigated) {
     if (!candidate || results.some((result) => result.domain === candidate.domain)) continue;
     const rememberedPrefix = candidate.discovery?.provenance === "remembered-reverified" ? "Remembered lead was re-crawled, not reconfirmed, and removed from memory: " : "Investigated but not confirmed: ";
-    blocks.push({ type: "gap", id: `investigation-gap-${candidate.domain}`, domain: candidate.domain, url: candidate.homepage?.sourceUrl || candidate.discovery?.sourceUrl || "", reason: candidate.homepage ? (!candidate.discovery?.regionCompatibility ? `${rememberedPrefix}${candidate.discovery?.regionDecisionReason || "first-party evidence placed this company in a different market region."}` : !candidate.discovery?.categoryAlignment ? `${rememberedPrefix}the company's own website did not establish the same core market category.` : discovery?.businessType === "ecommerce" && !candidate.discovery?.hasProductOverlap ? `${rememberedPrefix}the current first-party crawl did not prove a comparable product, so this seller was not included as an ecommerce competitor.` : `${rememberedPrefix}entity verification score ${candidate.discovery?.verificationScore || 0}/100 did not meet the inclusion threshold.`) : `${rememberedPrefix}${candidate.gaps[0]?.reason || "the public site could not be verified."}`, observedAt: candidate.fetchedAt });
+    blocks.push({ type: "gap", id: `investigation-gap-${candidate.domain}`, domain: candidate.domain, url: investigationGapSourceUrl(candidate), reason: candidate.homepage ? (!candidate.discovery?.regionCompatibility ? `${rememberedPrefix}${candidate.discovery?.regionDecisionReason || "first-party evidence placed this company in a different market region."}` : !candidate.discovery?.categoryAlignment ? `${rememberedPrefix}the company's own website did not establish the same core market category.` : discovery?.businessType === "ecommerce" && !candidate.discovery?.hasProductOverlap ? `${rememberedPrefix}the current first-party crawl did not prove a comparable product, so this seller was not included as an ecommerce competitor.` : `${rememberedPrefix}entity verification score ${candidate.discovery?.verificationScore || 0}/100 did not meet the inclusion threshold.`) : `${rememberedPrefix}${candidate.gaps[0]?.reason || "the public site could not be verified."}`, observedAt: candidate.fetchedAt });
   }
   return { version: "1", generatedAt: new Date().toISOString(), blocks };
 }
@@ -749,6 +909,7 @@ export async function POST(request: Request) {
     }
     if (primary?.siteState?.status === "unavailable") {
       const unavailableState = primary.siteState;
+      const unavailableMessaging = unavailablePrimaryMessaging(primaryDomain, unavailableState);
       const document = buildDocument(submittedResults, primaryDomain);
       document.blocks = [
         {
@@ -759,7 +920,7 @@ export async function POST(request: Request) {
           attemptedUrl: unavailableState.attemptedUrl,
           attempts: primary.coverage.attempts || 2,
           observedAt: unavailableState.observedAt,
-          explanation: "The submitted public HTTPS endpoint did not return a network response after two bounded attempts. Competitor, product, advertising, and matching analysis did not run.",
+          explanation: unavailableMessaging.explanation,
         },
         {
           type: "gap",
@@ -771,9 +932,9 @@ export async function POST(request: Request) {
         },
         ...document.blocks
           .filter((block) => block.id !== "candidate-gap" && !(block.type === "gap" && block.domain === primaryDomain && block.url === unavailableState.attemptedUrl))
-          .map((block) => block.type === "summary" ? { ...block, title: "The submitted website was unavailable", body: "Competitor discovery did not run because the submitted public HTTPS address returned no network response after two bounded attempts." } : block),
+          .map((block) => block.type === "summary" ? { ...block, title: "The submitted website was unavailable", body: unavailableMessaging.summaryBody } : block),
       ];
-      return Response.json({ ok: false, live: false, code: "unavailable-domain", primaryDomain, error: `${primaryDomain} did not return a public network response after two bounded attempts. Check the domain and try again later.`, results: submittedResults, document }, { status: 409 });
+      return Response.json({ ok: false, live: false, code: "unavailable-domain", primaryDomain, error: unavailableMessaging.error, results: submittedResults, document }, { status: 409 });
     }
     if (!primary?.homepage) {
       const reason = primary?.gaps[0]?.reason;
@@ -807,7 +968,13 @@ export async function POST(request: Request) {
       gaps: memory.gap ? [...discovery.gaps, memory.gap] : discovery.gaps,
     };
     const verificationMarket = resolveVerificationMarket(discovery.region, primary.homepage.region, firstPartyRegionSource(primary.homepage));
-    const investigatedSettled = await settleWithConcurrency(investigationCandidates, COMPETITOR_CRAWL_CONCURRENCY, async (candidate) => verifyDiscoveredCompetitor(primary, await crawlDomain(candidate.domain, "discovered-competitor", candidate.matchedProductUrls?.length ? candidate.matchedProductUrls : [candidate.matchedProductUrl || candidate.websiteUrl]), candidate, verificationMarket, discoveryPolicy.requireProductOverlap));
+    const investigatedSettled = await settleWithConcurrency(investigationCandidates, COMPETITOR_CRAWL_CONCURRENCY, async (candidate) => {
+      const seedUrls = [...new Set([
+        ...(candidate.matchedProductUrls || (candidate.matchedProductUrl ? [candidate.matchedProductUrl] : [])),
+        ...(candidate.inferredProductLeads || []).map((lead) => lead.candidateSourceUrl),
+      ])];
+      return verifyDiscoveredCompetitorWithInferredLeads(primary, await crawlDomain(candidate.domain, "discovered-competitor", seedUrls.length ? seedUrls : [candidate.websiteUrl]), candidate, verificationMarket, discoveryPolicy.requireProductOverlap);
+    });
     const discoveredResults = investigatedSettled.map((result) => result.status === "fulfilled" ? result.value : null);
     const confirmed: DomainCrawl[] = discoveredResults.filter((result): result is NonNullable<typeof result> => Boolean(result?.homepage && result.discovery?.accepted)).sort((left, right) => compareVerifiedCompetitors(left.discovery!, right.discovery!));
     const rememberedFailures = rememberedReverificationFailures(investigationCandidates, discoveredResults);
@@ -829,7 +996,8 @@ export async function POST(request: Request) {
       })),
     };
     const document = compactCatalogSnapshots(buildDocument(results, primaryDomain, discovery, discoveredResults));
-    return Response.json({ ok: true, live: true, primaryDomain, results, discovery, adRequest, document, crawl: { maxPagesPerDomain: MAX_HTML_PAGES, maxPagesPerDiscoveredCompetitor: MAX_DISCOVERED_HTML_PAGES, maxPrimaryProductPricePages: MAX_PRIMARY_PRODUCT_PRICE_PAGES, maxMatchedProductEnrichmentPages: MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES, competitorCrawlConcurrency: COMPETITOR_CRAWL_CONCURRENCY, htmlExtractionBytes: MAX_HTML_EXTRACTION_BYTES, robotsAware: true, generatedAt: new Date().toISOString() } });
+    const matchHints = verifiedExactMatchHints(confirmed);
+    return Response.json({ ok: true, live: true, primaryDomain, results, discovery, adRequest, matchHints, document, crawl: { maxPagesPerDomain: MAX_HTML_PAGES, maxPagesPerDiscoveredCompetitor: MAX_DISCOVERED_HTML_PAGES, maxPrimaryProductPricePages: MAX_PRIMARY_PRODUCT_PRICE_PAGES, maxMatchedProductEnrichmentPages: MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES, competitorCrawlConcurrency: COMPETITOR_CRAWL_CONCURRENCY, htmlExtractionBytes: MAX_HTML_EXTRACTION_BYTES, robotsAware: true, generatedAt: new Date().toISOString() } });
   } catch (error) {
     return Response.json({ ok: false, live: false, error: error instanceof Error ? error.message : "Unable to crawl the submitted domains." }, { status: 400 });
   }

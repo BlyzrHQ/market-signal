@@ -36,6 +36,12 @@ type Candidate = {
 
 type CandidateGroup = { primary: ProductRecord; candidates: Candidate[] };
 
+export type PinnedProductPair = {
+  primaryId: string;
+  rivalDomain: string;
+  rivalId: string;
+};
+
 export type JudgeBatchCheckpointKey = {
   batchHash: string;
   batchIndex: number;
@@ -79,6 +85,7 @@ export type AIProductMatchingOptions = {
   concurrency?: number;
   timeoutMs?: number;
   totalBudgetMs?: number;
+  pinnedPairs?: PinnedProductPair[];
   loadJudgeBatchCheckpoint?: (key: JudgeBatchCheckpointKey) => Promise<unknown>;
   saveJudgeBatchCheckpoint?: (key: JudgeBatchCheckpointKey, checkpoint: JudgeBatchCheckpoint) => Promise<void>;
 };
@@ -324,9 +331,19 @@ function isUsefulAssignment(primary: ProductRecord, rival: ProductRecord, confid
     && sharedNonGenericIdentityTokens(primary, rival).length === 0);
 }
 
-function retrieveGroups(primaryProducts: ProductRecord[], competitors: ProductCatalog[], embeddings: Map<string, number[]>, fallback: ProductComparison, maxCandidates: number, maxPerDomain: number, maxPool: number) {
+function candidateForPair(primary: ProductRecord, product: ProductRecord, embeddings: Map<string, number[]>): Candidate {
+  const lexical = scoreProductPair(primary, product);
+  const semanticScore = Math.max(0, cosine(embeddings.get(primary.id), embeddings.get(product.id)));
+  const identifierScore = sharedValidGtin(primary.identifiers, product.identifiers) ? 1 : scopedCodeMatch(primary, product) ? 0.62 : 0;
+  const quantityScore = quantitiesEqual(primary.quantity, product.quantity) && quantityHasIdentitySupport(primary, product) ? 0.04 : 0;
+  return { product, lexicalScore: lexical.score, lexicalEligible: lexical.eligible, semanticScore, identitySignal: identifierScore > 0 || quantityScore > 0, retrievalScore: Math.min(1, Math.max(lexical.score, semanticScore, identifierScore) + quantityScore) };
+}
+
+function retrieveGroups(primaryProducts: ProductRecord[], competitors: ProductCatalog[], embeddings: Map<string, number[]>, fallback: ProductComparison, maxCandidates: number, maxPerDomain: number, maxPool: number, pinnedPairs: PinnedProductPair[] = []) {
   const indexes = buildRetrievalIndexes(competitors);
   const fallbackRows = new Map(fallback.rows.map((row) => [row.primary.id, new Map(row.matches.map((match) => [canonicalDomain(match.domain), match.product]))]));
+  const pinsByPrimary = new Map<string, PinnedProductPair[]>();
+  for (const pin of pinnedPairs) pinsByPrimary.set(pin.primaryId, [...(pinsByPrimary.get(pin.primaryId) || []), pin]);
   let scoredPairs = 0;
   const groups = primaryProducts.map((primary): CandidateGroup => {
     const primaryTokens = retrievalTokens(primary);
@@ -335,17 +352,18 @@ function retrieveGroups(primaryProducts: ProductRecord[], competitors: ProductCa
       const fallbackProduct = fallbackRows.get(primary.id)?.get(canonicalDomain(index.catalog.domain)) || null;
       const pool = exactRetrievalPool(primary, primaryTokens, primaryVector, index, embeddings, fallbackProduct, Math.max(maxPool, maxPerDomain));
       scoredPairs += index.catalog.products.length;
-      return pool.map((product): Candidate => {
-        const lexical = scoreProductPair(primary, product);
-        const lexicalScore = lexical.score;
-        const semanticScore = Math.max(0, cosine(embeddings.get(primary.id), embeddings.get(product.id)));
-        const identifierScore = sharedValidGtin(primary.identifiers, product.identifiers) ? 1 : scopedCodeMatch(primary, product) ? 0.62 : 0;
-        const quantityScore = quantitiesEqual(primary.quantity, product.quantity) && quantityHasIdentitySupport(primary, product) ? 0.04 : 0;
-        return { product, lexicalScore, lexicalEligible: lexical.eligible, semanticScore, identitySignal: identifierScore > 0 || quantityScore > 0, retrievalScore: Math.min(1, Math.max(lexicalScore, semanticScore, identifierScore) + quantityScore) };
-      }).filter((candidate) => candidate.semanticScore > 0 || candidate.lexicalEligible || candidate.identitySignal)
+      return pool.map((product) => candidateForPair(primary, product, embeddings)).filter((candidate) => candidate.semanticScore > 0 || candidate.lexicalEligible || candidate.identitySignal)
         .sort((left, right) => right.retrievalScore - left.retrievalScore || right.lexicalScore - left.lexicalScore || left.product.id.localeCompare(right.product.id)).slice(0, maxPerDomain);
     });
-    return { primary, candidates: candidates.sort((left, right) => right.retrievalScore - left.retrievalScore || left.product.id.localeCompare(right.product.id)).slice(0, maxCandidates) };
+    const pinned = (pinsByPrimary.get(primary.id) || []).flatMap((pin) => {
+      const catalog = competitors.find((item) => canonicalDomain(item.domain) === canonicalDomain(pin.rivalDomain));
+      const product = catalog?.products.find((item) => item.id === pin.rivalId);
+      return product ? [candidateForPair(primary, product, embeddings)] : [];
+    });
+    const ordered = [...pinned, ...candidates]
+      .filter((candidate, index, all) => all.findIndex((item) => item.product.id === candidate.product.id && canonicalDomain(item.product.domain) === canonicalDomain(candidate.product.domain)) === index);
+    const pinnedKeys = new Set(pinned.map((candidate) => `${canonicalDomain(candidate.product.domain)}|${candidate.product.id}`));
+    return { primary, candidates: ordered.sort((left, right) => Number(pinnedKeys.has(`${canonicalDomain(right.product.domain)}|${right.product.id}`)) - Number(pinnedKeys.has(`${canonicalDomain(left.product.domain)}|${left.product.id}`)) || right.retrievalScore - left.retrievalScore || left.product.id.localeCompare(right.product.id)).slice(0, Math.max(maxCandidates, pinned.length)) };
   });
   return { groups, scoredPairs };
 }
@@ -529,10 +547,11 @@ function candidateStrength(group: CandidateGroup) {
   return group.candidates.reduce((best, candidate) => Math.max(best, candidate.retrievalScore), 0);
 }
 
-function selectJudgeGroups(groups: CandidateGroup[], maxPrimary: number) {
+function selectJudgeGroups(groups: CandidateGroup[], maxPrimary: number, pinnedPrimaryIds = new Set<string>()) {
   return [...groups]
     .filter((group) => group.candidates.length)
-    .sort((left, right) => candidateStrength(right) - candidateStrength(left)
+    .sort((left, right) => Number(pinnedPrimaryIds.has(right.primary.id)) - Number(pinnedPrimaryIds.has(left.primary.id))
+      || candidateStrength(right) - candidateStrength(left)
       || Number(right.primary.priceSignals.length > 0) - Number(left.primary.priceSignals.length > 0)
       || Number(Boolean(right.primary.imageUrl)) - Number(Boolean(left.primary.imageUrl))
       || left.primary.id.localeCompare(right.primary.id))
@@ -602,7 +621,8 @@ function withoutUnassessedMatches(comparison: ProductComparison) {
 export function buildAIProductComparison(primaryDomain: string, catalogs: ProductCatalog[], options?: AIProductMatchingOptions): Promise<ProductComparison>;
 export function buildAIProductComparison(primaryDomain: string, catalogs: ProductCatalog[], requiredSourceUrls?: Record<string, string[]>, options?: AIProductMatchingOptions): Promise<ProductComparison>;
 export async function buildAIProductComparison(primaryDomain: string, catalogs: ProductCatalog[], requiredSourceUrlsOrOptions: Record<string, string[]> | AIProductMatchingOptions = {}, providedOptions?: AIProductMatchingOptions): Promise<ProductComparison> {
-  const thirdArgumentIsOptions = providedOptions === undefined && Object.values(requiredSourceUrlsOrOptions).some((value) => !Array.isArray(value));
+  const optionKeys = new Set<keyof AIProductMatchingOptions>(["apiKey", "fetch", "baseUrl", "model", "embeddingModel", "maxPrimaryProducts", "maxCandidatesPerPrimary", "maxCandidatesPerDomain", "maxProductsPerCompetitor", "maxRetrievalPoolPerDomain", "primaryProductsPerJudgeCall", "maxPairsPerJudgeCall", "concurrency", "timeoutMs", "totalBudgetMs", "pinnedPairs", "loadJudgeBatchCheckpoint", "saveJudgeBatchCheckpoint"]);
+  const thirdArgumentIsOptions = providedOptions === undefined && Object.keys(requiredSourceUrlsOrOptions).some((key) => optionKeys.has(key as keyof AIProductMatchingOptions));
   const requiredSourceUrls = thirdArgumentIsOptions ? {} : requiredSourceUrlsOrOptions as Record<string, string[]>;
   const options = providedOptions || (thirdArgumentIsOptions ? requiredSourceUrlsOrOptions as AIProductMatchingOptions : {});
   const startedAt = Date.now();
@@ -627,7 +647,16 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   const totalBudgetMs = Math.max(1_000, options.totalBudgetMs || DEFAULT_TOTAL_BUDGET_MS);
   const deadlineAt = startedAt + totalBudgetMs;
   const synchronizedPrimary = synchronizedPrimaryProducts(primaryDomain, catalogs);
-  const competitors = catalogs.filter((catalog) => canonicalDomain(catalog.domain) !== canonicalDomain(primaryDomain)).map((catalog) => ({ domain: canonicalDomain(catalog.domain), products: selectPreferredProducts(catalog.products).slice(0, maxCompetitorProducts) }));
+  const requestedPins = (options.pinnedPairs || []).slice(0, 12);
+  const competitors = catalogs.filter((catalog) => canonicalDomain(catalog.domain) !== canonicalDomain(primaryDomain)).map((catalog) => {
+    const domain = canonicalDomain(catalog.domain);
+    const preferred = selectPreferredProducts(catalog.products);
+    const pinned = requestedPins.filter((pin) => canonicalDomain(pin.rivalDomain) === domain).flatMap((pin) => {
+      const product = catalog.products.find((item) => item.id === pin.rivalId);
+      return product ? [product] : [];
+    });
+    return { domain, products: [...pinned, ...preferred].filter((product, index, all) => all.findIndex((item) => item.id === product.id) === index).slice(0, Math.max(maxCompetitorProducts, pinned.length)) };
+  });
   matchingBase.primaryProductsSynchronized = synchronizedPrimary.length;
   matchingBase.competitorProductsSynchronized = competitors.reduce((sum, catalog) => sum + catalog.products.length, 0);
   if (!synchronizedPrimary.length || !competitors.length) return { ...withoutUnassessedMatches(fallback), matching: { ...matchingBase, method: "lexical-fallback", available: false, gaps: ["AI product matching had no primary or competitor catalog records to assess; no product pair was accepted."] } };
@@ -645,8 +674,9 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
     gaps.push(error instanceof Error && error.name === "AbortError" ? "Semantic product retrieval timed out; bounded lexical retrieval was used before AI judging." : "Semantic product retrieval was unavailable; bounded lexical retrieval was used before AI judging.");
   }
 
-  const retrieved = retrieveGroups(synchronizedPrimary, competitors, embeddings, fallback, maxCandidates, maxPerDomain, maxRetrievalPool);
-  const groups = selectJudgeGroups(retrieved.groups, maxPrimary);
+  const pinnedPairs = requestedPins;
+  const retrieved = retrieveGroups(synchronizedPrimary, competitors, embeddings, fallback, maxCandidates, maxPerDomain, maxRetrievalPool, pinnedPairs);
+  const groups = selectJudgeGroups(retrieved.groups, maxPrimary, new Set(pinnedPairs.map((pair) => pair.primaryId)));
   matchingBase.selectedPrimaryIds = groups.map((group) => group.primary.id);
   matchingBase.candidateSlotsByDomain = groups.flatMap((group) => group.candidates).reduce((counts, candidate) => {
     const domain = canonicalDomain(candidate.product.domain);
@@ -714,9 +744,20 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   });
   if (!successfulPrimaryIds.size) return { ...withoutUnassessedMatches(fallback), matching: { ...matchingBase, method: "lexical-fallback", available: false, retrievalPairsScored: retrieved.scoredPairs, judgeCalls, embeddingCalls, reusedJudgeCheckpoints, savedJudgeCheckpoints, durationMs: Date.now() - startedAt, selectedPrimaryIds: primaryProducts.map((product) => product.id), gaps: gaps.length ? gaps : ["AI product judging returned no usable assessments; no product pair was accepted."] } };
 
-  const proposals = sanitized.filter((item): item is typeof item & { verdict: "same_product" | "close_substitute" } => (item.verdict === "same_product" || item.verdict === "close_substitute")
-      && isUsefulAssignment(item.primary, item.candidate.product, item.confidence))
-    .sort((left, right) => Number(right.verdict === "same_product") - Number(left.verdict === "same_product") || right.confidence - left.confidence || right.candidate.retrievalScore - left.candidate.retrievalScore || left.candidate.product.id.localeCompare(right.candidate.product.id));
+  const pinnedPairKeys = new Set(pinnedPairs.map((pair) => `${pair.primaryId}|${canonicalDomain(pair.rivalDomain)}|${pair.rivalId}`));
+  const proposals = sanitized.filter((item): item is typeof item & { verdict: "same_product" | "close_substitute" } => {
+    if (item.verdict !== "same_product" && item.verdict !== "close_substitute") return false;
+    const pinned = pinnedPairKeys.has(`${item.primary.id}|${canonicalDomain(item.candidate.product.domain)}|${item.candidate.product.id}`);
+    return pinned
+      ? item.confidence >= 0.8 && isUsefulAssignment(item.primary, item.candidate.product, item.confidence)
+      : isUsefulAssignment(item.primary, item.candidate.product, item.confidence);
+  })
+    .sort((left, right) => Number(pinnedPairKeys.has(`${right.primary.id}|${canonicalDomain(right.candidate.product.domain)}|${right.candidate.product.id}`))
+      - Number(pinnedPairKeys.has(`${left.primary.id}|${canonicalDomain(left.candidate.product.domain)}|${left.candidate.product.id}`))
+      || Number(right.verdict === "same_product") - Number(left.verdict === "same_product")
+      || right.confidence - left.confidence
+      || right.candidate.retrievalScore - left.candidate.retrievalScore
+      || left.candidate.product.id.localeCompare(right.candidate.product.id));
   const assignments = new Map<string, typeof proposals[number]>();
   const usedRivals = new Set<string>();
   for (const proposal of proposals) {

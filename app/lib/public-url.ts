@@ -12,26 +12,15 @@ function publicIpv4(host: string) {
   return true;
 }
 
-function mappedIpv4(host: string) {
-  if (!host.startsWith("::ffff:")) return null;
-  const tail = host.slice(7);
-  if (tail.includes(".")) return tail;
-  const words = tail.split(":");
-  if (words.length !== 2 || words.some((word) => !/^[0-9a-f]{1,4}$/i.test(word))) return "invalid";
-  const value = (Number.parseInt(words[0], 16) * 65_536) + Number.parseInt(words[1], 16);
-  return [value >>> 24, (value >>> 16) & 255, (value >>> 8) & 255, value & 255].join(".");
-}
-
 export function isPublicHostname(value: string) {
   const host = value.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
   if (!host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return false;
   if (/^\d+(?:\.\d+){3}$/.test(host)) return publicIpv4(host);
-  if (host.includes(":")) {
-    const mapped = mappedIpv4(host);
-    if (mapped !== null) return mapped !== "invalid" && publicIpv4(mapped);
-    if (host === "::" || host === "::1" || /^(?:fc|fd|fe[89ab]|ff)/i.test(host) || /^2001:(?:db8|0?10):/i.test(host)) return false;
-    return /^[0-9a-f:]+$/i.test(host);
-  }
+  // Market Signal accepts public DNS names and IPv4 literals. Direct IPv6
+  // literals are outside the domain-in product contract and are rejected
+  // because organization-specific NAT64 and ISATAP routes cannot be inferred
+  // safely from an address alone.
+  if (host.includes(":")) return false;
   return host.includes(".") && /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i.test(host) && !host.includes("..") && host.length <= 253;
 }
 

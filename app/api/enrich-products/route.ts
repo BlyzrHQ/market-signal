@@ -1,4 +1,4 @@
-import { publicProductTarget } from "../../lib/storefront-product-enrichment.ts";
+import { publicProductTarget, type EnrichmentDependencies } from "../../lib/storefront-product-enrichment.ts";
 import { EDGE_PRODUCT_ENRICHMENT_MARKER } from "../../lib/edge-product-enrichment-recovery.ts";
 import { enrichProductTargetsWithRecovery } from "../../lib/product-enrichment-recovery.ts";
 import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../lib/internal-auth.ts";
@@ -6,7 +6,7 @@ import { runtimeEnvironmentValue } from "../../lib/runtime-env.ts";
 
 const MAX_TARGETS = 64;
 
-export async function POST(request: Request) {
+export async function handleProductEnrichmentRequest(request: Request, localDependencies?: EnrichmentDependencies) {
   try {
     const edgeRequest = request.headers.get(EDGE_PRODUCT_ENRICHMENT_MARKER) === "1";
     if (edgeRequest && !await hasValidInternalAuthorization(request.headers.get("authorization"))) return unauthorizedInternalResponse();
@@ -22,9 +22,13 @@ export async function POST(request: Request) {
       requestUrl: request.url,
       callbackToken,
       deployTarget: process.env.MARKET_SIGNAL_DEPLOY_TARGET,
-    });
+    }, localDependencies);
     return Response.json({ ok: true, ...result });
   } catch (error) {
     return Response.json({ ok: false, error: error instanceof Error ? error.message : "Selected product enrichment was unavailable." }, { status: 400 });
   }
+}
+
+export async function POST(request: Request) {
+  return handleProductEnrichmentRequest(request);
 }

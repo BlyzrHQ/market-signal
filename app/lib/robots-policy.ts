@@ -144,8 +144,16 @@ export function createRobotsPolicyResolver(options: ResolverOptions = {}) {
   };
 }
 
-export const sharedRobotsPolicyResolver = createRobotsPolicyResolver();
+let sharedResolverTestFetchEnabled = false;
+
+export const sharedRobotsPolicyResolver = createRobotsPolicyResolver({
+  fetchText: (url, accept, options) => fetchPublicText(url, accept, sharedResolverTestFetchEnabled
+    ? { ...options, fetchImpl: globalThis.fetch }
+    : options),
+});
 
 export function resetSharedRobotsPolicyResolverForTests() {
+  if (!process.env.NODE_TEST_CONTEXT) throw new Error("The shared robots resolver test hook is available only under node:test.");
+  sharedResolverTestFetchEnabled = true;
   sharedRobotsPolicyResolver.clear();
 }

@@ -2,10 +2,21 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { productDecision } from "../app/lib/product-intelligence.ts";
-import { resetSharedRobotsPolicyResolverForTests, sharedRobotsPolicyResolver } from "../app/lib/robots-policy.ts";
-import { claimablePagePricePatterns, enrichProductTargets, extractScopedProductPageEvidence, publicProductTarget, selectPrimaryProductPriceTargets } from "../app/lib/storefront-product-enrichment.ts";
+import { fetchPublicText } from "../app/lib/public-fetch.ts";
+import { createRobotsPolicyResolver } from "../app/lib/robots-policy.ts";
+import { claimablePagePricePatterns, enrichProductTargets as enrichProductTargetsImpl, extractScopedProductPageEvidence, publicProductTarget, selectPrimaryProductPriceTargets } from "../app/lib/storefront-product-enrichment.ts";
 
-test.beforeEach(() => resetSharedRobotsPolicyResolverForTests());
+let testRobotsResolver;
+function resetSharedRobotsPolicyResolverForTests() {
+  testRobotsResolver = createRobotsPolicyResolver({
+    fetchText: (url, accept, options) => fetchPublicText(url, accept, { ...options, fetchImpl: globalThis.fetch }),
+  });
+}
+test.beforeEach(resetSharedRobotsPolicyResolverForTests);
+
+function enrichProductTargets(targets, maxPages) {
+  return enrichProductTargetsImpl(targets, maxPages, { fetchImpl: globalThis.fetch, robotsResolver: testRobotsResolver });
+}
 
 function product(index, overrides = {}) {
   return {
@@ -1134,12 +1145,10 @@ test("classifies a successful response body-read failure as content, not network
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
     if (String(input).endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
-    return {
-      ok: true,
+    return new Response(new ReadableStream({ pull() { throw new Error("body stream failed"); } }), {
       status: 200,
-      headers: new Headers({ "content-type": "text/html" }),
-      arrayBuffer: async () => { throw new Error("body stream failed"); },
-    };
+      headers: { "content-type": "text/html" },
+    });
   };
   try {
     const result = await enrichProductTargets([target()], 1);
@@ -1365,7 +1374,7 @@ test("a cached robots denial still blocks the selected product page", async () =
     return new Response("User-agent: *\nDisallow: /products/", { headers: { "content-type": "text/plain" } });
   };
   try {
-    await sharedRobotsPolicyResolver.resolve("shop.test", "shop.test");
+    await testRobotsResolver.resolve("shop.test", "shop.test");
     globalThis.fetch = async (input) => {
       calls.push(String(input));
       return new Response("should not be fetched", { headers: { "content-type": "text/html" } });
@@ -1387,7 +1396,7 @@ test("a cached successful robots policy carries a later product enrichment reque
     return new Response("User-agent: *\nAllow: /products/", { headers: { "content-type": "text/plain" } });
   };
   try {
-    await sharedRobotsPolicyResolver.resolve("shop.test", "shop.test");
+    await testRobotsResolver.resolve("shop.test", "shop.test");
     globalThis.fetch = async (input) => {
       const url = String(input);
       calls.push(url);

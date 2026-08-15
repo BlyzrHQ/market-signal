@@ -1,3 +1,5 @@
+import { IPV6_ONLY_ORIGIN_REASON } from "./public-fetch.ts";
+
 export async function settleWithConcurrency<Input, Output>(
   inputs: Input[],
   concurrency: number,
@@ -37,21 +39,37 @@ export type UnavailablePrimaryState = {
   observedAt: string;
 };
 
+export function preferredEndpointFailure(first: PublicEndpointFailure, second: PublicEndpointFailure) {
+  return first.reason === IPV6_ONLY_ORIGIN_REASON ? first : second;
+}
+
 export function unavailableAfterBoundedAttempts(first?: PublicEndpointFailure, second?: PublicEndpointFailure): UnavailablePrimaryState | null {
   if (first?.kind !== "network" || second?.kind !== "network") return null;
   try {
     const firstUrl = new URL(first.attemptedUrl);
     const secondUrl = new URL(second.attemptedUrl);
     if (firstUrl.protocol !== "https:" || secondUrl.protocol !== "https:" || firstUrl.origin !== secondUrl.origin) return null;
+    const ipv6OnlyReason = first.reason === IPV6_ONLY_ORIGIN_REASON && second.reason === IPV6_ONLY_ORIGIN_REASON
+      ? IPV6_ONLY_ORIGIN_REASON
+      : "The submitted public HTTPS endpoint did not return a network response after two bounded attempts.";
     return {
       status: "unavailable",
       attemptedUrl: secondUrl.toString(),
-      reason: "The submitted public HTTPS endpoint did not return a network response after two bounded attempts.",
+      reason: ipv6OnlyReason,
       observedAt: second.observedAt,
     };
   } catch {
     return null;
   }
+}
+
+export function unavailablePrimaryMessaging(domain: string, state: UnavailablePrimaryState) {
+  const reason = state.reason.trim() || "The submitted public HTTPS endpoint was unavailable after two bounded attempts.";
+  return {
+    explanation: `${reason} Competitor, product, advertising, and matching analysis did not run.`,
+    summaryBody: `Competitor discovery did not run. ${reason}`,
+    error: `${domain}: ${reason}`,
+  };
 }
 
 function structuredDataFragments(document: string, maxBytes: number) {

@@ -1,9 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { enrichPrimaryProductPrices, reconcilePreliminaryPrimaryCatalog } from "../app/api/crawl/route.ts";
+import { enrichPrimaryProductPrices as enrichPrimaryProductPricesImpl, reconcilePreliminaryPrimaryCatalog as reconcilePreliminaryPrimaryCatalogImpl } from "../app/api/crawl/route.ts";
 import { buildProductComparison } from "../app/lib/product-intelligence.ts";
 import { resetSharedRobotsPolicyResolverForTests } from "../app/lib/robots-policy.ts";
+
+function reconcilePreliminaryPrimaryCatalog(results, primaryDomain, recoveryOptions) {
+  return reconcilePreliminaryPrimaryCatalogImpl(results, primaryDomain, recoveryOptions, { fetchImpl: globalThis.fetch });
+}
+
+function enrichPrimaryProductPrices(result, recoveryOptions) {
+  return enrichPrimaryProductPricesImpl(result, recoveryOptions, { fetchImpl: globalThis.fetch });
+}
 
 function product(id, domain, name, sourceUrl) {
   return {
