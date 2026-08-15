@@ -275,13 +275,56 @@ test("binds one query from a grouped translated action while rejecting citations
   assert.equal(candidates[0].matchedProductUrl, "https://health.example/products/reishi-honey-500g");
 });
 
-test("does not create a grouped-query lead when only the joined query text matches the path", () => {
+test("keeps a grouped-query exact source private when no individual query matches the path", () => {
   const translatedProfile = { ...profile, products: [product("Arabic Reishi Product", "https://myjam.co.uk/products/reishi-honey")] };
   const payload = { output: [{ type: "web_search_call", action: {
     queries: ["reishi supplement", "honey kuwait"],
     sources: [{ title: "Reishi Honey 500g", url: "https://health.example/products/reishi-honey-500g" }],
   } }] };
-  assert.deepEqual(candidatesFromSearchEvidence(payload, translatedProfile), []);
+  const candidates = candidatesFromSearchEvidence(payload, translatedProfile);
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].observedAdmission, undefined);
+  assert.equal(candidates[0].inferredProductLeads?.[0].admission, "source-first-cross-language");
+  assert.equal(candidates[0].inferredProductLeads?.[0].laneQuery, "reishi supplement");
+});
+
+test("admits an attributed opaque product-detail URL only as a source-first investigation lead", () => {
+  const arabicProfile = {
+    ...profile,
+    domain: "noororganicfood.com",
+    title: "نور للأغذية العضوية",
+    products: [product("عسل الريشي 500 غرام", "https://noororganicfood.com/product/reishi-honey-500g")],
+  };
+  const payload = { output: [{ type: "web_search_call", action: {
+    query: "reishi honey 500g kuwait buy",
+    sources: [{ title: "Wellness product", url: "https://health.example/products/sku-8472" }],
+  } }] };
+  const candidates = candidatesFromSearchEvidence(payload, arabicProfile);
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].domain, "health.example");
+  assert.equal(candidates[0].observedAdmission, undefined);
+  assert.equal(candidates[0].inferredProductLeads?.[0].admission, "source-first-cross-language");
+  assert.equal(candidates[0].inferredProductLeads?.[0].candidateSourceUrl, "https://health.example/products/sku-8472");
+});
+
+test("does not source-first admit citation-only opaque links or listing routes", () => {
+  const arabicProfile = { ...profile, products: [product("عسل الريشي 500 غرام", "https://myjam.co.uk/products/reishi-honey")] };
+  const payload = { output: [
+    { type: "message", content: [{ type: "output_text", text: "", annotations: [{ type: "url_citation", title: "Wellness product", url: "https://health.example/products/sku-8472" }] }] },
+    { type: "web_search_call", action: { query: "reishi honey 500g", sources: [{ title: "Wellness catalog", url: "https://health.example/collections/sku-8472" }] } },
+  ] };
+  assert.deepEqual(candidatesFromSearchEvidence(payload, arabicProfile), []);
+});
+
+test("bounds source-first investigations before domain deduplication", () => {
+  const arabicProfile = { ...profile, products: [product("عسل الريشي 500 غرام", "https://myjam.co.uk/products/reishi-honey")] };
+  const payload = { output: [{ type: "web_search_call", action: {
+    query: "reishi honey 500g kuwait buy",
+    sources: [1, 2, 3].map((index) => ({ title: `Opaque result ${index}`, url: `https://seller-${index}.example/products/sku-${index}` })),
+  } }] };
+  const candidates = candidatesFromSearchEvidence(payload, arabicProfile);
+  assert.equal(candidates.length, 2);
+  assert.ok(candidates.every((candidate) => candidate.inferredProductLeads?.[0].admission === "source-first-cross-language"));
 });
 
 test("rejects translated terminal listing words and pagination-shaped weak product leads without a finite dictionary", () => {
@@ -401,7 +444,7 @@ test("entity and category search sources cannot publish listing routes", () => {
 
 test("unknown-language entity result paths are rebound to the first-party root", () => {
   const payload = { output: [{ type: "web_search_call", action: { sources: [
-    { title: "Organic Sidr Honey Grocery", url: "https://rival.example/products/hledat" },
+    { title: "Organic Sidr Honey Grocery", url: "https://rival.example/products/nabidka" },
     { title: "Organic Sidr Honey Grocery", url: "https://second.example/catalog?strona=2" },
   ] } }] };
   const business = { domain: "myjam.co.uk", categoryTerms: ["organic", "grocery"], category: "organic grocery", region: "United Kingdom" };
