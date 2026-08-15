@@ -8,6 +8,7 @@ import { loadReportMatchBatchCheckpoints, loadReportProductEntitlement, saveRepo
 const MAX_CATALOGS = 7;
 const MAX_PRIMARY_PRODUCTS = 1_000;
 const MAX_RIVAL_PRODUCTS = 600;
+const MAX_SUBMITTED_PRODUCTS_PER_CATALOG = 5_000;
 const DEFAULT_PRODUCT_ANALYSIS_LIMIT = 20;
 const PLAN_PRODUCT_LIMITS = new Set([20, 50, 500, 1_000]);
 
@@ -109,12 +110,22 @@ export function parseCatalogs(value: unknown, primaryDomain = "", requestedPins?
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
     const item = entry as Record<string, unknown>;
     const domain = canonicalDomain(text(item.domain, 300));
-    if (!domain || !Array.isArray(item.products)) return [];
+    if (!domain || !Array.isArray(item.products) || item.products.length > MAX_SUBMITTED_PRODUCTS_PER_CATALOG) return [];
     const catalogLimit = domain === canonicalDomain(primaryDomain) ? MAX_PRIMARY_PRODUCTS : MAX_RIVAL_PRODUCTS;
     const wanted = pinIds.get(domain === canonicalDomain(primaryDomain) ? "$primary" : domain) || new Set<string>();
-    const pinned = item.products.filter((value) => value && typeof value === "object" && !Array.isArray(value) && wanted.has(text((value as Record<string, unknown>).id, 300)));
-    const pinnedIds = new Set(pinned.map((value) => text((value as Record<string, unknown>).id, 300)));
-    const selected = [...pinned, ...item.products.filter((value) => !value || typeof value !== "object" || Array.isArray(value) || !pinnedIds.has(text((value as Record<string, unknown>).id, 300)))].slice(0, catalogLimit);
+    const pinned: unknown[] = [];
+    const ordinary: unknown[] = [];
+    const retainedPinnedIds = new Set<string>();
+    for (const value of item.products) {
+      const id = value && typeof value === "object" && !Array.isArray(value) ? text((value as Record<string, unknown>).id, 300) : "";
+      if (id && wanted.has(id)) {
+        if (!retainedPinnedIds.has(id)) {
+          retainedPinnedIds.add(id);
+          pinned.push(value);
+        }
+      } else if (ordinary.length < catalogLimit) ordinary.push(value);
+    }
+    const selected = [...pinned, ...ordinary].slice(0, catalogLimit);
     const products = selected.flatMap((value) => {
       const parsed = product(value, domain);
       return parsed ? [parsed] : [];

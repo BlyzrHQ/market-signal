@@ -553,8 +553,13 @@ test("rejects search, browse, and catalog listing routes as inferred exact-produ
   const single = { ...profile, products: [product("Organic Sidr Honey 500g", "https://myjam.co.uk/products/organic-sidr-honey-500g")] };
   for (const url of [
     "https://rival.example/search/results.html",
+    "https://rival.example/search-results.html",
+    "https://rival.example/product-list.html",
     "https://rival.example/browse/organic-sidr-honey-500g.html",
     "https://rival.example/catalog/organic-sidr-honey-500g.html",
+    "https://rival.example/fr/recherche.html",
+    "https://rival.example/de/suche.html",
+    "https://rival.example/ar/بحث.html",
   ]) {
     const payload = { output: [{ type: "web_search_call", action: { query: "organic sidr honey 500g", sources: [{ title: "Organic Sidr Honey 500g", url }] } }] };
     assert.deepEqual(candidatesFromSearchEvidence(payload, single), [], url);

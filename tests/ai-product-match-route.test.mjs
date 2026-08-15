@@ -70,6 +70,11 @@ test("catalog bounds retain valid pinned records beyond both ordinary limits", (
   assert.deepEqual(parsePinnedPairs([{ primaryId: "p1009", rivalDomain: "rival.test", rivalId: "r609" }], catalogs, "shop.test"), [{ primaryId: "p1009", rivalDomain: "rival.test", rivalId: "r609" }]);
 });
 
+test("rejects an oversized submitted catalog before pin scanning or allocation", () => {
+  const oversized = Array.from({ length: 5_001 }, (_, index) => ({ id: `p${index}`, name: `Product ${index}`, sourceUrl: `https://shop.test/products/${index}` }));
+  assert.deepEqual(parseCatalogs([{ domain: "shop.test", products: oversized }], "shop.test", [{ primaryId: "p5000", rivalDomain: "rival.test", rivalId: "r1" }]), []);
+});
+
 test("pinned pairs are bounded, deduplicated, and must reference submitted catalog records", () => {
   const catalogs = parseCatalogs([
     { domain: "shop.test", products: [{ id: "p1", name: "Honey", sourceUrl: "https://shop.test/products/honey" }] },

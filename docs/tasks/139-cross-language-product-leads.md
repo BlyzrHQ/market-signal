@@ -82,6 +82,9 @@ such.
   exact-pair provenance, and global pin assignment. Every finding was addressed
   with adversarial regression coverage; re-review is still required.
 - The final focused suite passes 99 tests. The full repository command passes
-  both typechecks, production build, and 709 tests with zero failures.
+  both typechecks, production build, and 710 tests with zero failures after a
+  reviewer-requested hard cap and single-pass parser for submitted catalogs.
+- Compound and multilingual search/listing routes are rejected before the
+  generic HTML product-detail fallback.
 - ESLint reports zero errors and the two pre-existing `no-img-element`
   warnings in the design lab and report page.

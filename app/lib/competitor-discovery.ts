@@ -208,7 +208,7 @@ function isCrawlableProductLead(url: string) {
 function isListingRoute(url: string) {
   try {
     return decodeURIComponent(new URL(url).pathname).split("/").filter(Boolean)
-      .some((segment) => /^(?:search|results?|listing|list|browse|catalog|collections?|categories?|tags?)(?:\.(?:html?|aspx?))?$/iu.test(segment));
+      .some((segment) => /^(?:search|results?|listing|list|product[-_]?list|browse|catalog|collections?|categories?|tags?|recherche|chercher|buscar|b[uú]squeda|suche|suchen|ricerca|cerca|zoeken|zoek|بحث|البحث|検索)(?:[-_].*)?(?:\.(?:html?|aspx?))?$/iu.test(segment));
   } catch {
     return true;
   }
