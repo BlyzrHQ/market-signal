@@ -534,7 +534,7 @@ export function structuredProductLeadCandidate(value: unknown, primaryDomain: st
         : "";
     if (!candidateSourceUrl || sourceContainsPrimaryBrand(String(item.evidenceTitle || ""), candidateSourceUrl, profile)) return null;
     const product = profile.products[0];
-    const laneQuery = String(item.searchQuery || productSearchLabel(product)).slice(0, 180);
+    const laneQuery = productSearchLabel(product).slice(0, 180);
     return {
       domain,
       companyName: domain,
@@ -556,6 +556,7 @@ export function structuredProductLeadCandidate(value: unknown, primaryDomain: st
         admission: "model-structured-cross-language",
       }],
       evidenceMethod: "model-summarized",
+      observedAdmission: false,
     };
   } catch {
     return null;
@@ -732,7 +733,7 @@ async function runLane(endpoint: string, apiKey: string, model: string, lane: Se
     const rawCandidates = Array.isArray(parsed.candidates) ? parsed.candidates : [];
     let privateStructuredLeads = 0;
     const modelCandidates = rawCandidates.flatMap((item) => {
-      const candidate = sanitizeCandidate(item, business.domain, lane, profile);
+      const candidate = lane === "product" ? null : sanitizeCandidate(item, business.domain, lane, profile);
       if (candidate) return [candidate];
       if (lane !== "product" || privateStructuredLeads >= MAX_MODEL_STRUCTURED_LEADS_PER_LANE) return [];
       const privateLead = structuredProductLeadCandidate(item, business.domain, profile);

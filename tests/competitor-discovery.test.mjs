@@ -311,7 +311,7 @@ test("admits one domain-consistent structured exact product URL only as a privat
   const arabicProfile = { ...profile, domain: "noororganicfood.com", products: [product("عسل الريشي 500 غرام", "https://noororganicfood.com/products/reishi-honey")] };
   const candidate = structuredProductLeadCandidate({ domain: "health.example", companyName: "Untrusted model name", websiteUrl: "https://health.example/", evidenceUrl: "https://health.example/products/sku-8472", evidenceTitle: "Wellness product", matchedProductUrl: "https://health.example/products/sku-8472", searchQuery: "reishi honey kuwait" }, arabicProfile.domain, arabicProfile);
   assert.equal(candidate?.domain, "health.example");
-  assert.equal(candidate?.observedAdmission, undefined);
+  assert.equal(candidate?.observedAdmission, false);
   assert.equal(candidate?.matchedProductUrl, undefined);
   assert.equal(candidate?.evidence.length, 0);
   assert.equal(candidate?.inferredProductLeads?.[0].admission, "model-structured-cross-language");
@@ -736,7 +736,7 @@ test("runs company lanes even when a product-backed ecommerce candidate exists",
   }
 });
 
-test("recovers one Noor-shaped structured candidate when action sources contain no product lead", async () => {
+test("keeps a Noor-shaped product candidate private even when it satisfies observed admission", async () => {
   const previousKey = process.env.OPENAI_API_KEY;
   const previousFetch = globalThis.fetch;
   process.env.OPENAI_API_KEY = "test-only";
@@ -747,7 +747,8 @@ test("recovers one Noor-shaped structured candidate when action sources contain 
   globalThis.fetch = async (_url, init) => {
     const request = JSON.parse(init.body);
     const input = JSON.parse(request.input[1].content);
-    const candidate = { domain: "health.example", companyName: "Untrusted name", reason: "Untrusted reason", searchQuery: "reishi honey kuwait", websiteUrl: "https://health.example/", evidenceUrl: "https://health.example/products/sku-8472", evidenceTitle: "Wellness product", marketCategory: "wellness", relationship: "direct", sharedOfferings: ["honey"], matchedPrimaryProductName: "translated honey", matchedProductUrl: "https://health.example/products/sku-8472" };
+    const productName = input.profile.offerings[0]?.name || "Product";
+    const candidate = { domain: "health.example", companyName: "Untrusted name", reason: "Untrusted reason", searchQuery: "MODEL INVENTED QUERY", websiteUrl: "https://health.example/", evidenceUrl: "https://health.example/products/sku-8472", evidenceTitle: `${productName} | Health`, marketCategory: "wellness", relationship: "direct", sharedOfferings: [productName], matchedPrimaryProductName: productName, matchedProductUrl: "https://health.example/products/sku-8472" };
     return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Organic food", region: "Kuwait", queries: ["reishi honey kuwait"], candidates: input.lane === "product" ? [candidate, { ...candidate, domain: "second.example", websiteUrl: "https://second.example/", evidenceUrl: "https://second.example/products/sku-2", matchedProductUrl: "https://second.example/products/sku-2" }] : [] }) }] }] });
   };
   try {
@@ -755,7 +756,9 @@ test("recovers one Noor-shaped structured candidate when action sources contain 
     assert.equal(result.strategy, "product-first");
     assert.deepEqual(result.candidates.map((candidate) => candidate.domain), ["health.example"]);
     assert.equal(result.candidates[0].observedAdmission, false);
+    assert.deepEqual(result.candidates[0].evidence, []);
     assert.equal(result.candidates[0].inferredProductLeads?.[0].admission, "model-structured-cross-language");
+    assert.notEqual(result.candidates[0].inferredProductLeads?.[0].laneQuery, "MODEL INVENTED QUERY");
     assert.equal(result.gaps.some((gap) => /none survived attributable/i.test(gap)), false);
   } finally {
     globalThis.fetch = previousFetch;

@@ -43,3 +43,21 @@ least 0.8 and no contradictions.
 - Fresh `noororganicfood.com` production acceptance with at least one verified
   rival and one comparison carrying a finite positive supported-currency rival
   price before the 20-site multilingual matrix starts.
+
+## Review record
+
+Verified Claude Fable 5 blocked the first PR head because product-lane model
+candidates were passed through the older observed-admission sanitizer before
+the private structured-lead path. A sufficiently matching model payload could
+therefore bypass the exact-page investigation boundary. The correction:
+
+- disables observed model-candidate admission for every product lane;
+- derives private lead queries only from the selected primary product instead
+  of model-authored search text;
+- marks private structured leads explicitly as unobserved; and
+- pins the boundary with an integration regression where a payload that would
+  satisfy the old observed sanitizer remains evidence-free and private.
+
+Post-fix validation: focused discovery tests 51/51, full test suite 756/756
+including both typechecks and the production build, lint with zero errors, and
+`git diff --check` clean. Exact-head Fable re-review remains required.
