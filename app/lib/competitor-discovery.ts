@@ -17,7 +17,7 @@ export type InferredProductLead = {
   laneQuery: string;
   candidateDomain: string;
   candidateSourceUrl: string;
-  admission: "inferred-cross-language";
+  admission: "inferred-cross-language" | "source-first-cross-language";
 };
 
 export type DiscoveryCandidate = {
@@ -65,6 +65,8 @@ type LaneResult = { lane: SearchLane; category: string; region: string; queries:
 
 const MAX_CANDIDATES = 6;
 const MAX_PRODUCT_SEARCHES = 4;
+const MAX_SOURCE_FIRST_LEADS_PER_SEARCH = 2;
+const MAX_SOURCE_FIRST_CANDIDATES = 2;
 const SEARCH_TIMEOUT_MS = 24_000;
 const SEARCH_SOURCE_STOPWORDS = new Set([
   "apx", "approximately", "buy", "delivered", "delivery", "fresh", "halal", "home", "online", "order", "price", "product", "products", "shop", "store", "uk",
@@ -222,11 +224,11 @@ function isListingRoute(url: string) {
     if (queryKeys.some((key) => !productIdentityQuery.test(key))) return true;
     const segments = decodeURIComponent(parsed.pathname).split("/").filter(Boolean);
     const normalizedSegments = segments.map((segment) => segment.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase());
-    if (normalizedSegments.some((segment) => /(?:^|[-_])(?:search|results?|resultados?|busqueda|pesquisa|pesquisar|resultats?|recherche|suchergebnisse|risultati|ricerca|zoekresultaten|catalogo|katalog|pagina|seite|arama|wyniki|wyszukiwania)(?:$|[-_])/u.test(segment))) return true;
+    if (normalizedSegments.some((segment) => /(?:^|[-_])(?:search|results?|resultados?|busqueda|pesquisa|pesquisar|resultats?|recherche|suchergebnisse|risultati|ricerca|zoekresultaten|catalogo|katalog|pagina|seite|arama|hledat|szukaj|wyniki|wyszukiwania)(?:$|[-_])/u.test(segment))) return true;
     if (segments.some((segment) => /^(?:search[-_]?results?|resultados?[-_]?busqueda|r[eé]sultats?[-_]?recherche|suchergebnisse|risultati[-_]?ricerca|zoekresultaten|pesquisa)(?:\.(?:html?|aspx?))?$/iu.test(segment))) return true;
     if (segments.some((segment) => /^(?:page|pages?|pagina|seite|katalog|kategor(?:i|ie|ien|y))$/iu.test(segment))) return true;
     if (segments.some((segment, index) => /^\d+$/.test(segment) && index > 0 && /^(?:page|pages?|pagina|seite)$/iu.test(segments[index - 1]))) return true;
-    const listing = /^(?:search|results?|listing|list|product[-_]?list|browse|catalog|collections?|categories?|tags?|recherche|chercher|buscar|b[uú]squeda|suche|suchen|ricerca|cerca|zoeken|zoek|liste|lista|todos|todas|todo|tous|toutes|tutti|tutte|alle|all|index|filter|全部|所有|الكل|بحث|البحث|検索)(?:[-_].*)?(?:\.(?:html?|aspx?))?$/iu;
+    const listing = /^(?:search|results?|listing|list|product[-_]?list|browse|catalog|collections?|categories?|tags?|recherche|chercher|buscar|b[uú]squeda|suche|suchen|ricerca|cerca|zoeken|zoek|hledat|szukaj|liste|lista|todos|todas|todo|tous|toutes|tutti|tutte|alle|all|index|filter|全部|所有|الكل|بحث|البحث|検索)(?:[-_].*)?(?:\.(?:html?|aspx?))?$/iu;
     const productContainer = /^(?:products?|produits?|productos?|produtos?|produkte?|prodotti?|shop|store|منتج|منتجات|商品)$/iu;
     const genericTail = /^(?:all|index|filter|liste|lista|todos|todas|todo|tous|toutes|tutti|tutte|alle|全部|所有|الكل)$/iu;
     return segments.some((segment, index) => listing.test(segment)
@@ -272,6 +274,30 @@ function inferredLeadFromSource(source: SearchSource, url: string, profile: Disc
       candidateDomain: canonicalDomain(url),
       candidateSourceUrl: url,
       admission: "inferred-cross-language" as const,
+    },
+  };
+}
+
+function sourceFirstLeadFromSource(source: SearchSource, url: string, profile: DiscoveryProfile) {
+  if (profile.products.length !== 1 || !source.queries.length || !isExplicitProductDetailSource(url)) return undefined;
+  const product = profile.products[0];
+  const productTokens = observedProductNames(product).flatMap(normalizedTokens);
+  const laneQuery = source.queries.map((query) => {
+    const queryTokens = normalizedTokens(query);
+    const overlap = matchedProductTokens(queryTokens, productTokens).length;
+    return { query, score: overlap * 10 + Math.min(query.length, 180) / 1_000 };
+  }).sort((left, right) => right.score - left.score || left.query.localeCompare(right.query))[0]?.query;
+  if (!laneQuery) return undefined;
+  return {
+    product,
+    score: 1,
+    lead: {
+      primaryProductId: product.id,
+      primarySourceUrl: product.sourceUrl,
+      laneQuery: laneQuery.slice(0, 180),
+      candidateDomain: canonicalDomain(url),
+      candidateSourceUrl: url,
+      admission: "source-first-cross-language" as const,
     },
   };
 }
@@ -353,6 +379,7 @@ function excludedDomain(domain: string, primaryDomain: string) {
 
 export function candidatesFromSearchEvidence(payload: Record<string, unknown>, profile: DiscoveryProfile, queries: string[] = []) {
   const primaryDomain = canonicalDomain(profile.domain);
+  let sourceFirstLeads = 0;
   const ranked = searchSources(payload).flatMap((source) => {
     const url = cleanSearchUrl(source.url);
     if (!url) return [];
@@ -362,17 +389,23 @@ export function candidatesFromSearchEvidence(payload: Record<string, unknown>, p
     const match = productMatchFromSource(source.title, url, profile.products);
     const inferredLead = inferredLeadFromSource(source, url, profile);
     const urlConfirmed = Boolean(match && isProductDetailSource(url, match.product));
-    const inferred = urlConfirmed ? undefined : inferredLead;
+    const sourceFirstLead = !urlConfirmed && !inferredLead && sourceFirstLeads < MAX_SOURCE_FIRST_LEADS_PER_SEARCH
+      ? sourceFirstLeadFromSource(source, url, profile)
+      : undefined;
+    const inferred = urlConfirmed ? undefined : inferredLead || sourceFirstLead;
     const boundProduct = urlConfirmed ? match?.product : inferred?.product;
     if (!boundProduct || !isCrawlableProductLead(url) || sourceContainsPrimaryBrand(source.title, url, profile)) return [];
     if (!urlConfirmed && !inferred) return [];
+    if (sourceFirstLead) sourceFirstLeads += 1;
     return [{
       score: (match?.score || inferred?.score || 0) + (urlConfirmed || inferred ? 100 : 0),
       candidate: {
         domain,
         companyName: domain,
         reason: inferred
-          ? `An inferred cross-language query for “${boundProduct.name}” returned a first-party product-detail lead; it is not a verified competitor until the exact page and pair pass crawl, price, identity, region, and semantic checks.`
+          ? inferred.lead.admission === "source-first-cross-language"
+            ? `An attributed product search for “${boundProduct.name}” returned an exact first-party product-detail source whose URL wording was not independently comparable; it remains a private investigation lead until the exact page and pair pass crawl, structured Product, price, identity, region, and semantic checks.`
+            : `An inferred cross-language query for “${boundProduct.name}” returned a first-party product-detail lead; it is not a verified competitor until the exact page and pair pass crawl, price, identity, region, and semantic checks.`
           : urlConfirmed
             ? `A current product search returned the crawlable product page “${(source.title || new URL(url).pathname).slice(0, 180)}”, matching “${boundProduct.name}”.`
             : `A current product search returned the non-root first-party page “${(source.title || new URL(url).pathname).slice(0, 180)}”; its title matches “${boundProduct.name}” and the page still requires first-party crawl verification.`,
@@ -501,7 +534,8 @@ export function mergeCandidates(candidates: DiscoveryCandidate[]) {
         && other.primarySourceUrl === lead.primarySourceUrl
         && other.laneQuery === lead.laneQuery
         && other.candidateDomain === lead.candidateDomain
-        && other.candidateSourceUrl === lead.candidateSourceUrl) === index)
+        && other.candidateSourceUrl === lead.candidateSourceUrl
+        && other.admission === lead.admission) === index)
       .slice(0, MAX_PRODUCT_SEARCHES);
     merged.set(candidate.domain, {
       ...preferred,
@@ -521,13 +555,34 @@ export function mergeCandidates(candidates: DiscoveryCandidate[]) {
     });
   }
   const productCoverage = (candidate: DiscoveryCandidate) => new Set(candidate.matchedPrimaryProductNames || (candidate.matchedPrimaryProductName ? [candidate.matchedPrimaryProductName] : [])).size;
+  const sourceFirstOnly = (candidate: DiscoveryCandidate) => !candidate.observedAdmission
+    && Boolean(candidate.inferredProductLeads?.length)
+    && candidate.inferredProductLeads!.every((lead) => lead.admission === "source-first-cross-language");
+  let sourceFirstCandidates = 0;
   return [...merged.values()].sort((left, right) =>
     Number(Boolean(right.matchedProductUrl)) - Number(Boolean(left.matchedProductUrl))
       || productCoverage(right) - productCoverage(left)
       || right.mentionCount - left.mentionCount
       || Number(right.relationship === "direct") - Number(left.relationship === "direct")
       || left.domain.localeCompare(right.domain),
-  ).slice(0, MAX_CANDIDATES);
+  ).filter((candidate) => !sourceFirstOnly(candidate) || sourceFirstCandidates++ < MAX_SOURCE_FIRST_CANDIDATES)
+    .slice(0, MAX_CANDIDATES);
+}
+
+export function publicDiscoveryCandidate<T extends DiscoveryCandidate>(candidate: T): T {
+  const published = { ...candidate };
+  delete published.inferredProductLeads;
+  return published;
+}
+
+export function publicDiscoverySnapshot(discovery: DiscoveryResult, verifiedCandidates: Array<DiscoveryCandidate & { accepted?: boolean }>): DiscoveryResult {
+  return {
+    ...discovery,
+    candidates: verifiedCandidates.flatMap((candidate) => {
+      if (candidate.accepted !== true) return [];
+      return [publicDiscoveryCandidate(candidate)];
+    }),
+  };
 }
 
 function representativeProducts(products: ProductRecord[]) {
