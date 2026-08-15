@@ -122,6 +122,13 @@ test("public fetch DNS preflight rejects any private resolution", async () => {
   assert.equal(await resolvesToPublicAddress("private-resolution.example", resolve), false);
 });
 
+test("public fetch rejects private IPv4 destinations embedded in standard NAT64 answers", async () => {
+  for (const address of ["64:ff9b::7f00:1", "64:ff9b::a00:1", "64:ff9b::a9fe:101"]) {
+    const resolve = async (url) => Response.json({ Answer: String(url).includes("type=28") ? [{ type: 28, data: address }] : [] });
+    assert.equal(await resolvesToPublicAddress("nat64-rebinding.example", resolve), false, address);
+  }
+});
+
 test("public fetch DNS preflight accepts exclusively public resolutions", async () => {
   const resolve = async (url) => Response.json({ Answer: String(url).includes("type=1") ? [{ type: 1, data: "93.184.216.34" }] : [{ type: 28, data: "2606:2800:220:1:248:1893:25c8:1946" }] });
   assert.equal(await resolvesToPublicAddress("public-resolution.example", resolve), true);

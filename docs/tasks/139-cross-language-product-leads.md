@@ -81,8 +81,8 @@ such.
   deterministic fallback, identity-bearing URL parameters, ambiguous variants,
   exact-pair provenance, and global pin assignment. Every finding was addressed
   with adversarial regression coverage; re-review is still required.
-- The final discovery and network suites pass 50 focused tests. The full repository command passes
-  both typechecks, production build, and 731 tests with zero failures after
+- The latest discovery, network, and persistence suites pass 68 focused tests. The full repository command passes
+  both typechecks, production build, and 732 tests with zero failures after
   reviewer-requested input and provenance hardening.
 - The latest adversarial pass rejects multilingual listing routes, preserves
   non-tracking identity query parameters, rebinds publication provenance to
@@ -115,10 +115,16 @@ such.
   hostname for TLS. Response bodies are streamed, distinguish exact-boundary
   completion from overflow, and cancel after observing at most one byte beyond
   their configured ceiling.
-- The final focused adversarial pass contains 50 passing tests, the full suite
+- The pre-review focused adversarial pass contained 50 passing tests, the full suite
   and production build pass, and a live production-path pinned fetch of `example.com`
   returned HTTP 200 with 559 bytes and no truncation. Exact-head strict
   re-review remains pending for the next commit.
+- Two exact-head fallback reviewers then identified a title-only nested
+  translated-listing bypass and the standard `64:ff9b::/96` NAT64 form of an
+  embedded private IPv4 destination. Product search evidence now requires URL
+  identity or an atomic translated-query binding, and IPv4-compatible, mapped,
+  and well-known NAT64 addresses all inherit the embedded IPv4 public-address
+  policy. The fresh full suite passes; exact-head re-review is pending.
 - Compound and multilingual search/listing routes are rejected before the
   generic HTML product-detail fallback.
 - Nested catalog arrays are normalized from bounded prefixes, product IDs must

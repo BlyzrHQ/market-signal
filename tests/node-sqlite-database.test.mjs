@@ -22,10 +22,11 @@ async function fixture() {
 const factHash = (kind, items) => reportFactHash(items.map((item) => canonicalReportFact(kind, item)));
 
 test("report fact URLs reject intranet and non-global address variants", () => {
-  for (const value of ["http://intranet/path", "http://127.0.0.1/", "http://169.254.1.1/", "http://10.0.0.1/", "http://[::1]/", "http://[::ffff:7f00:1]/", "http://[fe80::1]/", "https://[fec0::1]/secret", "https://[64:ff9b:1::7f00:1]/secret"]) {
+  for (const value of ["http://intranet/path", "http://127.0.0.1/", "http://169.254.1.1/", "http://10.0.0.1/", "http://[::1]/", "http://[::ffff:7f00:1]/", "http://[0:0:0:0:0:ffff:7f00:1]/", "http://[fe80::1]/", "https://[fec0::1]/secret", "https://[64:ff9b:1::7f00:1]/secret", "https://[64:ff9b::7f00:1]/secret", "https://[64:ff9b::a00:1]/secret", "https://[64:ff9b::a9fe:101]/secret"]) {
     assert.throws(() => publicHttpUrl(value), /Invalid report fact URL/);
   }
   assert.equal(publicHttpUrl("https://shop.example/product"), "https://shop.example/product");
+  assert.equal(publicHttpUrl("https://[64:ff9b::808:808]/"), "https://[64:ff9b::808:808]/");
   assert.equal(officialAdRecordUrl("https://facebook.com/ads/libraryevil?id=123", "Meta"), "");
   assert.match(officialAdRecordUrl("https://facebook.com/ads/library/?id=123", "Meta"), /ads\/library/);
 });

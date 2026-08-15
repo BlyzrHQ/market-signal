@@ -237,18 +237,6 @@ function isExplicitProductDetailSource(url: string) {
   }
 }
 
-function hasSpecificProductLeaf(url: string) {
-  try {
-    const segments = decodeURIComponent(new URL(url).pathname).split("/").filter(Boolean);
-    const leaf = segments.at(-1)?.replace(/\.(?:html?|aspx?)$/i, "") || "";
-    const leafTokens = normalizedTokens(leaf);
-    if (leafTokens.length >= 2) return true;
-    return /^\d{4,}$/.test(leaf) && /^(?:items?|p)$/iu.test(segments.at(-2) || "");
-  } catch {
-    return false;
-  }
-}
-
 function inferredLeadFromSource(source: SearchSource, url: string, profile: DiscoveryProfile) {
   if (profile.products.length !== 1 || source.queryCount !== 1 || !source.query || !isExplicitProductDetailSource(url)) return undefined;
   const product = profile.products[0];
@@ -361,7 +349,7 @@ export function candidatesFromSearchEvidence(payload: Record<string, unknown>, p
     const boundProduct = match?.product || inferred?.product;
     if (!boundProduct || !isCrawlableProductLead(url) || sourceContainsPrimaryBrand(source.title, url, profile)) return [];
     const urlConfirmed = Boolean(match && isProductDetailSource(url, match.product));
-    if (match && !urlConfirmed && (match.productCoverage <= 0.5 || !hasSpecificProductLeaf(url))) return [];
+    if (!urlConfirmed && !inferred) return [];
     return [{
       score: (match?.score || inferred?.score || 0) + (urlConfirmed || inferred ? 100 : 0),
       candidate: {
@@ -450,7 +438,7 @@ export function sanitizeCandidate(value: unknown, primaryDomain: string, lane: S
       : undefined;
     if (lane === "product" && (!matchedProductUrl || !productMatch || !isCrawlableProductLead(matchedProductUrl) || sourceContainsPrimaryBrand(String(item.evidenceTitle || ""), matchedProductUrl, profile))) return null;
     const productUrlConfirmed = Boolean(productMatch && isProductDetailSource(matchedProductUrl, productMatch.product));
-    if (lane === "product" && !productUrlConfirmed && ((productMatch?.productCoverage || 0) <= 0.5 || !hasSpecificProductLeaf(matchedProductUrl))) return null;
+    if (lane === "product" && !productUrlConfirmed) return null;
     const method: DiscoveryEvidence["method"] = lane === "category" ? "category-search" : lane === "product" ? "product-search" : "entity-search";
     return {
       domain,

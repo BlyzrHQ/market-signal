@@ -281,6 +281,14 @@ test("rejects translated terminal listing words and pagination-shaped weak produ
     const payload = { output: [{ type: "web_search_call", action: { query: "reishi honey 500g", sources: [{ title: "Reishi Honey 500g", url }] } }] };
     assert.deepEqual(candidatesFromSearchEvidence(payload, arabicProfile), [], url);
   }
+  const originalLanguage = { ...profile, products: [product("Organic Sidr Honey 500g", "https://myjam.co.uk/products/organic-sidr-honey-500g")] };
+  for (const url of [
+    "https://health.example/hledat/organic-sidr-honey-500g",
+    "https://health.example/szukaj/organic-sidr-honey-500g",
+  ]) {
+    const payload = { output: [{ type: "web_search_call", action: { query: "organic sidr honey 500g", sources: [{ title: "Organic Sidr Honey 500g", url }] } }] };
+    assert.deepEqual(candidatesFromSearchEvidence(payload, originalLanguage), [], url);
+  }
 });
 
 test("rejects a title-matching collection page on its own domain", () => {
@@ -336,7 +344,7 @@ test("unknown-language entity result paths are rebound to the first-party root",
   assert.deepEqual(candidates.map((candidate) => [candidate.sourceUrl, candidate.evidence[0].url]), [["https://rival.example/", "https://rival.example/"]]);
 });
 
-test("admits specific localized and html product leads but rejects ambiguous id-only routes", () => {
+test("rejects title-only localized, html, and id-only routes", () => {
   const payload = {
     output: [{
       type: "web_search_call",
@@ -352,10 +360,7 @@ test("admits specific localized and html product leads but rejects ambiguous id-
   };
 
   const candidates = candidatesFromSearchEvidence(payload, profile);
-  assert.deepEqual(candidates.map((candidate) => candidate.domain), [
-    "magento.example",
-    "metzgerei.example",
-  ]);
+  assert.deepEqual(candidates, []);
   assert.ok(candidates.every((candidate) => /requires first-party crawl verification/.test(candidate.reason)));
 });
 

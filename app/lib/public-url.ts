@@ -12,14 +12,33 @@ function publicIpv4(host: string) {
   return true;
 }
 
-function mappedIpv4(host: string) {
-  if (!host.startsWith("::ffff:")) return null;
-  const tail = host.slice(7);
-  if (tail.includes(".")) return tail;
-  const words = tail.split(":");
-  if (words.length !== 2 || words.some((word) => !/^[0-9a-f]{1,4}$/i.test(word))) return "invalid";
-  const value = (Number.parseInt(words[0], 16) * 65_536) + Number.parseInt(words[1], 16);
-  return [value >>> 24, (value >>> 16) & 255, (value >>> 8) & 255, value & 255].join(".");
+function ipv6Words(host: string) {
+  let source = host;
+  if (source.includes(".")) {
+    const separator = source.lastIndexOf(":");
+    const parts = source.slice(separator + 1).split(".").map(Number);
+    if (separator < 0 || parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return null;
+    source = `${source.slice(0, separator)}:${((parts[0] << 8) | parts[1]).toString(16)}:${((parts[2] << 8) | parts[3]).toString(16)}`;
+  }
+  if ((source.match(/::/g) || []).length > 1) return null;
+  const [leftText, rightText] = source.split("::");
+  const left = leftText ? leftText.split(":") : [];
+  const right = rightText ? rightText.split(":") : [];
+  if ([...left, ...right].some((word) => !/^[0-9a-f]{1,4}$/i.test(word))) return null;
+  const omitted = source.includes("::") ? 8 - left.length - right.length : 0;
+  if (omitted < 0 || (!source.includes("::") && left.length !== 8)) return null;
+  const words = [...left, ...Array.from({ length: omitted }, () => "0"), ...right].map((word) => Number.parseInt(word, 16));
+  return words.length === 8 ? words : null;
+}
+
+function embeddedIpv4(host: string) {
+  const words = ipv6Words(host);
+  if (!words) return null;
+  const mapped = words.slice(0, 5).every((word) => word === 0) && words[5] === 0xffff;
+  const compatible = words.slice(0, 6).every((word) => word === 0);
+  const wellKnownNat64 = words[0] === 0x64 && words[1] === 0xff9b && words.slice(2, 6).every((word) => word === 0);
+  if (!mapped && !compatible && !wellKnownNat64) return null;
+  return [words[6] >>> 8, words[6] & 255, words[7] >>> 8, words[7] & 255].join(".");
 }
 
 export function isPublicHostname(value: string) {
@@ -27,8 +46,8 @@ export function isPublicHostname(value: string) {
   if (!host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return false;
   if (/^\d+(?:\.\d+){3}$/.test(host)) return publicIpv4(host);
   if (host.includes(":")) {
-    const mapped = mappedIpv4(host);
-    if (mapped !== null) return mapped !== "invalid" && publicIpv4(mapped);
+    const embedded = embeddedIpv4(host);
+    if (embedded !== null) return publicIpv4(embedded);
     if (host === "::" || host === "::1" || /^(?:fc|fd|fe[89a-f]|ff)/i.test(host) || /^2001:(?:db8|0?10):/i.test(host) || /^64:ff9b:1:/i.test(host)) return false;
     return /^[0-9a-f:]+$/i.test(host);
   }
