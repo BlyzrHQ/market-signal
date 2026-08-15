@@ -6,36 +6,44 @@ and truthful public-ad coverage states.
 
 ## Go CLI
 
-The Cobra CLI is the first language-neutral client of the versioned report
-contracts:
+The Go CLI is a contract-validating client for the Market Signal API. It does
+not crawl websites locally; report collection and matching run on the service
+selected by `--base-url`.
+
+You need Go 1.22 or newer. These safe commands do not contact the API:
 
 ```bash
-go -C cli run ./cmd/marketsignal report example.com --base-url http://localhost:3000
-go -C cli run ./cmd/marketsignal crawl example.com --output json
-go -C cli run ./cmd/marketsignal ads example.com --competitor rival.example --region "United Kingdom"
+go version
+go -C cli run ./cmd/marketsignal --help
 go -C cli run ./cmd/marketsignal version
 ```
 
-The domain is an argument, not a MyJam-specific value: replace `example.com`
-and `rival.example` with any valid public company domains.
+To run a report locally, start the API in one terminal:
 
-The default output is a compact decision summary. `--output json` returns the
-validated source response. Exit code `2` means the report is valid but declares
-coverage gaps; `3` means contract drift; `4` means transport, authentication, or
-API failure. For ads, `no-verified-result` and `access-limited` both return `2`
-because neither state establishes absence of advertising. The current Sites API
-does not yet enforce a headless token or per-customer quota. Do not distribute
-the CLI against it as a production API. Use `--base-url` with a controlled local
-or service deployment until a scoped, rate-limited API gateway exists.
+```bash
+npm install
+npm run dev
+```
 
-The live scraper is currently a custom robots-aware TypeScript crawler using
-native fetch, sitemap XML, public HTML, and JSON-LD. It is not Apify, Scrapy,
-Playwright, or Puppeteer. The crawler will move into Go only after real-domain
-parity tests protect the existing production behavior.
+Then use a second terminal:
 
-For the complete implemented architecture, data methods, hosted configuration,
-deployment sequence, and public-launch gate, see [the launch and operations
-runbook](docs/LAUNCH.md).
+```bash
+go -C cli run ./cmd/marketsignal report example.com
+```
+
+Replace `example.com` with any valid public company domain. `go -C cli run`
+downloads dependencies, builds a temporary CLI binary, and runs it from the
+`cli/` directory; prior Go experience is not required.
+
+The report-producing commands can consume the AI/provider resources configured
+on the selected service. The production deployment does not yet expose scoped
+headless tokens or per-customer quotas, so do not distribute the CLI against it.
+Use a local or explicitly controlled deployment.
+
+Read the [complete CLI guide](docs/CLI.md) for every command, global flags,
+table and JSON output, exit codes, environment configuration, binary builds,
+troubleshooting, and contribution checks. For architecture and deployment, see
+the [launch and operations runbook](docs/LAUNCH.md).
 
 ## Web application
 

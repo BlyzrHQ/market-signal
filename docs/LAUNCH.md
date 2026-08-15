@@ -148,8 +148,14 @@ contractually approved before relying on it as a core paid feature.
 
 ## 4. Go CLI
 
-The commands accept any valid public domain; `myjam.co.uk` is only a test
-example.
+The CLI is a contract-validating API client. Its canonical user and contributor
+documentation lives in the [Market Signal CLI guide](CLI.md), including the
+two-terminal local quick start, prerequisites, all commands and flags, output
+formats, exit codes, environment configuration, binary builds, and
+troubleshooting.
+
+The commands accept any valid public domain; `example.com` below is
+illustrative:
 
 ```bash
 go -C cli run ./cmd/marketsignal report example.com --base-url http://localhost:3000
@@ -169,6 +175,9 @@ For a built binary, replace `go -C cli run ./cmd/marketsignal` with
 - Exit `0` means a valid result with no declared gaps, `2` means a valid result
   with explicit coverage limits, `3` means JSON contract drift, and `4` means a
   transport, authentication, or API failure.
+
+The CLI guide is the source of truth for command usage. This runbook owns the
+service architecture and launch boundary below.
 
 The current deployment does not have application-owned API authentication.
 Saved report endpoints respond without a user session; access is effectively a
