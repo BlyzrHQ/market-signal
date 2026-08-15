@@ -206,10 +206,10 @@ function isCrawlableProductLead(url: string) {
 function isListingRoute(url: string) {
   try {
     const parsed = new URL(url);
-    if ([...parsed.searchParams.keys()].some((key) => /^(?:q|s|search|query|filter|sort|page|pagenumber|pagina|seite|recherche|ricerca|zoeken|pesquisa)$/iu.test(key))) return true;
+    if ([...parsed.searchParams.keys()].some((key) => /^(?:q|s|search|query|filter|sort|page|pagenumber|pagina|seite|sayfa|recherche|ricerca|zoeken|pesquisa)$/iu.test(key))) return true;
     const segments = decodeURIComponent(parsed.pathname).split("/").filter(Boolean);
     const normalizedSegments = segments.map((segment) => segment.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase());
-    if (normalizedSegments.some((segment) => /(?:^|[-_])(?:search|results?|resultados?|busqueda|pesquisa|pesquisar|resultats?|recherche|suchergebnisse|risultati|ricerca|zoekresultaten|catalogo|katalog|pagina|seite)(?:$|[-_])/u.test(segment))) return true;
+    if (normalizedSegments.some((segment) => /(?:^|[-_])(?:search|results?|resultados?|busqueda|pesquisa|pesquisar|resultats?|recherche|suchergebnisse|risultati|ricerca|zoekresultaten|catalogo|katalog|pagina|seite|arama|wyniki|wyszukiwania)(?:$|[-_])/u.test(segment))) return true;
     if (segments.some((segment) => /^(?:search[-_]?results?|resultados?[-_]?busqueda|r[eé]sultats?[-_]?recherche|suchergebnisse|risultati[-_]?ricerca|zoekresultaten|pesquisa)(?:\.(?:html?|aspx?))?$/iu.test(segment))) return true;
     if (segments.some((segment) => /^(?:page|pages?|pagina|seite|katalog|kategor(?:i|ie|ien|y))$/iu.test(segment))) return true;
     if (segments.some((segment, index) => /^\d+$/.test(segment) && index > 0 && /^(?:page|pages?|pagina|seite)$/iu.test(segments[index - 1]))) return true;
@@ -227,6 +227,9 @@ function isExplicitProductDetailSource(url: string) {
   try {
     const path = decodeURIComponent(new URL(url).pathname).replace(/\/+$/, "");
     if (!path || path === "/" || isListingRoute(url) || PUBLISHER_PATH.test(path) || !isCrawlableProductLead(url)) return false;
+    const segments = path.split("/").filter(Boolean);
+    const productContainerIndex = segments.findIndex((segment) => /^(?:items?|p|products?|produits?|productos?|produtos?|produkte?|prodotti?|shop|store)$/iu.test(segment));
+    if (productContainerIndex >= 0 && productContainerIndex !== segments.length - 2) return false;
     return /\/(?:items?|p|products?|produits?|productos?|produtos?|produkte?|prodotti?|shop|store|منتج|منتجات)\/[^/]+/iu.test(`${path}/`)
       || /\/[^/]+\.(?:html?|aspx?)$/i.test(path);
   } catch {
@@ -422,7 +425,7 @@ export function sanitizeCandidate(value: unknown, primaryDomain: string, lane: S
     if (!evidenceUrl || PUBLISHER_PATH.test(new URL(evidenceUrl).pathname)) return null;
     const matchedProductUrl = cleanSearchUrl(item.matchedProductUrl);
     if (matchedProductUrl && (canonicalDomain(matchedProductUrl) !== domain || isListingRoute(matchedProductUrl))) return null;
-    if (lane === "product" && isListingRoute(evidenceUrl)) return null;
+    if (isListingRoute(evidenceUrl)) return null;
     const productMatch = lane === "product" && matchedProductUrl
       ? productMatchFromSource(String(item.evidenceTitle || ""), matchedProductUrl, profile.products)
       : undefined;

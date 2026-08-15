@@ -81,8 +81,8 @@ such.
   deterministic fallback, identity-bearing URL parameters, ambiguous variants,
   exact-pair provenance, and global pin assignment. Every finding was addressed
   with adversarial regression coverage; re-review is still required.
-- The final discovery and network suites pass 62 tests. The full repository command passes
-  both typechecks, production build, and 726 tests with zero failures after
+- The final discovery and network suites pass 64 tests. The full repository command passes
+  both typechecks, production build, and 728 tests with zero failures after
   reviewer-requested input and provenance hardening.
 - The latest adversarial pass rejects multilingual listing routes, preserves
   non-tracking identity query parameters, rebinds publication provenance to
@@ -106,6 +106,9 @@ such.
   pagination query keys. Public URL validation covers private IPv6 and NAT64
   literals, and production fetches preflight cached A/AAAA answers so every
   resolved address must be public.
+- Inferred leads require a terminal product-container path. DNS answers are
+  uncached and must remain identical and public before and after connection;
+  response bodies are streamed and cancelled at their byte ceiling.
 - Compound and multilingual search/listing routes are rejected before the
   generic HTML product-detail fallback.
 - Nested catalog arrays are normalized from bounded prefixes, product IDs must

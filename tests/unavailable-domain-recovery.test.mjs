@@ -126,3 +126,27 @@ test("public fetch DNS preflight accepts exclusively public resolutions", async 
   const resolve = async (url) => Response.json({ Answer: String(url).includes("type=1") ? [{ type: 1, data: "93.184.216.34" }] : [{ type: 28, data: "2606:2800:220:1:248:1893:25c8:1946" }] });
   assert.equal(await resolvesToPublicAddress("public-resolution.example", resolve), true);
 });
+
+test("public fetch DNS preflight never trusts a stale public resolution", async () => {
+  let request = 0;
+  const resolve = async (url) => {
+    if (!String(url).includes("type=1")) return Response.json({ Answer: [] });
+    request += 1;
+    return Response.json({ Answer: [{ type: 1, data: request === 1 ? "93.184.216.34" : "127.0.0.1" }] });
+  };
+  assert.equal(await resolvesToPublicAddress("rebinding.example", resolve), true);
+  assert.equal(await resolvesToPublicAddress("rebinding.example", resolve), false);
+});
+
+test("public fetch streams and cancels response bodies at the configured byte limit", async () => {
+  const result = await fetchPublicText("https://large.example/", "text/html", {
+    expectedDomain: "large.example",
+    timeoutMs: 1_000,
+    maxDocumentBytes: 8,
+    userAgent: "test",
+    async fetchImpl() { return new Response("x".repeat(2_000_000), { headers: { "content-type": "text/html" } }); },
+  });
+  assert.equal(result.text.length, 8);
+  assert.equal(result.responseBytes, 9);
+  assert.equal(result.truncated, true);
+});

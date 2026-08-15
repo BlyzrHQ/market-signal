@@ -30,13 +30,9 @@ function isCloudflareOriginDnsFailure(response: Response, text: string) {
     || (/\berror\s+1016\b/i.test(text) && /\b(?:cloudflare|origin\s+dns\s+error)\b/i.test(text));
 }
 
-const resolutionCache = new Map<string, { public: boolean; expiresAt: number }>();
-
-export async function resolvesToPublicAddress(hostname: string, fetchImpl: FetchLike = fetch, signal?: AbortSignal) {
-  if (!isPublicHostname(hostname)) return false;
-  if (/^[\d.]+$/.test(hostname) || hostname.includes(":")) return true;
-  const cached = resolutionCache.get(hostname);
-  if (cached && cached.expiresAt > Date.now()) return cached.public;
+export async function resolvePublicAddresses(hostname: string, fetchImpl: FetchLike = fetch, signal?: AbortSignal) {
+  if (!isPublicHostname(hostname)) return [];
+  if (/^[\d.]+$/.test(hostname) || hostname.includes(":")) return [hostname];
   try {
     const answers = await Promise.all([1, 28].map(async (type) => {
       const response = await fetchImpl(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=${type}`, { signal, headers: { Accept: "application/dns-json" } });
@@ -45,12 +41,42 @@ export async function resolvesToPublicAddress(hostname: string, fetchImpl: Fetch
       return (payload.Answer || []).filter((answer) => answer.type === type && typeof answer.data === "string").map((answer) => answer.data as string);
     }));
     const addresses = answers.flat();
-    const isPublic = addresses.length > 0 && addresses.every(isPublicHostname);
-    resolutionCache.set(hostname, { public: isPublic, expiresAt: Date.now() + 300_000 });
-    return isPublic;
+    return addresses.length > 0 && addresses.every(isPublicHostname) ? [...new Set(addresses)].sort() : [];
   } catch {
-    return false;
+    return [];
   }
+}
+
+export async function resolvesToPublicAddress(hostname: string, fetchImpl: FetchLike = fetch, signal?: AbortSignal) {
+  return (await resolvePublicAddresses(hostname, fetchImpl, signal)).length > 0;
+}
+
+async function boundedResponseText(response: Response, maxBytes: number) {
+  if (!response.body) return { text: "", truncated: false, responseBytes: 0 };
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  let storedBytes = 0;
+  let observedBytes = 0;
+  let truncated = false;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    observedBytes = Math.min(maxBytes + 1, observedBytes + value.byteLength);
+    const remaining = Math.max(0, maxBytes - storedBytes);
+    if (remaining) {
+      const accepted = value.subarray(0, remaining);
+      storedBytes += accepted.byteLength;
+      text += decoder.decode(accepted, { stream: true });
+    }
+    if (value.byteLength > remaining || storedBytes >= maxBytes) {
+      truncated = value.byteLength > remaining || observedBytes > maxBytes;
+      await reader.cancel();
+      break;
+    }
+  }
+  text += decoder.decode();
+  return { text, truncated, responseBytes: observedBytes };
 }
 
 export async function fetchPublicText(url: string, accept: string, options: PublicFetchOptions) {
@@ -65,11 +91,19 @@ export async function fetchPublicText(url: string, accept: string, options: Publ
     for (let redirect = 0; redirect <= 3; redirect += 1) {
       const checked = normalizeDomain(currentUrl);
       if (options.expectedDomain && canonicalDomain(checked.hostname) !== canonicalDomain(options.expectedDomain)) throw new Error("redirected off the submitted domain");
-      if (!options.fetchImpl && globalThis.fetch === platformFetch && !await resolvesToPublicAddress(checked.hostname, platformFetch, controller.signal)) throw new Error("hostname did not resolve exclusively to public addresses");
+      const beforeAddresses = !options.fetchImpl && globalThis.fetch === platformFetch ? await resolvePublicAddresses(checked.hostname, platformFetch, controller.signal) : null;
+      if (beforeAddresses && !beforeAddresses.length) throw new Error("hostname did not resolve exclusively to public addresses");
       try {
         response = await fetchImpl(currentUrl, { redirect: "manual", signal: controller.signal, headers: { Accept: accept, "User-Agent": options.userAgent } });
       } catch (error) {
         throw new PublicFetchTransportError(error instanceof Error && error.name === "AbortError" ? "timeout" : "network");
+      }
+      if (beforeAddresses) {
+        const afterAddresses = await resolvePublicAddresses(checked.hostname, platformFetch, controller.signal);
+        if (!afterAddresses.length || afterAddresses.join("|") !== beforeAddresses.join("|")) {
+          await response.body?.cancel();
+          throw new Error("hostname resolution changed during the request");
+        }
       }
       if (![301, 302, 303, 307, 308].includes(response.status)) break;
       redirectCount += 1;
@@ -82,9 +116,7 @@ export async function fetchPublicText(url: string, accept: string, options: Publ
       currentUrl = nextUrl.toString();
     }
     if (!response) throw new Error("request failed");
-    const buffer = await response.arrayBuffer();
-    const truncated = buffer.byteLength > options.maxDocumentBytes;
-    const text = new TextDecoder().decode(buffer.slice(0, options.maxDocumentBytes));
+    const { text, truncated, responseBytes } = await boundedResponseText(response, options.maxDocumentBytes);
     const cloudflareOriginDnsFailure = isCloudflareOriginDnsFailure(response, text);
     return {
       ok: response.ok,
@@ -94,7 +126,7 @@ export async function fetchPublicText(url: string, accept: string, options: Publ
       text,
       truncated,
       responseTimeMs: Date.now() - startedAt,
-      responseBytes: buffer.byteLength,
+      responseBytes,
       redirectCount,
       ...(cloudflareOriginDnsFailure ? { error: "Cloudflare could not resolve the submitted origin hostname.", failureKind: "network" as const } : { failureKind: "" as const }),
     };

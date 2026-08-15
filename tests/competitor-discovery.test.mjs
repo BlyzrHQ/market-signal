@@ -303,6 +303,9 @@ test("model-summarized product candidates cannot bypass the listing-route gate",
     evidenceTitle: "Organic Honey",
   }, "myjam.co.uk", "product", { ...profile, products: [product("Organic Honey", "https://myjam.co.uk/products/organic-honey")] });
   assert.equal(candidate, null);
+  for (const lane of ["entity", "category"]) {
+    assert.equal(sanitizeCandidate({ domain: "rival.example", websiteUrl: "https://rival.example/", evidenceUrl: "https://rival.example/ar/search?q=organic+honey" }, "myjam.co.uk", lane, profile), null);
+  }
 });
 
 test("entity and category search sources cannot publish listing routes", () => {
@@ -609,6 +612,9 @@ test("rejects search, browse, and catalog listing routes as inferred exact-produ
     "https://rival.example/products/resultados-de-busqueda/organic-sidr-honey-500g",
     "https://rival.example/products/pesquisar/organic-sidr-honey-500g",
     "https://rival.example/products/honey?pagina=2",
+    "https://rival.example/products/arama/organic-sidr-honey-500g",
+    "https://rival.example/products/wyniki-wyszukiwania/organic-sidr-honey-500g",
+    "https://rival.example/products/honey?sayfa=2",
     "https://rival.example/produits/liste",
     "https://rival.example/produits/tous",
     "https://rival.example/prodotti/tutti",
