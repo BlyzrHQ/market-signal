@@ -72,7 +72,7 @@ const SEARCH_SOURCE_STOPWORDS = new Set([
 const NON_COMPANY_HOSTS = ["facebook.com", "gov.uk", "instagram.com", "linkedin.com", "pinterest.com", "reddit.com", "tiktok.com", "wikipedia.org", "youtube.com"];
 const MARKETPLACE_HOSTS = ["aliexpress.com", "amazon.ae", "amazon.ca", "amazon.co.uk", "amazon.com", "amazon.de", "amazon.eg", "amazon.es", "amazon.fr", "amazon.it", "deliveroo.co.uk", "doordash.com", "ebay.co.uk", "ebay.com", "etsy.com", "instacart.com", "just-eat.co.uk", "noon.com", "temu.com", "ubereats.com", "walmart.com"];
 const PUBLISHER_PATH = /\/(?:articles?|blog|guides?|news|recipes?|reviews?|wiki)(?:\/|$)/i;
-const PRODUCT_CONTAINER_SEGMENT = /^(?:items?|p|products?|produits?|productos?|produtos?|produkte?|prodotti?|shop|store)$/iu;
+const PRODUCT_CONTAINER_SEGMENT = /^(?:items?|p|products?|produits?|productos?|produtos?|produkte?|prodotto|prodotti|shop|store|منتج|منتجات|商品)$/iu;
 const ACCESSORY_ANCHOR = /\b(?:book|cookbook|cup|guide|infuser|mug|scoop|spoon|voucher|whisk)\b/i;
 const GENERIC_ANCHOR_TOKENS = new Set(["basic", "catalog", "collection", "edition", "plan", "pricing", "product", "products", "service", "shop", "store"]);
 const COUNTRY_SECOND_LEVEL_DOMAINS = new Set(["ac", "co", "com", "edu", "gov", "net", "org"]);
@@ -240,11 +240,7 @@ function isExplicitProductDetailSource(url: string) {
     const path = detail.path;
     if (!path || path === "/" || isListingRoute(url) || PUBLISHER_PATH.test(path) || !isCrawlableProductLead(url)) return false;
     if (!detail.containerDetail && !detail.htmlDetail) return false;
-    const segments = path.split("/").filter(Boolean);
-    const productContainerIndex = segments.findIndex((segment) => /^(?:items?|p|products?|produits?|productos?|produtos?|produkte?|prodotti?|shop|store)$/iu.test(segment));
-    if (productContainerIndex >= 0 && productContainerIndex !== segments.length - 2) return false;
-    return /\/(?:items?|p|products?|produits?|productos?|produtos?|produkte?|prodotti?|shop|store|منتج|منتجات)\/[^/]+/iu.test(`${path}/`)
-      || /\/[^/]+\.(?:html?|aspx?)$/i.test(path);
+    return true;
   } catch {
     return false;
   }

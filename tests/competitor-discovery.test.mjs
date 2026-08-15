@@ -305,6 +305,21 @@ test("keeps translated query-path admission when the search title matches the or
   assert.equal(candidates[0].inferredProductLeads?.[0].laneQuery, "rind lende 500g");
 });
 
+test("admits Arabic, Chinese, and Italian-singular product-detail containers", () => {
+  for (const example of [
+    { name: "عسل ريشي عضوي", query: "عسل ريشي عضوي", url: "https://rival.example/منتج/عسل-ريشي-عضوي", observed: true },
+    { name: "有机 灵芝 蜂蜜", query: "有机 灵芝 蜂蜜", url: "https://rival.example/商品/有机-灵芝-蜂蜜", observed: true },
+    { name: "Organic Reishi Honey", query: "miele reishi biologico", url: "https://rival.example/prodotto/miele-reishi-biologico", observed: false },
+  ]) {
+    const single = { ...profile, products: [product(example.name, `https://myjam.co.uk/products/${encodeURIComponent(example.name)}`)] };
+    const payload = { output: [{ type: "web_search_call", action: { query: example.query, sources: [{ title: example.name, url: example.url }] } }] };
+    const candidates = candidatesFromSearchEvidence(payload, single);
+    assert.equal(candidates.length, 1, example.url);
+    assert.equal(Boolean(candidates[0].observedAdmission), example.observed, example.url);
+    assert.equal(Boolean(candidates[0].inferredProductLeads?.length), !example.observed, example.url);
+  }
+});
+
 test("rejects a title-matching collection page on its own domain", () => {
   const payload = { output: [{ type: "web_search_call", action: { sources: [
     { title: "Halal Beef Sirloin Steak 500g", url: "https://collection.example/collections/halal-beef-sirloin-steak-500g" },

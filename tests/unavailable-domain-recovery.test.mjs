@@ -123,7 +123,7 @@ test("public fetch DNS preflight rejects any private resolution", async () => {
 });
 
 test("public fetch rejects private IPv4 destinations embedded in standard NAT64 answers", async () => {
-  for (const address of ["64:ff9b::7f00:1", "64:ff9b::a00:1", "64:ff9b::a9fe:101", "::ffff:0:7f00:1", "2002:7f00:1::"]) {
+  for (const address of ["64:ff9b::7f00:1", "64:ff9b::a00:1", "64:ff9b::a9fe:101", "::ffff:0:7f00:1", "2002:7f00:1::", "3ffe:831f::1", "3000::1"]) {
     const resolve = async (url) => Response.json({ Answer: String(url).includes("type=28") ? [{ type: 28, data: address }] : [] });
     assert.equal(await resolvesToPublicAddress("nat64-rebinding.example", resolve), false, address);
   }

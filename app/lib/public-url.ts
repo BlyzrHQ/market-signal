@@ -46,12 +46,23 @@ function embeddedIpv4(host: string) {
 function publicIpv6(host: string) {
   const words = ipv6Words(host);
   if (!words || embeddedIpv4(host) !== null) return false;
-  // Ordinary globally routed IPv6 lives in 2000::/3. Explicitly remove IETF
-  // special assignments, documentation ranges, and transition mechanisms.
-  if (words[0] < 0x2000 || words[0] > 0x3fff) return false;
-  if (words[0] === 0x2001 && (words[1] <= 0x01ff || words[1] === 0x0db8)) return false;
-  if (words[0] === 0x2002 || words[0] === 0x3fff) return false;
-  return true;
+  // IANA IPv6 Global Unicast Address Space, last checked 2025-10-10.
+  // Unlisted 2000::/3 space is reserved, so this is deliberately an allocation
+  // allowlist rather than an architectural-range test.
+  if ((words[0] & 0xff00) === 0x2400 || (words[0] & 0xff00) === 0x2600
+    || (words[0] & 0xff00) === 0x2800 || (words[0] & 0xff00) === 0x2a00
+    || (words[0] & 0xff00) === 0x2c00) return true;
+  if (words[0] === 0x2003) return (words[1] & 0xc000) === 0;
+  if (words[0] !== 0x2001 || words[1] === 0x0db8) return false;
+  const allocated2001: Array<[number, number]> = [
+    [0x0200, 0xfe00], [0x0400, 0xfe00], [0x0600, 0xfe00], [0x0800, 0xfc00],
+    [0x0c00, 0xfe00], [0x0e00, 0xfe00], [0x1200, 0xfe00], [0x1400, 0xfc00],
+    [0x1800, 0xfe00], [0x1a00, 0xfe00], [0x1c00, 0xfc00], [0x2000, 0xe000],
+    [0x4000, 0xfe00], [0x4200, 0xfe00], [0x4400, 0xfe00], [0x4600, 0xfe00],
+    [0x4800, 0xfe00], [0x4a00, 0xfe00], [0x4c00, 0xfe00], [0x5000, 0xf000],
+    [0x8000, 0xe000], [0xa000, 0xf000], [0xb000, 0xf000],
+  ];
+  return allocated2001.some(([prefix, mask]) => (words[1] & mask) === prefix);
 }
 
 export function isPublicHostname(value: string) {

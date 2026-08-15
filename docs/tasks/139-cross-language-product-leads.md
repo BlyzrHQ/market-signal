@@ -81,8 +81,8 @@ such.
   deterministic fallback, identity-bearing URL parameters, ambiguous variants,
   exact-pair provenance, and global pin assignment. Every finding was addressed
   with adversarial regression coverage; re-review is still required.
-- The latest discovery, verification, network, and persistence suites pass 80 focused tests. The full repository command passes
-  both typechecks, production build, and 733 tests with zero failures after
+- The latest discovery, verification, network, and persistence suites pass 81 focused tests. The full repository command passes
+  both typechecks, production build, and 734 tests with zero failures after
   reviewer-requested input and provenance hardening.
 - The latest adversarial pass rejects multilingual listing routes, preserves
   non-tracking identity query parameters, rebinds publication provenance to
@@ -131,10 +131,18 @@ such.
   provider title match, preserving legitimate German-path recovery. The fresh
   full suite passes again; exact-head re-review remains pending.
 - The network re-review found further RFC 2765 translated and 6to4 forms.
-  IPv6 is now fail-closed to ordinary `2000::/3` global unicast after excluding
+  IPv6 now fails closed to the allocations in the IANA IPv6 Global Unicast
+  Address Space registry (last updated 2025-10-10) after excluding
   embedded-IPv4, IETF special-assignment, documentation, and transition
-  ranges. Literal and DoH-answer regressions cover the reported forms; the
-  fresh full suite still passes and exact-head re-review remains pending.
+  ranges. Literal and DoH-answer regressions reject unallocated `3000::/4`
+  and former 6bone `3ffe::/16` space while retaining current Google and
+  Cloudflare addresses.
+- Product-detail admission now includes Arabic `منتج` / `منتجات`, Chinese
+  `商品`, and Italian singular `prodotto` containers under the same root or
+  locale-prefix structural rule. The exact-head focused suite passes 81/81,
+  the full suite passes 734/734, the production build passes, and ESLint has
+  zero errors with the same two pre-existing image warnings. Exact-head strict
+  re-review remains pending.
 - Compound and multilingual search/listing routes are rejected before the
   generic HTML product-detail fallback.
 - Nested catalog arrays are normalized from bounded prefixes, product IDs must
