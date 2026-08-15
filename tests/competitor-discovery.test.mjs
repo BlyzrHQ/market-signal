@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { candidatesFromSearchEvidence, discoverCompetitors, entityCandidatesFromSearchEvidence, mergeCandidates, productSearchAnchors, publicDiscoveryCandidate, publicDiscoverySnapshot, sanitizeCandidate } from "../app/lib/competitor-discovery.ts";
+import { candidatesFromSearchEvidence, discoverCompetitors, entityCandidatesFromSearchEvidence, mergeCandidates, productSearchAnchors, publicDiscoveryCandidate, publicDiscoverySnapshot, sanitizeCandidate, structuredProductLeadCandidate } from "../app/lib/competitor-discovery.ts";
 
 function product(name, sourceUrl) {
   return {
@@ -307,6 +307,30 @@ test("admits an attributed opaque product-detail URL only as a source-first inve
   assert.equal(candidates[0].inferredProductLeads?.[0].candidateSourceUrl, "https://health.example/products/sku-8472");
 });
 
+test("admits one domain-consistent structured exact product URL only as a private lead", () => {
+  const arabicProfile = { ...profile, domain: "noororganicfood.com", products: [product("عسل الريشي 500 غرام", "https://noororganicfood.com/products/reishi-honey")] };
+  const candidate = structuredProductLeadCandidate({ domain: "health.example", companyName: "Untrusted model name", websiteUrl: "https://health.example/", evidenceUrl: "https://health.example/products/sku-8472", evidenceTitle: "Wellness product", matchedProductUrl: "https://health.example/products/sku-8472", searchQuery: "reishi honey kuwait" }, arabicProfile.domain, arabicProfile);
+  assert.equal(candidate?.domain, "health.example");
+  assert.equal(candidate?.observedAdmission, false);
+  assert.equal(candidate?.matchedProductUrl, undefined);
+  assert.equal(candidate?.evidence.length, 0);
+  assert.equal(candidate?.inferredProductLeads?.[0].admission, "model-structured-cross-language");
+  assert.equal(candidate?.inferredProductLeads?.[0].candidateSourceUrl, "https://health.example/products/sku-8472");
+});
+
+test("rejects unsafe structured product leads before private investigation", () => {
+  const arabicProfile = { ...profile, domain: "noororganicfood.com", products: [product("عسل الريشي 500 غرام", "https://noororganicfood.com/products/reishi-honey")] };
+  const base = { domain: "health.example", websiteUrl: "https://health.example/", evidenceUrl: "https://health.example/products/sku-8472", evidenceTitle: "Wellness product", matchedProductUrl: "https://health.example/products/sku-8472", searchQuery: "reishi honey" };
+  for (const candidate of [
+    { ...base, domain: "noororganicfood.com", websiteUrl: "https://noororganicfood.com/", evidenceUrl: "https://noororganicfood.com/products/reishi", matchedProductUrl: "https://noororganicfood.com/products/reishi" },
+    { ...base, domain: "amazon.com", websiteUrl: "https://amazon.com/", evidenceUrl: "https://amazon.com/products/sku-8472", matchedProductUrl: "https://amazon.com/products/sku-8472" },
+    { ...base, matchedProductUrl: "https://other.example/products/sku-8472" },
+    { ...base, matchedProductUrl: "https://health.example/collections/honey", evidenceUrl: "https://health.example/collections/honey" },
+    { ...base, matchedProductUrl: "https://health.example/", evidenceUrl: "https://health.example/" },
+  ]) assert.equal(structuredProductLeadCandidate(candidate, arabicProfile.domain, arabicProfile), null);
+  assert.equal(structuredProductLeadCandidate(base, arabicProfile.domain, { ...arabicProfile, products: [...arabicProfile.products, product("Second", "https://noororganicfood.com/products/second")] }), null);
+});
+
 test("does not source-first admit citation-only opaque links or listing routes", () => {
   const arabicProfile = { ...profile, products: [product("عسل الريشي 500 غرام", "https://myjam.co.uk/products/reishi-honey")] };
   const payload = { output: [
@@ -329,15 +353,16 @@ test("bounds source-first investigations before domain deduplication", () => {
 
 test("reserves investigation capacity for attributable candidates across product lanes", () => {
   const sourceFirst = Array.from({ length: 5 }, (_, index) => ({
-    domain: `opaque-${index}.example`, companyName: `opaque-${index}.example`, reason: "private lead", searchQuery: "translated product", sourceUrl: `https://opaque-${index}.example/products/sku-${index}`, websiteUrl: `https://opaque-${index}.example/`, marketCategory: "", relationship: "adjacent", sharedOfferings: ["Arabic product"], evidence: [], mentionCount: 0, matchedPrimaryProductName: "Arabic product", matchedProductUrl: `https://opaque-${index}.example/products/sku-${index}`, inferredProductLeads: [{ primaryProductId: "p1", primarySourceUrl: "https://primary.example/products/p1", laneQuery: "translated product", candidateDomain: `opaque-${index}.example`, candidateSourceUrl: `https://opaque-${index}.example/products/sku-${index}`, admission: "source-first-cross-language" }],
+    domain: `opaque-${index}.example`, companyName: `opaque-${index}.example`, reason: "private lead", searchQuery: "translated product", sourceUrl: `https://opaque-${index}.example/products/sku-${index}`, websiteUrl: `https://opaque-${index}.example/`, marketCategory: "", relationship: "adjacent", sharedOfferings: ["Arabic product"], evidence: [], mentionCount: 0, matchedPrimaryProductName: "Arabic product", matchedProductUrl: `https://opaque-${index}.example/products/sku-${index}`, inferredProductLeads: [{ primaryProductId: "p1", primarySourceUrl: "https://primary.example/products/p1", laneQuery: "translated product", candidateDomain: `opaque-${index}.example`, candidateSourceUrl: `https://opaque-${index}.example/products/sku-${index}`, admission: index % 2 ? "model-structured-cross-language" : "source-first-cross-language" }],
   }));
   const observed = Array.from({ length: 4 }, (_, index) => ({
     domain: `observed-${index}.example`, companyName: `Observed ${index}`, reason: "observed company", searchQuery: "category", sourceUrl: `https://observed-${index}.example/`, websiteUrl: `https://observed-${index}.example/`, marketCategory: "organic food", relationship: "direct", sharedOfferings: ["organic food"], evidence: [{ url: `https://observed-${index}.example/`, title: `Observed ${index}`, method: "category-search" }], mentionCount: 1, observedAdmission: true,
   }));
   const merged = mergeCandidates([...sourceFirst, ...observed]);
   assert.equal(merged.length, 6);
-  assert.equal(merged.filter((candidate) => candidate.inferredProductLeads?.every((lead) => lead.admission === "source-first-cross-language") && !candidate.observedAdmission).length, 2);
+  assert.equal(merged.filter((candidate) => candidate.inferredProductLeads?.every((lead) => lead.admission === "source-first-cross-language" || lead.admission === "model-structured-cross-language") && !candidate.observedAdmission).length, 2);
   assert.equal(merged.filter((candidate) => candidate.observedAdmission).length, 4);
+  assert.deepEqual(merged.slice(0, 4).map((candidate) => candidate.domain), observed.map((candidate) => candidate.domain));
 });
 
 test("raw discovery snapshots publish only accepted candidates and remove private leads", () => {
@@ -351,6 +376,20 @@ test("raw discovery snapshots publish only accepted candidates and remove privat
   assert.equal(snapshot.candidates[0].inferredProductLeads, undefined);
   assert.equal(publicDiscoveryCandidate(candidate).inferredProductLeads, undefined);
   assert.equal(candidate.inferredProductLeads.length, 1);
+});
+
+test("raw rejected private candidates expose no model product metadata", () => {
+  const rejected = {
+    domain: "rival.example", companyName: "Untrusted name", reason: "untrusted reason", searchQuery: "private query", sourceUrl: "https://rival.example/products/sku-1", websiteUrl: "https://rival.example/", marketCategory: "untrusted category", relationship: "direct", sharedOfferings: ["private product"], evidence: [{ url: "https://rival.example/products/sku-1", title: "private", method: "product-search" }], mentionCount: 1, matchedPrimaryProductName: "private primary", matchedProductUrl: "https://rival.example/products/sku-1", accepted: false, inferredProductLeads: [{ primaryProductId: "p1", primarySourceUrl: "https://primary.example/products/p1", laneQuery: "private query", candidateDomain: "rival.example", candidateSourceUrl: "https://rival.example/products/sku-1", admission: "model-structured-cross-language" }],
+  };
+  const published = publicDiscoveryCandidate(rejected);
+  assert.equal(published.companyName, "rival.example");
+  assert.equal(published.searchQuery, "");
+  assert.equal(published.sourceUrl, "https://rival.example/");
+  assert.deepEqual(published.sharedOfferings, []);
+  assert.deepEqual(published.evidence, []);
+  assert.equal(published.matchedProductUrl, undefined);
+  assert.equal(published.inferredProductLeads, undefined);
 });
 
 test("rejects translated terminal listing words and pagination-shaped weak product leads without a finite dictionary", () => {
@@ -691,6 +730,36 @@ test("runs company lanes even when a product-backed ecommerce candidate exists",
     assert.deepEqual(result.candidates.map((candidate) => candidate.domain), ["rival.example", "company.example"]);
     assert.equal(result.strategy, "product-first");
     assert.equal(result.candidates[0].evidenceMethod, "search-source");
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
+test("keeps a Noor-shaped product candidate private even when it satisfies observed admission", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  const searchProfile = { ...profile, domain: "noororganicfood.com", products: [
+    product("عسل الريشي 500 غرام", "https://noororganicfood.com/products/reishi-honey"),
+    product("شاورما دجاج 500 غرام", "https://noororganicfood.com/products/chicken-shawarma"),
+  ] };
+  globalThis.fetch = async (_url, init) => {
+    const request = JSON.parse(init.body);
+    const input = JSON.parse(request.input[1].content);
+    const productName = input.profile.offerings[0]?.name || "Product";
+    const candidate = { domain: "health.example", companyName: "Untrusted name", reason: "Untrusted reason", searchQuery: "MODEL INVENTED QUERY", websiteUrl: "https://health.example/", evidenceUrl: "https://health.example/products/sku-8472", evidenceTitle: `${productName} | Health`, marketCategory: "wellness", relationship: "direct", sharedOfferings: [productName], matchedPrimaryProductName: productName, matchedProductUrl: "https://health.example/products/sku-8472" };
+    return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Organic food", region: "Kuwait", queries: ["reishi honey kuwait"], candidates: input.lane === "product" ? [candidate, { ...candidate, domain: "second.example", websiteUrl: "https://second.example/", evidenceUrl: "https://second.example/products/sku-2", matchedProductUrl: "https://second.example/products/sku-2" }] : [] }) }] }] });
+  };
+  try {
+    const result = await discoverCompetitors(searchProfile);
+    assert.equal(result.strategy, "product-first");
+    assert.deepEqual(result.candidates.map((candidate) => candidate.domain), ["health.example"]);
+    assert.equal(result.candidates[0].observedAdmission, false);
+    assert.deepEqual(result.candidates[0].evidence, []);
+    assert.equal(result.candidates[0].inferredProductLeads?.[0].admission, "model-structured-cross-language");
+    assert.notEqual(result.candidates[0].inferredProductLeads?.[0].laneQuery, "MODEL INVENTED QUERY");
+    assert.equal(result.gaps.some((gap) => /none survived attributable/i.test(gap)), false);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
