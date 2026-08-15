@@ -209,6 +209,12 @@ such.
   a single structured product and be mistaken for a detail page. They now share
   the existing pagination/listing veto before lead admission and publication,
   with a regression for every reported form.
+- That finite pagination denylist was still bypassable through adjacent names
+  such as `skip`, `take`, `per_page`, `page_size`, `pagesize`, `startIndex`, and
+  `after`. Detail-page queries now fail closed: after known tracking parameters
+  are removed, only explicit product identity/variant keys are admitted. Every
+  reported bypass is covered, while `variant`, `id`, and WooCommerce attribute
+  identity URLs remain admissible and still require exact page verification.
 - Compound and multilingual search/listing routes are rejected before the
   generic HTML product-detail fallback.
 - Nested catalog arrays are normalized from bounded prefixes, product IDs must

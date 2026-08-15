@@ -282,6 +282,13 @@ test("rejects translated terminal listing words and pagination-shaped weak produ
     "https://health.example/products/organic-sidr-honey-500g?cursor=next-page",
     "https://health.example/products/organic-sidr-honey-500g?start=24",
     "https://health.example/products/organic-sidr-honey-500g?from=24",
+    "https://health.example/products/organic-sidr-honey-500g?skip=24",
+    "https://health.example/products/organic-sidr-honey-500g?take=24",
+    "https://health.example/products/organic-sidr-honey-500g?per_page=24",
+    "https://health.example/products/organic-sidr-honey-500g?page_size=24",
+    "https://health.example/products/organic-sidr-honey-500g?pagesize=24",
+    "https://health.example/products/organic-sidr-honey-500g?startIndex=24",
+    "https://health.example/products/organic-sidr-honey-500g?after=opaque-cursor",
   ]) {
     const payload = { output: [{ type: "web_search_call", action: { query: "reishi honey 500g", sources: [{ title: "Reishi Honey 500g", url }] } }] };
     assert.deepEqual(candidatesFromSearchEvidence(payload, arabicProfile), [], url);
@@ -295,6 +302,18 @@ test("rejects translated terminal listing words and pagination-shaped weak produ
   ]) {
     const payload = { output: [{ type: "web_search_call", action: { query: "organic sidr honey 500g", sources: [{ title: "Organic Sidr Honey 500g", url }] } }] };
     assert.deepEqual(candidatesFromSearchEvidence(payload, originalLanguage), [], url);
+  }
+});
+
+test("permits only recognized product-identity query keys on detail routes", () => {
+  const single = { ...profile, products: [product("Organic Sidr Honey 500g", "https://myjam.co.uk/products/organic-sidr-honey-500g")] };
+  for (const url of [
+    "https://health.example/products/organic-sidr-honey-500g?variant=123",
+    "https://health.example/products/organic-sidr-honey-500g?id=123",
+    "https://health.example/products/organic-sidr-honey-500g?attribute_pa_size=500g",
+  ]) {
+    const payload = { output: [{ type: "web_search_call", action: { query: "organic sidr honey 500g", sources: [{ title: "Organic Sidr Honey 500g", url }] } }] };
+    assert.equal(candidatesFromSearchEvidence(payload, single).length, 1, url);
   }
 });
 
