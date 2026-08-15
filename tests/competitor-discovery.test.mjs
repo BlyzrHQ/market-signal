@@ -262,14 +262,26 @@ test("keeps a single translated product search result as an atomic inferred lead
   assert.deepEqual(candidates[0].sharedOfferings, ["عسل الريشي 500 غرام"]);
 });
 
-test("does not infer a product lead from a multi-query action, citation, or collection page", () => {
+test("binds one query from a grouped translated action while rejecting citations and collection pages", () => {
   const arabicProfile = { ...profile, products: [product("عسل الريشي 500 غرام", "https://myjam.co.uk/products/reishi-honey")] };
   const payload = { output: [
     { type: "web_search_call", action: { queries: ["reishi honey 500g", "organic honey kuwait"], sources: [{ title: "Reishi Honey 500g", url: "https://health.example/products/reishi-honey-500g" }] } },
     { type: "web_search_call", action: { query: "reishi honey 500g", sources: [{ title: "Reishi Honey 500g", url: "https://health.example/collections/honey" }] } },
     { type: "message", content: [{ type: "output_text", text: "", annotations: [{ type: "url_citation", title: "Reishi Honey 500g", url: "https://health.example/products/reishi-honey-500g" }] }] },
   ] };
-  assert.deepEqual(candidatesFromSearchEvidence(payload, arabicProfile), []);
+  const candidates = candidatesFromSearchEvidence(payload, arabicProfile);
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].inferredProductLeads?.[0].laneQuery, "reishi honey 500g");
+  assert.equal(candidates[0].matchedProductUrl, "https://health.example/products/reishi-honey-500g");
+});
+
+test("does not create a grouped-query lead when only the joined query text matches the path", () => {
+  const translatedProfile = { ...profile, products: [product("Arabic Reishi Product", "https://myjam.co.uk/products/reishi-honey")] };
+  const payload = { output: [{ type: "web_search_call", action: {
+    queries: ["reishi supplement", "honey kuwait"],
+    sources: [{ title: "Reishi Honey 500g", url: "https://health.example/products/reishi-honey-500g" }],
+  } }] };
+  assert.deepEqual(candidatesFromSearchEvidence(payload, translatedProfile), []);
 });
 
 test("rejects translated terminal listing words and pagination-shaped weak product leads without a finite dictionary", () => {
@@ -395,6 +407,19 @@ test("unknown-language entity result paths are rebound to the first-party root",
   const business = { domain: "myjam.co.uk", categoryTerms: ["organic", "grocery"], category: "organic grocery", region: "United Kingdom" };
   const candidates = entityCandidatesFromSearchEvidence(payload, business, "entity");
   assert.deepEqual(candidates.map((candidate) => [candidate.sourceUrl, candidate.evidence[0].url]), [["https://rival.example/", "https://rival.example/"]]);
+});
+
+test("uses an inferred translated category only to recover a provisional company source", () => {
+  const payload = { output: [{ type: "web_search_call", action: { query: "organic food stores Kuwait", sources: [
+    { title: "Kuwait Organic Food Store", url: "https://rival.example/organic-food" },
+  ] } }] };
+  const business = { domain: "noororganicfood.com", categoryTerms: ["arabic", "category", "terms"], category: "Arabic category title", region: "Kuwait" };
+  assert.deepEqual(entityCandidatesFromSearchEvidence(payload, business, "category"), []);
+  const [candidate] = entityCandidatesFromSearchEvidence(payload, business, "category", "organic food stores");
+  assert.equal(candidate.domain, "rival.example");
+  assert.equal(candidate.sourceUrl, "https://rival.example/");
+  assert.equal(candidate.marketCategory, "organic food stores");
+  assert.equal(candidate.observedAdmission, true);
 });
 
 test("admits a root html product page but rejects title-only localized and id-only routes", () => {
@@ -623,6 +648,7 @@ test("runs one bounded search request per selected ecommerce product", async () 
     const input = JSON.parse(request.input[1].content);
     if (input.lane === "product") {
       assert.equal(input.profile.offerings.length, 1);
+      assert.match(input.task, /target-market-language and English bridge translations/i);
       searchedProducts.push(input.profile.offerings[0].name);
     }
     return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: [], candidates: [] }) }] }] });

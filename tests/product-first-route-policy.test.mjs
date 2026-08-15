@@ -147,6 +147,33 @@ test("rejects inferred leads when the exact page is absent or the one-pair judge
   ]) assert.equal(await verifyInferredProductLead(crawl("noororganicfood.com", [primaryProduct]), crawl("health.example", [exact]), discovery, async () => ({ rows: [{ primary: primaryProduct, matches: [{ domain: "health.example", product: exact, confidence: "Medium", assessment }] }] })), undefined);
 });
 
+test("promotes a priced product after a same-domain locale redirect preserves the requested seed", async () => {
+  const primaryProduct = { ...product("noororganicfood.com", "Arabic Tea 500g"), id: "primary-ar", sourceUrl: "https://noororganicfood.com/product/tea-500g" };
+  const finalUrl = "https://health.example/en/products/tea-500g";
+  const rivalProduct = { ...product("health.example", "Organic Tea 500g"), id: "rival-en", sourceUrl: finalUrl, extraction: "json-ld", ownership: "self-declared-brand", priceSignals: [{ raw: "KWD 8.00", currency: "KWD", amount: 8 }] };
+  const primary = crawl("noororganicfood.com", [primaryProduct]);
+  const rival = crawl("health.example", [rivalProduct]);
+  rival.pages = rival.pages.map((page) => page.sourceUrl === finalUrl
+    ? { ...page, requestedSourceUrl: "https://health.example/products/tea-500g" }
+    : page);
+  const discovery = { ...rememberedCandidate(), domain: "health.example", inferredProductLeads: [{ primaryProductId: primaryProduct.id, primarySourceUrl: primaryProduct.sourceUrl, laneQuery: "tea 500g", candidateDomain: "health.example", candidateSourceUrl: "https://health.example/products/tea-500g", admission: "inferred-cross-language" }] };
+  const accepted = await verifyInferredProductLead(primary, rival, discovery, async () => ({ rows: [{ primary: primaryProduct, matches: [{ domain: "health.example", product: rivalProduct, confidence: "Medium", assessment: { verdict: "close_substitute", confidence: 0.91, contradictions: [] } }] }] }));
+  assert.equal(accepted?.rival.sourceUrl, finalUrl);
+});
+
+test("rejects a same-domain redirect that changes the seeded product identity", async () => {
+  const primaryProduct = { ...product("noororganicfood.com", "Arabic Reishi Honey 500g"), id: "primary-ar", sourceUrl: "https://noororganicfood.com/product/reishi-honey" };
+  const finalUrl = "https://health.example/en/products/ginseng-capsules-60";
+  const rivalProduct = { ...product("health.example", "Ginseng Capsules 60"), id: "rival-en", sourceUrl: finalUrl, extraction: "json-ld", ownership: "self-declared-brand", priceSignals: [{ raw: "KWD 8.00", currency: "KWD", amount: 8 }] };
+  const rival = crawl("health.example", [rivalProduct]);
+  rival.pages = rival.pages.map((page) => page.sourceUrl === finalUrl
+    ? { ...page, requestedSourceUrl: "https://health.example/products/reishi-honey-500g" }
+    : page);
+  const discovery = { ...rememberedCandidate(), domain: "health.example", inferredProductLeads: [{ primaryProductId: primaryProduct.id, primarySourceUrl: primaryProduct.sourceUrl, laneQuery: "reishi honey 500g", candidateDomain: "health.example", candidateSourceUrl: "https://health.example/products/reishi-honey-500g", admission: "inferred-cross-language" }] };
+  const accepted = await verifyInferredProductLead(crawl("noororganicfood.com", [primaryProduct]), rival, discovery, async () => { throw new Error("judge must not run"); });
+  assert.equal(accepted, undefined);
+});
+
 test("rejects a listing response that exposes several priced product identities at the seeded URL", async () => {
   const primaryProduct = { ...product("noororganicfood.com", "عسل الريشي 500 غرام"), id: "primary-ar", sourceUrl: "https://noororganicfood.com/product/reishi-honey" };
   const sourceUrl = "https://health.example/shop/reishi-honey";
