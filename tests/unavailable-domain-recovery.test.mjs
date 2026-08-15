@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { fetchPublicText, resolvePublicAddresses, resolvesToPublicAddress } from "../app/lib/public-fetch.ts";
+import { fetchPublicText, resolvePublicAddresses, resolvePublicAddressState, resolvesToPublicAddress } from "../app/lib/public-fetch.ts";
 
 test("the crawl API returns a typed unavailable-domain result before market discovery", async () => {
   const route = await readFile(new URL("../app/api/crawl/route.ts", import.meta.url), "utf8");
@@ -139,6 +139,22 @@ test("public fetch DNS preflight rejects IPv6-only targets even in allocated spa
     const resolve = async (url) => Response.json({ Answer: String(url).includes("type=28") ? [{ type: 28, data: address }] : [] });
     assert.equal(await resolvesToPublicAddress("public-allocation.example", resolve), false, address);
   }
+});
+
+test("an IPv6-only origin returns a typed user-visible crawler limitation", async () => {
+  const dnsFetchImpl = async (url) => Response.json({ Answer: String(url).includes("type=28") ? [{ type: 28, data: "2001:4860:4860::8888" }] : [] });
+  const state = await resolvePublicAddressState("ipv6-only.example", dnsFetchImpl);
+  assert.deepEqual(state, { addresses: [], ipv6Only: true });
+  const result = await fetchPublicText("https://ipv6-only.example/", "text/html", {
+    expectedDomain: "ipv6-only.example",
+    timeoutMs: 1_000,
+    maxDocumentBytes: 1_000,
+    userAgent: "test",
+    dnsFetchImpl,
+    async fetchImpl() { throw new Error("the page transport must not run"); },
+  });
+  assert.equal(result.failureKind, "network");
+  assert.match(result.error, /does not support IPv6-only origins/);
 });
 
 test("public fetch pins only public IPv4 when an unused AAAA answer is unsafe", async () => {

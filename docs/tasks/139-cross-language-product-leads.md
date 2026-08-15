@@ -163,6 +163,13 @@ such.
   gaps instead of creating an ambiguous SSRF route. Focused multilingual,
   persistence, adapter, and network tests pass 88/88; the full suite passes
   736/736, both typechecks and production build pass, and lint has zero errors.
+- Product re-review found that the initial AAAA-only boundary still collapsed
+  to a generic request failure. DNS preflight now queries AAAA only after an
+  empty A answer for classification, never for transport, and returns the
+  typed user-facing reason that IPv6-only origins are unsupported. The page
+  transport is not attempted. The network/persistence suite passes 34/34 and
+  the full repository suite passes 737/737 with both typechecks, build, and
+  zero lint errors.
 - Compound and multilingual search/listing routes are rejected before the
   generic HTML product-detail fallback.
 - Nested catalog arrays are normalized from bounded prefixes, product IDs must

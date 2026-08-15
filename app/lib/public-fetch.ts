@@ -11,13 +11,14 @@ export type PublicFetchOptions = {
   maxDocumentBytes: number;
   userAgent: string;
   fetchImpl?: FetchLike;
+  dnsFetchImpl?: FetchLike;
 };
 
 class PublicFetchTransportError extends Error {
   readonly failureKind: "network" | "timeout";
 
-  constructor(failureKind: "network" | "timeout") {
-    super(failureKind === "timeout" ? "timeout" : "request failed");
+  constructor(failureKind: "network" | "timeout", message = failureKind === "timeout" ? "timeout" : "request failed") {
+    super(message);
     this.name = "PublicFetchTransportError";
     this.failureKind = failureKind;
   }
@@ -31,24 +32,28 @@ function isCloudflareOriginDnsFailure(response: Response, text: string) {
     || (/\berror\s+1016\b/i.test(text) && /\b(?:cloudflare|origin\s+dns\s+error)\b/i.test(text));
 }
 
-export async function resolvePublicAddresses(hostname: string, fetchImpl: FetchLike = fetch, signal?: AbortSignal) {
-  if (!isPublicHostname(hostname)) return [];
-  if (/^[\d.]+$/.test(hostname) || hostname.includes(":")) return [hostname];
+async function dnsAnswers(hostname: string, type: 1 | 28, fetchImpl: FetchLike, signal?: AbortSignal) {
+  const response = await fetchImpl(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=${type}`, { signal, headers: { Accept: "application/dns-json" } });
+  if (!response.ok) throw new Error("DNS resolution failed");
+  const payload = await response.json() as { Answer?: Array<{ type?: unknown; data?: unknown }> };
+  return (payload.Answer || []).filter((answer) => answer.type === type && typeof answer.data === "string").map((answer) => answer.data as string);
+}
+
+export async function resolvePublicAddressState(hostname: string, fetchImpl: FetchLike = fetch, signal?: AbortSignal) {
+  if (!isPublicHostname(hostname)) return { addresses: [] as string[], ipv6Only: hostname.includes(":") };
+  if (/^[\d.]+$/.test(hostname)) return { addresses: [hostname], ipv6Only: false };
   try {
-    // Pin only observed public A records. An AAAA address can be routed through
-    // a deployment-specific NAT64 or ISATAP translator whose private IPv4
-    // destination cannot be identified reliably from the address alone.
-    const answers = await Promise.all([1].map(async (type) => {
-      const response = await fetchImpl(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=${type}`, { signal, headers: { Accept: "application/dns-json" } });
-      if (!response.ok) throw new Error("DNS resolution failed");
-      const payload = await response.json() as { Answer?: Array<{ type?: unknown; data?: unknown }> };
-      return (payload.Answer || []).filter((answer) => answer.type === type && typeof answer.data === "string").map((answer) => answer.data as string);
-    }));
-    const addresses = answers.flat();
-    return addresses.length > 0 && addresses.every(isPublicHostname) ? [...new Set(addresses)].sort() : [];
+    const addresses = await dnsAnswers(hostname, 1, fetchImpl, signal);
+    if (addresses.length) return { addresses: addresses.every(isPublicHostname) ? [...new Set(addresses)].sort() : [], ipv6Only: false };
+    const ipv6Answers = await dnsAnswers(hostname, 28, fetchImpl, signal);
+    return { addresses: [] as string[], ipv6Only: ipv6Answers.some((address) => address.includes(":")) };
   } catch {
-    return [];
+    return { addresses: [] as string[], ipv6Only: false };
   }
+}
+
+export async function resolvePublicAddresses(hostname: string, fetchImpl: FetchLike = fetch, signal?: AbortSignal) {
+  return (await resolvePublicAddressState(hostname, fetchImpl, signal)).addresses;
 }
 
 export async function resolvesToPublicAddress(hostname: string, fetchImpl: FetchLike = fetch, signal?: AbortSignal) {
@@ -128,8 +133,16 @@ export async function fetchPublicText(url: string, accept: string, options: Publ
     for (let redirect = 0; redirect <= 3; redirect += 1) {
       const checked = normalizeDomain(currentUrl);
       if (options.expectedDomain && canonicalDomain(checked.hostname) !== canonicalDomain(options.expectedDomain)) throw new Error("redirected off the submitted domain");
-      const publicAddresses = !options.fetchImpl && globalThis.fetch === platformFetch ? await resolvePublicAddresses(checked.hostname, platformFetch, controller.signal) : null;
-      if (publicAddresses && !publicAddresses.length) throw new Error("hostname did not resolve exclusively to public addresses");
+      const dnsFetchImpl = options.dnsFetchImpl || platformFetch;
+      const resolution = (!options.fetchImpl && globalThis.fetch === platformFetch) || options.dnsFetchImpl
+        ? await resolvePublicAddressState(checked.hostname, dnsFetchImpl, controller.signal)
+        : null;
+      const publicAddresses = resolution?.addresses ?? null;
+      if (resolution && !publicAddresses.length) {
+        throw new PublicFetchTransportError("network", resolution.ipv6Only
+          ? "The public crawler does not support IPv6-only origins. Add a public IPv4 A record and try again."
+          : "The hostname did not resolve to an exclusively public IPv4 address.");
+      }
       try {
         const init = { redirect: "manual" as const, signal: controller.signal, headers: { Accept: accept, "User-Agent": options.userAgent } };
         if (publicAddresses) {
@@ -174,7 +187,7 @@ export async function fetchPublicText(url: string, accept: string, options: Publ
     };
   } catch (error) {
     const failureKind = error instanceof PublicFetchTransportError ? error.failureKind : error instanceof Error && error.name === "AbortError" ? "timeout" as const : "" as const;
-    return { ok: false, status: 0, contentType: "", url, text: "", truncated: false, responseTimeMs: Date.now() - startedAt, responseBytes: 0, redirectCount: 0, error: failureKind === "timeout" ? "timeout" : "request failed", failureKind };
+    return { ok: false, status: 0, contentType: "", url, text: "", truncated: false, responseTimeMs: Date.now() - startedAt, responseBytes: 0, redirectCount: 0, error: error instanceof PublicFetchTransportError ? error.message : failureKind === "timeout" ? "timeout" : "request failed", failureKind };
   } finally {
     await response?.body?.cancel().catch(() => undefined);
     await closePinnedTransport?.();
