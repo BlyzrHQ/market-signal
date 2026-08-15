@@ -143,6 +143,12 @@ such.
   the full suite passes 734/734, the production build passes, and ESLint has
   zero errors with the same two pre-existing image warnings. Exact-head strict
   re-review remains pending.
+- Exact-head security re-review caught a `/12` mask implemented as `/8`, which
+  admitted reserved neighbors such as `2420::1`, `2640::1`, and `2a20::1`.
+  The allocation test now uses the correct `0xfff0` first-word mask and literal
+  plus DoH-answer regressions cover every reported boundary. The full suite
+  remains 734/734 and lint remains at zero errors; exact-head re-review is
+  required on the correcting commit.
 - Compound and multilingual search/listing routes are rejected before the
   generic HTML product-detail fallback.
 - Nested catalog arrays are normalized from bounded prefixes, product IDs must
