@@ -10,6 +10,7 @@ const MAX_CATALOGS = 7;
 const MAX_PRIMARY_PRODUCTS = 1_000;
 const MAX_RIVAL_PRODUCTS = 600;
 const MAX_SUBMITTED_PRODUCTS_PER_CATALOG = 5_000;
+export const MAX_MATCH_BODY_BYTES = 8 * 1_024 * 1_024;
 const DEFAULT_PRODUCT_ANALYSIS_LIMIT = 20;
 const PLAN_PRODUCT_LIMITS = new Set([20, 50, 500, 1_000]);
 
@@ -102,6 +103,28 @@ function requestedPinIds(value: unknown) {
     if (rivalDomain && rivalId) ids.set(rivalDomain, new Set([...(ids.get(rivalDomain) || []), rivalId]));
   }
   return ids;
+}
+
+async function boundedJsonBody(request: Request) {
+  const declared = request.headers.get("content-length");
+  if (declared !== null && (!Number.isSafeInteger(Number(declared)) || Number(declared) < 0 || Number(declared) > MAX_MATCH_BODY_BYTES)) throw new Error("The product-matching request body is too large.");
+  if (!request.body) throw new Error("A JSON request body is required.");
+  const reader = request.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let raw = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > MAX_MATCH_BODY_BYTES) {
+      await reader.cancel();
+      throw new Error("The product-matching request body is too large.");
+    }
+    raw += decoder.decode(value, { stream: true });
+  }
+  raw += decoder.decode();
+  return JSON.parse(raw) as Record<string, unknown>;
 }
 
 export function parseCatalogs(value: unknown, primaryDomain = "", requestedPins?: unknown) {
@@ -208,7 +231,7 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
   return async function matchHandler(request: Request) {
     if (!await hasValidInternalAuthorization(request.headers.get("authorization"), expectedToken)) return unauthorizedInternalResponse();
     try {
-      const body = await request.json() as { publicId?: unknown; reportAttempt?: unknown; primaryDomain?: unknown; productLimit?: unknown; catalogs?: unknown; pinnedPairs?: unknown };
+      const body = await boundedJsonBody(request) as { publicId?: unknown; reportAttempt?: unknown; primaryDomain?: unknown; productLimit?: unknown; catalogs?: unknown; pinnedPairs?: unknown };
       const publicId = text(body.publicId, 32);
       const reportAttempt = Number(body.reportAttempt);
       const primaryDomain = canonicalDomain(text(body.primaryDomain, 300));

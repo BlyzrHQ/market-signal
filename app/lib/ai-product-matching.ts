@@ -748,7 +748,9 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   const proposals = sanitized.filter((item): item is typeof item & { verdict: "same_product" | "close_substitute" } => {
     if (item.verdict !== "same_product" && item.verdict !== "close_substitute") return false;
     const pinned = pinnedPairKeys.has(`${item.primary.id}|${canonicalDomain(item.candidate.product.domain)}|${item.candidate.product.id}`);
-    return pinned ? item.confidence >= 0.8 : isUsefulAssignment(item.primary, item.candidate.product, item.confidence);
+    return pinned
+      ? item.confidence >= 0.8 && isUsefulAssignment(item.primary, item.candidate.product, item.confidence)
+      : isUsefulAssignment(item.primary, item.candidate.product, item.confidence);
   })
     .sort((left, right) => Number(pinnedPairKeys.has(`${right.primary.id}|${canonicalDomain(right.candidate.product.domain)}|${right.candidate.product.id}`))
       - Number(pinnedPairKeys.has(`${left.primary.id}|${canonicalDomain(left.candidate.product.domain)}|${left.candidate.product.id}`))

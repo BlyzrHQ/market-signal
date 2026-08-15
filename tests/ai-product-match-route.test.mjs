@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createMatchHandler, parseCatalogs, parsePinnedPairs, productAnalysisBudgetMs, productAnalysisLimit } from "../app/api/match/route.ts";
+import { createMatchHandler, MAX_MATCH_BODY_BYTES, parseCatalogs, parsePinnedPairs, productAnalysisBudgetMs, productAnalysisLimit } from "../app/api/match/route.ts";
 
 test("AI matching input keeps a broad but bounded first-party catalog", () => {
   const products = Array.from({ length: 605 }, (_, index) => ({
@@ -202,6 +202,15 @@ test("authenticated matching binds durable judge checkpoints to the active repor
     body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, primaryDomain: "shop.test", productLimit: 1_000, pinnedPairs: { primaryId: "p1" }, catalogs: [{ domain: "shop.test", products: [{ name: "Honey", sourceUrl: "https://shop.test/products/honey" }] }] }),
   }));
   assert.equal(malformedPins.status, 400);
+
+  const oversized = await handler(new Request("https://signal.test/api/match", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array(MAX_MATCH_BODY_BYTES + 1)); controller.close(); } }),
+    duplex: "half",
+  }));
+  assert.equal(oversized.status, 400);
+  assert.match((await oversized.json()).error, /too large/i);
 });
 
 test("AI matching keeps public HTTPS CDN images but rejects unsafe image URLs", () => {

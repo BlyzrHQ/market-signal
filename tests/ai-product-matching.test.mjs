@@ -71,6 +71,7 @@ test("falls back honestly without an API key", async () => {
   assert.match(comparison.matching?.gaps[0] || "", /not configured/i);
   assert.equal(comparison.rows[0].matches[0].product, null);
   assert.equal(comparison.coverage.assignedPairCount, 0);
+
 });
 
 test("an incomplete Responses API output is visible and never exposes a fallback pair", async () => {
@@ -275,6 +276,13 @@ test("generic bilingual container words cannot produce an accepted battle", asyn
 
   assert.equal(comparison.rows[0].matches[0].product, null);
   assert.equal(comparison.coverage.assignedPairCount, 0);
+
+  const pinned = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [primary] },
+    { domain: "rival.test", products: [rival] },
+  ], {}, { apiKey: "test", fetch, pinnedPairs: [{ primaryId: primary.id, rivalDomain: "rival.test", rivalId: rival.id }] });
+  assert.equal(pinned.rows[0].matches[0].product, null);
+  assert.equal(pinned.coverage.assignedPairCount, 0);
 });
 
 test("low-confidence close substitutes are not assigned without deterministic identity", async () => {
