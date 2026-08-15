@@ -10,7 +10,7 @@ Product search can return an attributable first-party product-detail page whose 
 - Keep citation-only links, listing/search/category pages, marketplaces, the primary brand, and unsafe URLs excluded.
 - Preserve the existing publication gate: exact requested page (or identity-preserving same-domain redirect), one first-party structured Product identity, finite positive supported-currency price, regional compatibility, and a targeted semantic verdict of `same_product` or `close_substitute` at confidence >= 0.8 with no contradictions.
 - Do not publish provisional source claims when verification fails.
-- Reserve the global investigation budget so source-first leads cannot displace all attributable candidates, and remove private lead details from the returned discovery snapshot.
+- Reserve the global investigation budget so source-first leads cannot displace all attributable candidates, and remove private lead details from every returned discovery surface.
 
 ## Validation
 

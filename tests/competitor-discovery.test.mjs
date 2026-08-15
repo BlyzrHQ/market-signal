@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { candidatesFromSearchEvidence, discoverCompetitors, entityCandidatesFromSearchEvidence, mergeCandidates, productSearchAnchors, publicDiscoverySnapshot, sanitizeCandidate } from "../app/lib/competitor-discovery.ts";
+import { candidatesFromSearchEvidence, discoverCompetitors, entityCandidatesFromSearchEvidence, mergeCandidates, productSearchAnchors, publicDiscoveryCandidate, publicDiscoverySnapshot, sanitizeCandidate } from "../app/lib/competitor-discovery.ts";
 
 function product(name, sourceUrl) {
   return {
@@ -349,6 +349,8 @@ test("raw discovery snapshots publish only accepted candidates and remove privat
   const snapshot = publicDiscoverySnapshot(base, [candidate, rejected]);
   assert.deepEqual(snapshot.candidates.map((item) => item.domain), ["rival.example"]);
   assert.equal(snapshot.candidates[0].inferredProductLeads, undefined);
+  assert.equal(publicDiscoveryCandidate(candidate).inferredProductLeads, undefined);
+  assert.equal(candidate.inferredProductLeads.length, 1);
 });
 
 test("rejects translated terminal listing words and pagination-shaped weak product leads without a finite dictionary", () => {

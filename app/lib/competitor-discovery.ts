@@ -66,6 +66,7 @@ type LaneResult = { lane: SearchLane; category: string; region: string; queries:
 const MAX_CANDIDATES = 6;
 const MAX_PRODUCT_SEARCHES = 4;
 const MAX_SOURCE_FIRST_LEADS_PER_SEARCH = 2;
+const MAX_SOURCE_FIRST_CANDIDATES = 2;
 const SEARCH_TIMEOUT_MS = 24_000;
 const SEARCH_SOURCE_STOPWORDS = new Set([
   "apx", "approximately", "buy", "delivered", "delivery", "fresh", "halal", "home", "online", "order", "price", "product", "products", "shop", "store", "uk",
@@ -564,8 +565,14 @@ export function mergeCandidates(candidates: DiscoveryCandidate[]) {
       || right.mentionCount - left.mentionCount
       || Number(right.relationship === "direct") - Number(left.relationship === "direct")
       || left.domain.localeCompare(right.domain),
-  ).filter((candidate) => !sourceFirstOnly(candidate) || sourceFirstCandidates++ < MAX_SOURCE_FIRST_LEADS_PER_SEARCH)
+  ).filter((candidate) => !sourceFirstOnly(candidate) || sourceFirstCandidates++ < MAX_SOURCE_FIRST_CANDIDATES)
     .slice(0, MAX_CANDIDATES);
+}
+
+export function publicDiscoveryCandidate<T extends DiscoveryCandidate>(candidate: T): T {
+  const published = { ...candidate };
+  delete published.inferredProductLeads;
+  return published;
 }
 
 export function publicDiscoverySnapshot(discovery: DiscoveryResult, verifiedCandidates: Array<DiscoveryCandidate & { accepted?: boolean }>): DiscoveryResult {
@@ -573,9 +580,7 @@ export function publicDiscoverySnapshot(discovery: DiscoveryResult, verifiedCand
     ...discovery,
     candidates: verifiedCandidates.flatMap((candidate) => {
       if (candidate.accepted !== true) return [];
-      const published: DiscoveryCandidate & { accepted?: boolean } = { ...candidate };
-      delete published.inferredProductLeads;
-      return [published];
+      return [publicDiscoveryCandidate(candidate)];
     }),
   };
 }
