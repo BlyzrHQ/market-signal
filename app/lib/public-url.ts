@@ -36,21 +36,29 @@ function embeddedIpv4(host: string) {
   if (!words) return null;
   const mapped = words.slice(0, 5).every((word) => word === 0) && words[5] === 0xffff;
   const compatible = words.slice(0, 6).every((word) => word === 0);
+  const translated = words.slice(0, 4).every((word) => word === 0) && words[4] === 0xffff && words[5] === 0;
   const wellKnownNat64 = words[0] === 0x64 && words[1] === 0xff9b && words.slice(2, 6).every((word) => word === 0);
-  if (!mapped && !compatible && !wellKnownNat64) return null;
+  if (words[0] === 0x2002) return [words[1] >>> 8, words[1] & 255, words[2] >>> 8, words[2] & 255].join(".");
+  if (!mapped && !compatible && !translated && !wellKnownNat64) return null;
   return [words[6] >>> 8, words[6] & 255, words[7] >>> 8, words[7] & 255].join(".");
+}
+
+function publicIpv6(host: string) {
+  const words = ipv6Words(host);
+  if (!words || embeddedIpv4(host) !== null) return false;
+  // Ordinary globally routed IPv6 lives in 2000::/3. Explicitly remove IETF
+  // special assignments, documentation ranges, and transition mechanisms.
+  if (words[0] < 0x2000 || words[0] > 0x3fff) return false;
+  if (words[0] === 0x2001 && (words[1] <= 0x01ff || words[1] === 0x0db8)) return false;
+  if (words[0] === 0x2002 || words[0] === 0x3fff) return false;
+  return true;
 }
 
 export function isPublicHostname(value: string) {
   const host = value.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
   if (!host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return false;
   if (/^\d+(?:\.\d+){3}$/.test(host)) return publicIpv4(host);
-  if (host.includes(":")) {
-    const embedded = embeddedIpv4(host);
-    if (embedded !== null) return publicIpv4(embedded);
-    if (host === "::" || host === "::1" || /^(?:fc|fd|fe[89a-f]|ff)/i.test(host) || /^2001:(?:db8|0?10):/i.test(host) || /^64:ff9b:1:/i.test(host)) return false;
-    return /^[0-9a-f:]+$/i.test(host);
-  }
+  if (host.includes(":")) return publicIpv6(host);
   return host.includes(".") && /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i.test(host) && !host.includes("..") && host.length <= 253;
 }
 

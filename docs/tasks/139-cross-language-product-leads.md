@@ -81,7 +81,7 @@ such.
   deterministic fallback, identity-bearing URL parameters, ambiguous variants,
   exact-pair provenance, and global pin assignment. Every finding was addressed
   with adversarial regression coverage; re-review is still required.
-- The latest discovery, network, and persistence suites pass 69 focused tests. The full repository command passes
+- The latest discovery, verification, network, and persistence suites pass 80 focused tests. The full repository command passes
   both typechecks, production build, and 733 tests with zero failures after
   reviewer-requested input and provenance hardening.
 - The latest adversarial pass rejects multilingual listing routes, preserves
@@ -130,6 +130,11 @@ such.
   variants. Translated query/path inference is evaluated independently from a
   provider title match, preserving legitimate German-path recovery. The fresh
   full suite passes again; exact-head re-review remains pending.
+- The network re-review found further RFC 2765 translated and 6to4 forms.
+  IPv6 is now fail-closed to ordinary `2000::/3` global unicast after excluding
+  embedded-IPv4, IETF special-assignment, documentation, and transition
+  ranges. Literal and DoH-answer regressions cover the reported forms; the
+  fresh full suite still passes and exact-head re-review remains pending.
 - Compound and multilingual search/listing routes are rejected before the
   generic HTML product-detail fallback.
 - Nested catalog arrays are normalized from bounded prefixes, product IDs must
