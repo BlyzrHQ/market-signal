@@ -74,6 +74,23 @@ test("uses observed first-party aliases for cross-language category and product 
   assert.equal(withoutAlias.accepted, false);
 });
 
+test("does not align unrelated companies solely because localized catalogs share product words", () => {
+  const primaryProduct = {
+    ...product("software.example", "عنصر مشترك", "برمجيات"),
+    aliases: [{ name: "Natural Dried Figs 500g", normalizedName: "natural dried figs 500g", locale: "en", sourceUrl: "https://software.example/en/products/natural-dried-figs-500g", extraction: "sitemap" }],
+  };
+  const candidateProduct = product("bakery.example", "Natural Dried Figs 500g", "fresh bakery item");
+  const result = verifyCompetitorEntity(
+    site("software.example", "Alpha software consulting", "Enterprise IT services", "Not enough public signal", [primaryProduct]),
+    site("bakery.example", "Beta Bakery", "Fresh bread baked daily", "Not enough public signal", [candidateProduct]),
+    discovery({ domain: "bakery.example", websiteUrl: "https://bakery.example/", marketCategory: "enterprise software consulting", sharedOfferings: ["software services"] }),
+  );
+
+  assert.equal(result.hasProductOverlap, true);
+  assert.equal(result.categoryAlignment, false);
+  assert.equal(result.accepted, false);
+});
+
 test("requires observed product overlap when product-led ecommerce discovery requests it", () => {
   const result = verifyCompetitorEntity(
     site("myjam.co.uk", "MyJam cultural grocery marketplace", "Halal meat and cultural groceries delivered across the UK", "United Kingdom (inferred)"),

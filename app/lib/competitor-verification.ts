@@ -107,14 +107,13 @@ export function verifyCompetitorEntity(
   const pair = strongestProductPair(primary.products, candidate.products);
   const hasProductOverlap = Boolean(pair);
 
-  const hasLocaleBridge = [...primary.products, ...candidate.products].some((product) => Boolean(product.aliases?.length));
-  const primaryBridge = hasLocaleBridge ? observedProductTerms(primary.products).join(" ") : "";
-  const candidateBridge = hasLocaleBridge ? observedProductTerms(candidate.products).join(" ") : "";
-  const primaryCore = profileTerms(`${primary.title} ${primary.description} ${(primary.headings || []).slice(0, 8).join(" ")} ${primaryBridge}`).filter((term) => !GENERIC.has(term));
-  const candidateCore = profileTerms(`${candidate.title} ${candidate.description} ${(candidate.headings || []).slice(0, 8).join(" ")} ${candidateBridge}`).filter((term) => !GENERIC.has(term));
+  const hasLocaleBridge = [...primary.products, ...candidate.products].some((product) => (product.aliases || []).some((alias) => alias.locale !== "und" && alias.normalizedName !== product.normalizedName));
+  const primaryCore = profileTerms(`${primary.title} ${primary.description} ${(primary.headings || []).slice(0, 8).join(" ")}`).filter((term) => !GENERIC.has(term));
+  const candidateCore = profileTerms(`${candidate.title} ${candidate.description} ${(candidate.headings || []).slice(0, 8).join(" ")}`).filter((term) => !GENERIC.has(term));
   const coreOverlap = primaryCore.filter((term) => candidateCore.includes(term));
   const accessoryOnly = ACCESSORY.test(`${candidate.title} ${candidate.description}`) && coreOverlap.length < 2;
-  const categoryAlignment = !accessoryOnly && coreOverlap.length >= 2;
+  const localizedProductBridge = hasLocaleBridge && hasProductOverlap && ownSiteDiscoveryOverlap.length >= 2;
+  const categoryAlignment = !accessoryOnly && (coreOverlap.length >= 2 || localizedProductBridge);
 
   const primaryRegion = targetMarket.regionCode;
   const candidateCombinedRegion = regionCode(candidate.region);

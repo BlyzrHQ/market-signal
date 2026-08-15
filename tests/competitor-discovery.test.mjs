@@ -238,6 +238,11 @@ test("rejects homepages and ranks URL-confirmed product pages over weaker same-d
   ]);
 });
 
+test("rejects a title-matching collection page on its own domain", () => {
+  const payload = { output: [{ type: "web_search_call", action: { sources: [{ title: "Halal Beef Sirloin Steak 500g", url: "https://listing.example/collections/halal-beef-sirloin-steak-500g" }] } }] };
+  assert.deepEqual(candidatesFromSearchEvidence(payload, profile), []);
+});
+
 test("admits localized, html, and id-only product leads when the search title strongly matches", () => {
   const payload = {
     output: [{

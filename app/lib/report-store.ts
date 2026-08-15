@@ -713,11 +713,33 @@ function matchCursor(value: string) {
   return { domain, id };
 }
 
+function sanitizedStoredProductAliases(value: unknown, productDomain: string) {
+  let targetDomain = "";
+  try { targetDomain = canonicalDomain(productDomain); } catch { return []; }
+  return (Array.isArray(value) ? value : []).slice(0, 8).flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const source = item as Record<string, unknown>;
+    const name = String(source.name || "").replace(/\s+/g, " ").trim().slice(0, 160);
+    const normalizedName = String(source.normalizedName || "").replace(/\s+/g, " ").trim().slice(0, 160);
+    const locale = String(source.locale || "und").replace(/\s+/g, " ").trim().slice(0, 20) || "und";
+    const extraction = source.extraction === "json-ld" || source.extraction === "sitemap" ? source.extraction : "";
+    let sourceUrl = "";
+    let sourceDomain = "";
+    try {
+      sourceUrl = publicHttpUrl(source.sourceUrl);
+      sourceDomain = canonicalDomain(new URL(sourceUrl).hostname);
+    } catch { sourceUrl = ""; sourceDomain = ""; }
+    if (!name || !normalizedName || !sourceUrl || !extraction || sourceDomain !== targetDomain) return [];
+    return [{ name, normalizedName, locale, sourceUrl, extraction }];
+  });
+}
+
 function matchProduct(row: Record<string, unknown>, prefix: "primary" | "rival") {
   const metadata = parsedRecord(row[`${prefix}_metadata_json`]);
+  const domain = String(row[`${prefix}_domain`] || "");
   return {
     id: String(row[`${prefix}_product_id`] || ""),
-    domain: String(row[`${prefix}_domain`] || ""),
+    domain,
     name: String(row[`${prefix}_name`] || ""),
     normalizedName: String(row[`${prefix}_normalized_name`] || ""),
     sourceUrl: String(row[`${prefix}_source_url`] || ""),
@@ -725,6 +747,7 @@ function matchProduct(row: Record<string, unknown>, prefix: "primary" | "rival")
     priceSignals: parsedRecords(row[`${prefix}_price_json`]),
     observedAt: String(row[`${prefix}_observed_at`] || ""),
     ...metadata,
+    aliases: sanitizedStoredProductAliases(metadata.aliases, domain),
   };
 }
 
@@ -1735,7 +1758,7 @@ export async function getStoredReport(publicReportId: string, now = new Date(), 
         ownership: String(metadata.ownership || ""),
         extraction: String(metadata.extraction || ""),
         confidence: String(metadata.confidence || ""),
-        aliases: Array.isArray(metadata.aliases) ? metadata.aliases : [],
+        aliases: sanitizedStoredProductAliases(metadata.aliases, String(row.domain || "")),
         identifiers: metadata.identifiers && typeof metadata.identifiers === "object" && !Array.isArray(metadata.identifiers) ? metadata.identifiers : {},
         quantity: metadata.quantity && typeof metadata.quantity === "object" && !Array.isArray(metadata.quantity) ? metadata.quantity : {},
         observedAt: String(row.observed_at || ""),

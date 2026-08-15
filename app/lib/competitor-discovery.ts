@@ -187,7 +187,7 @@ function isProductDetailSource(url: string, product: ProductRecord) {
 function isCrawlableProductLead(url: string) {
   try {
     const path = decodeURIComponent(new URL(url).pathname).replace(/\/+$/, "");
-    return Boolean(path && path !== "/" && !PUBLISHER_PATH.test(path));
+    return Boolean(path && path !== "/" && !PUBLISHER_PATH.test(path) && !/(?:^|\/)\b(?:categories|category|collections|collection)\b(?:\/|$)/i.test(path));
   } catch {
     return false;
   }

@@ -870,7 +870,7 @@ export function extractProductsFromSitemap(document: string, domain: string, obs
       imageUrl,
       observedAt,
       claimIds: [`${id}-sitemap-observed`],
-      aliases: [{ name: boundedName, normalizedName: normalized(boundedName), locale, sourceUrl, extraction: "sitemap" }],
+      aliases: locale === "und" ? undefined : [{ name: boundedName, normalizedName: normalized(boundedName), locale, sourceUrl, extraction: "sitemap" }],
       quantity: parseCanonicalQuantity(name) || undefined,
     });
     if (products.length >= 1_000) break;
@@ -895,11 +895,15 @@ export function selectPreferredProducts(items: ProductRecord[]) {
     + (item.description ? 5 : 0)
     + (item.imageUrl ? 3 : 0);
   const mergeAliases = (preferred: ProductRecord, supplemental: ProductRecord) => {
-    const candidates: ProductAlias[] = [
+    const observedAliases: ProductAlias[] = [
       ...(preferred.aliases || []),
       ...(supplemental.aliases || []),
-      ...(preferred.extraction === "sitemap" && !preferred.aliases?.length ? [{ name: preferred.name, normalizedName: preferred.normalizedName, locale: "und", sourceUrl: preferred.sourceUrl, extraction: "sitemap" as const }] : []),
-      ...(supplemental.extraction === "sitemap" && !supplemental.aliases?.length ? [{ name: supplemental.name, normalizedName: supplemental.normalizedName, locale: "und", sourceUrl: supplemental.sourceUrl, extraction: "sitemap" as const }] : []),
+    ];
+    const hasLocalizedObservation = observedAliases.some((alias) => alias.locale !== "und");
+    const candidates: ProductAlias[] = [
+      ...observedAliases,
+      ...(hasLocalizedObservation && preferred.extraction === "sitemap" && !preferred.aliases?.length ? [{ name: preferred.name, normalizedName: preferred.normalizedName, locale: "default", sourceUrl: preferred.sourceUrl, extraction: "sitemap" as const }] : []),
+      ...(hasLocalizedObservation && supplemental.extraction === "sitemap" && !supplemental.aliases?.length ? [{ name: supplemental.name, normalizedName: supplemental.normalizedName, locale: "default", sourceUrl: supplemental.sourceUrl, extraction: "sitemap" as const }] : []),
     ];
     const aliases = new Map<string, ProductAlias>();
     for (const alias of candidates) {

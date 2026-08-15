@@ -30,6 +30,18 @@ test("report fact URLs reject intranet and non-global address variants", () => {
   assert.match(officialAdRecordUrl("https://facebook.com/ads/library/?id=123", "Meta"), /ads\/library/);
 });
 
+test("product fact canonicalization drops cross-domain locale aliases", () => {
+  const fact = canonicalReportFact("products", {
+    domain: "catalog.example", productId: "one", name: "Observed product", normalizedName: "observed product",
+    sourceUrl: "https://catalog.example/products/one", imageUrl: "", prices: [], observedAt: "2026-08-15T00:00:00.000Z",
+    metadata: { aliases: [
+      { name: "Observed product", normalizedName: "observed product", locale: "en", sourceUrl: "https://catalog.example/en/products/one", extraction: "sitemap" },
+      { name: "Injected product", normalizedName: "injected product", locale: "en", sourceUrl: "https://attacker.example/products/one", extraction: "sitemap" },
+    ] },
+  });
+  assert.deepEqual(fact.metadata.aliases, [{ extraction: "sitemap", locale: "en", name: "Observed product", normalizedName: "observed product", sourceUrl: "https://catalog.example/en/products/one" }]);
+});
+
 test("Node SQLite preserves reports and competitor memory after reopening", async () => {
   const { directory, databasePath } = await fixture();
   let database;
@@ -164,6 +176,10 @@ test("full relational report facts survive snapshot compaction with replay-safe 
     assert.equal(catalogSnapshot.totalProductCount, 61);
     assert.equal(catalogSnapshot.persistedProductCount, 12);
     assert.equal(catalogSnapshot.productsTruncated, true);
+    const storedAliasRow = (await database.prepare("SELECT metadata_json FROM report_products WHERE product_id = 'product-0' AND domain = 'catalog.example'").all()).results[0];
+    const storedAliasMetadata = JSON.parse(storedAliasRow.metadata_json);
+    storedAliasMetadata.aliases.push({ name: "Injected product", normalizedName: "injected product", locale: "en", sourceUrl: "https://attacker.example/products/0", extraction: "sitemap" });
+    await database.prepare("UPDATE report_products SET metadata_json = ? WHERE product_id = 'product-0' AND domain = 'catalog.example'").bind(JSON.stringify(storedAliasMetadata)).run();
     const hydrated = await getStoredReport(created.publicId, now, database);
     assert.equal(hydrated.primaryProducts.authoritative, true);
     assert.equal(hydrated.primaryProducts.totalCount, 61);
