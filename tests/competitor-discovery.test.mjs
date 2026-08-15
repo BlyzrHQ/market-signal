@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { candidatesFromSearchEvidence, discoverCompetitors, productSearchAnchors } from "../app/lib/competitor-discovery.ts";
+import { candidatesFromSearchEvidence, discoverCompetitors, mergeCandidates, productSearchAnchors } from "../app/lib/competitor-discovery.ts";
 
 function product(name, sourceUrl) {
   return {
@@ -560,10 +560,27 @@ test("rejects search, browse, and catalog listing routes as inferred exact-produ
     "https://rival.example/fr/recherche.html",
     "https://rival.example/de/suche.html",
     "https://rival.example/ar/بحث.html",
+    "https://rival.example/products/all",
+    "https://rival.example/produits/liste",
   ]) {
     const payload = { output: [{ type: "web_search_call", action: { query: "organic sidr honey 500g", sources: [{ title: "Organic Sidr Honey 500g", url }] } }] };
     assert.deepEqual(candidatesFromSearchEvidence(payload, single), [], url);
   }
+});
+
+test("observed company evidence replaces provisional inferred publication fields without dropping the private lead", () => {
+  const inferred = {
+    domain: "rival.example", companyName: "rival.example", reason: "inferred lead", searchQuery: "translated honey", sourceUrl: "https://rival.example/products/honey", websiteUrl: "https://rival.example/", marketCategory: "", relationship: "adjacent", sharedOfferings: ["Arabic honey"], evidence: [{ url: "https://rival.example/products/honey", title: "Honey", method: "product-search" }], mentionCount: 1, matchedPrimaryProductName: "Arabic honey", matchedProductUrl: "https://rival.example/products/honey", matchedPrimaryProductNames: ["Arabic honey"], matchedProductUrls: ["https://rival.example/products/honey"], inferredProductLeads: [{ primaryProductId: "p1", primarySourceUrl: "https://shop.test/products/honey", laneQuery: "translated honey", candidateDomain: "rival.example", candidateSourceUrl: "https://rival.example/products/honey", admission: "inferred-cross-language" }], evidenceMethod: "search-source",
+  };
+  const observed = {
+    domain: "rival.example", companyName: "Rival Foods", reason: "observed category company", searchQuery: "organic food competitors", sourceUrl: "https://rival.example/about", websiteUrl: "https://rival.example/", marketCategory: "organic food", relationship: "direct", sharedOfferings: ["organic food"], evidence: [{ url: "https://rival.example/about", title: "Rival Foods", method: "category-search" }], mentionCount: 1, evidenceMethod: "search-source", observedAdmission: true,
+  };
+  const [merged] = mergeCandidates([inferred, observed]);
+  assert.equal(merged.sourceUrl, observed.sourceUrl);
+  assert.equal(merged.searchQuery, observed.searchQuery);
+  assert.deepEqual(merged.evidence, observed.evidence);
+  assert.equal(merged.matchedProductUrl, undefined);
+  assert.deepEqual(merged.inferredProductLeads, inferred.inferredProductLeads);
 });
 
 test("ranks product-backed sellers ahead of company-first results", async () => {

@@ -745,9 +745,11 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   if (!successfulPrimaryIds.size) return { ...withoutUnassessedMatches(fallback), matching: { ...matchingBase, method: "lexical-fallback", available: false, retrievalPairsScored: retrieved.scoredPairs, judgeCalls, embeddingCalls, reusedJudgeCheckpoints, savedJudgeCheckpoints, durationMs: Date.now() - startedAt, selectedPrimaryIds: primaryProducts.map((product) => product.id), gaps: gaps.length ? gaps : ["AI product judging returned no usable assessments; no product pair was accepted."] } };
 
   const pinnedPairKeys = new Set(pinnedPairs.map((pair) => `${pair.primaryId}|${canonicalDomain(pair.rivalDomain)}|${pair.rivalId}`));
-  const proposals = sanitized.filter((item): item is typeof item & { verdict: "same_product" | "close_substitute" } => (item.verdict === "same_product" || item.verdict === "close_substitute")
-      && (isUsefulAssignment(item.primary, item.candidate.product, item.confidence)
-        || (item.confidence >= 0.8 && pinnedPairKeys.has(`${item.primary.id}|${canonicalDomain(item.candidate.product.domain)}|${item.candidate.product.id}`))))
+  const proposals = sanitized.filter((item): item is typeof item & { verdict: "same_product" | "close_substitute" } => {
+    if (item.verdict !== "same_product" && item.verdict !== "close_substitute") return false;
+    const pinned = pinnedPairKeys.has(`${item.primary.id}|${canonicalDomain(item.candidate.product.domain)}|${item.candidate.product.id}`);
+    return pinned ? item.confidence >= 0.8 : isUsefulAssignment(item.primary, item.candidate.product, item.confidence);
+  })
     .sort((left, right) => Number(pinnedPairKeys.has(`${right.primary.id}|${canonicalDomain(right.candidate.product.domain)}|${right.candidate.product.id}`))
       - Number(pinnedPairKeys.has(`${left.primary.id}|${canonicalDomain(left.candidate.product.domain)}|${left.candidate.product.id}`))
       || Number(right.verdict === "same_product") - Number(left.verdict === "same_product")

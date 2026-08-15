@@ -223,6 +223,7 @@ function exactPageProductFingerprint(product: ProductRecord, expectedDomain: str
       brand: identifiers.brand || "",
     },
     prices,
+    attributes: [...product.attributes].map((value) => value.toLowerCase().normalize("NFKC").trim()).filter(Boolean).sort(),
     source: exactProductPageKey(product.sourceUrl, expectedDomain),
   });
 }
@@ -939,7 +940,13 @@ export async function POST(request: Request) {
       gaps: memory.gap ? [...discovery.gaps, memory.gap] : discovery.gaps,
     };
     const verificationMarket = resolveVerificationMarket(discovery.region, primary.homepage.region, firstPartyRegionSource(primary.homepage));
-    const investigatedSettled = await settleWithConcurrency(investigationCandidates, COMPETITOR_CRAWL_CONCURRENCY, async (candidate) => verifyDiscoveredCompetitorWithInferredLeads(primary, await crawlDomain(candidate.domain, "discovered-competitor", candidate.matchedProductUrls?.length ? candidate.matchedProductUrls : [candidate.matchedProductUrl || candidate.websiteUrl]), candidate, verificationMarket, discoveryPolicy.requireProductOverlap));
+    const investigatedSettled = await settleWithConcurrency(investigationCandidates, COMPETITOR_CRAWL_CONCURRENCY, async (candidate) => {
+      const seedUrls = [...new Set([
+        ...(candidate.matchedProductUrls || (candidate.matchedProductUrl ? [candidate.matchedProductUrl] : [])),
+        ...(candidate.inferredProductLeads || []).map((lead) => lead.candidateSourceUrl),
+      ])];
+      return verifyDiscoveredCompetitorWithInferredLeads(primary, await crawlDomain(candidate.domain, "discovered-competitor", seedUrls.length ? seedUrls : [candidate.websiteUrl]), candidate, verificationMarket, discoveryPolicy.requireProductOverlap);
+    });
     const discoveredResults = investigatedSettled.map((result) => result.status === "fulfilled" ? result.value : null);
     const confirmed: DomainCrawl[] = discoveredResults.filter((result): result is NonNullable<typeof result> => Boolean(result?.homepage && result.discovery?.accepted)).sort((left, right) => compareVerifiedCompetitors(left.discovery!, right.discovery!));
     const rememberedFailures = rememberedReverificationFailures(investigationCandidates, discoveredResults);

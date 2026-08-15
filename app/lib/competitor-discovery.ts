@@ -207,8 +207,10 @@ function isCrawlableProductLead(url: string) {
 
 function isListingRoute(url: string) {
   try {
-    return decodeURIComponent(new URL(url).pathname).split("/").filter(Boolean)
-      .some((segment) => /^(?:search|results?|listing|list|product[-_]?list|browse|catalog|collections?|categories?|tags?|recherche|chercher|buscar|b[uú]squeda|suche|suchen|ricerca|cerca|zoeken|zoek|بحث|البحث|検索)(?:[-_].*)?(?:\.(?:html?|aspx?))?$/iu.test(segment));
+    const segments = decodeURIComponent(new URL(url).pathname).split("/").filter(Boolean);
+    const listing = /^(?:search|results?|listing|list|product[-_]?list|browse|catalog|collections?|categories?|tags?|recherche|chercher|buscar|b[uú]squeda|suche|suchen|ricerca|cerca|zoeken|zoek|liste|lista|todos|alle|all|全部|所有|الكل|بحث|البحث|検索)(?:[-_].*)?(?:\.(?:html?|aspx?))?$/iu;
+    return segments.some((segment, index) => listing.test(segment)
+      && (index === 0 || /^(?:products?|produits?|productos?|produtos?|produkte?|prodotti?|shop|store)$/iu.test(segments[index - 1]) || !/^(?:all|liste|lista|todos|alle|全部|所有|الكل)$/iu.test(segment)));
   } catch {
     return true;
   }
@@ -446,7 +448,7 @@ function sanitizeCandidate(value: unknown, primaryDomain: string, lane: SearchLa
   }
 }
 
-function mergeCandidates(candidates: DiscoveryCandidate[]) {
+export function mergeCandidates(candidates: DiscoveryCandidate[]) {
   const merged = new Map<string, DiscoveryCandidate>();
   for (const candidate of candidates) {
     const current = merged.get(candidate.domain);
@@ -454,7 +456,12 @@ function mergeCandidates(candidates: DiscoveryCandidate[]) {
       merged.set(candidate.domain, candidate);
       continue;
     }
-    const evidence = [...current.evidence, ...candidate.evidence].filter((item, index, all) => all.findIndex((other) => other.url === item.url) === index);
+    const observed = [current, candidate].filter((item) => item.observedAdmission);
+    const publishable = observed.length ? observed : [current, candidate];
+    const preferred = publishable[0];
+    const evidence = publishable.flatMap((item) => item.evidence).filter((item, index, all) => all.findIndex((other) => other.url === item.url) === index);
+    const matchedNames = [...new Set(publishable.flatMap((item) => item.matchedPrimaryProductNames || (item.matchedPrimaryProductName ? [item.matchedPrimaryProductName] : [])))].slice(0, MAX_PRODUCT_SEARCHES);
+    const matchedUrls = [...new Set(publishable.flatMap((item) => item.matchedProductUrls || (item.matchedProductUrl ? [item.matchedProductUrl] : [])))].slice(0, MAX_PRODUCT_SEARCHES);
     const inferredProductLeads = [...(current.inferredProductLeads || []), ...(candidate.inferredProductLeads || [])]
       .filter((lead, index, all) => all.findIndex((other) => other.primaryProductId === lead.primaryProductId
         && other.primarySourceUrl === lead.primarySourceUrl
@@ -463,18 +470,18 @@ function mergeCandidates(candidates: DiscoveryCandidate[]) {
         && other.candidateSourceUrl === lead.candidateSourceUrl) === index)
       .slice(0, MAX_PRODUCT_SEARCHES);
     merged.set(candidate.domain, {
-      ...current,
-      companyName: current.companyName === current.domain ? candidate.companyName : current.companyName,
-      reason: current.relationship === "direct" ? current.reason : candidate.reason,
-      marketCategory: current.marketCategory || candidate.marketCategory,
-      relationship: current.relationship === "direct" || candidate.relationship === "direct" ? "direct" : "adjacent",
-      sharedOfferings: [...new Set([...current.sharedOfferings, ...candidate.sharedOfferings])].slice(0, 10),
+      ...preferred,
+      companyName: publishable.find((item) => item.companyName !== item.domain)?.companyName || preferred.companyName,
+      reason: publishable.find((item) => item.relationship === "direct")?.reason || preferred.reason,
+      marketCategory: publishable.find((item) => item.marketCategory)?.marketCategory || "",
+      relationship: publishable.some((item) => item.relationship === "direct") ? "direct" : "adjacent",
+      sharedOfferings: [...new Set(publishable.flatMap((item) => item.sharedOfferings))].slice(0, 10),
       evidence,
       mentionCount: evidence.length,
-      matchedPrimaryProductName: current.matchedPrimaryProductName || candidate.matchedPrimaryProductName,
-      matchedProductUrl: current.matchedProductUrl || candidate.matchedProductUrl,
-      matchedPrimaryProductNames: [...new Set([...(current.matchedPrimaryProductNames || (current.matchedPrimaryProductName ? [current.matchedPrimaryProductName] : [])), ...(candidate.matchedPrimaryProductNames || (candidate.matchedPrimaryProductName ? [candidate.matchedPrimaryProductName] : []))])].slice(0, MAX_PRODUCT_SEARCHES),
-      matchedProductUrls: [...new Set([...(current.matchedProductUrls || (current.matchedProductUrl ? [current.matchedProductUrl] : [])), ...(candidate.matchedProductUrls || (candidate.matchedProductUrl ? [candidate.matchedProductUrl] : []))])].slice(0, MAX_PRODUCT_SEARCHES),
+      matchedPrimaryProductName: matchedNames[0],
+      matchedProductUrl: matchedUrls[0],
+      matchedPrimaryProductNames: matchedNames.length ? matchedNames : undefined,
+      matchedProductUrls: matchedUrls.length ? matchedUrls : undefined,
       ...(inferredProductLeads.length ? { inferredProductLeads } : {}),
       observedAdmission: Boolean(current.observedAdmission || candidate.observedAdmission),
     });

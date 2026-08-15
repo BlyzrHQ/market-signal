@@ -202,6 +202,18 @@ test("an eligible pin wins global rival contention over a higher-confidence unpi
   assert.equal(comparison.rows.find((row) => row.primary.id === unpinnedPrimary.id)?.matches[0].product, null);
 });
 
+test("a pinned deterministic pair still requires semantic confidence of at least 0.80", async () => {
+  const primary = product("p-low-pin", "shop.test", "Sidr Honey 500g");
+  const rival = product("r-low-pin", "rival.test", "Sidr Honey 500g", { price: { raw: "GBP 8", currency: "GBP", amount: 8 } });
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, 0] })) });
+    return response({ output_text: JSON.stringify({ assessments: [{ primaryId: primary.id, candidateId: rival.id, verdict: "close_substitute", confidence: 0.2, reason: "Weak model guess.", contradiction: "" }] }) });
+  };
+  const comparison = await buildAIProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "rival.test", products: [rival] }], {}, { apiKey: "test", fetch, pinnedPairs: [{ primaryId: primary.id, rivalDomain: "rival.test", rivalId: rival.id }] });
+  assert.equal(comparison.rows[0].matches[0].product, null);
+});
+
 test("bilingual quantity retrieval reaches the judge when embeddings are unavailable", async () => {
   const quantity = { kind: "mass", amount: 500, unit: "g" };
   const identifiers = { gtins: [], brand: "Sidr House" };

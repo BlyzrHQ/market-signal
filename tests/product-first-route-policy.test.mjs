@@ -181,6 +181,17 @@ test("rejects same-name exact-page variants when price, quantity, or identifiers
   assert.equal(await verifyInferredProductLead(crawl("noororganicfood.com", [primaryProduct]), candidate, discovery, async () => { throw new Error("judge must not run"); }), undefined);
 });
 
+test("rejects same-name exact-page variants that differ only by a variant attribute", async () => {
+  const primaryProduct = { ...product("noororganicfood.com", "Arabic Shirt"), id: "primary", sourceUrl: "https://noororganicfood.com/product/shirt" };
+  const sourceUrl = "https://fashion.example/products/shirt";
+  const first = { ...product("fashion.example", "Organic Shirt"), id: "r1", sourceUrl, extraction: "json-ld", attributes: ["Color: Red"], priceSignals: [{ raw: "USD 20", currency: "USD", amount: 20 }] };
+  const second = { ...first, id: "r2", attributes: ["Color: Blue"] };
+  const candidate = crawl("fashion.example", [first]);
+  candidate.pages = [{ ...candidate.pages[0], path: "/products/shirt", sourceUrl, products: [first, second] }];
+  const discovery = { ...rememberedCandidate(), domain: "fashion.example", inferredProductLeads: [{ primaryProductId: primaryProduct.id, primarySourceUrl: primaryProduct.sourceUrl, laneQuery: "organic shirt", candidateDomain: "fashion.example", candidateSourceUrl: sourceUrl, admission: "inferred-cross-language" }] };
+  assert.equal(await verifyInferredProductLead(crawl("noororganicfood.com", [primaryProduct]), candidate, discovery, async () => { throw new Error("judge must not run"); }), undefined);
+});
+
 test("an inference-only failed lead cannot fall through to unrelated deterministic catalog overlap", async () => {
   const primaryProducts = [product("noororganicfood.com", "Shared Coffee 1kg"), { ...product("noororganicfood.com", "Arabic Honey"), id: "target" }];
   const rivalProducts = [product("health.example", "Shared Coffee 1kg")];

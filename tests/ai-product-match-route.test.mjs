@@ -75,6 +75,27 @@ test("rejects an oversized submitted catalog before pin scanning or allocation",
   assert.deepEqual(parseCatalogs([{ domain: "shop.test", products: oversized }], "shop.test", [{ primaryId: "p5000", rivalDomain: "rival.test", rivalId: "r1" }]), []);
 });
 
+test("bounds nested product arrays before normalization", () => {
+  const [catalog] = parseCatalogs([{ domain: "shop.test", products: [{
+    id: "bounded", name: "Honey", sourceUrl: "https://shop.test/products/honey",
+    attributes: Array.from({ length: 100 }, (_, index) => `Attribute ${index}`),
+    claimIds: Array.from({ length: 100 }, (_, index) => `Claim ${index}`),
+    priceSignals: Array.from({ length: 100 }, (_, index) => ({ raw: `USD ${index + 1}`, currency: "USD", amount: index + 1 })),
+    identifiers: { gtins: Array.from({ length: 100 }, () => "4006381333931") },
+  }] }], "shop.test");
+  assert.equal(catalog.products[0].attributes.length, 12);
+  assert.equal(catalog.products[0].claimIds.length, 20);
+  assert.equal(catalog.products[0].priceSignals.length, 8);
+  assert.equal(catalog.products[0].identifiers.gtins.length, 1);
+});
+
+test("rejects duplicate caller-controlled product IDs across the submitted catalogs", () => {
+  assert.deepEqual(parseCatalogs([
+    { domain: "shop.test", products: [{ id: "duplicate", name: "Honey", sourceUrl: "https://shop.test/products/honey" }] },
+    { domain: "rival.test", products: [{ id: "duplicate", name: "Honey", sourceUrl: "https://rival.test/products/honey" }] },
+  ], "shop.test"), []);
+});
+
 test("pinned pairs are bounded, deduplicated, and must reference submitted catalog records", () => {
   const catalogs = parseCatalogs([
     { domain: "shop.test", products: [{ id: "p1", name: "Honey", sourceUrl: "https://shop.test/products/honey" }] },

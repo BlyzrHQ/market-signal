@@ -17,7 +17,7 @@ function text(value: unknown, limit: number) {
 }
 
 function strings(value: unknown, limit: number, itemLimit: number) {
-  return Array.isArray(value) ? value.map((item) => text(item, itemLimit)).filter(Boolean).slice(0, limit) : [];
+  return Array.isArray(value) ? value.slice(0, limit).map((item) => text(item, itemLimit)).filter(Boolean) : [];
 }
 
 function publicUrl(value: unknown, domain: string) {
@@ -42,7 +42,7 @@ function publicImageUrl(value: unknown) {
 function identifiers(value: unknown): ProductIdentifiers | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const item = value as Record<string, unknown>;
-  const gtins = [...new Set((Array.isArray(item.gtins) ? item.gtins : []).map(canonicalGtin).filter((gtin): gtin is string => Boolean(gtin)))].slice(0, 8);
+  const gtins = [...new Set((Array.isArray(item.gtins) ? item.gtins.slice(0, 8) : []).map(canonicalGtin).filter((gtin): gtin is string => Boolean(gtin)))];
   const sku = text(item.sku, 120) || undefined;
   const mpn = text(item.mpn, 120) || undefined;
   const brand = text(item.brand, 120) || undefined;
@@ -58,12 +58,12 @@ function product(value: unknown, catalogDomain: string): ProductRecord | null {
   const allowedTypes = new Set<ProductRecord["jsonLdType"]>(["Product", "SoftwareApplication", "Service", "PageSignal"]);
   const allowedOwnership = new Set<ProductRecord["ownership"]>(["self-declared-brand", "path-inferred", "third-party-referenced"]);
   const allowedExtraction = new Set<ProductRecord["extraction"]>(["json-ld", "storefront-api", "page-signal", "sitemap"]);
-  const priceSignals = Array.isArray(item.priceSignals) ? item.priceSignals.flatMap((value) => {
+  const priceSignals = Array.isArray(item.priceSignals) ? item.priceSignals.slice(0, 8).flatMap((value) => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return [];
     const signal = value as Record<string, unknown>;
     const amount = typeof signal.amount === "number" && Number.isFinite(signal.amount) ? signal.amount : undefined;
     return [{ raw: text(signal.raw, 100), currency: text(signal.currency, 12) || undefined, amount, period: text(signal.period, 40) || undefined }];
-  }).slice(0, 8) : [];
+  }) : [];
   const attributes = strings(item.attributes, 12, 120);
   const quantityAttributes = attributes.filter((value) => !/^(?:barcode|ean|gtin|isbn|mpn|sku|upc)\s*:/i.test(value));
   return {
@@ -106,7 +106,7 @@ function requestedPinIds(value: unknown) {
 export function parseCatalogs(value: unknown, primaryDomain = "", requestedPins?: unknown) {
   if (!Array.isArray(value)) return [];
   const pinIds = requestedPinIds(requestedPins);
-  return value.slice(0, MAX_CATALOGS).flatMap((entry) => {
+  const catalogs = value.slice(0, MAX_CATALOGS).flatMap((entry) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
     const item = entry as Record<string, unknown>;
     const domain = canonicalDomain(text(item.domain, 300));
@@ -132,6 +132,12 @@ export function parseCatalogs(value: unknown, primaryDomain = "", requestedPins?
     });
     return [{ domain, products }];
   });
+  const productIds = new Set<string>();
+  for (const catalog of catalogs) for (const item of catalog.products) {
+    if (productIds.has(item.id)) return [];
+    productIds.add(item.id);
+  }
+  return catalogs;
 }
 
 export function productAnalysisLimit(value?: string) {
