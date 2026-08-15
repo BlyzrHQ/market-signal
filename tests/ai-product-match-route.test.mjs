@@ -195,6 +195,13 @@ test("authenticated matching binds durable judge checkpoints to the active repor
   }));
   assert.equal(mismatch.status, 409);
   assert.equal(saved[0].input.inputHash, "a".repeat(64));
+
+  const malformedPins = await handler(new Request("https://signal.test/api/match", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, primaryDomain: "shop.test", productLimit: 1_000, pinnedPairs: { primaryId: "p1" }, catalogs: [{ domain: "shop.test", products: [{ name: "Honey", sourceUrl: "https://shop.test/products/honey" }] }] }),
+  }));
+  assert.equal(malformedPins.status, 400);
 });
 
 test("AI matching keeps public HTTPS CDN images but rejects unsafe image URLs", () => {

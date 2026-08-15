@@ -283,6 +283,17 @@ test("rejects a title-matching collection page on its own domain", () => {
   assert.deepEqual(candidatesFromSearchEvidence(payload, profile), []);
 });
 
+test("rejects private-address and credential-bearing search sources", () => {
+  const single = { ...profile, products: [product("Organic Sidr Honey 500g", "https://myjam.co.uk/products/organic-sidr-honey-500g")] };
+  for (const url of [
+    "http://[::ffff:127.0.0.1]/products/organic-sidr-honey-500g",
+    "https://secret:pass@rival.example/products/organic-sidr-honey-500g",
+  ]) {
+    const payload = { output: [{ type: "web_search_call", action: { query: "organic sidr honey 500g", sources: [{ title: "Organic Sidr Honey 500g", url }] } }] };
+    assert.deepEqual(candidatesFromSearchEvidence(payload, single), [], url);
+  }
+});
+
 test("admits localized, html, and id-only product leads when the search title strongly matches", () => {
   const payload = {
     output: [{
@@ -565,6 +576,9 @@ test("rejects search, browse, and catalog listing routes as inferred exact-produ
     "https://rival.example/products/filter",
     "https://rival.example/products/page/2",
     "https://rival.example/products/kategori/organic-sidr-honey-500g",
+    "https://rival.example/products/pagina/2",
+    "https://rival.example/products/seite/2",
+    "https://rival.example/products/katalog/organic-sidr-honey-500g",
     "https://rival.example/produits/liste",
     "https://rival.example/produits/tous",
     "https://rival.example/prodotti/tutti",

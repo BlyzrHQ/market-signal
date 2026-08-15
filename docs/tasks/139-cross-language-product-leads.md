@@ -81,8 +81,8 @@ such.
   deterministic fallback, identity-bearing URL parameters, ambiguous variants,
   exact-pair provenance, and global pin assignment. Every finding was addressed
   with adversarial regression coverage; re-review is still required.
-- The final focused suite passes 60 tests. The full repository command passes
-  both typechecks, production build, and 721 tests with zero failures after
+- The final focused suite passes 61 tests. The full repository command passes
+  both typechecks, production build, and 722 tests with zero failures after
   reviewer-requested input and provenance hardening.
 - The latest adversarial pass rejects multilingual listing routes, preserves
   non-tracking identity query parameters, rebinds publication provenance to
@@ -92,6 +92,9 @@ such.
   provisional gap-URL leakage, partial mixed-pin admission, and private or
   credential-bearing product sources. Those paths now fail closed with direct
   regression coverage.
+- A further adversarial pass extended the same boundaries to mapped-loopback
+  search URLs, credential-bearing search evidence, additional translated
+  listing terms, and non-array pin payloads.
 - Compound and multilingual search/listing routes are rejected before the
   generic HTML product-detail fallback.
 - Nested catalog arrays are normalized from bounded prefixes, product IDs must
