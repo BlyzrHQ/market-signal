@@ -594,6 +594,7 @@ test("accepts only title-supported cross-script identity on the exact canonical 
   assert.equal(validateProductPageIdentity([expected], [fetched], "تسوق مرتبة طبية من أوى مع خصم 66% | من متجر ريفي", options).accepted, true);
   assert.equal(validateProductPageIdentity([expected], [{ ...fetched, sourceUrl: "https://reefi.me/products/other" }], fetched.name, options).accepted, false);
   assert.equal(validateProductPageIdentity([expected], [fetched], "منشفة شعر فاخرة | متجر ريفي", options).accepted, false);
+  assert.equal(validateProductPageIdentity([expected], [{ ...fetched, aliases: [{ name: "وسادة فاخرة ناعمة جدا كبيرة", normalizedName: "وسادة فاخرة ناعمة جدا كبيرة", locale: "ar", sourceUrl, extraction: "json-ld" }] }], "منشفة شعر فاخرة | متجر ريفي", options).accepted, false);
   assert.equal(validateProductPageIdentity([expected], [{ ...fetched, name: "Awa Medical Bed", normalizedName: "awa medical bed" }], "Awa Medical Bed", options).accepted, false);
   assert.equal(validateProductPageIdentity([{ ...expected, quantity: { kind: "mass", amount: 250, unit: "g" } }], [{ ...fetched, quantity: { kind: "mass", amount: 500, unit: "g" } }], "مرتبة أوى الطبية 500g", options).accepted, false);
   assert.equal(validateProductPageIdentity([{ ...expected, identifiers: { gtins: [], sku: "EXPECTED" } }], [fetched], fetched.name, options).accepted, false);

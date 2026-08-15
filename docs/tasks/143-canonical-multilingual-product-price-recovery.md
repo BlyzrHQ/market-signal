@@ -60,3 +60,13 @@ same-language repurposed-page rejection unchanged.
   `Awa Mattress` recovered the observed Arabic identity `مرتبة أوى الطبية` and
   SAR 996.00; `Awa Air Mattress` recovered `مرتبة أوى - الهوائية` and SAR
   396.00. Both remained JSON-LD observations on their requested source URLs.
+
+## Review
+
+- Verified Claude Fable 5 returned strict PASS on commit `e3c9dc5` with one
+  non-blocking hardening suggestion: exclude candidate aliases from the
+  synthetic page-title evidence record so future extractor aliases cannot
+  partially self-support title alignment.
+- Applied that hardening and added a regression proving an unrelated title is
+  still rejected even when the fetched candidate carries a strongly aligned
+  alias. The exact hardened head requires a fresh strict review before merge.

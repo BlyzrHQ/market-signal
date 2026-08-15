@@ -1252,6 +1252,7 @@ function pageTitleSupportsProduct(candidate: ProductRecord, pageTitle: string) {
     normalizedName: bilingualNormalize(pageTitle),
     description: "",
     attributes: [],
+    aliases: undefined,
     identifiers: undefined,
   };
   const alignment = enrichmentIdentityAlignment(candidate, titleRecord);
