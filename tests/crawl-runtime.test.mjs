@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { boundedExtractionDocument, compactCatalogSnapshots, interruptedReportRecovery, settleWithConcurrency, unavailableAfterBoundedAttempts } from "../app/lib/crawl-runtime.ts";
+import { boundedExtractionDocument, compactCatalogSnapshots, interruptedReportRecovery, settleWithConcurrency, unavailableAfterBoundedAttempts, unavailablePrimaryMessaging } from "../app/lib/crawl-runtime.ts";
 
 test("settles every crawl while keeping large-document work within the concurrency limit", async () => {
   let active = 0;
@@ -146,4 +146,16 @@ test("classifies only two same-origin non-timeout network failures as unavailabl
   assert.equal(unavailableAfterBoundedAttempts(first, { ...second, attemptedUrl: "https://other.example/" }), null);
   assert.equal(unavailableAfterBoundedAttempts(first, undefined), null);
   assert.equal(unavailableAfterBoundedAttempts({ ...first, attemptedUrl: "http://missing.example/" }, { ...second, attemptedUrl: "http://missing.example/" }), null);
+});
+
+test("preserves an IPv6-only reason through the final customer messaging", () => {
+  const reason = "The public crawler does not support IPv6-only origins. Add a public IPv4 A record and try again.";
+  const first = { kind: "network", attemptedUrl: "https://ipv6-only.example/", reason, observedAt: "2026-08-15T06:00:00.000Z" };
+  const state = unavailableAfterBoundedAttempts(first, { ...first, observedAt: "2026-08-15T06:00:01.000Z" });
+  assert.ok(state);
+  assert.equal(state.reason, reason);
+  const messaging = unavailablePrimaryMessaging("ipv6-only.example", state);
+  assert.match(messaging.explanation, /does not support IPv6-only origins/);
+  assert.match(messaging.summaryBody, /Add a public IPv4 A record/);
+  assert.match(messaging.error, /^ipv6-only\.example: The public crawler/);
 });

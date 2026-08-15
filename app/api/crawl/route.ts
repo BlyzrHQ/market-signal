@@ -9,7 +9,7 @@ import { seededCrawlPaths } from "../../lib/crawl-planning.ts";
 import { combineRegionSignals, displayRegion, inferRegion as inferRegionEvidence, type RegionSignal } from "../../lib/region-inference.ts";
 import { forgetRememberedCompetitors, loadRememberedCompetitors, mergeRememberedCandidates, rememberVerifiedCompetitors, type MemoryCandidate } from "../../lib/competitor-memory.ts";
 import { discoverDomainAlternatives, extractStaticClientRedirect, parkingProvider } from "../../lib/domain-recovery.ts";
-import { boundedExtractionDocument, compactCatalogSnapshots, settleWithConcurrency, unavailableAfterBoundedAttempts, type PublicEndpointFailure } from "../../lib/crawl-runtime.ts";
+import { boundedExtractionDocument, compactCatalogSnapshots, settleWithConcurrency, unavailableAfterBoundedAttempts, unavailablePrimaryMessaging, type PublicEndpointFailure } from "../../lib/crawl-runtime.ts";
 import { fetchPublicText } from "../../lib/public-fetch.ts";
 import { claimablePagePricePatterns, selectPrimaryProductPriceTargets, type ProductEnrichmentCoverage } from "../../lib/storefront-product-enrichment.ts";
 import { enrichProductTargetsWithRecovery, type ProductEnrichmentRecoveryOptions } from "../../lib/product-enrichment-recovery.ts";
@@ -900,6 +900,7 @@ export async function POST(request: Request) {
     }
     if (primary?.siteState?.status === "unavailable") {
       const unavailableState = primary.siteState;
+      const unavailableMessaging = unavailablePrimaryMessaging(primaryDomain, unavailableState);
       const document = buildDocument(submittedResults, primaryDomain);
       document.blocks = [
         {
@@ -910,7 +911,7 @@ export async function POST(request: Request) {
           attemptedUrl: unavailableState.attemptedUrl,
           attempts: primary.coverage.attempts || 2,
           observedAt: unavailableState.observedAt,
-          explanation: "The submitted public HTTPS endpoint did not return a network response after two bounded attempts. Competitor, product, advertising, and matching analysis did not run.",
+          explanation: unavailableMessaging.explanation,
         },
         {
           type: "gap",
@@ -922,9 +923,9 @@ export async function POST(request: Request) {
         },
         ...document.blocks
           .filter((block) => block.id !== "candidate-gap" && !(block.type === "gap" && block.domain === primaryDomain && block.url === unavailableState.attemptedUrl))
-          .map((block) => block.type === "summary" ? { ...block, title: "The submitted website was unavailable", body: "Competitor discovery did not run because the submitted public HTTPS address returned no network response after two bounded attempts." } : block),
+          .map((block) => block.type === "summary" ? { ...block, title: "The submitted website was unavailable", body: unavailableMessaging.summaryBody } : block),
       ];
-      return Response.json({ ok: false, live: false, code: "unavailable-domain", primaryDomain, error: `${primaryDomain} did not return a public network response after two bounded attempts. Check the domain and try again later.`, results: submittedResults, document }, { status: 409 });
+      return Response.json({ ok: false, live: false, code: "unavailable-domain", primaryDomain, error: unavailableMessaging.error, results: submittedResults, document }, { status: 409 });
     }
     if (!primary?.homepage) {
       const reason = primary?.gaps[0]?.reason;

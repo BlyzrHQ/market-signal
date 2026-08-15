@@ -43,15 +43,27 @@ export function unavailableAfterBoundedAttempts(first?: PublicEndpointFailure, s
     const firstUrl = new URL(first.attemptedUrl);
     const secondUrl = new URL(second.attemptedUrl);
     if (firstUrl.protocol !== "https:" || secondUrl.protocol !== "https:" || firstUrl.origin !== secondUrl.origin) return null;
+    const ipv6OnlyReason = first.reason === second.reason && /does not support IPv6-only origins/i.test(second.reason)
+      ? second.reason
+      : "The submitted public HTTPS endpoint did not return a network response after two bounded attempts.";
     return {
       status: "unavailable",
       attemptedUrl: secondUrl.toString(),
-      reason: "The submitted public HTTPS endpoint did not return a network response after two bounded attempts.",
+      reason: ipv6OnlyReason,
       observedAt: second.observedAt,
     };
   } catch {
     return null;
   }
+}
+
+export function unavailablePrimaryMessaging(domain: string, state: UnavailablePrimaryState) {
+  const reason = state.reason.trim() || "The submitted public HTTPS endpoint was unavailable after two bounded attempts.";
+  return {
+    explanation: `${reason} Competitor, product, advertising, and matching analysis did not run.`,
+    summaryBody: `Competitor discovery did not run. ${reason}`,
+    error: `${domain}: ${reason}`,
+  };
 }
 
 function structuredDataFragments(document: string, maxBytes: number) {

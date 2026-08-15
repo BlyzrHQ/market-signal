@@ -170,6 +170,12 @@ such.
   transport is not attempted. The network/persistence suite passes 34/34 and
   the full repository suite passes 737/737 with both typechecks, build, and
   zero lint errors.
+- End-to-end messaging review then found the bounded retry and terminal report
+  replacing that reason with generic unavailable copy. The same typed reason
+  is now preserved only when both same-origin attempts agree, and it drives the
+  domain-status explanation, summary, gap, and API error. The final focused
+  crawl/network suite passes 29/29 and the full suite passes 738/738 with both
+  typechecks, production build, and zero lint errors.
 - Compound and multilingual search/listing routes are rejected before the
   generic HTML product-detail fallback.
 - Nested catalog arrays are normalized from bounded prefixes, product IDs must
