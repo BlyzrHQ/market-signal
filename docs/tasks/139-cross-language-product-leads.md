@@ -81,8 +81,8 @@ such.
   deterministic fallback, identity-bearing URL parameters, ambiguous variants,
   exact-pair provenance, and global pin assignment. Every finding was addressed
   with adversarial regression coverage; re-review is still required.
-- The final discovery and network suites pass 64 tests. The full repository command passes
-  both typechecks, production build, and 728 tests with zero failures after
+- The final discovery and network suites pass 50 focused tests. The full repository command passes
+  both typechecks, production build, and 731 tests with zero failures after
   reviewer-requested input and provenance hardening.
 - The latest adversarial pass rejects multilingual listing routes, preserves
   non-tracking identity query parameters, rebinds publication provenance to
@@ -104,11 +104,21 @@ such.
   result-route markers.
 - All discovery lanes now reject compound localized listing segments and
   pagination query keys. Public URL validation covers private IPv6 and NAT64
-  literals, and production fetches preflight cached A/AAAA answers so every
-  resolved address must be public.
-- Inferred leads require a terminal product-container path. DNS answers are
-  uncached and must remain identical and public before and after connection;
-  response bodies are streamed and cancelled at their byte ceiling.
+  literals, and production fetches use fresh A/AAAA answers so every resolved
+  and connected address must be public.
+- Inferred leads require both a terminal product-container path and lexical
+  support from the candidate path itself; search-result titles alone cannot
+  turn translated listing pages into product leads. Unknown-language entity
+  result paths are rebound to the first-party root before publication.
+- DNS answers are uncached and every production HTTP connection is pinned to
+  an exclusively public DoH-validated address while retaining the original
+  hostname for TLS. Response bodies are streamed, distinguish exact-boundary
+  completion from overflow, and cancel after observing at most one byte beyond
+  their configured ceiling.
+- The final focused adversarial pass contains 50 passing tests, the full suite
+  and production build pass, and a live production-path pinned fetch of `example.com`
+  returned HTTP 200 with 559 bytes and no truncation. Exact-head strict
+  re-review remains pending for the next commit.
 - Compound and multilingual search/listing routes are rejected before the
   generic HTML product-detail fallback.
 - Nested catalog arrays are normalized from bounded prefixes, product IDs must

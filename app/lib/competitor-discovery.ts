@@ -237,13 +237,27 @@ function isExplicitProductDetailSource(url: string) {
   }
 }
 
+function hasSpecificProductLeaf(url: string) {
+  try {
+    const segments = decodeURIComponent(new URL(url).pathname).split("/").filter(Boolean);
+    const leaf = segments.at(-1)?.replace(/\.(?:html?|aspx?)$/i, "") || "";
+    const leafTokens = normalizedTokens(leaf);
+    if (leafTokens.length >= 2) return true;
+    return /^\d{4,}$/.test(leaf) && /^(?:items?|p)$/iu.test(segments.at(-2) || "");
+  } catch {
+    return false;
+  }
+}
+
 function inferredLeadFromSource(source: SearchSource, url: string, profile: DiscoveryProfile) {
   if (profile.products.length !== 1 || source.queryCount !== 1 || !source.query || !isExplicitProductDetailSource(url)) return undefined;
   const product = profile.products[0];
   const queryTokens = normalizedTokens(source.query);
-  const sourceTokens = normalizedTokens(`${source.title} ${decodeURIComponent(new URL(url).pathname)}`);
-  const shared = matchedProductTokens(sourceTokens, queryTokens);
-  const coverage = shared.length / Math.max(1, Math.min(queryTokens.length, sourceTokens.length));
+  // The candidate URL itself must bind the translated query to a concrete item.
+  // Search-result titles are model/provider metadata and can describe a listing page.
+  const pathTokens = normalizedTokens(decodeURIComponent(new URL(url).pathname));
+  const shared = matchedProductTokens(pathTokens, queryTokens);
+  const coverage = shared.length / Math.max(1, Math.min(queryTokens.length, pathTokens.length));
   if (shared.length < 2 || coverage < 0.5) return undefined;
   return {
     product,
@@ -347,7 +361,7 @@ export function candidatesFromSearchEvidence(payload: Record<string, unknown>, p
     const boundProduct = match?.product || inferred?.product;
     if (!boundProduct || !isCrawlableProductLead(url) || sourceContainsPrimaryBrand(source.title, url, profile)) return [];
     const urlConfirmed = Boolean(match && isProductDetailSource(url, match.product));
-    if (match && !urlConfirmed && match.productCoverage <= 0.5) return [];
+    if (match && !urlConfirmed && (match.productCoverage <= 0.5 || !hasSpecificProductLeaf(url))) return [];
     return [{
       score: (match?.score || inferred?.score || 0) + (urlConfirmed || inferred ? 100 : 0),
       candidate: {
@@ -395,17 +409,21 @@ export function entityCandidatesFromSearchEvidence(payload: Record<string, unkno
     const titleTerms = profileTerms(source.title);
     const overlap = titleTerms.filter((term) => categoryTerms.has(term));
     if (overlap.length < 2) return [];
+    // Entity/category discovery identifies the company, not the cited result page.
+    // Publish the first-party root as the provisional source so an untranslated or
+    // previously unknown listing route can never become customer-facing evidence.
+    const websiteUrl = new URL("/", url).toString();
     return [{
       domain,
       companyName: source.title.split(/\s+(?:\||—|–)\s+/)[0].slice(0, 100) || domain,
       reason: `A current ${lane} search surfaced this company in the same inferred market category.`,
       searchQuery: (source.query || `${business.category} competitors ${business.region}`).slice(0, 180),
-      sourceUrl: url,
-      websiteUrl: new URL("/", url).toString(),
+      sourceUrl: websiteUrl,
+      websiteUrl,
       marketCategory: business.category,
       relationship: "direct" as const,
       sharedOfferings: overlap.slice(0, 8),
-      evidence: [{ url, title: source.title || domain, method: lane === "category" ? "category-search" as const : "entity-search" as const }],
+      evidence: [{ url: websiteUrl, title: source.title || domain, method: lane === "category" ? "category-search" as const : "entity-search" as const }],
       mentionCount: 1,
       evidenceMethod: "search-source" as const,
       observedAdmission: true,
@@ -421,17 +439,18 @@ export function sanitizeCandidate(value: unknown, primaryDomain: string, lane: S
     if (excludedDomain(domain, primaryDomain)) return null;
     const websiteUrl = cleanSearchUrl(item.websiteUrl || `https://${domain}/`);
     if (!websiteUrl || canonicalDomain(websiteUrl) !== domain) return null;
-    const evidenceUrl = cleanSearchUrl(item.evidenceUrl || item.sourceUrl || websiteUrl);
-    if (!evidenceUrl || PUBLISHER_PATH.test(new URL(evidenceUrl).pathname)) return null;
+    const suppliedEvidenceUrl = cleanSearchUrl(item.evidenceUrl || item.sourceUrl || websiteUrl);
+    if (!suppliedEvidenceUrl || PUBLISHER_PATH.test(new URL(suppliedEvidenceUrl).pathname) || isListingRoute(suppliedEvidenceUrl)) return null;
+    const evidenceUrl = lane === "product" ? suppliedEvidenceUrl : websiteUrl;
+    if (!evidenceUrl) return null;
     const matchedProductUrl = cleanSearchUrl(item.matchedProductUrl);
     if (matchedProductUrl && (canonicalDomain(matchedProductUrl) !== domain || isListingRoute(matchedProductUrl))) return null;
-    if (isListingRoute(evidenceUrl)) return null;
     const productMatch = lane === "product" && matchedProductUrl
       ? productMatchFromSource(String(item.evidenceTitle || ""), matchedProductUrl, profile.products)
       : undefined;
     if (lane === "product" && (!matchedProductUrl || !productMatch || !isCrawlableProductLead(matchedProductUrl) || sourceContainsPrimaryBrand(String(item.evidenceTitle || ""), matchedProductUrl, profile))) return null;
     const productUrlConfirmed = Boolean(productMatch && isProductDetailSource(matchedProductUrl, productMatch.product));
-    if (lane === "product" && !productUrlConfirmed && (productMatch?.productCoverage || 0) <= 0.5) return null;
+    if (lane === "product" && !productUrlConfirmed && ((productMatch?.productCoverage || 0) <= 0.5 || !hasSpecificProductLeaf(matchedProductUrl))) return null;
     const method: DiscoveryEvidence["method"] = lane === "category" ? "category-search" : lane === "product" ? "product-search" : "entity-search";
     return {
       domain,

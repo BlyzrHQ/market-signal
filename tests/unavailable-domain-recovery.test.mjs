@@ -150,3 +150,34 @@ test("public fetch streams and cancels response bodies at the configured byte li
   assert.equal(result.responseBytes, 9);
   assert.equal(result.truncated, true);
 });
+
+test("public fetch distinguishes an exact-size body from a longer next chunk", async () => {
+  const exact = await fetchPublicText("https://exact.example/", "text/html", {
+    expectedDomain: "exact.example",
+    timeoutMs: 1_000,
+    maxDocumentBytes: 8,
+    userAgent: "test",
+    async fetchImpl() { return new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode("12345678")); controller.close(); } })); },
+  });
+  assert.equal(exact.text, "12345678");
+  assert.equal(exact.responseBytes, 8);
+  assert.equal(exact.truncated, false);
+
+  let cancelled = false;
+  const longer = await fetchPublicText("https://longer.example/", "text/html", {
+    expectedDomain: "longer.example",
+    timeoutMs: 1_000,
+    maxDocumentBytes: 8,
+    userAgent: "test",
+    async fetchImpl() {
+      return new Response(new ReadableStream({
+        start(controller) { controller.enqueue(new TextEncoder().encode("12345678")); controller.enqueue(new TextEncoder().encode("abcdefgh")); },
+        cancel() { cancelled = true; },
+      }));
+    },
+  });
+  assert.equal(longer.text, "12345678");
+  assert.equal(longer.responseBytes, 9);
+  assert.equal(longer.truncated, true);
+  assert.equal(cancelled, true);
+});

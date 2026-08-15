@@ -1,5 +1,6 @@
 import { canonicalDomain, normalizeDomain } from "./domain.ts";
 import { isPublicHostname } from "./public-url.ts";
+import type { LookupFunction } from "node:net";
 
 type FetchLike = typeof fetch;
 const platformFetch = globalThis.fetch;
@@ -69,9 +70,21 @@ async function boundedResponseText(response: Response, maxBytes: number) {
       storedBytes += accepted.byteLength;
       text += decoder.decode(accepted, { stream: true });
     }
-    if (value.byteLength > remaining || storedBytes >= maxBytes) {
-      truncated = value.byteLength > remaining || observedBytes > maxBytes;
+    if (value.byteLength > remaining) {
+      truncated = true;
       await reader.cancel();
+      break;
+    }
+    // Reaching the limit exactly is not proof of truncation. Read once more so
+    // an exactly-sized response remains complete while a longer stream is
+    // represented by maxBytes + 1 observed bytes and cancelled immediately.
+    if (storedBytes === maxBytes) {
+      const next = await reader.read();
+      if (!next.done && next.value.byteLength > 0) {
+        observedBytes = maxBytes + 1;
+        truncated = true;
+        await reader.cancel();
+      }
       break;
     }
   }
@@ -79,31 +92,52 @@ async function boundedResponseText(response: Response, maxBytes: number) {
   return { text, truncated, responseBytes: observedBytes };
 }
 
+async function fetchPinnedToPublicAddress(url: string, init: RequestInit, addresses: string[]) {
+  if (!addresses.length) throw new Error("hostname did not resolve exclusively to public addresses");
+  const { Agent, fetch: undiciFetch } = await import("undici");
+  const lookup: LookupFunction = (_hostname, options, callback) => {
+    const candidates = addresses.map((address) => ({ address, family: address.includes(":") ? 6 : 4 as 4 | 6 }));
+    const requestedFamily = typeof options === "object" && (options.family === 4 || options.family === 6) ? options.family : 0;
+    const selected = candidates.find((candidate) => !requestedFamily || candidate.family === requestedFamily) || candidates[0];
+    if (typeof options === "object" && options.all) callback(null, candidates);
+    else callback(null, selected.address, selected.family);
+  };
+  const dispatcher = new Agent({ connect: { lookup } });
+  try {
+    const response = await undiciFetch(url, { ...init, dispatcher } as unknown as Parameters<typeof undiciFetch>[1]);
+    return { response: response as unknown as Response, close: () => dispatcher.close() };
+  } catch (error) {
+    await dispatcher.close();
+    throw error;
+  }
+}
+
 export async function fetchPublicText(url: string, accept: string, options: PublicFetchOptions) {
   const startedAt = Date.now();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
   const fetchImpl = options.fetchImpl || fetch;
+  let closePinnedTransport: (() => Promise<void>) | null = null;
+  let response: Response | null = null;
   try {
     let currentUrl = url;
-    let response: Response | null = null;
     let redirectCount = 0;
     for (let redirect = 0; redirect <= 3; redirect += 1) {
       const checked = normalizeDomain(currentUrl);
       if (options.expectedDomain && canonicalDomain(checked.hostname) !== canonicalDomain(options.expectedDomain)) throw new Error("redirected off the submitted domain");
-      const beforeAddresses = !options.fetchImpl && globalThis.fetch === platformFetch ? await resolvePublicAddresses(checked.hostname, platformFetch, controller.signal) : null;
-      if (beforeAddresses && !beforeAddresses.length) throw new Error("hostname did not resolve exclusively to public addresses");
+      const publicAddresses = !options.fetchImpl && globalThis.fetch === platformFetch ? await resolvePublicAddresses(checked.hostname, platformFetch, controller.signal) : null;
+      if (publicAddresses && !publicAddresses.length) throw new Error("hostname did not resolve exclusively to public addresses");
       try {
-        response = await fetchImpl(currentUrl, { redirect: "manual", signal: controller.signal, headers: { Accept: accept, "User-Agent": options.userAgent } });
+        const init = { redirect: "manual" as const, signal: controller.signal, headers: { Accept: accept, "User-Agent": options.userAgent } };
+        if (publicAddresses) {
+          const pinned = await fetchPinnedToPublicAddress(currentUrl, init, publicAddresses);
+          response = pinned.response;
+          closePinnedTransport = pinned.close;
+        } else {
+          response = await fetchImpl(currentUrl, init);
+        }
       } catch (error) {
         throw new PublicFetchTransportError(error instanceof Error && error.name === "AbortError" ? "timeout" : "network");
-      }
-      if (beforeAddresses) {
-        const afterAddresses = await resolvePublicAddresses(checked.hostname, platformFetch, controller.signal);
-        if (!afterAddresses.length || afterAddresses.join("|") !== beforeAddresses.join("|")) {
-          await response.body?.cancel();
-          throw new Error("hostname resolution changed during the request");
-        }
       }
       if (![301, 302, 303, 307, 308].includes(response.status)) break;
       redirectCount += 1;
@@ -113,10 +147,15 @@ export async function fetchPublicText(url: string, accept: string, options: Publ
       if (options.expectedDomain && canonicalDomain(nextUrl.hostname) !== canonicalDomain(options.expectedDomain)) {
         return { ok: false, status: response.status, contentType: response.headers.get("content-type") ?? "", url: currentUrl, text: "", truncated: false, responseTimeMs: Date.now() - startedAt, responseBytes: 0, redirectCount, error: `redirected off the submitted domain to ${canonicalDomain(nextUrl.hostname)}.`, redirectDomain: canonicalDomain(nextUrl.hostname), failureKind: "" as const };
       }
+      await response.body?.cancel();
+      await closePinnedTransport?.();
+      closePinnedTransport = null;
       currentUrl = nextUrl.toString();
     }
     if (!response) throw new Error("request failed");
     const { text, truncated, responseBytes } = await boundedResponseText(response, options.maxDocumentBytes);
+    await closePinnedTransport?.();
+    closePinnedTransport = null;
     const cloudflareOriginDnsFailure = isCloudflareOriginDnsFailure(response, text);
     return {
       ok: response.ok,
@@ -134,6 +173,8 @@ export async function fetchPublicText(url: string, accept: string, options: Publ
     const failureKind = error instanceof PublicFetchTransportError ? error.failureKind : error instanceof Error && error.name === "AbortError" ? "timeout" as const : "" as const;
     return { ok: false, status: 0, contentType: "", url, text: "", truncated: false, responseTimeMs: Date.now() - startedAt, responseBytes: 0, redirectCount: 0, error: failureKind === "timeout" ? "timeout" : "request failed", failureKind };
   } finally {
+    await response?.body?.cancel().catch(() => undefined);
+    await closePinnedTransport?.();
     clearTimeout(timeout);
   }
 }

@@ -272,6 +272,17 @@ test("does not infer a product lead from a multi-query action, citation, or coll
   assert.deepEqual(candidatesFromSearchEvidence(payload, arabicProfile), []);
 });
 
+test("rejects translated terminal listing words and pagination-shaped weak product leads without a finite dictionary", () => {
+  const arabicProfile = { ...profile, products: [product("Ø¹Ø³Ù„ Ø§Ù„Ø±ÙŠØ´ÙŠ 500 ØºØ±Ø§Ù…", "https://myjam.co.uk/products/reishi-honey")] };
+  for (const url of [
+    "https://health.example/products/hledat",
+    "https://health.example/products/honey?strona=2",
+  ]) {
+    const payload = { output: [{ type: "web_search_call", action: { query: "reishi honey 500g", sources: [{ title: "Reishi Honey 500g", url }] } }] };
+    assert.deepEqual(candidatesFromSearchEvidence(payload, arabicProfile), [], url);
+  }
+});
+
 test("rejects a title-matching collection page on its own domain", () => {
   const payload = { output: [{ type: "web_search_call", action: { sources: [
     { title: "Halal Beef Sirloin Steak 500g", url: "https://collection.example/collections/halal-beef-sirloin-steak-500g" },
@@ -315,7 +326,17 @@ test("entity and category search sources cannot publish listing routes", () => {
   assert.deepEqual(entityCandidatesFromSearchEvidence(payload, business, "category"), []);
 });
 
-test("admits localized, html, and id-only product leads when the search title strongly matches", () => {
+test("unknown-language entity result paths are rebound to the first-party root", () => {
+  const payload = { output: [{ type: "web_search_call", action: { sources: [
+    { title: "Organic Sidr Honey Grocery", url: "https://rival.example/products/hledat" },
+    { title: "Organic Sidr Honey Grocery", url: "https://second.example/catalog?strona=2" },
+  ] } }] };
+  const business = { domain: "myjam.co.uk", categoryTerms: ["organic", "grocery"], category: "organic grocery", region: "United Kingdom" };
+  const candidates = entityCandidatesFromSearchEvidence(payload, business, "entity");
+  assert.deepEqual(candidates.map((candidate) => [candidate.sourceUrl, candidate.evidence[0].url]), [["https://rival.example/", "https://rival.example/"]]);
+});
+
+test("admits specific localized and html product leads but rejects ambiguous id-only routes", () => {
   const payload = {
     output: [{
       type: "web_search_call",
@@ -332,7 +353,6 @@ test("admits localized, html, and id-only product leads when the search title st
 
   const candidates = candidatesFromSearchEvidence(payload, profile);
   assert.deepEqual(candidates.map((candidate) => candidate.domain), [
-    "local.example",
     "magento.example",
     "metzgerei.example",
   ]);
