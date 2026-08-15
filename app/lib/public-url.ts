@@ -49,9 +49,9 @@ function publicIpv6(host: string) {
   // IANA IPv6 Global Unicast Address Space, last checked 2025-10-10.
   // Unlisted 2000::/3 space is reserved, so this is deliberately an allocation
   // allowlist rather than an architectural-range test.
-  if ((words[0] & 0xfff0) === 0x2400 || (words[0] & 0xfff0) === 0x2600
-    || (words[0] & 0xfff0) === 0x2800 || (words[0] & 0xfff0) === 0x2a00
-    || (words[0] & 0xfff0) === 0x2c00) return true;
+  const allocatedFirstWord12 = new Set([0x2400, 0x2410, 0x2600, 0x2630, 0x2800, 0x2a00, 0x2a10, 0x2c00]);
+  if (allocatedFirstWord12.has(words[0] & 0xfff0)) return true;
+  if ((words[0] === 0x2610 || words[0] === 0x2620) && (words[1] & 0xfe00) === 0) return true;
   if (words[0] === 0x2003) return (words[1] & 0xc000) === 0;
   if (words[0] !== 0x2001 || words[1] === 0x0db8) return false;
   const allocated2001: Array<[number, number]> = [

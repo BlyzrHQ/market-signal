@@ -134,6 +134,13 @@ test("public fetch DNS preflight accepts exclusively public resolutions", async 
   assert.equal(await resolvesToPublicAddress("public-resolution.example", resolve), true);
 });
 
+test("public fetch DNS preflight accepts every current IANA allocation boundary", async () => {
+  for (const address of ["2410::1", "2610::1", "2620::1", "2630::1", "2a10::1"]) {
+    const resolve = async (url) => Response.json({ Answer: String(url).includes("type=28") ? [{ type: 28, data: address }] : [] });
+    assert.equal(await resolvesToPublicAddress("public-allocation.example", resolve), true, address);
+  }
+});
+
 test("public fetch DNS preflight never trusts a stale public resolution", async () => {
   let request = 0;
   const resolve = async (url) => {

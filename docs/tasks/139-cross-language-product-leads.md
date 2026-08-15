@@ -149,6 +149,12 @@ such.
   plus DoH-answer regressions cover every reported boundary. The full suite
   remains 734/734 and lint remains at zero errors; exact-head re-review is
   required on the correcting commit.
+- Re-review then found that the compact allowlist omitted valid newer IANA
+  allocations. The complete table now includes `2410::/12`, `2610::/23`,
+  `2620::/23`, `2630::/12`, and `2a10::/12`, with positive literal and DoH
+  boundary tests alongside the reserved-neighbor negatives. The focused
+  network/persistence suite passes 32/32, the full suite passes 735/735, both
+  typechecks and the production build pass, and lint remains at zero errors.
 - Compound and multilingual search/listing routes are rejected before the
   generic HTML product-detail fallback.
 - Nested catalog arrays are normalized from bounded prefixes, product IDs must
