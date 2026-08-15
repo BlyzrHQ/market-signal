@@ -43,7 +43,7 @@ class ProductFetchFailure extends Error {
   }
 }
 
-async function fetchSameDomain(url: string, domain: string, accept: string) {
+async function fetchSameDomain(url: string, domain: string, accept: string, fetchImpl: typeof fetch) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -54,7 +54,7 @@ async function fetchSameDomain(url: string, domain: string, accept: string) {
       if (canonicalDomain(checked.hostname) !== canonicalDomain(domain)) throw new ProductFetchFailure("redirected off the product domain", "redirect");
       let response: Response;
       try {
-        response = await fetch(current, { redirect: "manual", signal: controller.signal, headers: { Accept: accept, "User-Agent": USER_AGENT } });
+        response = await fetchImpl(current, { redirect: "manual", signal: controller.signal, headers: { Accept: accept, "User-Agent": USER_AGENT } });
       } catch (error) {
         throw new ProductFetchFailure(error instanceof Error ? error.message : "network request failed", "network");
       }
@@ -792,13 +792,20 @@ export function claimablePagePricePatterns(values: string[]) {
   return values.filter((value) => priceAmount(value) !== 0);
 }
 
-export async function enrichProductTargets(targets: ProductEnrichmentTarget[], maxPages = 24) {
+type EnrichmentDependencies = {
+  fetchImpl?: typeof fetch;
+  robotsResolver?: Pick<typeof sharedRobotsPolicyResolver, "resolve">;
+};
+
+export async function enrichProductTargets(targets: ProductEnrichmentTarget[], maxPages = 24, dependencies: EnrichmentDependencies = {}) {
   const boundedMax = Math.max(0, Math.min(MAX_ENRICHMENT_TARGETS, Math.floor(maxPages)));
   const selected = targets.slice(0, boundedMax);
+  const fetchImpl = dependencies.fetchImpl || fetch;
+  const robotsResolver = dependencies.robotsResolver || sharedRobotsPolicyResolver;
   const robotsByDomain = new Map<string, Awaited<ReturnType<typeof sharedRobotsPolicyResolver.resolve>>>();
   await Promise.all([...new Set(selected.map((item) => item.domain))].map(async (domain) => {
     const preferred = selected.find((item) => item.domain === domain)?.sourceUrl || domain;
-    robotsByDomain.set(domain, await sharedRobotsPolicyResolver.resolve(domain, preferred));
+    robotsByDomain.set(domain, await robotsResolver.resolve(domain, preferred));
   }));
 
   const enrichOne = async (item: ProductEnrichmentTarget) => {
@@ -810,7 +817,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       const robots = robotsResult?.policy;
       if (!robots) return { product: null, gap: gap("robots.txt was unreachable, so selected-product enrichment was skipped.", "robots_unreachable", undefined, "robots") };
       if (!robots.allows(new URL(item.sourceUrl).pathname)) return { product: null, gap: gap("robots.txt disallows this selected product page.", "robots_disallowed", undefined, "robots") };
-      const fetched = await fetchSameDomain(item.sourceUrl, item.domain, "text/html,application/xhtml+xml");
+      const fetched = await fetchSameDomain(item.sourceUrl, item.domain, "text/html,application/xhtml+xml", fetchImpl);
       if (!fetched.ok) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed", fetched.status, "http") };
       if (!/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed", fetched.status, "content") };
       const extracted = pageExtraction(fetched.text, fetched.url, item.domain);
@@ -832,7 +839,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
           if (!robots.allows(`${adapterUrl.pathname}${adapterUrl.search}`)) {
             adapterGap = `robots.txt disallows the ${adapterLabel} endpoint.`;
           } else {
-            const adapterResponse = await fetchSameDomain(adapter.endpointUrl, item.domain, "application/json");
+            const adapterResponse = await fetchSameDomain(adapter.endpointUrl, item.domain, "application/json", fetchImpl);
             if (!adapterResponse.ok || !/json|javascript/i.test(adapterResponse.contentType)) {
               adapterGap = `${adapterLabel} endpoint returned HTTP ${adapterResponse.status} or non-JSON content.`;
             } else {

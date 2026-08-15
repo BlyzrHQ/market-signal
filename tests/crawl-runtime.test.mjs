@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { boundedExtractionDocument, compactCatalogSnapshots, interruptedReportRecovery, preferredEndpointFailure, settleWithConcurrency, unavailableAfterBoundedAttempts, unavailablePrimaryMessaging } from "../app/lib/crawl-runtime.ts";
+import { IPV6_ONLY_ORIGIN_REASON } from "../app/lib/public-fetch.ts";
 
 test("settles every crawl while keeping large-document work within the concurrency limit", async () => {
   let active = 0;
@@ -149,7 +150,7 @@ test("classifies only two same-origin non-timeout network failures as unavailabl
 });
 
 test("preserves an IPv6-only reason through the final customer messaging", () => {
-  const reason = "The public crawler does not support IPv6-only origins. Add a public IPv4 A record and try again.";
+  const reason = IPV6_ONLY_ORIGIN_REASON;
   const first = { kind: "network", attemptedUrl: "https://ipv6-only.example/", reason, observedAt: "2026-08-15T06:00:00.000Z" };
   const state = unavailableAfterBoundedAttempts(first, { ...first, observedAt: "2026-08-15T06:00:01.000Z" });
   assert.ok(state);
@@ -162,8 +163,19 @@ test("preserves an IPv6-only reason through the final customer messaging", () =>
 
 test("prefers the submitted IPv6-only failure over a generic www recovery failure", () => {
   const observedAt = "2026-08-15T06:00:00.000Z";
-  const submitted = { kind: "network", attemptedUrl: "https://shop.example/", reason: "The public crawler does not support IPv6-only origins. Add a public IPv4 A record and try again.", observedAt };
+  const submitted = { kind: "network", attemptedUrl: "https://shop.example/", reason: IPV6_ONLY_ORIGIN_REASON, observedAt };
   const alternate = { kind: "network", attemptedUrl: "https://www.shop.example/", reason: "The hostname did not resolve to an exclusively public IPv4 address.", observedAt };
   assert.deepEqual(preferredEndpointFailure(submitted, alternate), submitted);
   assert.deepEqual(preferredEndpointFailure({ ...submitted, reason: "request failed" }, alternate), alternate);
+});
+
+test("does not preserve appended text as a typed IPv6-only reason", () => {
+  const observedAt = "2026-08-15T06:00:00.000Z";
+  const injected = `${IPV6_ONLY_ORIGIN_REASON} REMOTE_MARKER=<img src=x onerror=alert(1)>`;
+  const failure = { kind: "network", attemptedUrl: "https://shop.example/", reason: injected, observedAt };
+  const alternate = { ...failure, attemptedUrl: "https://www.shop.example/" };
+  assert.deepEqual(preferredEndpointFailure(failure, alternate), alternate);
+  const state = unavailableAfterBoundedAttempts(failure, { ...failure, attemptedUrl: "https://shop.example/" });
+  assert.equal(state?.reason, "The submitted public HTTPS endpoint did not return a network response after two bounded attempts.");
+  assert.doesNotMatch(state?.reason || "", /REMOTE_MARKER/);
 });

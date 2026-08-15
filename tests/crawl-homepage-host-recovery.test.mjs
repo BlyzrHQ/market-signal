@@ -2,10 +2,26 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { crawlDomain } from "../app/api/crawl/route.ts";
-import { resetSharedRobotsPolicyResolverForTests } from "../app/lib/robots-policy.ts";
+import { fetchPublicText } from "../app/lib/public-fetch.ts";
+import { createRobotsPolicyResolver, resetSharedRobotsPolicyResolverForTests } from "../app/lib/robots-policy.ts";
 
 function response(body, status = 200, contentType = "text/html") {
   return new Response(body, { status, headers: { "content-type": contentType } });
+}
+
+function crawlWithMock(input, role) {
+  const fetchImpl = globalThis.fetch;
+  const pageFetch = (url, accept, expectedDomain) => fetchPublicText(url, accept, {
+    expectedDomain,
+    timeoutMs: 1_000,
+    maxDocumentBytes: 2_000_000,
+    userAgent: "test",
+    fetchImpl,
+  });
+  const robotsResolver = createRobotsPolicyResolver({
+    fetchText: (url, accept, options) => fetchPublicText(url, accept, { ...options, fetchImpl }),
+  });
+  return crawlDomain(input, role, [], { fetchText: pageFetch, robotsResolver });
 }
 
 test("recovers an apex homepage failure through www and rebases downstream crawl URLs", async () => {
@@ -24,7 +40,7 @@ test("recovers an apex homepage failure through www and rebases downstream crawl
     throw new Error(`Unexpected request: ${url}`);
   };
   try {
-    const result = await crawlDomain("shop.test", "primary");
+    const result = await crawlWithMock("shop.test", "primary");
     assert.equal(result.homepage?.sourceUrl, "https://www.shop.test/");
     assert.ok(result.pages.some((page) => page.sourceUrl === "https://www.shop.test/products/honey"));
     assert.ok(result.gaps.some((gap) => /continued on.*www\.shop\.test/i.test(gap.reason)));
@@ -54,7 +70,7 @@ test("does not route around robots denial or homepage throttling", async (t) => 
       return response("User-agent: *\nDisallow: /", 200, "text/plain");
     };
     try {
-      const result = await crawlDomain("shop.test", "primary");
+      const result = await crawlWithMock("shop.test", "primary");
       assert.equal(result.homepage, null);
       assert.deepEqual(calls, ["https://shop.test/robots.txt"]);
     } finally {
@@ -74,7 +90,7 @@ test("does not route around robots denial or homepage throttling", async (t) => 
       return response("slow down", 429);
     };
     try {
-      const result = await crawlDomain("shop.test", "primary");
+      const result = await crawlWithMock("shop.test", "primary");
       assert.equal(result.homepage, null);
       assert.ok(!calls.some((url) => url.startsWith("https://www.shop.test/")));
     } finally {
@@ -97,7 +113,7 @@ test("reports both host failures without misclassifying a responding apex as a n
     throw new Error(`Unexpected request: ${url}`);
   };
   try {
-    const result = await crawlDomain("shop.test", "primary");
+    const result = await crawlWithMock("shop.test", "primary");
     assert.equal(result.homepage, null);
     assert.equal(result.homepageFailure, undefined);
     assert.ok(result.gaps.some((gap) => gap.url === "https://shop.test/" && /HTTP 403/.test(gap.reason)));
@@ -120,7 +136,7 @@ test("does not re-resolve robots or fetch the alternate homepage after a robots 
     return response("forbidden", 403);
   };
   try {
-    const result = await crawlDomain("shop.test", "primary");
+    const result = await crawlWithMock("shop.test", "primary");
     assert.equal(result.homepage, null);
     assert.deepEqual(calls, ["https://shop.test/robots.txt", "https://shop.test/"]);
   } finally {
@@ -142,7 +158,7 @@ test("does not fetch the alternate homepage when its robots re-resolution is thr
     throw new Error(`Unexpected request: ${url}`);
   };
   try {
-    const result = await crawlDomain("shop.test", "primary");
+    const result = await crawlWithMock("shop.test", "primary");
     assert.equal(result.homepage, null);
     assert.deepEqual(calls, [
       "https://shop.test/robots.txt",

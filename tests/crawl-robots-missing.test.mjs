@@ -2,6 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { crawlDomain } from "../app/api/crawl/route.ts";
+import { fetchPublicText } from "../app/lib/public-fetch.ts";
+import { createRobotsPolicyResolver } from "../app/lib/robots-policy.ts";
+
+function crawlWithMock(input, role) {
+  const fetchImpl = globalThis.fetch;
+  const fetchText = (url, accept, expectedDomain) => fetchPublicText(url, accept, { expectedDomain, timeoutMs: 1_000, maxDocumentBytes: 2_000_000, userAgent: "test", fetchImpl });
+  const robotsResolver = createRobotsPolicyResolver({ fetchText: (url, accept, options) => fetchPublicText(url, accept, { ...options, fetchImpl }) });
+  return crawlDomain(input, role, [], { fetchText, robotsResolver });
+}
 
 test("a 404 robots response permits sitemap discovery and bounded page expansion", async () => {
   const originalFetch = globalThis.fetch;
@@ -15,7 +24,7 @@ test("a 404 robots response permits sitemap discovery and bounded page expansion
     return new Response('<html><head><title>Honey Shop</title></head><body><a href="/products/sidr-honey">Sidr Honey</a></body></html>', { headers: { "content-type": "text/html" } });
   };
   try {
-    const result = await crawlDomain("shop.test", "primary");
+    const result = await crawlWithMock("shop.test", "primary");
     assert.ok(calls.includes("https://shop.test/sitemap.xml"));
     assert.ok(calls.includes("https://shop.test/products/sidr-honey"));
     assert.ok(result.pages.some((page) => page.path === "/products/sidr-honey"));

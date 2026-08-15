@@ -449,12 +449,12 @@ function parseSitemapUrls(text: string, domain: string) {
   }), 500);
 }
 
-async function collectSitemapEvidence(sitemapUrl: string, domain: string, observedAt: string, maxDocuments = MAX_SITEMAP_DOCUMENTS) {
-  const root = await fetchText(sitemapUrl, "application/xml,text/xml,text/plain", domain);
+async function collectSitemapEvidence(sitemapUrl: string, domain: string, observedAt: string, maxDocuments = MAX_SITEMAP_DOCUMENTS, fetchPage = fetchText) {
+  const root = await fetchPage(sitemapUrl, "application/xml,text/xml,text/plain", domain);
   if (!root.ok) return { paths: [] as string[], products: [] as ProductRecord[] };
   const rootUrls = parseSitemapUrls(root.text, domain);
   const childSitemaps = rootUrls.filter((value) => /sitemap[^/]*\.xml/i.test(new URL(value).pathname)).sort((left, right) => Number(!/products?/i.test(left)) - Number(!/products?/i.test(right))).slice(0, maxDocuments);
-  const documents = childSitemaps.length ? await Promise.all(childSitemaps.map(async (url) => ({ url, result: await fetchText(url, "application/xml,text/xml,text/plain", domain) }))) : [{ url: sitemapUrl, result: root }];
+  const documents = childSitemaps.length ? await Promise.all(childSitemaps.map(async (url) => ({ url, result: await fetchPage(url, "application/xml,text/xml,text/plain", domain) }))) : [{ url: sitemapUrl, result: root }];
   const urls = documents.flatMap(({ result }) => result.ok ? parseSitemapUrls(result.text, domain) : []);
   const products = documents.flatMap(({ result }) => result.ok ? extractProductsFromSitemap(result.text, domain, observedAt) : []);
   return { paths: unique(urls.flatMap((value) => { try { return [new URL(value).pathname]; } catch { return []; } }), 500), products: selectPreferredProducts(products) };
@@ -509,8 +509,15 @@ async function parsePage(document: string, sourceUrl: string, fetchedAt: string,
   return { ok: true, live: true, domain, url: sourceUrl, path: url.pathname, sourceUrl, fetchedAt, title, description: description || "No meta description was exposed on the public page.", language: language || "unknown", region: displayRegion(regionInference), regionCountryCode: regionInference.countryCode, regionConfidence: regionInference.confidence, regionSignals: regionInference.signals, headings, prices: claimablePriceSignals, socialLinks: socialLinks(extractionDocument, url), internalLinks, wordCount: readable ? readable.split(/\s+/).length : 0, truncated, contentHash: await hash(document), claims, products: productExtraction.products, productGaps: productExtraction.gaps, thirdPartyProductCount: productExtraction.thirdPartyReferenced.length, responseTimeMs: transport.responseTimeMs, responseBytes: transport.responseBytes, imageCount: imageTags.length, imagesWithAlt, responsiveImageCount, hasViewport, hasDocumentLanguage: language !== "unknown", productLinkCount, hasProductPath, hasAddToCart, hasCartLink, hasCheckoutLink, trustSignals };
 }
 
-export async function crawlDomain(input: string, role: DomainCrawl["role"], seededProductUrls: string[] = []): Promise<DomainCrawl> {
+type CrawlDomainDependencies = {
+  fetchText?: typeof fetchText;
+  robotsResolver?: Pick<typeof sharedRobotsPolicyResolver, "resolve">;
+};
+
+export async function crawlDomain(input: string, role: DomainCrawl["role"], seededProductUrls: string[] = [], dependencies: CrawlDomainDependencies = {}): Promise<DomainCrawl> {
   const startedAt = new Date().toISOString();
+  const fetchPage = dependencies.fetchText || fetchText;
+  const robotsResolver = dependencies.robotsResolver || sharedRobotsPolicyResolver;
   const maxHtmlPages = role === "discovered-competitor" ? MAX_DISCOVERED_HTML_PAGES : MAX_HTML_PAGES;
   const maxSitemapDocuments = role === "discovered-competitor" ? MAX_DISCOVERED_SITEMAP_DOCUMENTS : MAX_SITEMAP_DOCUMENTS;
   let base: URL;
@@ -522,7 +529,7 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
   }
   const domain = canonicalDomain(base.hostname);
   const gaps: Gap[] = [];
-  let robotsResult = await sharedRobotsPolicyResolver.resolve(domain, base.hostname);
+  let robotsResult = await robotsResolver.resolve(domain, base.hostname);
   let robotsState = robotsResult.availability;
   let robots = robotsResult.policy;
   if (robotsState === "available" && !robots.allows("/")) {
@@ -531,7 +538,7 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
   }
   let homepageRequests = 1;
   const submittedBase = new URL(base.toString());
-  const submittedHomepageResult = await fetchText(base.toString(), "text/html,application/xhtml+xml", domain);
+  const submittedHomepageResult = await fetchPage(base.toString(), "text/html,application/xhtml+xml", domain);
   let homepageResult = submittedHomepageResult;
   const alternateBase = alternateHomepageBase(base, domain);
   let attemptedAlternateBase: URL | null = null;
@@ -539,7 +546,7 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
   if (!robotsThrottled && !isHtmlHomepage(homepageResult) && alternateBase && canRecoverHomepageOnAlternateHost(homepageResult)) {
     const robotsRefusedSubmittedHost = robotsState === "unreachable" && [401, 403, 407, 451].includes(robotsResult.status);
     if (robotsRefusedSubmittedHost) {
-      robotsResult = await sharedRobotsPolicyResolver.resolve(domain, alternateBase.hostname);
+      robotsResult = await robotsResolver.resolve(domain, alternateBase.hostname);
       robotsState = robotsResult.availability;
       robots = robotsResult.policy;
     }
@@ -551,7 +558,7 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
       }
       homepageRequests += 1;
       attemptedAlternateBase = alternateBase;
-      homepageResult = await fetchText(alternateBase.toString(), "text/html,application/xhtml+xml", domain);
+      homepageResult = await fetchPage(alternateBase.toString(), "text/html,application/xhtml+xml", domain);
       if (isHtmlHomepage(homepageResult)) {
         gaps.push({
           url: submittedBase.toString(),
@@ -584,7 +591,7 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
   }
   const clientRedirect = extractStaticClientRedirect(homepageResult.text, homepageResult.url);
   if (clientRedirect) {
-    const redirectResult = await fetchText(clientRedirect, "text/html,application/xhtml+xml", domain);
+    const redirectResult = await fetchPage(clientRedirect, "text/html,application/xhtml+xml", domain);
     const provider = redirectResult.redirectDomain ? parkingProvider(redirectResult.redirectDomain) : "";
     if (provider) {
       gaps.push({ url: clientRedirect, reason: `${domain} redirects to a ${provider} domain-for-sale service; no company report was generated.`, observedAt: startedAt });
@@ -598,7 +605,7 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
   let sitemapProducts: ProductRecord[] = [];
   const sitemapUrl = (() => { try { const candidate = new URL(robots.sitemaps[0] || "/sitemap.xml", base); return canonicalDomain(candidate.hostname) === canonicalDomain(domain) && /^https?:$/.test(candidate.protocol) ? candidate.toString() : new URL("/sitemap.xml", base).toString(); } catch { return new URL("/sitemap.xml", base).toString(); } })();
   if (robotsState !== "unreachable") {
-    const sitemapEvidence = await collectSitemapEvidence(sitemapUrl, domain, startedAt, maxSitemapDocuments);
+    const sitemapEvidence = await collectSitemapEvidence(sitemapUrl, domain, startedAt, maxSitemapDocuments, fetchPage);
     sitemapPaths = sitemapEvidence.paths;
     sitemapProducts = sitemapEvidence.products;
   }
@@ -614,7 +621,7 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
   for (const path of expandablePaths) if (!robots.allows(new URL(path, base).pathname)) gaps.push({ url: new URL(path, base).toString(), reason: "robots.txt disallows this crawl path.", observedAt: startedAt });
   const fetchedPages = await Promise.all(paths.map(async (path) => {
     const url = new URL(path, base).toString();
-    const result = await fetchText(url, "text/html,application/xhtml+xml", domain);
+    const result = await fetchPage(url, "text/html,application/xhtml+xml", domain);
     if (!result.ok || !/text\/html|application\/xhtml\+xml/i.test(result.contentType)) { gaps.push({ url, reason: result.error || `page returned HTTP ${result.status} or non-HTML content.`, observedAt: startedAt }); return null; }
     const finalHost = new URL(result.url).hostname.toLowerCase().replace(/^www\./, "");
     if (finalHost !== domain.replace(/^www\./, "")) { gaps.push({ url, reason: "redirected off the submitted domain.", observedAt: startedAt }); return null; }

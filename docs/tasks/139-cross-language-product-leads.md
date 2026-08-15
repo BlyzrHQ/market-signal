@@ -183,6 +183,17 @@ such.
   endpoint. The focused crawl/network suite passes 37/37, the full suite passes
   739/739, the production build passes, and ESLint has zero errors with the two
   pre-existing image warnings. Fresh exact-head reviews are required.
+- Exact-head network/security review then found three blockers: runtime
+  replacement of global `fetch` could bypass DNS pinning, an empty stream chunk
+  could hide overflow after the exact byte boundary, and substring matching
+  could preserve attacker-appended text as the IPv6-only reason. Production now
+  always uses the captured platform fetch plus pinned transport unless a caller
+  supplies an explicit dependency, crawl tests use explicit fetch and robots
+  dependencies, the overflow probe skips empty chunks until EOF or a real byte,
+  and typed customer copy requires the exact exported canonical constant. The
+  node suite passes 741/741, both typechecks and the production build pass, and
+  ESLint has zero errors with the same two pre-existing warnings. Fresh
+  exact-head reviews are required after commit.
 - Compound and multilingual search/listing routes are rejected before the
   generic HTML product-detail fallback.
 - Nested catalog arrays are normalized from bounded prefixes, product IDs must

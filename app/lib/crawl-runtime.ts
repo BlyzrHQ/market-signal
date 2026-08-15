@@ -1,3 +1,5 @@
+import { IPV6_ONLY_ORIGIN_REASON } from "./public-fetch.ts";
+
 export async function settleWithConcurrency<Input, Output>(
   inputs: Input[],
   concurrency: number,
@@ -38,7 +40,7 @@ export type UnavailablePrimaryState = {
 };
 
 export function preferredEndpointFailure(first: PublicEndpointFailure, second: PublicEndpointFailure) {
-  return /does not support IPv6-only origins/i.test(first.reason) ? first : second;
+  return first.reason === IPV6_ONLY_ORIGIN_REASON ? first : second;
 }
 
 export function unavailableAfterBoundedAttempts(first?: PublicEndpointFailure, second?: PublicEndpointFailure): UnavailablePrimaryState | null {
@@ -47,8 +49,8 @@ export function unavailableAfterBoundedAttempts(first?: PublicEndpointFailure, s
     const firstUrl = new URL(first.attemptedUrl);
     const secondUrl = new URL(second.attemptedUrl);
     if (firstUrl.protocol !== "https:" || secondUrl.protocol !== "https:" || firstUrl.origin !== secondUrl.origin) return null;
-    const ipv6OnlyReason = first.reason === second.reason && /does not support IPv6-only origins/i.test(second.reason)
-      ? second.reason
+    const ipv6OnlyReason = first.reason === IPV6_ONLY_ORIGIN_REASON && second.reason === IPV6_ONLY_ORIGIN_REASON
+      ? IPV6_ONLY_ORIGIN_REASON
       : "The submitted public HTTPS endpoint did not return a network response after two bounded attempts.";
     return {
       status: "unavailable",

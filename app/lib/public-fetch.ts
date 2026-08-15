@@ -5,6 +5,8 @@ import type { LookupFunction } from "node:net";
 type FetchLike = typeof fetch;
 const platformFetch = globalThis.fetch;
 
+export const IPV6_ONLY_ORIGIN_REASON = "The public crawler does not support IPv6-only origins. Add a public IPv4 A record and try again.";
+
 export type PublicFetchOptions = {
   expectedDomain?: string;
   timeoutMs: number;
@@ -68,33 +70,40 @@ async function boundedResponseText(response: Response, maxBytes: number) {
   let storedBytes = 0;
   let observedBytes = 0;
   let truncated = false;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    observedBytes = Math.min(maxBytes + 1, observedBytes + value.byteLength);
-    const remaining = Math.max(0, maxBytes - storedBytes);
-    if (remaining) {
-      const accepted = value.subarray(0, remaining);
-      storedBytes += accepted.byteLength;
-      text += decoder.decode(accepted, { stream: true });
-    }
-    if (value.byteLength > remaining) {
-      truncated = true;
-      await reader.cancel();
-      break;
-    }
-    // Reaching the limit exactly is not proof of truncation. Read once more so
-    // an exactly-sized response remains complete while a longer stream is
-    // represented by maxBytes + 1 observed bytes and cancelled immediately.
-    if (storedBytes === maxBytes) {
-      const next = await reader.read();
-      if (!next.done && next.value.byteLength > 0) {
-        observedBytes = maxBytes + 1;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value.byteLength) continue;
+      observedBytes = Math.min(maxBytes + 1, observedBytes + value.byteLength);
+      const remaining = Math.max(0, maxBytes - storedBytes);
+      if (remaining) {
+        const accepted = value.subarray(0, remaining);
+        storedBytes += accepted.byteLength;
+        text += decoder.decode(accepted, { stream: true });
+      }
+      if (value.byteLength > remaining) {
         truncated = true;
         await reader.cancel();
+        break;
       }
-      break;
+      // Reaching the limit exactly is not proof of truncation. Empty chunks
+      // carry no EOF information, so keep probing until EOF or the first byte.
+      if (storedBytes === maxBytes) {
+        while (true) {
+          const next = await reader.read();
+          if (next.done) break;
+          if (!next.value.byteLength) continue;
+          observedBytes = maxBytes + 1;
+          truncated = true;
+          await reader.cancel();
+          break;
+        }
+        break;
+      }
     }
+  } finally {
+    reader.releaseLock();
   }
   text += decoder.decode();
   return { text, truncated, responseBytes: observedBytes };
@@ -124,7 +133,7 @@ export async function fetchPublicText(url: string, accept: string, options: Publ
   const startedAt = Date.now();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
-  const fetchImpl = options.fetchImpl || fetch;
+  const fetchImpl = options.fetchImpl || platformFetch;
   let closePinnedTransport: (() => Promise<void>) | null = null;
   let response: Response | null = null;
   try {
@@ -134,13 +143,13 @@ export async function fetchPublicText(url: string, accept: string, options: Publ
       const checked = normalizeDomain(currentUrl);
       if (options.expectedDomain && canonicalDomain(checked.hostname) !== canonicalDomain(options.expectedDomain)) throw new Error("redirected off the submitted domain");
       const dnsFetchImpl = options.dnsFetchImpl || platformFetch;
-      const resolution = (!options.fetchImpl && globalThis.fetch === platformFetch) || options.dnsFetchImpl
+      const resolution = !options.fetchImpl || options.dnsFetchImpl
         ? await resolvePublicAddressState(checked.hostname, dnsFetchImpl, controller.signal)
         : null;
       const publicAddresses = resolution?.addresses ?? null;
       if (resolution && !publicAddresses.length) {
         throw new PublicFetchTransportError("network", resolution.ipv6Only
-          ? "The public crawler does not support IPv6-only origins. Add a public IPv4 A record and try again."
+          ? IPV6_ONLY_ORIGIN_REASON
           : "The hostname did not resolve to an exclusively public IPv4 address.");
       }
       try {

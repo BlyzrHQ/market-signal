@@ -222,3 +222,25 @@ test("public fetch distinguishes an exact-size body from a longer next chunk", a
   assert.equal(longer.truncated, true);
   assert.equal(cancelled, true);
 });
+
+test("public fetch skips empty overflow-probe chunks and cancels a longer body", async () => {
+  let cancelled = false;
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("12345678"));
+      controller.enqueue(new Uint8Array());
+      controller.enqueue(new TextEncoder().encode("OVERFLOW"));
+    },
+    cancel() { cancelled = true; },
+  });
+  const result = await fetchPublicText("https://empty-chunk.example/", "text/html", {
+    timeoutMs: 1_000,
+    maxDocumentBytes: 8,
+    userAgent: "test",
+    async fetchImpl() { return new Response(stream); },
+  });
+  assert.equal(result.text, "12345678");
+  assert.equal(result.responseBytes, 9);
+  assert.equal(result.truncated, true);
+  assert.equal(cancelled, true);
+});
