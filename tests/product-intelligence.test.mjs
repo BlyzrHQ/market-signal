@@ -495,6 +495,19 @@ test("catalog deduplication collapses locale variants of the same product URL", 
   assert.deepEqual(new Set(selected[0].claimIds), new Set(["bundle-ar-observed", "bundle-en-observed"]));
 });
 
+test("catalog deduplication preserves first-party locale names with provenance", () => {
+  const observedAt = "2026-08-15T00:00:00.000Z";
+  const arabic = extractProductsFromSitemap(`<urlset><url><loc>https://shop.example/ar/products/natural-dried-figs-500g</loc><image:title>تين مجفف طبيعي 500 جم</image:title></url></urlset>`, "shop.example", observedAt)[0];
+  const english = extractProductsFromSitemap(`<urlset><url><loc>https://shop.example/en/products/natural-dried-figs-500g</loc><image:title>Natural Dried Figs 500g</image:title></url></urlset>`, "shop.example", observedAt)[0];
+  const selected = selectPreferredProducts([arabic, english]);
+
+  assert.equal(selected.length, 1);
+  assert.deepEqual(selected[0].aliases.map((alias) => [alias.name, alias.locale, alias.sourceUrl]), [
+    ["تين مجفف طبيعي 500 جم", "ar", "https://shop.example/ar/products/natural-dried-figs-500g"],
+    ["Natural Dried Figs 500g", "en", "https://shop.example/en/products/natural-dried-figs-500g"],
+  ]);
+});
+
 test("catalog enrichment keeps a secure sitemap image while adding a page price", () => {
   const sitemap = {
     ...product("sitemap", "myjam.co.uk", "Lamb Leg Halal apx 2500g"),
@@ -1035,6 +1048,29 @@ test("indexed candidate retrieval counts each primary token once per product", (
   const oneTokenOnly = { ...product("one-token", "rival.test", "Gxlden Goldenn"), jsonLdType: "Product" };
   const candidates = retrieveProductPairCandidates(primary, buildProductPairCandidateIndex([oneTokenOnly]));
   assert.deepEqual(candidates, []);
+});
+
+test("observed first-party aliases retrieve and match products across languages", () => {
+  const primary = {
+    ...product("primary-figs", "shop.test", "تين مجفف طبيعي 500 جم"),
+    jsonLdType: "Product",
+    aliases: [{ name: "Natural Dried Figs 500g", normalizedName: "natural dried figs 500g", locale: "en", sourceUrl: "https://shop.test/en/products/natural-dried-figs-500g", extraction: "sitemap" }],
+  };
+  const rival = { ...product("rival-figs", "rival.test", "Natural Dried Figs 500g"), jsonLdType: "Product" };
+  const candidates = retrieveProductPairCandidates(primary, buildProductPairCandidateIndex([rival]));
+
+  assert.deepEqual(candidates.map((item) => item.id), [rival.id]);
+  assert.equal(scoreProductPair(primary, rival).eligible, true);
+});
+
+test("shared validated GTIN retrieves cross-language products but never bypasses quantity conflicts", () => {
+  const primary = { ...product("primary-gtin", "shop.test", "زيت زيتون فاخر"), jsonLdType: "Product", identifiers: { gtins: ["4006381333931"] }, quantity: { kind: "mass", amount: 500, unit: "g" } };
+  const compatible = { ...product("rival-gtin", "rival.test", "Premium Olive Oil"), jsonLdType: "Product", identifiers: { gtins: ["4006381333931"] }, quantity: { kind: "mass", amount: 500, unit: "g" } };
+  const conflicting = { ...compatible, id: "rival-conflicting", quantity: { kind: "mass", amount: 1_000, unit: "g" } };
+
+  assert.deepEqual(retrieveProductPairCandidates(primary, buildProductPairCandidateIndex([compatible])).map((item) => item.id), [compatible.id]);
+  assert.equal(scoreProductPair(primary, compatible).eligible, true);
+  assert.equal(scoreProductPair(primary, conflicting).eligible, false);
 });
 
 test("comparison scans the crawled catalog beyond the first sixteen products and reports bounded coverage", () => {

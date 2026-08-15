@@ -114,6 +114,7 @@ test("full relational report facts survive snapshot compaction with replay-safe 
       imageUrl: `https://catalog.example/images/${index}.jpg`,
       observedAt: now.toISOString(),
       claimIds: [`claim-${index}`],
+      aliases: index === 0 ? [{ name: "Observed product zero", normalizedName: "observed product zero", locale: "en", sourceUrl: "https://catalog.example/en/products/0", extraction: "sitemap" }] : [],
     }));
     const rivalProduct = { ...products[0], id: "rival-product", domain: "rival.example", name: "Observed rival product", normalizedName: "observed rival product", sourceUrl: "https://rival.example/products/observed", imageUrl: "https://rival.example/images/observed.jpg" };
     const blockedProduct = { ...products[0], id: "blocked-product", domain: "blocked.example", name: "Observed blocked-home product", normalizedName: "observed blocked home product", sourceUrl: "https://blocked.example/products/observed", imageUrl: "" };
@@ -168,6 +169,7 @@ test("full relational report facts survive snapshot compaction with replay-safe 
     assert.equal(hydrated.primaryProducts.totalCount, 61);
     assert.equal(hydrated.primaryProducts.products.length, 61);
     assert.ok(hydrated.primaryProducts.products.every((product) => product.imageUrl && product.priceSignals.length));
+    assert.deepEqual(hydrated.primaryProducts.products.find((product) => product.id === "product-0").aliases, [{ extraction: "sitemap", locale: "en", name: "Observed product zero", normalizedName: "observed product zero", sourceUrl: "https://catalog.example/en/products/0" }]);
     const evaluation = await getReportEvaluation(created.publicId, database);
     assert.equal(evaluation.status, "deterministic");
     assert.equal(evaluation.ratingBasis, "deterministic_only");

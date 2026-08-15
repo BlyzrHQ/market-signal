@@ -57,6 +57,23 @@ test("accepts a company-level rival from its own category evidence without a mat
   assert.equal(result.hasProductOverlap, false);
 });
 
+test("uses observed first-party aliases for cross-language category and product verification", () => {
+  const arabicProduct = {
+    ...product("noor.example", "تين مجفف طبيعي 500 جم", "فواكه مجففة"),
+    aliases: [{ name: "Natural Dried Figs 500g", normalizedName: "natural dried figs 500g", locale: "en", sourceUrl: "https://noor.example/en/products/natural-dried-figs-500g", extraction: "sitemap" }],
+  };
+  const rivalProduct = product("rival.example", "Natural Dried Figs 500g", "dried fruit");
+  const primary = site("noor.example", "نور", "منتجات عضوية", "Not enough public signal", [arabicProduct]);
+  const rival = site("rival.example", "Natural organic foods", "Natural dried fruit shop", "Not enough public signal", [rivalProduct]);
+  const withAlias = verifyCompetitorEntity(primary, rival, discovery({ marketCategory: "natural organic foods", sharedOfferings: ["natural dried figs"] }), undefined, { requireProductOverlap: true });
+  const withoutAlias = verifyCompetitorEntity({ ...primary, products: [{ ...arabicProduct, aliases: [] }] }, rival, discovery({ marketCategory: "natural organic foods", sharedOfferings: ["natural dried figs"] }), undefined, { requireProductOverlap: true });
+
+  assert.equal(withAlias.categoryAlignment, true);
+  assert.equal(withAlias.hasProductOverlap, true);
+  assert.equal(withAlias.accepted, true);
+  assert.equal(withoutAlias.accepted, false);
+});
+
 test("requires observed product overlap when product-led ecommerce discovery requests it", () => {
   const result = verifyCompetitorEntity(
     site("myjam.co.uk", "MyJam cultural grocery marketplace", "Halal meat and cultural groceries delivered across the UK", "United Kingdom (inferred)"),

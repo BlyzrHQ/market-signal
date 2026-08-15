@@ -67,12 +67,21 @@ const GENERIC = new Set([
 ]);
 const ACCESSORY = /\b(?:accessories|accessory|bags?|cases?|chargers?|covers?|holders?|mounts?|parts?|straps?)\b/i;
 
+function observedProductTerms(products: ProductRecord[]) {
+  return products.slice(0, 30).flatMap((product) => [
+    product.name,
+    ...(product.aliases || []).map((alias) => alias.name),
+    product.category,
+    product.description,
+  ]);
+}
+
 function siteTerms(site: VerificationSite) {
   return new Set(profileTerms([
     site.title,
     site.description,
     ...(site.headings || []).slice(0, 12),
-    ...site.products.slice(0, 30).flatMap((product) => [product.name, product.category, product.description]),
+    ...observedProductTerms(site.products),
   ].join(" ")).filter((term) => !GENERIC.has(term)));
 }
 
@@ -98,8 +107,11 @@ export function verifyCompetitorEntity(
   const pair = strongestProductPair(primary.products, candidate.products);
   const hasProductOverlap = Boolean(pair);
 
-  const primaryCore = profileTerms(`${primary.title} ${primary.description} ${(primary.headings || []).slice(0, 8).join(" ")}`).filter((term) => !GENERIC.has(term));
-  const candidateCore = profileTerms(`${candidate.title} ${candidate.description} ${(candidate.headings || []).slice(0, 8).join(" ")}`).filter((term) => !GENERIC.has(term));
+  const hasLocaleBridge = [...primary.products, ...candidate.products].some((product) => Boolean(product.aliases?.length));
+  const primaryBridge = hasLocaleBridge ? observedProductTerms(primary.products).join(" ") : "";
+  const candidateBridge = hasLocaleBridge ? observedProductTerms(candidate.products).join(" ") : "";
+  const primaryCore = profileTerms(`${primary.title} ${primary.description} ${(primary.headings || []).slice(0, 8).join(" ")} ${primaryBridge}`).filter((term) => !GENERIC.has(term));
+  const candidateCore = profileTerms(`${candidate.title} ${candidate.description} ${(candidate.headings || []).slice(0, 8).join(" ")} ${candidateBridge}`).filter((term) => !GENERIC.has(term));
   const coreOverlap = primaryCore.filter((term) => candidateCore.includes(term));
   const accessoryOnly = ACCESSORY.test(`${candidate.title} ${candidate.description}`) && coreOverlap.length < 2;
   const categoryAlignment = !accessoryOnly && coreOverlap.length >= 2;

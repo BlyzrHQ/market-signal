@@ -19,6 +19,14 @@ export type ProductPriceSignal = {
   period?: string;
 };
 
+export type ProductAlias = {
+  name: string;
+  normalizedName: string;
+  locale: string;
+  sourceUrl: string;
+  extraction: "json-ld" | "sitemap";
+};
+
 export type ProductRecord = {
   id: string;
   domain: string;
@@ -36,6 +44,7 @@ export type ProductRecord = {
   imageUrl: string;
   observedAt: string;
   claimIds: string[];
+  aliases?: ProductAlias[];
   identifiers?: ProductIdentifiers;
   quantity?: CanonicalProductQuantity;
 };
@@ -841,10 +850,13 @@ export function extractProductsFromSitemap(document: string, domain: string, obs
     const description = clean(entry.match(/<(?:image:)?caption>\s*([\s\S]*?)\s*<\/(?:image:)?caption>/i)?.[1] || "");
     const imageUrl = clean(entry.match(/<image:loc>\s*(https?:\/\/[^<]+)\s*<\/image:loc>/i)?.[1] || "").replace(/&amp;/gi, "&");
     const id = makeId(domain, name, sourceUrl);
+    const firstPathSegment = url.pathname.split("/").filter(Boolean)[0] || "";
+    const locale = LOCALE_PATH_PREFIX.test(firstPathSegment) ? firstPathSegment.toLowerCase() : "und";
+    const boundedName = name.slice(0, 160);
     products.push({
       id,
       domain: canonicalHost(domain),
-      name: name.slice(0, 160),
+      name: boundedName,
       normalizedName: normalized(name),
       description: description.slice(0, 400),
       category: url.pathname.split("/").filter(Boolean)[0] || "product",
@@ -858,6 +870,7 @@ export function extractProductsFromSitemap(document: string, domain: string, obs
       imageUrl,
       observedAt,
       claimIds: [`${id}-sitemap-observed`],
+      aliases: [{ name: boundedName, normalizedName: normalized(boundedName), locale, sourceUrl, extraction: "sitemap" }],
       quantity: parseCanonicalQuantity(name) || undefined,
     });
     if (products.length >= 1_000) break;
@@ -881,6 +894,25 @@ export function selectPreferredProducts(items: ProductRecord[]) {
     + (item.priceSignals.length ? 15 : 0)
     + (item.description ? 5 : 0)
     + (item.imageUrl ? 3 : 0);
+  const mergeAliases = (preferred: ProductRecord, supplemental: ProductRecord) => {
+    const candidates: ProductAlias[] = [
+      ...(preferred.aliases || []),
+      ...(supplemental.aliases || []),
+      ...(preferred.extraction === "sitemap" && !preferred.aliases?.length ? [{ name: preferred.name, normalizedName: preferred.normalizedName, locale: "und", sourceUrl: preferred.sourceUrl, extraction: "sitemap" as const }] : []),
+      ...(supplemental.extraction === "sitemap" && !supplemental.aliases?.length ? [{ name: supplemental.name, normalizedName: supplemental.normalizedName, locale: "und", sourceUrl: supplemental.sourceUrl, extraction: "sitemap" as const }] : []),
+    ];
+    const aliases = new Map<string, ProductAlias>();
+    for (const alias of candidates) {
+      if (!alias.name || !alias.normalizedName) continue;
+      try {
+        if (canonicalHost(new URL(alias.sourceUrl).hostname) !== canonicalHost(preferred.domain)) continue;
+      } catch { continue; }
+      const key = `${alias.locale}|${alias.normalizedName}|${alias.sourceUrl.split("#")[0]}`;
+      if (!aliases.has(key)) aliases.set(key, alias);
+      if (aliases.size >= 8) break;
+    }
+    return [...aliases.values()];
+  };
   const selected = new Map<string, ProductRecord>();
   for (const item of items) {
     const key = productIdentityKey(item);
@@ -909,6 +941,7 @@ export function selectPreferredProducts(items: ProductRecord[]) {
         ...(preferred.attributes.length ? preferred.attributes : supplemental.attributes),
         ...supplemental.attributes.filter((attribute) => attribute.startsWith(CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX)),
       ])],
+      aliases: mergeAliases(preferred, supplemental),
       identifiers: mergeIdentifiers(preferred.identifiers, supplemental.identifiers),
       quantity: preferred.quantity || supplemental.quantity,
       imageUrl: secureImage || preferred.imageUrl || supplemental.imageUrl,
@@ -939,10 +972,19 @@ export function isGenericProductIdentityToken(token: string) {
 
 export function productIdentityTokens(product: ProductRecord) {
   const domainToken = bilingualNormalize(canonicalHost(product.domain).split(".")[0]);
-  return bilingualTokens(product.name).filter((token) => token.length > 1
+  return [...new Set([product.name, ...(product.aliases || []).map((alias) => alias.name)].flatMap((name) => bilingualTokens(name)))].filter((token) => token.length > 1
     && token !== domainToken
     && !isGenericProductIdentityToken(token)
     && !/^\d/.test(token));
+}
+
+function productNameVariants(product: ProductRecord) {
+  const names = [product.name, ...(product.aliases || []).map((alias) => alias.name)].map(clean).filter(Boolean);
+  return [...new Set(names)];
+}
+
+function productNameTokens(product: ProductRecord) {
+  return [...new Set(productNameVariants(product).flatMap((name) => fieldTokens(product, name)))];
 }
 
 export function productIdentityKey(product: ProductRecord) {
@@ -994,12 +1036,18 @@ function oneEditSignatures(token: string) {
 
 export function buildProductPairCandidateIndex(products: ProductRecord[]) {
   const productsByToken = new Map<string, ProductRecord[]>();
+  const productsByGtin = new Map<string, ProductRecord[]>();
   const tokensBySignature = new Map<string, Set<string>>();
   const nearbyProductsByToken = new Map<string, ProductRecord[]>();
   const productOrder = new Map<string, number>();
   for (const [position, product] of products.entries()) {
     if (!productOrder.has(product.id)) productOrder.set(product.id, position);
-    for (const token of fieldTokens(product, product.name)) {
+    for (const gtin of product.identifiers?.gtins || []) {
+      const entries = productsByGtin.get(gtin) || [];
+      entries.push(product);
+      productsByGtin.set(gtin, entries);
+    }
+    for (const token of productNameTokens(product)) {
       const entries = productsByToken.get(token) || [];
       entries.push(product);
       productsByToken.set(token, entries);
@@ -1010,7 +1058,7 @@ export function buildProductPairCandidateIndex(products: ProductRecord[]) {
       }
     }
   }
-  return { products, productsByToken, tokensBySignature, nearbyProductsByToken, productOrder };
+  return { products, productsByToken, productsByGtin, tokensBySignature, nearbyProductsByToken, productOrder };
 }
 
 function nearbyProductsForToken(primaryToken: string, index: ReturnType<typeof buildProductPairCandidateIndex>) {
@@ -1032,7 +1080,10 @@ function nearbyProductsForToken(primaryToken: string, index: ReturnType<typeof b
 export function retrieveProductPairCandidates(primary: ProductRecord, index: ReturnType<typeof buildProductPairCandidateIndex>) {
   if (primary.category.startsWith("saas-plan")) return index.products.filter((product) => product.category.startsWith("saas-plan"));
   const hitCounts = new Map<string, { product: ProductRecord; count: number }>();
-  for (const token of fieldTokens(primary, primary.name)) {
+  for (const gtin of primary.identifiers?.gtins || []) {
+    for (const product of index.productsByGtin.get(gtin) || []) hitCounts.set(product.id, { product, count: Math.max(2, hitCounts.get(product.id)?.count || 0) });
+  }
+  for (const token of productNameTokens(primary)) {
     for (const product of nearbyProductsForToken(token, index)) {
       const hit = hitCounts.get(product.id);
       hitCounts.set(product.id, { product, count: (hit?.count || 0) + 1 });
@@ -1050,7 +1101,7 @@ function jaccard(left: string[], right: string[]) {
 }
 
 function accessoryGroups(product: ProductRecord) {
-  return new Set(fieldTokens(product, product.name).map((token) => ACCESSORY_PRODUCT_GROUPS.get(token)).filter((group): group is string => Boolean(group)));
+  return new Set(productNameTokens(product).map((token) => ACCESSORY_PRODUCT_GROUPS.get(token)).filter((group): group is string => Boolean(group)));
 }
 
 export function productPairVetoes(primary: ProductRecord, candidate: ProductRecord) {
@@ -1075,19 +1126,24 @@ export function productPairVetoes(primary: ProductRecord, candidate: ProductReco
 }
 
 export function scoreProductPair(primary: ProductRecord, candidate: ProductRecord) {
-  const primaryName = fieldTokens(primary, primary.name);
-  const candidateName = fieldTokens(candidate, candidate.name);
+  const namePairs = productNameVariants(primary).flatMap((primaryVariant) => productNameVariants(candidate).map((candidateVariant) => {
+    const primaryName = fieldTokens(primary, primaryVariant);
+    const candidateName = fieldTokens(candidate, candidateVariant);
+    const sharedNameTerms = primaryName.filter((token) => candidateName.some((candidateToken) => editDistanceAtMostOne(token, candidateToken)));
+    const primaryFamily = fieldTokens(primary, productFamilyName(primaryVariant));
+    const candidateFamily = fieldTokens(candidate, productFamilyName(candidateVariant));
+    const sharedFamilyTerms = primaryFamily.filter((token) => candidateFamily.some((candidateToken) => editDistanceAtMostOne(token, candidateToken)));
+    const familySimilarity = primaryFamily.length >= 2 && candidateFamily.length >= 2 && sharedFamilyTerms.length >= 2 ? jaccard(primaryFamily, candidateFamily) : 0;
+    const primaryNameContained = primaryName.length >= 2 && primaryName.every((token) => candidateName.includes(token));
+    return { sharedNameTerms, nameSimilarity: Math.max(jaccard(primaryName, candidateName), familySimilarity, primaryNameContained ? 1 : 0) };
+  }));
+  const strongestNamePair = namePairs.sort((left, right) => right.nameSimilarity - left.nameSimilarity || right.sharedNameTerms.length - left.sharedNameTerms.length)[0]
+    || { sharedNameTerms: [], nameSimilarity: 0 };
+  const { sharedNameTerms, nameSimilarity } = strongestNamePair;
   const primaryCategory = fieldTokens(primary, primary.category);
   const candidateCategory = fieldTokens(candidate, candidate.category);
   const primaryDescription = fieldTokens(primary, primary.description);
   const candidateDescription = fieldTokens(candidate, candidate.description);
-  const sharedNameTerms = primaryName.filter((token) => candidateName.some((candidateToken) => editDistanceAtMostOne(token, candidateToken)));
-  const primaryFamily = fieldTokens(primary, productFamilyName(primary.name));
-  const candidateFamily = fieldTokens(candidate, productFamilyName(candidate.name));
-  const sharedFamilyTerms = primaryFamily.filter((token) => candidateFamily.some((candidateToken) => editDistanceAtMostOne(token, candidateToken)));
-  const familySimilarity = primaryFamily.length >= 2 && candidateFamily.length >= 2 && sharedFamilyTerms.length >= 2 ? jaccard(primaryFamily, candidateFamily) : 0;
-  const primaryNameContained = primaryName.length >= 2 && primaryName.every((token) => candidateName.includes(token));
-  const nameSimilarity = Math.max(jaccard(primaryName, candidateName), familySimilarity, primaryNameContained ? 1 : 0);
   const sharedTerms = [...new Set([...sharedNameTerms, ...primaryCategory.filter((token) => candidateCategory.includes(token)), ...primaryDescription.filter((token) => candidateDescription.includes(token))])].sort();
   const imageTokens = (url: string) => { try { return tokens(decodeURIComponent(new URL(url).pathname.split("/").at(-1) || "").replace(/\.[a-z0-9]{2,5}$/i, ""), true).filter((token) => !/^(?:asset|default|hero|image|img|logo|og|placeholder|product|products|thumb|thumbnail|\d+)$/i.test(token)); } catch { return []; } };
   const imageScore = primary.imageUrl && candidate.imageUrl ? jaccard(imageTokens(primary.imageUrl), imageTokens(candidate.imageUrl)) : 0;
@@ -1100,8 +1156,10 @@ export function scoreProductPair(primary: ProductRecord, candidate: ProductRecor
   const score = sameSaasPlanTier ? Math.max(baseScore, 0.72) : baseScore;
   if (sameSaasPlanTier) sharedTerms.push(`plan tier: ${primaryPlanTier}`);
   const vetoes = productPairVetoes(primary, candidate);
+  const identifierEquivalent = Boolean(sharedValidGtin(primary.identifiers, candidate.identifiers)) && !quantitiesConflict(primary.quantity, candidate.quantity);
+  if (identifierEquivalent) sharedTerms.push("shared validated GTIN");
   const ordinaryEligible = score >= 0.32 && sharedNameTerms.length >= 2;
-  return { score: Number(score.toFixed(4)), sharedTerms, imageScore: Number(imageScore.toFixed(4)), eligible: (sameSaasPlanTier || (!eitherSaasPlan && ordinaryEligible)) && vetoes.length === 0 };
+  return { score: Number(score.toFixed(4)), sharedTerms: [...new Set(sharedTerms)], imageScore: Number(imageScore.toFixed(4)), eligible: (identifierEquivalent || sameSaasPlanTier || (!eitherSaasPlan && ordinaryEligible)) && vetoes.length === 0 };
 }
 
 function canonicalProductPageUrl(value: string) {

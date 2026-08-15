@@ -83,6 +83,18 @@ function productPrices(value: unknown) {
   }), 8_000);
 }
 
+function productAliases(value: unknown) {
+  return (Array.isArray(value) ? value : []).slice(0, 8).flatMap((item) => {
+    const source = record(item);
+    const name = text(source.name, 160);
+    const normalizedName = text(source.normalizedName, 160);
+    const sourceUrl = safeUrl(source.sourceUrl);
+    const extraction = source.extraction === "json-ld" || source.extraction === "sitemap" ? source.extraction : "";
+    if (!name || !normalizedName || !sourceUrl || !extraction) return [];
+    return [{ name, normalizedName, locale: text(source.locale, 20) || "und", sourceUrl, extraction }];
+  });
+}
+
 function productMetadata(value: unknown) {
   const source = record(value);
   const identifiers = record(source.identifiers);
@@ -96,6 +108,7 @@ function productMetadata(value: unknown) {
     extraction: text(source.extraction, 80),
     confidence: text(source.confidence, 40),
     claimIds: strings(source.claimIds, 100, 160),
+    aliases: productAliases(source.aliases),
     identifiers: { gtins: strings(identifiers.gtins, 20, 32), sku: text(identifiers.sku, 120), mpn: text(identifiers.mpn, 120), brand: text(identifiers.brand, 240) },
     quantity: { kind: text(quantity.kind, 20), amount: finite(quantity.amount), unit: text(quantity.unit, 20) },
   });
@@ -231,6 +244,7 @@ function productFact(product: ProductRecord, fallbackObservedAt: string) {
       extraction: product.extraction,
       confidence: product.confidence,
       claimIds: product.claimIds,
+      aliases: product.aliases,
       identifiers: product.identifiers,
       quantity: product.quantity,
     },
