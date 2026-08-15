@@ -187,7 +187,8 @@ function isProductDetailSource(url: string, product: ProductRecord) {
 function isCrawlableProductLead(url: string) {
   try {
     const path = decodeURIComponent(new URL(url).pathname).replace(/\/+$/, "");
-    return Boolean(path && path !== "/" && !PUBLISHER_PATH.test(path) && !/(?:^|\/)\b(?:categories|category|collections|collection)\b(?:\/|$)/i.test(path));
+    const listingSegment = path.split("/").filter(Boolean).some((segment) => /(?:^|[-_])(?:categor(?:y|ies|ie|ien|ia|ias)|collection(?:s)?|kategor(?:ie|ien|y)|categorie(?:s|n)?|categoria(?:s)?|تصنيف|فئة)(?:$|[-_])/iu.test(segment));
+    return Boolean(path && path !== "/" && !PUBLISHER_PATH.test(path) && !listingSegment);
   } catch {
     return false;
   }

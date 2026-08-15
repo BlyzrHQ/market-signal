@@ -239,7 +239,13 @@ test("rejects homepages and ranks URL-confirmed product pages over weaker same-d
 });
 
 test("rejects a title-matching collection page on its own domain", () => {
-  const payload = { output: [{ type: "web_search_call", action: { sources: [{ title: "Halal Beef Sirloin Steak 500g", url: "https://listing.example/collections/halal-beef-sirloin-steak-500g" }] } }] };
+  const payload = { output: [{ type: "web_search_call", action: { sources: [
+    { title: "Halal Beef Sirloin Steak 500g", url: "https://collection.example/collections/halal-beef-sirloin-steak-500g" },
+    { title: "Halal Beef Sirloin Steak 500g", url: "https://woocommerce.example/product-category/halal-beef-sirloin-steak-500g" },
+    { title: "Halal Beef Sirloin Steak 500g", url: "https://german.example/kategorie/halal-beef-sirloin-steak-500g" },
+    { title: "Halal Beef Sirloin Steak 500g", url: "https://french.example/categorie/halal-beef-sirloin-steak-500g" },
+    { title: "Halal Beef Sirloin Steak 500g", url: "https://arabic.example/تصنيف/halal-beef-sirloin-steak-500g" },
+  ] } }] };
   assert.deepEqual(candidatesFromSearchEvidence(payload, profile), []);
 });
 

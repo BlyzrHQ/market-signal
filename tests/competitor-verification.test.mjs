@@ -91,6 +91,24 @@ test("does not align unrelated companies solely because localized catalogs share
   assert.equal(result.accepted, false);
 });
 
+test("ties a locale bridge to the matched pair instead of any aliased product on the site", () => {
+  const unrelatedLocalizedProduct = {
+    ...product("software.example", "منتج مختلف", "برمجيات"),
+    aliases: [{ name: "Natural Dried Figs 500g", normalizedName: "natural dried figs 500g", locale: "en", sourceUrl: "https://software.example/en/products/natural-dried-figs-500g", extraction: "sitemap" }],
+  };
+  const primaryPair = product("software.example", "Golden Anchor Device", "software tool");
+  const candidatePair = product("widgets.example", "Golden Anchor Device", "business widget");
+  const result = verifyCompetitorEntity(
+    site("software.example", "Alpha software consulting", "Enterprise IT services", "Not enough public signal", [unrelatedLocalizedProduct, primaryPair]),
+    site("widgets.example", "Premium widgets shop", "Business widget solutions", "Not enough public signal", [candidatePair]),
+    discovery({ domain: "widgets.example", websiteUrl: "https://widgets.example/", marketCategory: "premium widget solutions", sharedOfferings: ["business widgets"] }),
+  );
+
+  assert.equal(result.hasProductOverlap, true);
+  assert.equal(result.categoryAlignment, false);
+  assert.equal(result.accepted, false);
+});
+
 test("requires observed product overlap when product-led ecommerce discovery requests it", () => {
   const result = verifyCompetitorEntity(
     site("myjam.co.uk", "MyJam cultural grocery marketplace", "Halal meat and cultural groceries delivered across the UK", "United Kingdom (inferred)"),
