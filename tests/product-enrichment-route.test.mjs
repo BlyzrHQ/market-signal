@@ -225,6 +225,51 @@ test("enriches the exact selected product page with authoritative price and secu
   }
 });
 
+test("recovers an Arabic Reefi product price for its exact English sitemap URL", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response(`<html lang="ar"><head>
+      <title>مرتبة أوى الطبية | ريفي</title>
+      <script type="application/ld+json">${JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "Product",
+        name: "مرتبة أوى الطبية",
+        image: "https://reefi.test/cdn/awa-mattress.jpg",
+        offers: { "@type": "Offer", price: "996.00", priceCurrency: "SAR" },
+      })}</script>
+    </head><body><h1>مرتبة أوى الطبية</h1></body></html>`, { headers: { "content-type": "text/html; charset=utf-8" } });
+  };
+  try {
+    const response = await POST(new Request("http://localhost/api/enrich-products", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ targets: [{
+        domain: "reefi.test",
+        sourceUrl: "https://reefi.test/products/Awa-Mattress",
+        productId: "awa-mattress",
+        expectedName: "Awa Mattress",
+        expectedType: "Product",
+        role: "primary",
+        allowCatalogReplacement: true,
+      }] }),
+    }));
+    const payload = await response.json();
+    assert.equal(payload.ok, true);
+    assert.equal(payload.coverage.pagesFetched, 1);
+    assert.equal(payload.products[0].id, "awa-mattress");
+    assert.equal(payload.products[0].name, "مرتبة أوى الطبية");
+    assert.deepEqual(payload.products[0].priceSignals, [{ raw: "SAR 996.00", currency: "SAR", amount: 996 }]);
+    assert.equal(payload.products[0].imageUrl, "https://reefi.test/cdn/awa-mattress.jpg");
+    assert.deepEqual(calls, ["https://reefi.test/robots.txt", "https://reefi.test/products/Awa-Mattress"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("returns a visible source gap when one selected product domain cannot be reached", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => { throw new Error("connection reset"); };
