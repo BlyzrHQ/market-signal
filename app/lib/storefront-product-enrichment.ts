@@ -800,10 +800,11 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       const extracted = pageExtraction(fetched.text, fetched.url, item.domain);
       const expected = expectedProduct(item);
       addScopedProductPageEvidence(fetched.text, fetched.url, expected, extracted.result.products, extracted.pageTitle);
-      const rawInitialIdentity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle, { allowScopedPageSignal: true });
+      const canonicalCrossLanguageOptions = { allowCanonicalCrossLanguageIdentity: canonicalSelectedPage(item.sourceUrl) === canonicalSelectedPage(fetched.url) };
+      const rawInitialIdentity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle, { allowScopedPageSignal: true, ...canonicalCrossLanguageOptions });
       const rawMatchedProduct = rawInitialIdentity.products[0];
       extracted.result.products = extracted.result.products.map(withPositivePrices);
-      const initialIdentity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle);
+      const initialIdentity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle, canonicalCrossLanguageOptions);
       const replacementCandidates = [...extracted.result.products];
       let adapterGap = "";
       let adapterEvidenceProduct: ProductRecord | null = null;
@@ -842,7 +843,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
           adapterGap = error instanceof SyntaxError ? `${adapterLabel} endpoint returned invalid JSON.` : `${adapterLabel} endpoint could not be fetched.`;
         }
       }
-      const identity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle, { allowScopedPageSignal: true });
+      const identity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle, { allowScopedPageSignal: true, ...canonicalCrossLanguageOptions });
       if (!identity.accepted) {
         const replacement = observedCatalogReplacement(item, replacementCandidates, extracted.pageTitle, fetched.url);
         return replacement ? { product: replacement, gap: null } : { product: null, gap: gap(identity.reason, "identity_mismatch", undefined, "identity") };

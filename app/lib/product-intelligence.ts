@@ -1224,7 +1224,42 @@ function slugAnchoredIdentityAlignment(product: ProductRecord, candidate: Produc
   return (expectedIsSlugAnchored && candidateExplainsSlug) || fullSlugContained ? slugToCandidate : null;
 }
 
-export function validateProductPageIdentity(expected: ProductRecord[], fetched: ProductRecord[], pageTitle = "", options: { allowScopedPageSignal?: boolean } = {}) {
+function writingSystems(value: string) {
+  const systems = [
+    ["latin", /\p{Script=Latin}/u],
+    ["arabic", /\p{Script=Arabic}/u],
+    ["cyrillic", /\p{Script=Cyrillic}/u],
+    ["han", /\p{Script=Han}/u],
+    ["hebrew", /\p{Script=Hebrew}/u],
+    ["devanagari", /\p{Script=Devanagari}/u],
+    ["thai", /\p{Script=Thai}/u],
+    ["hangul", /\p{Script=Hangul}/u],
+  ] as const;
+  return new Set(systems.flatMap(([name, pattern]) => pattern.test(value) ? [name] : []));
+}
+
+function disjointWritingSystems(left: string, right: string) {
+  const leftSystems = writingSystems(left);
+  const rightSystems = writingSystems(right);
+  return leftSystems.size > 0 && rightSystems.size > 0 && [...leftSystems].every((system) => !rightSystems.has(system));
+}
+
+function pageTitleSupportsProduct(candidate: ProductRecord, pageTitle: string) {
+  if (!pageTitle.trim()) return false;
+  const titleRecord = {
+    ...candidate,
+    name: pageTitle,
+    normalizedName: bilingualNormalize(pageTitle),
+    description: "",
+    attributes: [],
+    aliases: undefined,
+    identifiers: undefined,
+  };
+  const alignment = enrichmentIdentityAlignment(candidate, titleRecord);
+  return alignment.aligned >= 2 && alignment.leftCoverage >= 0.6 && !quantitiesConflict(candidate.quantity, parseCanonicalQuantity(pageTitle) || undefined);
+}
+
+export function validateProductPageIdentity(expected: ProductRecord[], fetched: ProductRecord[], pageTitle = "", options: { allowScopedPageSignal?: boolean; allowCanonicalCrossLanguageIdentity?: boolean } = {}) {
   if (!expected.length) return { accepted: false, products: [] as ProductRecord[], reason: "No expected product identity was available for this enrichment page." };
   const accepted = fetched.flatMap((candidate) => {
     let strength = -1;
@@ -1241,6 +1276,14 @@ export function validateProductPageIdentity(expected: ProductRecord[], fetched: 
       }
       const sameFinalProductPage = canonicalProductPageUrl(product.sourceUrl) === canonicalProductPageUrl(candidate.sourceUrl);
       if (!sameFinalProductPage || product.jsonLdType !== "Product" || (candidate.jsonLdType !== "Product" && !(options.allowScopedPageSignal && candidate.jsonLdType === "PageSignal"))) continue;
+      const canonicalCrossLanguageIdentity = options.allowCanonicalCrossLanguageIdentity === true
+        && candidate.jsonLdType === "Product"
+        && disjointWritingSystems(product.name, candidate.name)
+        && pageTitleSupportsProduct(candidate, pageTitle);
+      if (canonicalCrossLanguageIdentity) {
+        strength = Math.max(strength, 90_000);
+        continue;
+      }
       const alignment = enrichmentIdentityAlignment(product, candidate);
       const directAlignment = alignment.aligned >= 2 && alignment.leftCoverage >= 0.5 && alignment.rightCoverage >= 0.5 && !(alignment.leftHasConflict && alignment.rightHasConflict);
       const slugAlignment = directAlignment ? null : slugAnchoredIdentityAlignment(product, candidate);
