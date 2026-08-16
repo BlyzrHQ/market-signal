@@ -827,6 +827,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       const canonicalCrossLanguageOptions = { allowCanonicalCrossLanguageIdentity: canonicalSelectedPage(item.sourceUrl) === canonicalSelectedPage(fetched.url) };
       const rawInitialIdentity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle, { allowScopedPageSignal: true, ...canonicalCrossLanguageOptions });
       const rawMatchedProduct = rawInitialIdentity.products[0];
+      const pagePriceConflicts = [...new Set(extracted.result.products.flatMap((product) => product.attributes.filter((attribute) => attribute.startsWith("Price evidence conflict:"))))];
       extracted.result.products = extracted.result.products.map(withPositivePrices);
       const initialIdentity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle, canonicalCrossLanguageOptions);
       const replacementCandidates = [...extracted.result.products];
@@ -851,12 +852,11 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
                 ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: confirmedAdapterCurrency(fetched.text, rawMatchedProduct), expectedQuantity: expected.quantity })
                 : parseWooCommerceProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt: new Date().toISOString() });
               if (adapterResult.product) {
-                const pageConflicts = (rawMatchedProduct?.attributes || []).filter((attribute) => attribute.startsWith("Price evidence conflict:"));
                 const positiveAdapterProduct = withPositivePrices(adapterResult.product);
                 adapterEvidenceProduct = {
                   ...positiveAdapterProduct,
-                  priceSignals: pageConflicts.length ? [] : positiveAdapterProduct.priceSignals,
-                  attributes: [...new Set([...adapterResult.product.attributes, ...pageConflicts])],
+                  priceSignals: pagePriceConflicts.length ? [] : positiveAdapterProduct.priceSignals,
+                  attributes: [...new Set([...adapterResult.product.attributes, ...pagePriceConflicts])],
                 };
                 extracted.result.products.push(adapterEvidenceProduct);
               }
@@ -864,7 +864,14 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
                 const replacementAdapterResult = adapter.kind === "shopify"
                   ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: confirmedAdapterCurrency(fetched.text, rawMatchedProduct) })
                   : adapterResult;
-                if (replacementAdapterResult.product) replacementCandidates.push(withPositivePrices(replacementAdapterResult.product));
+                if (replacementAdapterResult.product) {
+                  const positiveReplacementProduct = withPositivePrices(replacementAdapterResult.product);
+                  replacementCandidates.push({
+                    ...positiveReplacementProduct,
+                    priceSignals: pagePriceConflicts.length ? [] : positiveReplacementProduct.priceSignals,
+                    attributes: [...new Set([...replacementAdapterResult.product.attributes, ...pagePriceConflicts])],
+                  });
+                }
               }
               adapterGap = adapterResult.gap;
             }
