@@ -67,7 +67,7 @@ export async function createCheckout(request: Request, services: CheckoutService
       success_url: `${baseURL}/account?checkout=success`,
       cancel_url: `${baseURL}/pricing?checkout=cancelled`,
       allow_promotion_codes: true,
-      integration_identifier: "market_signal",
+      integration_identifier: "market_signal_nsvqkptw",
       expires_at: Math.floor(now.getTime() / 1_000) + 30 * 60,
       metadata: { workspace_id: account.workspaceId, plan: plan.id },
       subscription_data: { metadata: { workspace_id: account.workspaceId, app: "market-signal" } },
