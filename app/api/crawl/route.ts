@@ -19,7 +19,7 @@ import { EDGE_CRAWL_MARKER, isEdgeRecoveryEligible, recoverCrawlThroughEdgeAttem
 import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../lib/internal-auth.ts";
 import { runtimeEnvironmentValue } from "../../lib/runtime-env.ts";
 import { buildAIProductComparison } from "../../lib/ai-product-matching.ts";
-import { recoverSallaStorefrontCatalog, type SallaStorefrontRecovery } from "../../lib/salla-mcp-catalog-recovery.ts";
+import { isSallaCatalogRecoveryEligible, recoverSallaStorefrontCatalog, type SallaStorefrontRecovery } from "../../lib/salla-mcp-catalog-recovery.ts";
 
 type ClaimType = "Observed" | "Inferred";
 type Confidence = "High" | "Medium" | "Low";
@@ -98,6 +98,7 @@ type DomainCrawl = {
   siteState?: { status: "parked"; provider: string; evidenceUrl: string; redirectDomain: string } | { status: "unavailable"; attemptedUrl: string; reason: string; observedAt: string };
   homepageFailure?: PublicEndpointFailure;
   homepageAccessDenied?: { status: 403; hosts: string[] };
+  benchmarkEligible?: boolean;
 };
 
 type ReportBlock = Record<string, unknown> & { type: string; id: string };
@@ -903,6 +904,7 @@ async function sallaRecoveryDomainCrawl(previous: DomainCrawl, maxProducts: numb
     },
     productCoverage: { scannedPages: 1, catalogProductsDiscovered: recovery.products.length, thirdPartyReferenced: 0 },
     fetchedAt: recovery.observedAt,
+    benchmarkEligible: false,
   };
 }
 
@@ -937,7 +939,7 @@ function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?
   const productLed = discovery?.businessType === "ecommerce";
   const blocks: ReportBlock[] = [{ type: "summary", id: "scan-summary", title: discovered.length ? `We verified ${discovered.length} market competitor${discovered.length === 1 ? "" : "s"}` : "No company passed independent verification", body: discovered.length ? (productLed ? `${productMatched} had a comparable public product match. Every included ecommerce competitor was found or confirmed through product evidence, then independently crawled for category and regional fit.` : `${productMatched} had a comparable public product match. Every included company was crawled and had to describe itself in the same core category; product overlap increased confidence but was not required.`) : discovery?.gap || "No searched company exposed enough first-party category evidence to include without guessing." }];
   if (discovery) blocks.push({ type: "market-profile", id: "market-profile", category: discovery.category, region: discovery.region, businessType: discovery.businessType, strategy: discovery.strategy, queries: discovery.queries, provider: discovery.provider, model: discovery.model, available: discovery.available, gaps: discovery.gaps, gap: discovery.gap || "" });
-  const benchmarkInputs = results.filter((result) => result.homepage && (result.role === "primary" || result.role === "discovered-competitor"));
+  const benchmarkInputs = results.filter((result) => result.homepage && result.benchmarkEligible !== false && (result.role === "primary" || result.role === "discovered-competitor"));
   if (benchmarkInputs.length) blocks.push({ type: "experience-benchmark", id: "experience-benchmark", ...buildExperienceBenchmark(benchmarkInputs.map((result) => ({ domain: result.domain, role: result.role, fetchedAt: result.fetchedAt, pages: result.pages, products: result.products, catalogProductsDiscovered: result.productCoverage.catalogProductsDiscovered }))) });
   for (const result of discovered) blocks.push({ type: "competitor", id: `competitor-${result.domain}`, domain: result.domain, companyName: result.discovery?.companyName, title: result.homepage?.title, description: result.homepage?.description, reason: result.discovery?.reason, marketCategory: result.discovery?.marketCategory, relationship: result.discovery?.relationship, sharedOfferings: result.discovery?.sharedOfferings, categoryAlignment: result.discovery?.categoryAlignment, regionCompatibility: result.discovery?.regionCompatibility, hasProductOverlap: result.discovery?.hasProductOverlap, matchedPrimaryProductName: result.discovery?.provenPrimaryProduct?.name, matchedProductName: result.discovery?.provenRivalProduct?.name, matchedProductUrl: result.discovery?.provenRivalProduct?.sourceUrl || result.discovery?.websiteUrl, searchQuery: result.discovery?.searchQuery, discoverySourceUrl: result.discovery?.sourceUrl, websiteSourceUrl: result.homepage?.sourceUrl, verificationScore: result.discovery?.verificationScore, confidence: result.discovery?.confidence, overlapTerms: result.discovery?.overlapTerms, productCount: result.products.length, prices: result.products.flatMap((product) => product.priceSignals.map((price) => price.raw)).slice(0, 6), provenance: result.discovery?.provenance || "discovered-this-run", rememberedVerifiedAt: result.discovery?.rememberedVerifiedAt || "" });
   for (const result of results) {
@@ -1019,7 +1021,7 @@ export async function POST(request: Request) {
         primary.gaps.push({ url: `https://${primaryDomain}/`, reason: recovery.message, observedAt: new Date().toISOString() });
       }
     }
-    if (!primary?.homepage && !edgeRequest) {
+    if (isSallaCatalogRecoveryEligible(primary) && !edgeRequest) {
       const recovered = primary ? await sallaRecoveryDomainCrawl(primary, productLimit) : null;
       if (recovered) {
         submittedResults = submittedResults.map((result) => result.domain === primaryDomain ? recovered : result);

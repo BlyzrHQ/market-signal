@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { recoverSallaStorefrontCatalog } from "../app/lib/salla-mcp-catalog-recovery.ts";
+import { isSallaCatalogRecoveryEligible, recoverSallaStorefrontCatalog } from "../app/lib/salla-mcp-catalog-recovery.ts";
 
 function result(text, overrides = {}) {
   return { ok: true, status: 200, contentType: "application/json", url: "https://shop.example/", text: JSON.stringify(text), truncated: false, responseTimeMs: 1, responseBytes: 10, redirectCount: 0, failureKind: "", ...overrides };
 }
 
-function rpcText(value) {
-  return { jsonrpc: "2.0", result: { content: [{ type: "text", text: JSON.stringify(value) }] } };
+function rpcText(value, id = "products-1") {
+  return { jsonrpc: "2.0", id, result: { content: [{ type: "text", text: JSON.stringify(value) }] } };
 }
 
 function product(id, overrides = {}) {
@@ -31,9 +31,9 @@ test("official Salla MCP recovery returns bounded, priced storefront products ac
     requests.push({ url, options });
     if (url.endsWith("server-card.json")) return result({ serverInfo: { name: "store", title: "Salla Store MCP Server" }, description: "Salla storefront", transport: { type: "streamable-http", endpoint: "/mcp" } });
     const body = JSON.parse(options.jsonRpcBody);
-    if (body.method === "resources/read") return result({ jsonrpc: "2.0", result: { contents: [{ uri: "store://info", mimeType: "application/json", text: JSON.stringify({ store: { name: "Observed Store", url: "https://shop.example/ar/", country: "SA", store_country: "SA", scope: { countries: ["SA"], languages: ["ar", "en"] }, meta: { title: "Observed honey store", description: "Public store description" }, social: { instagram: "https://instagram.com/observed" } } }) }] } });
-    if (!body.params.arguments.cursor) return result(rpcText({ items: [product("1"), product("2")], next_cursor: "https://api.salla.dev/store/v1/products?source=latest&cursor=safe-next" }));
-    return result(rpcText({ items: [product("3"), product("4")], next_cursor: null }));
+    if (body.method === "resources/read") return result({ jsonrpc: "2.0", id: body.id, result: { contents: [{ uri: "store://info", mimeType: "application/json", text: JSON.stringify({ store: { name: "Observed Store", url: "https://shop.example/ar/", country: "SA", store_country: "SA", scope: { countries: ["SA"], languages: ["ar", "en"] }, meta: { title: "Observed honey store", description: "Public store description" }, social: { instagram: "https://instagram.com/observed" } } }) }] } });
+    if (!body.params.arguments.cursor) return result(rpcText({ items: [product("1"), product("2")], next_cursor: "https://api.salla.dev/store/v1/products?source=latest&cursor=safe-next" }, body.id));
+    return result(rpcText({ items: [product("3"), product("4")], next_cursor: null }, body.id));
   };
 
   const recovered = await recoverSallaStorefrontCatalog("shop.example", { maxProducts: 3, fetchText, now: () => new Date("2026-08-16T00:00:00.000Z") });
@@ -63,7 +63,7 @@ test("Salla recovery rejects cross-domain store identity", async () => {
   const fetchText = async (url, _accept, options) => {
     if (url.endsWith("server-card.json")) return result({ serverInfo: { name: "Salla" }, description: "Salla", transport: { type: "streamable-http", endpoint: "/mcp" } });
     const body = JSON.parse(options.jsonRpcBody);
-    if (body.method === "resources/read") return result({ jsonrpc: "2.0", result: { contents: [{ uri: "store://info", mimeType: "application/json", text: JSON.stringify({ store: { name: "Wrong store", url: "https://attacker.example/", country: "SA", scope: { countries: ["SA"] } } }) }] } });
+    if (body.method === "resources/read") return result({ jsonrpc: "2.0", id: body.id, result: { contents: [{ uri: "store://info", mimeType: "application/json", text: JSON.stringify({ store: { name: "Wrong store", url: "https://attacker.example/", country: "SA", scope: { countries: ["SA"] } } }) }] } });
     return result(rpcText({ items: [product("1", { url: "https://attacker.example/product" })], next_cursor: null }));
   };
   assert.equal(await recoverSallaStorefrontCatalog("shop.example", { maxProducts: 20, fetchText }), null);
@@ -74,11 +74,36 @@ test("Salla recovery does not follow an untrusted pagination cursor", async () =
   const fetchText = async (url, _accept, options) => {
     if (url.endsWith("server-card.json")) return result({ serverInfo: { name: "Salla" }, description: "Salla", transport: { type: "streamable-http", endpoint: "/mcp" } });
     const body = JSON.parse(options.jsonRpcBody);
-    if (body.method === "resources/read") return result({ jsonrpc: "2.0", result: { contents: [{ uri: "store://info", mimeType: "application/json", text: JSON.stringify({ store: { name: "Store", url: "https://shop.example/", country: "SA", scope: { countries: ["SA"] } } }) }] } });
+    if (body.method === "resources/read") return result({ jsonrpc: "2.0", id: body.id, result: { contents: [{ uri: "store://info", mimeType: "application/json", text: JSON.stringify({ store: { name: "Store", url: "https://shop.example/", country: "SA", scope: { countries: ["SA"] } } }) }] } });
     productCalls += 1;
-    return result(rpcText({ items: [product("1")], next_cursor: "https://attacker.example/steal?cursor=secret" }));
+    return result(rpcText({ items: [product("1")], next_cursor: "https://attacker.example/steal?cursor=secret" }, body.id));
   };
   const recovered = await recoverSallaStorefrontCatalog("shop.example", { maxProducts: 20, fetchText });
   assert.equal(recovered?.products.length, 1);
   assert.equal(productCalls, 1);
+});
+
+test("Salla recovery is limited to verified access failures and never bypasses a generic or robots denial", () => {
+  assert.equal(isSallaCatalogRecoveryEligible({ homepage: null }), false);
+  assert.equal(isSallaCatalogRecoveryEligible({ homepage: null, homepageAccessDenied: { status: 403, hosts: ["shop.example", "www.shop.example"] } }), true);
+  assert.equal(isSallaCatalogRecoveryEligible({ homepage: null, siteState: { status: "unavailable" } }), true);
+  assert.equal(isSallaCatalogRecoveryEligible({ homepage: {}, siteState: { status: "unavailable" } }), false);
+});
+
+test("Salla recovery fails closed on malformed store metadata instead of throwing", async () => {
+  const fetchText = async (url, _accept, options) => {
+    if (url.endsWith("server-card.json")) return result({ serverInfo: { name: "Salla" }, description: "Salla", transport: { type: "streamable-http", endpoint: "/mcp" } });
+    const body = JSON.parse(options.jsonRpcBody);
+    return result({ jsonrpc: "2.0", id: body.id, result: { contents: [{ uri: "store://info", mimeType: "application/json", text: JSON.stringify({ store: null }) }] } });
+  };
+  assert.equal(await recoverSallaStorefrontCatalog("shop.example", { maxProducts: 20, fetchText }), null);
+});
+
+test("Salla recovery rejects JSON-RPC responses with a mismatched request id", async () => {
+  const fetchText = async (url, _accept, options) => {
+    if (url.endsWith("server-card.json")) return result({ serverInfo: { name: "Salla" }, description: "Salla", transport: { type: "streamable-http", endpoint: "/mcp" } });
+    const body = JSON.parse(options.jsonRpcBody);
+    return result({ jsonrpc: "2.0", id: `${body.id}-wrong`, result: { contents: [] } });
+  };
+  assert.equal(await recoverSallaStorefrontCatalog("shop.example", { maxProducts: 20, fetchText }), null);
 });

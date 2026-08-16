@@ -11,8 +11,10 @@ product URLs, images, positive SAR prices, and bounded pagination.
 ## Decision
 
 - Keep normal HTML, robots, sitemap, and edge recovery as the primary paths.
-- When the primary homepage remains unavailable, probe only the submitted
-  domain's exact `/.well-known/mcp/server-card.json` path.
+- Activate the fallback only after a typed transport-unavailable state or a
+  dual-host HTTP 403. A generic missing homepage or robots denial is not
+  eligible. Probe only the submitted domain's exact
+  `/.well-known/mcp/server-card.json` path.
 - Accept recovery only when the card identifies Salla and declares the exact
   same-origin `/mcp` streamable-HTTP endpoint.
 - Read only `store://info` and call only the read-only
@@ -23,16 +25,19 @@ product URLs, images, positive SAR prices, and bounded pagination.
 - Whitelist the observed store and product fields used by Market Signal. Reject
   cross-domain store/product identity, malformed prices, unsupported currency,
   unsafe image URLs, untrusted cursor URLs, duplicate products, and oversized
-  pagination.
+  pagination. Require every JSON-RPC response to echo the request ID.
 - Bound catalog collection to the persisted report plan's product limit (maximum
   1,000) and expose the Salla source and fallback reason as a visible evidence
   gap. Keep facts labeled as observed storefront-API records.
+- Exclude the synthetic storefront-API page from website-speed and UX
+  benchmarking; it is catalog evidence, not an observed browser page load.
 
 ## Acceptance
 
 - Focused tests cover verified recovery, positive SAR prices, images, cursor
   pagination, plan bounds, JSON-RPC transport, bad server identity, cross-domain
-  identity, and untrusted cursors.
+  identity, untrusted cursors, malformed store metadata, request-ID mismatch,
+  and recovery eligibility.
 - Full test, typecheck, production build, and lint gates pass.
 - Strict Fable 5 review reports no blockers on the exact head.
 - Deploy Trigger, Sites, and the exact VPS commit.

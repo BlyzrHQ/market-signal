@@ -74,6 +74,17 @@ function jsonRpcResource(payload: unknown) {
   return typeof content?.text === "string" ? parseJson(content.text) : null;
 }
 
+export function isSallaCatalogRecoveryEligible(primary: {
+  homepage?: unknown;
+  homepageAccessDenied?: { status: number; hosts: string[] };
+  siteState?: { status: string };
+} | undefined) {
+  if (primary?.homepage) return false;
+  const deniedOnBothHosts = primary?.homepageAccessDenied?.status === 403
+    && primary.homepageAccessDenied.hosts.length === 2;
+  return Boolean(deniedOnBothHosts || primary?.siteState?.status === "unavailable");
+}
+
 function nextCursor(value: unknown) {
   if (typeof value !== "string" || value.length > 8_000) return "";
   try {
@@ -128,7 +139,9 @@ async function publicJsonRpc(fetchText: FetchText, domain: string, body: Record<
     protocolVersion: MCP_PROTOCOL_VERSION,
   });
   if (!response.ok || !/^application\/json\b/i.test(response.contentType) || response.truncated) return null;
-  return parseJson(response.text);
+  const payload = parseJson(response.text);
+  const root = record(payload);
+  return root?.id === body.id ? payload : null;
 }
 
 export async function recoverSallaStorefrontCatalog(
@@ -159,12 +172,13 @@ export async function recoverSallaStorefrontCatalog(
   const info = record(jsonRpcResource(infoPayload));
   const store = record(info?.store);
   const storeUrl = sameDomainHttpsUrl(store?.url, domain);
+  if (!store || !storeUrl) return null;
   const scope = record(store?.scope);
   const meta = record(store?.meta);
   const countryCode = [store.country, store.store_country, ...(Array.isArray(scope?.countries) ? scope.countries : [])]
     .map((item) => boundedText(item, 2).toUpperCase())
     .find((item) => /^[A-Z]{2}$/.test(item)) || "";
-  if (!store || !storeUrl || !countryCode) return null;
+  if (!countryCode) return null;
 
   const products: ProductRecord[] = [];
   const seen = new Set<string>();
