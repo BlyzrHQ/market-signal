@@ -34,6 +34,10 @@ trap cleanup EXIT
 restricted_found=0
 webhook_found=0
 hosted_found=0
+price_starter_found=0
+price_solo_found=0
+price_growth_found=0
+price_agency_found=0
 while IFS= read -r line || [[ -n "${line}" ]]; do
   case "${line}" in
     STRIPE_RESTRICTED_KEY=*)
@@ -48,6 +52,30 @@ while IFS= read -r line || [[ -n "${line}" ]]; do
       printf 'MARKET_SIGNAL_HOSTED_BILLING=true\n' >>"${temporary}"
       hosted_found=$((hosted_found + 1))
       ;;
+    STRIPE_PRICE_STARTER=*)
+      [[ "${line#*=}" =~ ^price_[A-Za-z0-9_]{8,}$ ]] \
+        || fail "STRIPE_PRICE_STARTER is missing or invalid"
+      printf '%s\n' "${line}" >>"${temporary}"
+      price_starter_found=$((price_starter_found + 1))
+      ;;
+    STRIPE_PRICE_SOLO=*)
+      [[ "${line#*=}" =~ ^price_[A-Za-z0-9_]{8,}$ ]] \
+        || fail "STRIPE_PRICE_SOLO is missing or invalid"
+      printf '%s\n' "${line}" >>"${temporary}"
+      price_solo_found=$((price_solo_found + 1))
+      ;;
+    STRIPE_PRICE_GROWTH=*)
+      [[ "${line#*=}" =~ ^price_[A-Za-z0-9_]{8,}$ ]] \
+        || fail "STRIPE_PRICE_GROWTH is missing or invalid"
+      printf '%s\n' "${line}" >>"${temporary}"
+      price_growth_found=$((price_growth_found + 1))
+      ;;
+    STRIPE_PRICE_AGENCY=*)
+      [[ "${line#*=}" =~ ^price_[A-Za-z0-9_]{8,}$ ]] \
+        || fail "STRIPE_PRICE_AGENCY is missing or invalid"
+      printf '%s\n' "${line}" >>"${temporary}"
+      price_agency_found=$((price_agency_found + 1))
+      ;;
     *)
       printf '%s\n' "${line}" >>"${temporary}"
       ;;
@@ -57,6 +85,10 @@ done <"${env_file}"
 [[ "${restricted_found}" -eq 1 ]] || fail "expected exactly one STRIPE_RESTRICTED_KEY entry"
 [[ "${webhook_found}" -eq 1 ]] || fail "expected exactly one STRIPE_WEBHOOK_SECRET entry"
 [[ "${hosted_found}" -eq 1 ]] || fail "expected exactly one MARKET_SIGNAL_HOSTED_BILLING entry"
+[[ "${price_starter_found}" -eq 1 ]] || fail "expected exactly one STRIPE_PRICE_STARTER entry"
+[[ "${price_solo_found}" -eq 1 ]] || fail "expected exactly one STRIPE_PRICE_SOLO entry"
+[[ "${price_growth_found}" -eq 1 ]] || fail "expected exactly one STRIPE_PRICE_GROWTH entry"
+[[ "${price_agency_found}" -eq 1 ]] || fail "expected exactly one STRIPE_PRICE_AGENCY entry"
 chown root:"${deploy_group}" "${temporary}"
 chmod 0640 "${temporary}"
 mv -f -- "${temporary}" "${env_file}"

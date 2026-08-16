@@ -103,6 +103,11 @@ test("GitHub VPS deployment is manual, pinned, immutable, and non-destructive", 
   assert.match(updateBilling, /MARKET_SIGNAL_HOSTED_BILLING=true/);
   assert.match(updateBilling, /expected exactly one STRIPE_RESTRICTED_KEY entry/);
   assert.match(updateBilling, /expected exactly one STRIPE_WEBHOOK_SECRET entry/);
+  assert.match(updateBilling, /expected exactly one STRIPE_PRICE_STARTER entry/);
+  assert.match(updateBilling, /expected exactly one STRIPE_PRICE_SOLO entry/);
+  assert.match(updateBilling, /expected exactly one STRIPE_PRICE_GROWTH entry/);
+  assert.match(updateBilling, /expected exactly one STRIPE_PRICE_AGENCY entry/);
+  assert.match(updateBilling, /STRIPE_PRICE_STARTER is missing or invalid/);
   assert.match(updateBilling, /mv -f -- "\$\{temporary\}" "\$\{env_file\}"/);
   assert.doesNotMatch(updateBilling, /echo .*restricted_key|echo .*webhook_secret|set -x/);
 

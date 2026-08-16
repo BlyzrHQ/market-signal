@@ -45,5 +45,5 @@ The VPS needs server-only Stripe restricted-key, webhook-signing-secret, and tes
 - Non-blocking follow-ups: prune old webhook-event receipts, improve post-Checkout webhook-pending UX, and consider preventing simultaneous different-plan Checkout sessions.
 - Stripe release hygiene: Checkout uses a stable label with the required eight-letter random suffix, and the VPS template lists every server-only hosted-billing setting.
 - VPS candidate validation exposed and fixed an ESM crash caused by bundling `better-sqlite3`; Node builds now keep the native package external and assert that its binding loader is absent from the server bundle.
-- Deployment sends the restricted Stripe key and rotated webhook secret through a root-owned atomic updater, enables hosted billing only after both values validate, and never stages or prints either secret.
+- Deployment sends the restricted Stripe key and rotated webhook secret through a root-owned atomic updater, enables hosted billing only after both values and all four configured price IDs validate, and never stages or prints either secret.
 - Remaining release gate: publish the reviewed commit, deploy that exact commit with server-owned test-mode secrets, and verify Checkout, signed webhook delivery, subscription state, quota enforcement, and Customer Portal before merge.
