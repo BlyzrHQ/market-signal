@@ -56,7 +56,43 @@ test("Salla recovery fails closed for an unverified server card", async () => {
     fetchText: async () => { calls += 1; return result({ serverInfo: { name: "unknown" }, transport: { type: "streamable-http", endpoint: "/mcp" } }); },
   });
   assert.equal(recovered, null);
-  assert.equal(calls, 1);
+  assert.equal(calls, 2);
+});
+
+test("Salla recovery initializes the exact-domain MCP endpoint when public discovery GETs are blocked", async () => {
+  const requests = [];
+  const fetchText = async (url, _accept, options) => {
+    requests.push({ url, options });
+    if (url.endsWith("server-card.json")) return result("blocked", { ok: false, status: 403, contentType: "text/html" });
+    const body = JSON.parse(options.jsonRpcBody);
+    if (body.method === "initialize") return result({
+      jsonrpc: "2.0",
+      id: body.id,
+      result: {
+        protocolVersion: "2025-06-18",
+        serverInfo: { name: "storefront", title: "Storefront MCP", description: "Browse products for a Salla store." },
+        instructions: "All operations are scoped to the Salla store identified by the request hostname.",
+      },
+    });
+    if (body.method === "resources/read") return result({ jsonrpc: "2.0", id: body.id, result: { contents: [{ uri: "store://info", mimeType: "application/json", text: JSON.stringify({ store: { name: "Observed Store", url: "https://shop.example/ar/", country: "SA", scope: { countries: ["SA"], languages: ["ar", "en"] } } }) }] } });
+    return result(rpcText({ items: [product("1")], next_cursor: null }, body.id));
+  };
+
+  const recovered = await recoverSallaStorefrontCatalog("shop.example", { maxProducts: 20, fetchText });
+  assert.equal(recovered?.products.length, 1);
+  assert.equal(recovered?.sourceUrl, "https://shop.example/mcp");
+  assert.equal(recovered?.requests, 4);
+  assert.equal(JSON.parse(requests[1].options.jsonRpcBody).method, "initialize");
+  assert.equal(requests[1].options.expectedDomain, "shop.example");
+});
+
+test("Salla MCP initialize fallback rejects an unrelated server identity", async () => {
+  const fetchText = async (url, _accept, options) => {
+    if (url.endsWith("server-card.json")) return result("blocked", { ok: false, status: 403, contentType: "text/html" });
+    const body = JSON.parse(options.jsonRpcBody);
+    return result({ jsonrpc: "2.0", id: body.id, result: { protocolVersion: "2025-06-18", serverInfo: { name: "unrelated", title: "Generic MCP" } } });
+  };
+  assert.equal(await recoverSallaStorefrontCatalog("shop.example", { maxProducts: 20, fetchText }), null);
 });
 
 test("Salla recovery rejects cross-domain store identity", async () => {
