@@ -1301,6 +1301,7 @@ test("keeps non-positive, non-finite, or unsupported-currency Shopify prices non
       })], 1);
       assert.equal(result.products.length, 1);
       assert.deepEqual(result.products[0].priceSignals, []);
+      assert.ok(result.products[0].attributes.includes("Price evidence conflict: observed price is non-positive or invalid"));
       assert.equal(calls.at(-1), "https://shop.test/products/cornerstone-enhanced-visibility-beanie.js");
     } finally {
       globalThis.fetch = originalFetch;

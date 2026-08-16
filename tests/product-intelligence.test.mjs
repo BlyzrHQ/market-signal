@@ -324,6 +324,26 @@ test("generic multi-product card metadata cannot erase scoped JSON-LD prices", (
   assert.deepEqual(result.products.map((product) => product.priceSignals[0]?.amount), [10, 20]);
 });
 
+test("a collection heading cannot bind generic metadata to one product", () => {
+  const result = extraction({
+    document: `<meta itemprop="price" content="999"><meta itemprop="priceCurrency" content="USD"><script type="application/ld+json">${JSON.stringify([{ "@type": "Product", name: "Catalog Jacket A" }, { "@type": "Product", name: "Catalog Jacket B", offers: { price: 20, priceCurrency: "USD" } }])}</script>`,
+    sourceUrl: "https://acme.com/collections/jackets",
+    pageTitle: "Jackets",
+    headings: ["Catalog Jacket A"],
+  });
+  assert.deepEqual(result.products.map((product) => product.priceSignals.map((signal) => signal.amount)), [[], [20]]);
+});
+
+test("ambiguous product metadata on a collection page cannot erase sibling JSON-LD prices", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="10"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify([{ "@type": "Product", name: "Catalog Jacket A", offers: { price: 10, priceCurrency: "USD" } }, { "@type": "Product", name: "Catalog Jacket B", offers: { price: 20, priceCurrency: "USD" } }])}</script>`,
+    sourceUrl: "https://acme.com/collections/jackets",
+    pageTitle: "Jackets",
+    headings: ["Jackets"],
+  });
+  assert.deepEqual(result.products.map((product) => product.priceSignals[0]?.amount), [10, 20]);
+});
+
 test("product-scoped direct metadata conflict suppresses price until visible evidence corroborates it", () => {
   const result = extraction({
     document: `<head><title>Custom Embroidered Columbia Jackets No Minimum – Arklavo</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="GBP"></head><script type="application/ld+json">${JSON.stringify({
@@ -1438,6 +1458,30 @@ test("final enrichment clears a stale price when fresh page evidence records a c
 
   assert.deepEqual(enriched.rows[0].matches[0].product.priceSignals, []);
   assert.ok(enriched.rows[0].matches[0].product.attributes.some((attribute) => attribute.startsWith("Price evidence conflict:")));
+});
+
+test("final enrichment cannot revive a stale price after a fresh non-positive observation", () => {
+  const primary = { ...product("jacket", "wearform.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://wearform.test/products/custom-jacket", priceSignals: [{ raw: "USD 90", currency: "USD", amount: 90 }] };
+  const rival = { ...product("rival-jacket", "rival.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://rival.test/products/custom-jacket", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }] };
+  const comparison = buildProductComparison("wearform.test", [{ domain: "wearform.test", products: [primary] }, { domain: "rival.test", products: [rival] }]);
+  const fresh = { ...rival, priceSignals: [], attributes: ["Price evidence conflict: observed price is non-positive or invalid"] };
+
+  const enriched = applyFinalProductEnrichment(comparison, [fresh], { pagesRequested: 1, pagesFetched: 1, maxPages: 24, gaps: [] });
+
+  assert.deepEqual(enriched.rows[0].matches[0].product.priceSignals, []);
+  assert.ok(enriched.rows[0].matches[0].product.attributes.includes("Price evidence conflict: observed price is non-positive or invalid"));
+});
+
+test("final enrichment cannot revive or re-date a stale price after a fresh unpriced observation", () => {
+  const primary = { ...product("jacket", "wearform.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://wearform.test/products/custom-jacket", priceSignals: [{ raw: "USD 90", currency: "USD", amount: 90 }], observedAt: "2026-08-01T00:00:00.000Z" };
+  const rival = { ...product("rival-jacket", "rival.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://rival.test/products/custom-jacket", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }] };
+  const comparison = buildProductComparison("wearform.test", [{ domain: "wearform.test", products: [primary] }, { domain: "rival.test", products: [rival] }]);
+  const fresh = { ...primary, priceSignals: [], attributes: [], observedAt: "2026-08-16T00:00:00.000Z" };
+
+  const enriched = applyFinalProductEnrichment(comparison, [fresh], { pagesRequested: 1, pagesFetched: 1, maxPages: 24, gaps: [] });
+
+  assert.deepEqual(enriched.rows[0].primary.priceSignals, []);
+  assert.equal(enriched.rows[0].primary.observedAt, "2026-08-16T00:00:00.000Z");
 });
 
 test("pre-match reconciliation cannot restore a stale range after fresh currency-conflict evidence", () => {

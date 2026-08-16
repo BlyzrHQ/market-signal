@@ -760,7 +760,13 @@ function directMetadataPriceSignals(document: string) {
 function withPositivePrices(product: ProductRecord) {
   const positive = product.priceSignals.filter(isPositivePriceSignal);
   const removedObservedAmount = product.priceSignals.some((signal) => typeof signal.amount === "number" && Number.isFinite(signal.amount) && !isPositivePriceSignal(signal));
-  return { ...product, priceSignals: removedObservedAmount && product.priceSignals.length > 1 ? [] : positive };
+  return {
+    ...product,
+    priceSignals: removedObservedAmount && product.priceSignals.length > 1 ? [] : positive,
+    attributes: removedObservedAmount
+      ? [...new Set([...product.attributes, "Price evidence conflict: observed price is non-positive or invalid"])]
+      : product.attributes,
+  };
 }
 
 function hasConfirmedPrice(products: ProductRecord[]) {

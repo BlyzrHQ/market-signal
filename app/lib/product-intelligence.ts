@@ -756,18 +756,24 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
   });
   let productPathForMetadata = false;
   try { productPathForMetadata = PRODUCT_PATH.test(new URL(input.sourceUrl).pathname); } catch { productPathForMetadata = false; }
+  let productDetailPathForMetadata = false;
+  try { productDetailPathForMetadata = productPathForMetadata && !/\/(?:collections?|catalog)(?:\/|$)/i.test(new URL(input.sourceUrl).pathname); } catch { productDetailPathForMetadata = false; }
   const samePageProducts = products.filter((product) => product.jsonLdType === "Product" && product.sourceUrl === input.sourceUrl);
   const metadataCandidates = exactMetadataCandidates.length
     ? exactMetadataCandidates
     : productPathForMetadata && samePageProducts.length === 1
       ? samePageProducts
       : [];
+  const canBindMetadataCandidate = metadataCandidates.length === 1
+    && (authoritativeMetadata.scope === "product" || productDetailPathForMetadata);
   if (authoritativeMetadata.present) {
+    const oneMetadataIdentity = metadataCandidates.length > 0
+      && new Set(metadataCandidates.map((product) => product.normalizedName)).size === 1;
     const scopedTargets = authoritativeMetadata.scope === "product"
-      ? metadataCandidates.length === 1
+      ? oneMetadataIdentity
         ? metadataCandidates
-        : samePageProducts
-      : metadataCandidates.length === 1
+        : []
+      : canBindMetadataCandidate
         ? metadataCandidates
         : [];
     const samePageProductIds = new Set(scopedTargets.map((product) => product.id));
@@ -797,7 +803,7 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
       };
     });
   }
-  if (metadataCandidates.length === 1) {
+  if (canBindMetadataCandidate) {
     const selectedId = metadataCandidates[0].id;
     const validMetadataSignals = authoritativeMetadata.signals.filter((signal) => typeof signal.amount === "number"
       && Number.isFinite(signal.amount) && signal.amount > 0 && isSupportedCurrency(signal.currency));
@@ -1776,14 +1782,13 @@ export function applyPreMatchCatalogEnrichment(catalog: ProductRecord[], enriche
       continue;
     }
     const secureImage = [fresh.imageUrl, base.imageUrl].find((value) => /^https:\/\//i.test(value));
-    const priceConflict = fresh.attributes.some((attribute) => attribute.startsWith("Price evidence conflict:"));
     merged.push({
       ...base,
       ...fresh,
       id: base.id,
       description: fresh.description || base.description,
       category: fresh.category || base.category,
-      priceSignals: priceConflict ? fresh.priceSignals : fresh.priceSignals.length ? fresh.priceSignals : base.priceSignals,
+      priceSignals: fresh.priceSignals,
       attributes: fresh.attributes.length ? fresh.attributes : base.attributes,
       identifiers: mergeIdentifiers(fresh.identifiers, base.identifiers),
       quantity: fresh.quantity || base.quantity,
@@ -1822,14 +1827,13 @@ export function applyFinalProductEnrichment(
         && sameLiveCatalogIdentity(product, base)));
     if (!fresh || isCatalogReplacementProduct(fresh)) return base;
     const secureImage = [fresh.imageUrl, base.imageUrl].find((value) => /^https:\/\//i.test(value));
-    const priceConflict = fresh.attributes.some((attribute) => attribute.startsWith("Price evidence conflict:"));
     return {
       ...base,
       name: fresh.name,
       normalizedName: fresh.normalizedName,
       description: fresh.description || base.description,
       category: fresh.category || base.category,
-      priceSignals: priceConflict ? fresh.priceSignals : fresh.priceSignals.length ? fresh.priceSignals : base.priceSignals,
+      priceSignals: fresh.priceSignals,
       attributes: fresh.attributes.length ? fresh.attributes : base.attributes,
       identifiers: mergeIdentifiers(fresh.identifiers, base.identifiers),
       quantity: fresh.quantity || base.quantity,
