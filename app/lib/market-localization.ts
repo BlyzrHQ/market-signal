@@ -14,7 +14,7 @@ function normalizedPath(pathname: string) {
  * conflicting locale prefix during an HTTP redirect. Explicit market selectors
  * on the evidence URL are never overridden.
  */
-export function redirectedMarketRetryUrl(requestedUrl: string, fetchedUrl: string, targetCountryCode: string) {
+export function redirectedMarketRetryUrl(requestedUrl: string, fetchedUrl: string, targetCountryCode: string, targetLanguage = "") {
   const country = targetCountryCode.trim().toUpperCase();
   if (!COUNTRY_CODE.test(country)) return "";
 
@@ -35,7 +35,8 @@ export function redirectedMarketRetryUrl(requestedUrl: string, fetchedUrl: strin
   if (!localized || localized[2].toUpperCase() === country) return "";
   if (normalizedPath(localized[3]) !== normalizedPath(requested.pathname)) return "";
 
-  fetched.pathname = `/${localized[1]}-${country.toLowerCase()}${localized[3]}`;
+  const language = /^[a-z]{2,3}$/i.test(targetLanguage.trim()) ? targetLanguage.trim().toLowerCase() : localized[1].toLowerCase();
+  fetched.pathname = `/${language}-${country.toLowerCase()}${localized[3]}`;
   fetched.hash = "";
   return fetched.toString();
 }

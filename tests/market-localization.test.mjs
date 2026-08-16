@@ -14,6 +14,19 @@ test("retries a geo-inserted storefront locale in the primary market", () => {
   );
 });
 
+test("can select a known bilingual storefront language without weakening market guards", () => {
+  assert.equal(
+    redirectedMarketRetryUrl(
+      "https://hana.com.sa/products/golden-sidr-blend-500g",
+      "https://hana.com.sa/ar-de/products/golden-sidr-blend-500g",
+      "SA",
+      "en",
+    ),
+    "https://hana.com.sa/en-sa/products/golden-sidr-blend-500g",
+  );
+  assert.equal(redirectedMarketRetryUrl("https://hana.com.sa/ar-de/products/honey", "https://hana.com.sa/ar-de/products/honey", "SA", "en"), "");
+});
+
 test("does not override explicit, unrelated, or same-market storefront URLs", () => {
   assert.equal(redirectedMarketRetryUrl("https://hana.com.sa/ar-de/products/honey", "https://hana.com.sa/ar-de/products/honey", "SA"), "");
   assert.equal(redirectedMarketRetryUrl("https://hana.com.sa/products/honey?country=DE", "https://hana.com.sa/ar-de/products/honey?country=DE", "SA"), "");

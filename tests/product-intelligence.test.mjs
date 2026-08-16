@@ -1625,12 +1625,14 @@ test("final match enrichment fetches the exact AI-selected pair when secure imag
   const primary = { ...product("tea", "shop.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/lemon-ginger-tea", priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }] };
   const rival = { ...product("rival-tea", "tea.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://tea.test/products/lemon-ginger-tea", priceSignals: [{ raw: "GBP 6", currency: "GBP", amount: 6 }] };
   const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "tea.test", products: [rival] }]);
+  comparison.marketCountryCode = "SA";
   comparison.rows[0].matches[0].assessment = { method: "ai-hybrid", claimType: "Inferred", verdict: "same_product", confidence: 0.94, model: "gpt-5.4-mini", promptVersion: "test", reasons: ["same tea"], contradictions: [], normalizedCategory: "tea", normalizedVariant: "lemon ginger", normalizedSize: "", primarySourceUrl: primary.sourceUrl, rivalSourceUrl: rival.sourceUrl };
   const targets = selectFinalProductEnrichmentTargets(comparison, 24);
   assert.deepEqual(targets.map((target) => [target.role, target.productId, target.expectedName]), [
     ["rival", rival.id, rival.name],
     ["primary", primary.id, primary.name],
   ]);
+  assert.deepEqual(targets.map((target) => target.marketCountryCode), ["SA", "SA"]);
 });
 
 test("accepts exact-page title qualifiers when both expected and fetched identity are anchored to the requested slug", () => {

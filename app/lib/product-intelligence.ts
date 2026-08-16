@@ -207,6 +207,7 @@ export type ProductEnrichmentTarget = {
   expectedType: ProductRecord["jsonLdType"];
   pairScore: number;
   role: "primary" | "rival";
+  marketCountryCode?: string;
   allowCatalogReplacement?: true;
 };
 
@@ -1890,6 +1891,9 @@ export function planPreliminaryCatalogReconciliation(comparison: ProductComparis
 
 export function planFinalProductEnrichmentTargets(comparison: ProductComparison, maxPages = 24) {
   const boundedMax = Math.max(0, Math.min(1_000, Math.floor(maxPages)));
+  const marketCountryCode = /^[A-Z]{2}$/.test(String(comparison.marketCountryCode || "").toUpperCase())
+    ? String(comparison.marketCountryCode).toUpperCase()
+    : "";
   const eligible: ProductEnrichmentTarget[] = [];
   const seenTargets = new Set<string>();
   const deferredPriceTargets = new Set<string>();
@@ -1903,7 +1907,7 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
     if (!sourceUrl || (need === "price" ? !needsPrice : !needsSecureImage) || seenTargets.has(key)) return;
     seenTargets.add(key);
     deferredPriceTargets.delete(key);
-    eligible.push({ domain: product.domain, sourceUrl, productId: product.id, expectedName: product.name, expectedType: product.jsonLdType, pairScore, role });
+    eligible.push({ domain: product.domain, sourceUrl, productId: product.id, expectedName: product.name, expectedType: product.jsonLdType, pairScore, role, ...(marketCountryCode ? { marketCountryCode } : {}) });
   };
 
   // Complete the most viable accepted pairs before spending any capacity on

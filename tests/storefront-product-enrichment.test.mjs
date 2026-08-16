@@ -66,6 +66,11 @@ test("selects every requested same-domain first-party target up to the report ce
   assert.equal(targets.some((item) => item.productId === "p-20" || item.productId === "p-21" || item.productId === "p-22"), false);
 });
 
+test("public enrichment targets preserve only valid report market country codes", () => {
+  assert.equal(publicProductTarget(target({ marketCountryCode: "sa" })).marketCountryCode, "SA");
+  assert.equal(publicProductTarget(target({ marketCountryCode: "Saudi Arabia" })).marketCountryCode, undefined);
+});
+
 test("extracts only the requested product summary price and ignores related products", () => {
   const evidence = extractScopedProductPageEvidence(`
     <main><h1 class="product_title">White Onion</h1>
@@ -713,6 +718,27 @@ test("rejects enrichment when a redirect drops the requested market", async () =
     const result = await enrichProductTargets([target({ expectedName: "Market Jacket", sourceUrl: "https://shop.test/products/market-jacket?country=GB" })], 1);
     assert.equal(result.products.length, 0);
     assert.equal(result.coverage.gaps[0].failureKind, "redirect");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("retries a redirect-injected storefront locale in the report market before final match enrichment", async () => {
+  const originalFetch = globalThis.fetch;
+  const requested = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    requested.push(url);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url === "https://hana.com.sa/products/golden-sidr-blend-500g") return new Response(null, { status: 302, headers: { location: "https://hana.com.sa/ar-de/products/golden-sidr-blend-500g" } });
+    const market = url.includes("/en-sa/") ? { amount: "279.00", currency: "SAR" } : { amount: "68.31", currency: "EUR" };
+    return new Response(`<html><head><title>Golden Sidr Blend 500g</title><meta property="product:sale_price:amount" content="${market.amount}"><meta property="product:sale_price:currency" content="${market.currency}"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Golden Sidr Blend 500g", offers: { price: market.amount, priceCurrency: market.currency } })}</script></head><body><h1>Golden Sidr Blend 500g</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ domain: "hana.com.sa", sourceUrl: "https://hana.com.sa/products/golden-sidr-blend-500g", expectedName: "Golden Sidr Blend 500g", marketCountryCode: "SA", role: "rival" })], 1);
+    assert.equal(requested.some((url) => url.includes("/en-sa/products/golden-sidr-blend-500g")), true);
+    assert.equal(result.products.length, 1);
+    assert.equal(result.products[0].priceSignals.length, 1);
+    assert.deepEqual({ ...result.products[0].priceSignals[0], period: undefined }, { raw: "SAR 279.00", currency: "SAR", amount: 279, period: undefined });
+    assert.match(result.products[0].sourceUrl, /\/en-sa\/products\/golden-sidr-blend-500g$/);
   } finally { globalThis.fetch = originalFetch; }
 });
 
