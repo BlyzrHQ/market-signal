@@ -764,13 +764,20 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
     : productPathForMetadata && samePageProducts.length === 1
       ? samePageProducts
       : [];
-  const canBindMetadataCandidate = metadataCandidates.length === 1 && productDetailPathForMetadata;
+  let pathIdentity = "";
+  try {
+    const segments = new URL(input.sourceUrl).pathname.split("/").filter(Boolean);
+    pathIdentity = normalized(decodeURIComponent(segments.at(-1) || "").replace(/[-_]+/g, " "));
+  } catch { pathIdentity = ""; }
+  const pageBoundMetadataCandidates = metadataCandidates.filter((product) => product.normalizedName === normalized(pageIdentity)
+    || (pathIdentity.length >= 4 && (product.normalizedName.includes(pathIdentity) || pathIdentity.includes(product.normalizedName))));
+  const canBindMetadataCandidate = pageBoundMetadataCandidates.length === 1 && productDetailPathForMetadata;
   if (authoritativeMetadata.present) {
-    const oneMetadataIdentity = metadataCandidates.length > 0
-      && new Set(metadataCandidates.map((product) => product.normalizedName)).size === 1;
+    const oneMetadataIdentity = pageBoundMetadataCandidates.length > 0
+      && new Set(pageBoundMetadataCandidates.map((product) => product.normalizedName)).size === 1;
     const scopedTargets = authoritativeMetadata.scope === "product"
       ? oneMetadataIdentity && productDetailPathForMetadata
-        ? metadataCandidates
+        ? pageBoundMetadataCandidates
         : []
       : canBindMetadataCandidate
         ? metadataCandidates
@@ -803,7 +810,7 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
     });
   }
   if (canBindMetadataCandidate) {
-    const selectedId = metadataCandidates[0].id;
+    const selectedId = pageBoundMetadataCandidates[0].id;
     const validMetadataSignals = authoritativeMetadata.signals.filter((signal) => typeof signal.amount === "number"
       && Number.isFinite(signal.amount) && signal.amount > 0 && isSupportedCurrency(signal.currency));
     const metadataImage = openGraphImage(input.document, input.sourceUrl);
@@ -1066,6 +1073,7 @@ export function selectPreferredProducts(items: ProductRecord[]) {
     }
     const preferred = quality(item) > quality(current) ? item : current;
     const supplemental = preferred === item ? current : item;
+    const priceEvidence = (Date.parse(item.observedAt) || 0) >= (Date.parse(current.observedAt) || 0) ? item : current;
     const preferredSource = canonicalProductSourceKey(preferred);
     const supplementalSource = canonicalProductSourceKey(supplemental);
     const sameSource = preferred.sourceUrl.split("#")[0].replace(/\/$/, "") === supplemental.sourceUrl.split("#")[0].replace(/\/$/, "")
@@ -1079,15 +1087,16 @@ export function selectPreferredProducts(items: ProductRecord[]) {
     selected.set(key, {
       ...preferred,
       description: preferred.description || supplemental.description,
-      priceSignals: preferred.priceSignals.length ? preferred.priceSignals : supplemental.priceSignals,
+      priceSignals: priceEvidence.priceSignals,
       attributes: [...new Set([
-        ...(preferred.attributes.length ? preferred.attributes : supplemental.attributes),
+        ...priceEvidence.attributes,
         ...supplemental.attributes.filter((attribute) => attribute.startsWith(CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX)),
       ])],
       aliases: mergeAliases(preferred, supplemental),
       identifiers: mergeIdentifiers(preferred.identifiers, supplemental.identifiers),
       quantity: preferred.quantity || supplemental.quantity,
       imageUrl: secureImage || preferred.imageUrl || supplemental.imageUrl,
+      observedAt: priceEvidence.observedAt,
       claimIds: [...new Set([...preferred.claimIds, ...supplemental.claimIds])],
     });
   }

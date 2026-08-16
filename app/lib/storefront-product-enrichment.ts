@@ -631,11 +631,21 @@ function pageExtraction(document: string, sourceUrl: string, domain: string) {
   return { pageTitle, result: extractProductsFromHtml({ document, sourceUrl, domain, observedAt: new Date().toISOString(), pageTitle, pageDescription, headings, pagePriceSignals }) };
 }
 
-function rejectContradictoryPageCurrencies(document: string, products: ProductRecord[]) {
+function rejectContradictoryPageCurrencies(document: string, products: ProductRecord[], sourceUrl: string, expected: ProductRecord, pageTitle: string) {
+  let detailPage = false;
+  try {
+    const path = new URL(sourceUrl).pathname;
+    detailPage = /\/(?:products?|shop|store)\//i.test(path) && !/\/(?:collections?|catalog)(?:\/|$)/i.test(path);
+  } catch { detailPage = false; }
+  if (!detailPage) return products;
+  const identity = validateProductPageIdentity([expected], products, pageTitle, { allowScopedPageSignal: true });
+  if (!identity.accepted || identity.products.length !== 1) return products;
+  const selectedId = identity.products[0].id;
   const directConflict = hasConflictingDirectProductCurrency(document);
   const directCurrency = confirmedProductCurrency(document, { allowStructured: false });
   if (!directConflict && !directCurrency) return products;
   return products.map((product) => {
+    if (product.id !== selectedId) return product;
     const supported = product.priceSignals.filter((signal) => isSupportedCurrency(signal.currency));
     const contradiction = directConflict
       ? supported.length > 0
@@ -717,6 +727,9 @@ function observedCatalogReplacement(item: ProductEnrichmentTarget, products: Pro
       || Number(/^https:\/\//i.test(right.imageUrl)) - Number(/^https:\/\//i.test(left.imageUrl))
       || left.name.localeCompare(right.name))[0];
   if (!product) return null;
+  const richestPriceEvidence = [...groups[0]].filter((candidate) => candidate.priceSignals.length > 0)
+    .sort((left, right) => right.priceSignals.length - left.priceSignals.length
+      || Number(right.extraction === "json-ld") - Number(left.extraction === "json-ld"))[0];
   const observedAt = product.observedAt || new Date().toISOString();
   const audit = catalogReplacementAuditAttribute(item.expectedName, item.sourceUrl);
   return {
@@ -724,6 +737,7 @@ function observedCatalogReplacement(item: ProductEnrichmentTarget, products: Pro
     id: item.productId,
     domain: canonicalDomain(item.domain),
     normalizedName: bilingualNormalize(product.name),
+    priceSignals: richestPriceEvidence?.priceSignals || product.priceSignals,
     attributes: [...new Set([...product.attributes.filter((attribute) => !attribute.startsWith(CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX)), audit])],
     sourceUrl: item.sourceUrl,
     observedAt,
@@ -880,7 +894,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       const extracted = pageExtraction(fetched.text, fetched.url, item.domain);
       const expected = expectedProduct(item);
       addScopedProductPageEvidence(fetched.text, fetched.url, expected, extracted.result.products, extracted.pageTitle);
-      extracted.result.products = rejectContradictoryPageCurrencies(fetched.text, extracted.result.products);
+      extracted.result.products = rejectContradictoryPageCurrencies(fetched.text, extracted.result.products, fetched.url, expected, extracted.pageTitle);
       const canonicalCrossLanguageOptions = { allowCanonicalCrossLanguageIdentity: canonicalSelectedPage(item.sourceUrl) === canonicalSelectedPage(fetched.url) };
       const rawInitialIdentity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle, { allowScopedPageSignal: true, ...canonicalCrossLanguageOptions });
       const rawMatchedProduct = rawInitialIdentity.products[0];

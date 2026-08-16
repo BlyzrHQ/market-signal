@@ -1488,6 +1488,42 @@ test("catalog drift stays rejected unless the pre-match caller explicitly permit
   }
 });
 
+test("collection-level product metadata cannot erase valid sibling JSON-LD prices", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response(`<html><head><title>Workwear</title><meta property="product:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify([
+      { "@type": "Product", name: "Jacket A", offers: { price: "10", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Jacket B", offers: { price: "20", priceCurrency: "USD" } },
+    ])}</script></head><body><h1>Workwear</h1><h2>Jacket A</h2><h2>Jacket B</h2></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Jacket A", sourceUrl: "https://shop.test/shop/collections/workwear" })], 1);
+    assert.equal(result.products.length, 1);
+    assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 10 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("catalog replacement preserves a canonical range when an adapter exposes one endpoint", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({ title: "New Work Jacket", handle: "old-work-jacket", variants: [{ title: "Default Title", price: 1000 }] });
+    return new Response(`<html><head><title>New Work Jacket</title><meta property="product:price:amount" content="10"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "New Work Jacket", offers: { lowPrice: 10, highPrice: 20, priceCurrency: "USD" } })}</script></head><body><h1>New Work Jacket</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Old Work Jacket", sourceUrl: "https://shop.test/products/old-work-jacket", allowCatalogReplacement: true })], 1);
+    assert.equal(result.products.length, 1);
+    assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 10 }, { currency: "USD", amount: 20 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("catalog replacement rejects ambiguous structured identities and page-signal-only evidence", async () => {
   const originalFetch = globalThis.fetch;
   let mode = "ambiguous";

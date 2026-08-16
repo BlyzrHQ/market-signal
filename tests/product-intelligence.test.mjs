@@ -366,6 +366,18 @@ test("a direct metadata range enriches a matching structured endpoint", () => {
   assert.deepEqual(result.products[0].priceSignals.map((signal) => signal.amount), [10, 20]);
 });
 
+test("product-page metadata cannot bind to a related-product heading", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="999"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Related Jacket" })}</script>`,
+    sourceUrl: "https://acme.com/products/main-jacket",
+    pageTitle: "Main Jacket",
+    headings: ["Main Jacket", "Related Jacket"],
+  });
+  assert.equal(result.products.length, 1);
+  assert.equal(result.products[0].name, "Related Jacket");
+  assert.deepEqual(result.products[0].priceSignals, []);
+});
+
 test("product-scoped direct metadata conflict suppresses price until visible evidence corroborates it", () => {
   const result = extraction({
     document: `<head><title>Custom Embroidered Columbia Jackets No Minimum – Arklavo</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="GBP"></head><script type="application/ld+json">${JSON.stringify({
@@ -654,6 +666,28 @@ test("catalog deduplication never transfers a sibling price across one shared UR
   assert.equal(selected.length, 2);
   assert.deepEqual(selected.find((item) => item.id === "jacket-a").priceSignals, []);
   assert.deepEqual(selected.find((item) => item.id === "jacket-b").priceSignals.map((signal) => signal.amount), [20]);
+});
+
+test("catalog deduplication lets the newest observation clear a stale price", () => {
+  const sourceUrl = "https://wearform.test/products/custom-jacket";
+  const stale = { ...product("stale", "wearform.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl, priceSignals: [{ raw: "USD 90", currency: "USD", amount: 90 }], observedAt: "2026-08-01T00:00:00.000Z" };
+  const fresh = { ...stale, id: "fresh", priceSignals: [], observedAt: "2026-08-16T00:00:00.000Z", claimIds: ["fresh-observed"] };
+  const selected = selectPreferredProducts([stale, fresh]);
+  assert.equal(selected.length, 1);
+  assert.deepEqual(selected[0].priceSignals, []);
+  assert.equal(selected[0].observedAt, fresh.observedAt);
+});
+
+test("catalog deduplication preserves a fresh price conflict instead of reviving stale evidence", () => {
+  const sourceUrl = "https://wearform.test/products/custom-jacket";
+  const stale = { ...product("stale", "wearform.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl, priceSignals: [{ raw: "USD 90", currency: "USD", amount: 90 }], observedAt: "2026-08-01T00:00:00.000Z" };
+  const conflict = "Price evidence conflict: contradictory direct metadata namespace";
+  const fresh = { ...stale, id: "fresh", priceSignals: [], attributes: [conflict], observedAt: "2026-08-16T00:00:00.000Z", claimIds: ["fresh-observed"] };
+  const selected = selectPreferredProducts([fresh, stale]);
+  assert.equal(selected.length, 1);
+  assert.deepEqual(selected[0].priceSignals, []);
+  assert.ok(selected[0].attributes.includes(conflict));
+  assert.equal(selected[0].observedAt, fresh.observedAt);
 });
 
 test("catalog deduplication collapses locale variants of the same product URL", () => {
