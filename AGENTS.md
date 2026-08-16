@@ -40,12 +40,13 @@ These rules govern work in this repository.
 - Treat access failures, missing pages, and coverage gaps as user-visible data-quality states.
 - Never commit API keys, cookies, tokens, or source repository credentials.
 
-## Sites deployment
+## Production deployment
 
-- Keep `.openai/hosting.json` in sync with the Sites project identity; do not store runtime secrets there.
-- Build the exact validated source, push that commit to the Sites source repository, package it, save a version, and deploy privately.
-- Verify deployment status and report the live private URL.
-- If live source behavior changes, redeploy and verify the deployed endpoint, not only the local preview.
+- The supported production architecture is Trigger.dev plus the VPS at `signal.blyzr.com`; do not add an OpenAI Sites dependency or fallback.
+- Deploy Trigger tasks before the web application whenever their shared contract changes.
+- Build and publish the exact independently approved `master` revision, deploy its immutable image by digest through the pinned VPS workflow, and retain the previous healthy image for rollback.
+- Verify TLS, container health, the deployed revision, and at least one real public-domain report when live source behavior changes.
+- Store runtime secrets only in the approved GitHub Environment, Trigger environment, and protected VPS environment file. Never put secrets in tracked hosting configuration.
 
 ## Communication
 

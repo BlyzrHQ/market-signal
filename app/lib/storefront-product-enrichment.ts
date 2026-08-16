@@ -27,7 +27,6 @@ export type ProductEnrichmentCoverage = {
   pagesFetched: number;
   maxPages: number;
   gaps: EnrichmentGap[];
-  edgeRecovery?: { recovered: number; requested: number; provider: string; observedAt: string };
 };
 
 function text(value: unknown, limit: number) {

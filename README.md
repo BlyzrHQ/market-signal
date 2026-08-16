@@ -1,145 +1,95 @@
 # Market Signal
 
-Market Signal turns one domain into an evidence-backed competitive-intelligence
-report: verified competitors, product-by-product comparison, market positioning,
-and truthful public-ad coverage states.
+Market Signal turns one public domain into an evidence-backed competitive
+intelligence report: verified competitors, product comparisons, market
+positioning, and explicit data-quality limits.
+
+The project is open source. The hosted service runs the web application on a
+VPS and uses Trigger.dev for durable background jobs. There is no OpenAI Sites
+runtime or fallback.
+
+## Run locally
+
+Requirements:
+
+- Node.js 22.13 or newer
+- Go 1.22 or newer for the optional CLI
+
+```bash
+npm install
+cp .env.example .env.local
+npm run dev
+```
+
+For durable local reports, set `MARKET_SIGNAL_SQLITE_PATH` to a writable SQLite
+file and configure the server-only values documented in `.env.example`.
+Provider keys are optional for UI development, but live competitor discovery,
+matching, and report orchestration require their corresponding server-side
+credentials.
+
+## Validate a contribution
+
+```bash
+npm test
+npm run lint
+go -C cli test ./...
+go -C cli vet ./...
+```
+
+`npm test` runs TypeScript checks, the production Node build, and the complete
+Node test suite. Never commit API keys, cookies, tokens, private report data, or
+deployment environment files.
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Current
+engineering tasks live under `docs/tasks/`; completed task files are historical
+release evidence and may describe retired architecture.
 
 ## Go CLI
 
-The Go CLI is a contract-validating client for the Market Signal API. It does
-not crawl websites locally; report collection and matching run on the service
-selected by `--base-url`.
-
-You need Go 1.22 or newer. These safe commands do not contact the API:
+The CLI validates and calls a selected Market Signal HTTP service; it does not
+scrape websites locally.
 
 ```bash
-go version
 go -C cli run ./cmd/marketsignal --help
 go -C cli run ./cmd/marketsignal version
+go -C cli run ./cmd/marketsignal report example.com --base-url http://localhost:3000
 ```
 
-To run a report locally, start the API in one terminal:
+Replace `example.com` with any valid public company domain. The hosted service
+does not expose general-purpose API tokens yet, so use the CLI only against a
+local or explicitly controlled deployment. See [docs/CLI.md](docs/CLI.md) for
+all commands, flags, output formats, exit codes, and troubleshooting.
 
-```bash
-npm install
-npm run dev
+## Architecture
+
+```text
+Browser / CLI
+  -> Node web application on the VPS
+       -> SQLite report and account database
+       -> bounded public-source crawler and official storefront adapters
+       -> Trigger.dev durable jobs
+            -> OpenAI discovery, matching, and evaluation calls
+            -> authenticated callbacks to the VPS
 ```
 
-Then use a second terminal:
+Public-source facts, AI inferences, estimates, and recommendations remain
+separate in saved reports. Missing prices, inaccessible pages, and unsupported
+comparisons are shown as coverage limits rather than fabricated values.
 
-```bash
-go -C cli run ./cmd/marketsignal report example.com
-```
+See [docs/LAUNCH.md](docs/LAUNCH.md) for the production topology, configuration,
+release sequence, backups, and launch gates. VPS provisioning and rollback are
+documented in [deploy/vps/README.md](deploy/vps/README.md).
 
-Replace `example.com` with any valid public company domain. `go -C cli run`
-downloads dependencies, builds a temporary CLI binary, and runs it from the
-`cli/` directory; prior Go experience is not required.
+## Useful commands
 
-The report-producing commands can consume the AI/provider resources configured
-on the selected service. The production deployment does not yet expose scoped
-headless tokens or per-customer quotas, so do not distribute the CLI against it.
-Use a local or explicitly controlled deployment.
+- `npm run dev` — start local development
+- `npm run build` — build the Node application
+- `npm run build:vps` — build and assert VPS packaging boundaries
+- `npm test` — typecheck, build, and run tests
+- `npm run lint` — run ESLint
+- `npm run trigger:deploy` — deploy Trigger tasks from an authenticated operator environment
+- `npm run backup:vps` / `npm run verify-backup:vps` — create and verify SQLite backups
 
-Read the [complete CLI guide](docs/CLI.md) for every command, global flags,
-table and JSON output, exit codes, environment configuration, binary builds,
-troubleshooting, and contribution checks. For architecture and deployment, see
-the [launch and operations runbook](docs/LAUNCH.md).
+## License
 
-## Web application
-
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
-
-## Prerequisites
-
-- Node.js `>=22.13.0`
-
-## Quick Start
-
-```bash
-npm install
-npm run dev
-npm run build
-```
-
-This starter does not use `wrangler.jsonc`.
-
-## Included Shape
-
-- edit site code under `app/`
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
-
-## Workspace Auth Headers
-
-OpenAI workspace sites can read the current user's email from
-`oai-authenticated-user-email`.
-
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
-```
-
-## Optional Dispatch-Owned ChatGPT Sign-In
-
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
-
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
-
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
-
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
-
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
-
-## Useful Commands
-
-- `npm run dev`: start local development
-- `npm run build`: verify the vinext build output
-- `npm test`: build the starter and verify its rendered loading skeleton
-- `npm run db:generate`: generate Drizzle migrations after schema changes
-
-## Learn More
-
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+See [LICENSE](LICENSE).

@@ -101,9 +101,10 @@ Never rebuild an old tag from a different checkout. Database schema changes
 require a compatibility check before code rollback; restore a verified
 pre-release backup only when the migration is not backward compatible.
 
-Keep the existing Sites deployment live until the VPS passes TLS, capability,
-Trigger callback, real crawl, persistence, restart, and backup/restore checks.
-DNS cutover and Trigger production-origin changes are separate release tasks.
+The VPS is the only supported web runtime. Verify TLS, capability, Trigger
+callback, a real crawl, persistence, restart, and backup/restore behavior before
+promoting a release. DNS and Trigger production-origin changes remain separate
+release tasks.
 
 ## 7. GitHub Actions handoff
 

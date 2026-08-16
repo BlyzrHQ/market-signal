@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { reduceCompetitorForPanel, usefulnessBreakdown } from "./live-panel-utils.mjs";
 import { assertContract } from "./contract-validation.mjs";
 
-const siteUrl = (process.env.MARKET_SIGNAL_SITE_URL || "https://market-signal.abdulla617931.chatgpt.site").replace(/\/$/, "");
+const siteUrl = (process.env.MARKET_SIGNAL_SITE_URL || "https://signal.blyzr.com").replace(/\/$/, "");
 const authorization = process.env.MARKET_SIGNAL_SITES_AUTH;
 const callbackToken = process.env.MARKET_SIGNAL_CALLBACK_TOKEN;
 const sitesVersion = Number(process.env.MARKET_SIGNAL_SITES_VERSION || 38);

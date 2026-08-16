@@ -20,18 +20,11 @@ async function nodeDatabase(path: string) {
 
 export async function runtimeDatabaseResult(): Promise<{
   database: ApplicationDatabase | null;
-  diagnosticCode: "database-import-failed" | "database-binding-missing" | "";
+  diagnosticCode: "database-path-missing" | "";
 }> {
   const path = sqlitePath();
   if (path) return { database: await nodeDatabase(path), diagnosticCode: "" };
-
-  try {
-    const workers = await import("cloudflare:workers");
-    const database = (workers.env as unknown as { DB?: ApplicationDatabase }).DB || null;
-    return { database, diagnosticCode: database ? "" : "database-binding-missing" };
-  } catch {
-    return { database: null, diagnosticCode: "database-import-failed" };
-  }
+  return { database: null, diagnosticCode: "database-path-missing" };
 }
 
 export async function runtimeDatabase() {

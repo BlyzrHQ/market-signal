@@ -227,8 +227,7 @@ export type ReportMatchBatchCheckpointInput = {
 export type ReportCreateDiagnostic =
   | "invalid-domain"
   | "storage-unavailable"
-  | "database-import-failed"
-  | "database-binding-missing"
+  | "database-path-missing"
   | `schema-statement-${number}-failed`
   | `run-create-batch-${"schema-mismatch" | "constraint" | "binding-count" | "transaction" | "batch-api"}`
   | "run-create-unclassified";
@@ -254,7 +253,7 @@ const STATUSES = new Set<ReportRunStatus>(["queued", "running", "complete", "lim
 const TERMINAL_REPORT_STATUSES = new Set<ReportRunStatus>(["complete", "limited", "failed", "interrupted"]);
 const schemaInitialization = new WeakMap<object, Promise<void>>();
 const emittedStorageDiagnostics = new Set<string>();
-const REPORT_STORAGE_DIAGNOSTIC = /^(?:database-(?:import-failed|binding-missing)|schema-statement-[1-9]\d?-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api))$/;
+const REPORT_STORAGE_DIAGNOSTIC = /^(?:database-(?:import-failed|path-missing)|schema-statement-[1-9]\d?-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api))$/;
 
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS report_runs (id text PRIMARY KEY NOT NULL, public_id text NOT NULL, primary_domain text NOT NULL, locale text DEFAULT 'en' NOT NULL, workspace_id text DEFAULT '' NOT NULL, billing_reservation_id text DEFAULT '' NOT NULL, status text NOT NULL, current_phase text NOT NULL, attempt_count integer DEFAULT 1 NOT NULL, created_at text NOT NULL, updated_at text NOT NULL, heartbeat_at text NOT NULL, expires_at text NOT NULL, error_code text DEFAULT '' NOT NULL, error_message text DEFAULT '' NOT NULL)`,

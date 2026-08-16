@@ -14,10 +14,6 @@ import {
   ensureAccountSchema,
   ensurePersonalWorkspace,
 } from "../app/lib/account-auth.ts";
-import {
-  chatGPTUserFromHeaders,
-  mayTrustChatGPTIdentityHeaders,
-} from "../app/lib/chatgpt-identity.ts";
 import { accountUsers } from "../db/schema.ts";
 
 async function fixture() {
@@ -194,19 +190,7 @@ test("email signup creates a user, password account, session, and personal works
   }
 });
 
-test("VPS requests cannot authenticate through user-supplied ChatGPT headers", async () => {
-  const headers = new Headers({
-    "oai-authenticated-user-email": "forged@example.test",
-    "oai-authenticated-user-full-name": "Forged%20User",
-    "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8",
-  });
-  assert.equal(mayTrustChatGPTIdentityHeaders({ MARKET_SIGNAL_DEPLOY_TARGET: "node", MARKET_SIGNAL_TRUST_CHATGPT_AUTH_HEADERS: "true" }), false);
-  assert.equal(chatGPTUserFromHeaders(headers, { MARKET_SIGNAL_DEPLOY_TARGET: "node", MARKET_SIGNAL_TRUST_CHATGPT_AUTH_HEADERS: "true" }), null);
-  for (const target of [undefined, "site", "cloudflare", "future-target"]) {
-    assert.equal(mayTrustChatGPTIdentityHeaders({ MARKET_SIGNAL_DEPLOY_TARGET: target, MARKET_SIGNAL_TRUST_CHATGPT_AUTH_HEADERS: "true" }), false);
-  }
-  assert.equal(mayTrustChatGPTIdentityHeaders({ MARKET_SIGNAL_DEPLOY_TARGET: "sites", MARKET_SIGNAL_TRUST_CHATGPT_AUTH_HEADERS: "true" }), true);
-
+test("VPS strips obsolete platform identity headers at the proxy boundary", async () => {
   const caddy = await readFile(new URL("../deploy/vps/Caddyfile", import.meta.url), "utf8");
   for (const header of [
     "oai-authenticated-user-email",
