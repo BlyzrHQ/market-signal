@@ -74,6 +74,23 @@ function jsonRpcResource(payload: unknown) {
   return typeof content?.text === "string" ? parseJson(content.text) : null;
 }
 
+function isVerifiedSallaCard(payload: unknown) {
+  const card = record(payload);
+  const transport = record(card?.transport);
+  const serverInfo = record(card?.serverInfo);
+  const identity = `${boundedText(serverInfo?.name, 100)} ${boundedText(serverInfo?.title, 100)} ${boundedText(card?.description, 300)}`;
+  return /\bsalla\b/i.test(identity) && transport?.type === "streamable-http" && transport.endpoint === "/mcp";
+}
+
+function isVerifiedSallaInitialize(payload: unknown) {
+  const root = record(payload);
+  if (root?.jsonrpc !== "2.0" || root.id !== "initialize" || root.error) return false;
+  const result = record(root.result);
+  const serverInfo = record(result?.serverInfo);
+  const identity = `${boundedText(serverInfo?.name, 100)} ${boundedText(serverInfo?.title, 100)} ${boundedText(serverInfo?.description, 500)} ${boundedText(result?.instructions, 1_000)}`;
+  return result?.protocolVersion === MCP_PROTOCOL_VERSION && /\bsalla\b/i.test(identity);
+}
+
 export function isSallaCatalogRecoveryEligible(primary: {
   homepage?: unknown;
   homepageAccessDenied?: { status: number; hosts: string[] };
@@ -152,21 +169,35 @@ export async function recoverSallaStorefrontCatalog(
   const maxProducts = Math.max(1, Math.min(1_000, Math.floor(options.maxProducts)));
   const fetchText = options.fetchText || fetchPublicText;
   const observedAt = (options.now || (() => new Date()))().toISOString();
-  const sourceUrl = `https://${domain}/.well-known/mcp/server-card.json`;
-  const cardResponse = await fetchText(sourceUrl, "application/json", {
+  const cardUrl = `https://${domain}/.well-known/mcp/server-card.json`;
+  let sourceUrl = cardUrl;
+  let requests = 1;
+  const cardResponse = await fetchText(cardUrl, "application/json", {
     expectedDomain: domain,
     timeoutMs: REQUEST_TIMEOUT_MS,
     maxDocumentBytes: 64_000,
     userAgent: USER_AGENT,
   });
-  if (!cardResponse.ok || !/^application\/json\b/i.test(cardResponse.contentType) || cardResponse.truncated) return null;
-  const card = record(parseJson(cardResponse.text));
-  const transport = record(card?.transport);
-  const serverInfo = record(card?.serverInfo);
-  const identity = `${boundedText(serverInfo?.name, 100)} ${boundedText(serverInfo?.title, 100)} ${boundedText(card?.description, 300)}`;
-  if (!/\bsalla\b/i.test(identity) || transport?.type !== "streamable-http" || transport.endpoint !== "/mcp") return null;
+  const cardVerified = cardResponse.ok
+    && /^application\/json\b/i.test(cardResponse.contentType)
+    && !cardResponse.truncated
+    && isVerifiedSallaCard(parseJson(cardResponse.text));
+  if (!cardVerified) {
+    const initializePayload = await publicJsonRpc(fetchText, domain, {
+      jsonrpc: "2.0",
+      id: "initialize",
+      method: "initialize",
+      params: {
+        protocolVersion: MCP_PROTOCOL_VERSION,
+        capabilities: {},
+        clientInfo: { name: "Market Signal", version: "0.1" },
+      },
+    });
+    requests += 1;
+    if (!isVerifiedSallaInitialize(initializePayload)) return null;
+    sourceUrl = `https://${domain}/mcp`;
+  }
 
-  let requests = 1;
   const infoPayload = await publicJsonRpc(fetchText, domain, { jsonrpc: "2.0", id: "store-info", method: "resources/read", params: { uri: "store://info" } });
   requests += 1;
   const info = record(jsonRpcResource(infoPayload));
