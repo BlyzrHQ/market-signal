@@ -1,4 +1,6 @@
-import { hasValidObservedRivalPrice, type ProductComparison } from "./product-intelligence.ts";
+import { hasValidObservedRivalPrice, isSupportedCurrency, publicSourceMarketCountryCode, publicSourceMarketEvidence, type ProductComparison, type ProductMatch, type ProductRecord } from "./product-intelligence.ts";
+import { canonicalDomain } from "./domain.ts";
+import { publicHttpUrl } from "./public-url.ts";
 
 export type ProductMatchLifecycle = "idle" | "matching" | "retrying" | "complete" | "limited";
 
@@ -118,13 +120,85 @@ export function upsertProductComparisonBlock<T extends ReportDocument>(document:
 }
 
 export function publishPricedProductComparison(comparison: ProductComparison): ProductComparison {
+  const now = Date.now();
+  const maxObservationAgeMs = 366 * 24 * 60 * 60 * 1000;
+  const maxFutureSkewMs = 5 * 60 * 1000;
   let suppressedAcceptedPairs = 0;
+  const reasons: Record<string, number> = {};
+  const observedCurrencies = (product: ProductRecord) => new Set(product.priceSignals
+    .filter((signal) => typeof signal.amount === "number" && Number.isFinite(signal.amount) && signal.amount > 0 && Boolean(String(signal.raw || "").trim()) && isSupportedCurrency(signal.currency))
+    .map((signal) => String(signal.currency).trim().toUpperCase()));
+  const targetMarket = /^[A-Z]{2}$/.test(String(comparison.marketCountryCode || "").toUpperCase())
+    ? String(comparison.marketCountryCode).toUpperCase()
+    : "";
+  const marketCompatible = (primary: ProductRecord, rival: ProductRecord) => {
+    const primaryEvidence = publicSourceMarketEvidence(primary.sourceUrl);
+    const rivalEvidence = publicSourceMarketEvidence(rival.sourceUrl);
+    if (primaryEvidence.conflict || rivalEvidence.conflict) return false;
+    if ((primaryEvidence.explicit && !primaryEvidence.countryCode) || (rivalEvidence.explicit && !rivalEvidence.countryCode)) return false;
+    const primaryMarket = publicSourceMarketCountryCode(primary.sourceUrl);
+    const rivalMarket = publicSourceMarketCountryCode(rival.sourceUrl);
+    if (targetMarket && ((primaryMarket && primaryMarket !== targetMarket) || (rivalMarket && rivalMarket !== targetMarket))) return false;
+    return !(primaryMarket && rivalMarket && primaryMarket !== rivalMarket);
+  };
+  const validPublicSource = (product: ProductRecord) => {
+    try {
+      const url = new URL(publicHttpUrl(product.sourceUrl, false));
+      return canonicalDomain(url.hostname) === canonicalDomain(product.domain);
+    } catch { return false; }
+  };
+  const validObservedAt = (value: string) => {
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false;
+    const parsed = Date.parse(value);
+    if (!Number.isFinite(parsed) || new Date(parsed).toISOString() !== value) return false;
+    const age = now - parsed;
+    return age >= -maxFutureSkewMs && age <= maxObservationAgeMs;
+  };
+  const completeObservedPrice = (product: ProductRecord) => product.priceSignals.length > 0
+    && product.priceSignals.every((signal) => typeof signal.amount === "number"
+      && Number.isFinite(signal.amount)
+      && signal.amount > 0
+      && Boolean(String(signal.raw || "").trim())
+      && isSupportedCurrency(signal.currency))
+    && hasValidObservedRivalPrice(product)
+    && validPublicSource(product)
+    && validObservedAt(product.observedAt);
+  const suppress = (reason: string) => {
+    suppressedAcceptedPairs += 1;
+    reasons[reason] = (reasons[reason] || 0) + 1;
+  };
   const rows = comparison.rows.map((row) => ({
     ...row,
     matches: row.matches.map((match) => {
-      if (!match.product || hasValidObservedRivalPrice(match.product)) return match;
-      suppressedAcceptedPairs += 1;
-      return { ...match, product: null, score: 0, confidence: null, sharedTerms: [], claimIds: row.primary.claimIds, decision: null, assessment: undefined };
+      if (!match.product) return match;
+      if (match.confidence !== "Medium") suppress("insufficient-match-confidence");
+      else if (!completeObservedPrice(row.primary)) suppress("missing-valid-primary-price");
+      else if (!completeObservedPrice(match.product)) suppress("missing-valid-rival-price");
+      else if (!marketCompatible(row.primary, match.product)) suppress("incompatible-market");
+      else {
+        const primaryCurrencies = observedCurrencies(row.primary);
+        const rivalCurrencies = observedCurrencies(match.product);
+        if (primaryCurrencies.size === 1 && rivalCurrencies.size === 1 && [...primaryCurrencies][0] === [...rivalCurrencies][0]) {
+          return { ...match, publication: { priceEligible: true } };
+        }
+        suppress("incompatible-price-currency");
+      }
+      const reason: NonNullable<ProductMatch["publication"]>["reason"] = match.confidence !== "Medium"
+        ? "insufficient-match-confidence"
+        : !completeObservedPrice(row.primary)
+          ? "missing-valid-primary-price"
+          : !completeObservedPrice(match.product)
+            ? "missing-valid-rival-price"
+            : !marketCompatible(row.primary, match.product)
+              ? "incompatible-market"
+            : "incompatible-price-currency";
+      return {
+        ...match,
+        excludedProduct: match.product,
+        product: null,
+        decision: null,
+        publication: { priceEligible: false, reason },
+      };
     }),
   }));
   const assignedPairCount = rows.reduce((sum, row) => sum + row.matches.filter((match) => match.product).length, 0);
@@ -135,7 +209,7 @@ export function publishPricedProductComparison(comparison: ProductComparison): P
     coverage: { ...comparison.coverage, assignedPairCount, verifiedPairCount },
     matching: comparison.matching ? {
       ...comparison.matching,
-      publication: { suppressedAcceptedPairs, reasons: { "missing-valid-rival-price": suppressedAcceptedPairs } },
+      publication: { suppressedAcceptedPairs, reasons },
     } : comparison.matching,
   };
 }

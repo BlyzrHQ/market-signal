@@ -729,7 +729,11 @@ test("action planning runs after final enrichment and persists source-labelled p
 
 test("AI action transport failure retains deterministic moves without limiting the report", async () => {
   const port = mockPort({
-    async match() { return { ok: true, comparison: comparison({ withPair: true }) }; },
+    async match() {
+      const priced = comparison({ withPair: true });
+      priced.rows[0].primary.priceSignals = [{ raw: "GBP 9", currency: "GBP", amount: 9 }];
+      return { ok: true, comparison: priced };
+    },
     async enrich({ targets }) { return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: 64, gaps: [] } }; },
     async actions() { throw new Error("action provider timeout"); },
   });

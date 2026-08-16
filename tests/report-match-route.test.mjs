@@ -9,6 +9,7 @@ const page = {
   manifestHash: "manifest-1",
   totalCount: 232,
   directPriceCount: 80,
+  domainCounts: { "rival.example": 232 },
   items: [{ primary: {}, rival: {}, match: {}, key: "match-1" }],
   nextCursor: "rival.example~" + "b".repeat(64),
 };

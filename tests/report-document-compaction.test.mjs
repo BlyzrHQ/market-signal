@@ -52,6 +52,17 @@ test("compaction preserves raw-only public prices and prioritizes accepted sourc
   assert.equal(blocks.find((block) => block.type === "presentation-compaction").relationalFactsAuthoritative, false);
 });
 
+test("compaction preserves excluded semantic products and their price-publication reason", () => {
+  const primary = { id: "p-1", domain: "shop.test", name: "Primary", sourceUrl: "https://shop.test/p-1", priceSignals: [{ raw: "USD 10", currency: "USD", amount: 10 }] };
+  const rival = { id: "r-1", domain: "rival.test", name: "Rival", sourceUrl: "https://rival.test/r-1", priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }] };
+  const compacted = compactTerminalReportDocument({ document: { blocks: [{ type: "product-comparison", id: "comparison", rows: [{ primary, matches: [{ domain: "rival.test", product: null, excludedProduct: rival, publication: { priceEligible: false, reason: "incompatible-price-currency" } }] }], unmatched: [] }] } });
+  const match = compacted.document.blocks.find((block) => block.id === "comparison").rows[0].matches[0];
+
+  assert.equal(match.product, null);
+  assert.equal(match.excludedProduct.id, "r-1");
+  assert.deepEqual(match.publication, { priceEligible: false, reason: "incompatible-price-currency" });
+});
+
 test("explicit de-authoritization clears stale counts and ad truncation remains visible", () => {
   const concepts = Array.from({ length: 10 }, (_, index) => ({ id: `ad-${index}`, headline: `Creative ${index}` }));
   const platforms = Array.from({ length: 5 }, (_, index) => ({ platform: `Platform ${index}`, creativeConcepts: concepts }));

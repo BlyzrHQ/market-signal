@@ -1,4 +1,4 @@
-import type { ProductComparison, ProductRecord } from "../../app/lib/product-intelligence.ts";
+import { isSupportedCurrency, type ProductComparison, type ProductRecord } from "../../app/lib/product-intelligence.ts";
 import type { ReportFactChunkInput, ReportFactKind, ReportFactManifestInput } from "../../app/lib/report-store.ts";
 import { canonicalDomain } from "../../app/lib/domain.ts";
 import { publicHttpUrl } from "../../app/lib/public-url.ts";
@@ -119,6 +119,7 @@ function productMetadata(value: unknown, productDomain: string) {
 function matchEvidence(value: unknown) {
   const source = record(value);
   const decision = record(source.decision);
+  const publication = record(source.publication);
   const priceComparison = record(decision.priceComparison);
   const actionPlan = record(decision.actionPlan);
   return bounded({
@@ -132,6 +133,7 @@ function matchEvidence(value: unknown) {
     normalizedCategory: text(source.normalizedCategory, 240),
     normalizedVariant: text(source.normalizedVariant, 240),
     normalizedSize: text(source.normalizedSize, 120),
+    publication: { priceEligible: publication.priceEligible === true, reason: text(publication.reason, 80) },
     decision: {
       priceVerdict: text(decision.priceVerdict, 1_000),
       whyTheyMayWin: text(decision.whyTheyMayWin, 1_000),
@@ -229,6 +231,18 @@ function companyFacts(results: CrawlFactResult[], comparison: ProductComparison 
 }
 
 function productFact(product: ProductRecord, fallbackObservedAt: string) {
+  const parsedObservedAt = Date.parse(product.observedAt);
+  const age = Date.now() - parsedObservedAt;
+  const priceObservationIsFresh = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(product.observedAt)
+    && Number.isFinite(parsedObservedAt)
+    && new Date(parsedObservedAt).toISOString() === product.observedAt
+    && age >= -(5 * 60 * 1000)
+    && age <= 366 * 24 * 60 * 60 * 1000;
+  const pricesAreValid = product.priceSignals.every((price) => typeof price.amount === "number"
+    && Number.isFinite(price.amount)
+    && price.amount > 0
+    && Boolean(String(price.raw || "").trim())
+    && isSupportedCurrency(price.currency));
   return {
     domain: product.domain,
     productId: product.id,
@@ -236,7 +250,7 @@ function productFact(product: ProductRecord, fallbackObservedAt: string) {
     normalizedName: product.normalizedName,
     sourceUrl: product.sourceUrl,
     imageUrl: product.imageUrl,
-    prices: product.priceSignals,
+    prices: priceObservationIsFresh && pricesAreValid ? product.priceSignals : [],
     metadata: {
       description: product.description,
       category: product.category,
@@ -255,20 +269,27 @@ function productFact(product: ProductRecord, fallbackObservedAt: string) {
 }
 
 function productFacts(results: CrawlFactResult[], comparison: ProductComparison | null, fallbackObservedAt: string) {
-  const products = results.flatMap((result) => result.products.map((product) => ({ ...product, domain: product.domain || result.domain })));
+  const key = (product: ProductRecord) => `${canonicalDomain(product.domain)}\n${product.id}`;
+  const comparisonProducts = new Map<string, ProductRecord>();
   if (comparison) {
     for (const row of comparison.rows) {
-      products.push(row.primary);
-      for (const match of row.matches) if (match.product) products.push(match.product);
+      comparisonProducts.set(key(row.primary), row.primary);
+      for (const match of row.matches) {
+        const product = match.product || match.excludedProduct;
+        if (product) comparisonProducts.set(key(product), product);
+      }
     }
   }
-  return products.map((product) => productFact(product, fallbackObservedAt));
+  const crawlProducts = results.flatMap((result) => result.products
+    .map((product) => ({ ...product, domain: product.domain || result.domain }))
+    .filter((product) => !comparisonProducts.has(key(product))));
+  return [...crawlProducts, ...comparisonProducts.values()].map((product) => productFact(product, fallbackObservedAt));
 }
 
 async function matchFacts(publicId: string, comparison: ProductComparison | null, fallbackObservedAt: string) {
   if (!comparison) return [];
-  return await Promise.all(comparison.rows.flatMap((row) => row.matches.filter((match) => match.product && match.assessment && ["same_product", "close_substitute"].includes(match.assessment.verdict)).map(async (match) => {
-    const product = match.product!;
+  return await Promise.all(comparison.rows.flatMap((row) => row.matches.filter((match) => (match.product || match.excludedProduct) && match.assessment && ["same_product", "close_substitute"].includes(match.assessment.verdict)).map(async (match) => {
+    const product = (match.product || match.excludedProduct)!;
     const assessment = match.assessment!;
     return {
       id: await reportFactHash([publicId, row.primary.id, product.domain, product.id]),
@@ -292,6 +313,7 @@ async function matchFacts(publicId: string, comparison: ProductComparison | null
         normalizedVariant: assessment.normalizedVariant,
         normalizedSize: assessment.normalizedSize,
         decision: match.decision,
+        publication: match.publication,
       },
       observedAt: observedAt(product.observedAt, fallbackObservedAt),
     };

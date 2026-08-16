@@ -122,10 +122,16 @@ export type ProductMatch = {
     primarySourceUrl: string;
     rivalSourceUrl: string;
   };
+  publication?: {
+    priceEligible: boolean;
+    reason?: "insufficient-match-confidence" | "missing-valid-primary-price" | "missing-valid-rival-price" | "incompatible-price-currency" | "incompatible-market";
+  };
+  excludedProduct?: ProductRecord;
 };
 
 export type ProductComparison = {
   primaryDomain: string;
+  marketCountryCode?: string;
   comparisonDomains: string[];
   rows: Array<{ primary: ProductRecord; matches: ProductMatch[] }>;
   unmatched: Array<{ domain: string; products: ProductRecord[] }>;
@@ -165,7 +171,7 @@ export type ProductComparison = {
     candidateSlotsByDomain?: Record<string, number>;
     publication?: {
       suppressedAcceptedPairs: number;
-      reasons: Record<"missing-valid-rival-price", number>;
+      reasons: Record<string, number>;
     };
   };
   enrichment?: {
@@ -410,7 +416,9 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown, options: { allo
   const accountingNegative = /\(\s*(?:[A-Z]{3}\s*|[$£€]\s*)?\d+(?:\.\d+)?(?:\s*[A-Z]{3})?\s*\)/u.test(normalizedAmountText);
   const trailingNegative = /\d+(?:\.\d+)?\s*-\s*(?:[A-Z]{3})?\s*$/u.test(normalizedAmountText);
   if (separatedNegative || labeledNegative || accountingNegative || trailingNegative) return null;
-  const amountMatch = normalizedAmountText.match(/[+-]?\d+(?:\.\d+)?/);
+  const amountMatches = [...normalizedAmountText.matchAll(/[+-]?\d+(?:\.\d+)?/g)];
+  if (amountMatches.length !== 1) return null;
+  const amountMatch = amountMatches[0];
   const amount = amountMatch ? Number(amountMatch[0]) : undefined;
   if (typeof amount === "number" && Number.isFinite(amount) && amount < 0) return null;
   const raw = explicitCurrency && !rawText.toUpperCase().includes(explicitCurrency) ? `${explicitCurrency} ${rawText}` : rawText;
@@ -419,25 +427,56 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown, options: { allo
 
 function offerSignals(value: unknown): ProductPriceSignal[] {
   const found: ProductPriceSignal[] = [];
+  const explicitRangePairs = new Set<string>();
+  const signalKey = (signal: ProductPriceSignal) => `${signal.currency}|${signal.amount}`;
+  const rangeKey = (low: ProductPriceSignal, high: ProductPriceSignal) => `${signalKey(low)}::${signalKey(high)}`;
   for (const offer of records(value)) {
+    if (offer.priceValidUntil !== undefined) {
+      const validUntil = Date.parse(text(offer.priceValidUntil));
+      if (!Number.isFinite(validUntil) || validUntil < Date.now()) continue;
+    }
     const currency = offer.priceCurrency;
+    const priceLabel = text([offer.priceType, offer.name, offer.description].filter(Boolean).join(" "))
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .replace(/[^a-zA-Z0-9]+/g, " ")
+      .toLowerCase();
+    const nonCurrentPrice = /(?:\blist\b|\bregular\b|\bwas\b|\bmsrp\b|\bsrp\b|strike|compare[ -]?at|\boriginal\b|\brrp\b|\bretail\b|\bmember\b|\binvoice(?: price)?\b|\bminimum advertised(?: price)?\b)/i.test(priceLabel);
+    if (nonCurrentPrice) continue;
     const hasRangeEndpoint = offer.lowPrice !== undefined || offer.highPrice !== undefined;
+    let hasDirectPriceEvidence = false;
     if (hasRangeEndpoint) {
       const low = priceSignal(offer.lowPrice, currency);
       const high = priceSignal(offer.highPrice, currency);
       const completePositiveRange = low && high
         && typeof low.amount === "number" && Number.isFinite(low.amount) && low.amount > 0
         && typeof high.amount === "number" && Number.isFinite(high.amount) && high.amount > 0
-        && low.currency && low.currency === high.currency;
-      if (completePositiveRange) found.push(low, high);
+        && low.currency && low.currency === high.currency
+        && low.amount <= high.amount;
+      if (completePositiveRange) {
+        found.push(low, high);
+        hasDirectPriceEvidence = true;
+        if (low.amount < high.amount) explicitRangePairs.add(rangeKey(low, high));
+      }
     } else {
       const price = priceSignal(offer.price, currency);
-      if (price) found.push(price);
+      if (price) {
+        found.push(price);
+        hasDirectPriceEvidence = true;
+      }
     }
-    found.push(...offerSignals(offer.offers));
-    found.push(...offerSignals(offer.priceSpecification));
+    if (!hasDirectPriceEvidence) {
+      const nestedOffers = offerSignals(offer.offers);
+      if (nestedOffers.length) {
+        found.push(...nestedOffers);
+        if (nestedOffers.length === 2) explicitRangePairs.add(rangeKey(nestedOffers[0], nestedOffers[1]));
+      }
+      // priceSpecification can describe list, member, unit, or strikeout
+      // prices. It is never promoted as a standalone current offer.
+    }
   }
-  return [...new Map(found.map((signal) => [signal.raw, signal])).values()].slice(0, 12);
+  const unique = [...new Map(found.map((signal) => [signalKey(signal), signal])).values()].slice(0, 12);
+  if (unique.length <= 1) return unique;
+  return unique.length === 2 && explicitRangePairs.has(rangeKey(unique[0], unique[1])) ? unique : [];
 }
 
 function metaContents(document: string, key: string) {
@@ -458,13 +497,59 @@ function metaContent(document: string, key: string) {
   return metaContents(document, key)[0] || "";
 }
 
-function openGraphOffer(document: string) {
-  const amounts = [...new Set(["product:price:amount", "og:price:amount", "price"].flatMap((key) => metaContents(document, key)))];
-  const currencies = [...new Set(["product:price:currency", "og:price:currency", "priceCurrency"]
-    .flatMap((key) => metaContents(document, key))
-    .map((value) => value.toUpperCase())
-    .filter(isSupportedCurrency))];
-  return amounts.length === 1 && currencies.length === 1 ? priceSignal(amounts[0], currencies[0]) : null;
+function metadataOfferForNamespace(document: string, amountKey: string, currencyKey: string, scope: "product" | "og" | "generic") {
+  const amountValues = metaContents(document, amountKey);
+  const currencyValues = metaContents(document, currencyKey);
+  const present = amountValues.length > 0 || currencyValues.length > 0;
+  const parsedAmountEntries = amountValues.map((value) => ({ value, signal: priceSignal(value) }))
+    .filter((entry): entry is { value: string; signal: ProductPriceSignal } => Boolean(entry.signal && typeof entry.signal.amount === "number" && Number.isFinite(entry.signal.amount) && entry.signal.amount > 0));
+  const normalizedAmountValues = new Map<string, string>();
+  parsedAmountEntries.forEach(({ value, signal }) => normalizedAmountValues.set(Number(signal.amount).toFixed(6), value));
+  const amounts = [...normalizedAmountValues.keys()];
+  const rawCurrencies = [...new Set(currencyValues.map((value) => value.trim().toUpperCase()).filter(Boolean))];
+  const currencies = rawCurrencies.filter(isSupportedCurrency);
+  const complete = amountValues.length > 0 && currencyValues.length > 0;
+  const preliminaryConflict = complete && (parsedAmountEntries.length !== amountValues.length || amounts.length < 1 || amounts.length > 2
+    || currencies.length !== rawCurrencies.length || currencies.length !== 1);
+  const signals = complete && !preliminaryConflict
+    ? amounts.map((amount) => priceSignal(normalizedAmountValues.get(amount), currencies[0])).filter((signal): signal is ProductPriceSignal => Boolean(signal))
+    : [];
+  const conflict = preliminaryConflict || (complete && signals.length !== amounts.length);
+  return { present, conflict, scope, amounts, currencies, signals, offer: signals.length === 1 ? signals[0] : null };
+}
+
+function promotableMetadataSignals(signals: ProductPriceSignal[]) {
+  // Repeated price metadata often represents list/current sale prices. Without
+  // explicit lowPrice/highPrice semantics it is not an observed price range.
+  return signals.length === 1 ? signals : [];
+}
+
+export function directProductMetadataOffer(document: string) {
+  for (const [amountKey, currencyKey, scope] of [["product:price:amount", "product:price:currency", "product"], ["og:price:amount", "og:price:currency", "og"]] as const) {
+    const namespace = metadataOfferForNamespace(document, amountKey, currencyKey, scope);
+    if (namespace.present) return namespace.offer;
+  }
+  return null;
+}
+
+function directProductMetadataEvidence(document: string) {
+  for (const [amountKey, currencyKey, scope] of [["product:price:amount", "product:price:currency", "product"], ["og:price:amount", "og:price:currency", "og"]] as const) {
+    const namespace = metadataOfferForNamespace(document, amountKey, currencyKey, scope);
+    if (namespace.present) return namespace;
+  }
+  return { present: false, conflict: false, scope: "generic" as const, amounts: [] as string[], currencies: [] as string[], signals: [] as ProductPriceSignal[], offer: null };
+}
+
+export function directProductScopedMetadataOffer(document: string) {
+  return metadataOfferForNamespace(document, "product:price:amount", "product:price:currency", "product").offer;
+}
+
+function compatibleObservedAmounts(left: string[], right: string[]) {
+  if (!left.length || !right.length) return true;
+  if (left.length === right.length && left.every((amount, index) => amount === right[index])) return true;
+  if (left.length === 1) return right.includes(left[0]);
+  if (right.length === 1) return left.includes(right[0]);
+  return false;
 }
 
 function publicImageUrl(value: string, sourceUrl: string) {
@@ -689,7 +774,7 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
   let products: ProductRecord[] = extractSaasPlans(input);
   const thirdPartyReferenced: ProductRecord[] = [];
   const gaps: string[] = [];
-  const authoritativeOffer = openGraphOffer(input.document);
+  const authoritativeMetadata = directProductMetadataEvidence(input.document);
   const scripts = [...input.document.matchAll(/<script[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
   for (const script of scripts) {
     try {
@@ -705,24 +790,118 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
     }
   }
   const pageIdentity = clean(input.pageTitle.split(/\s+(?:\||—|–|-)\s+/)[0] || input.pageTitle);
-  const metadataCandidates = products.filter((product) => {
+  const metadataIdentities = new Set([pageIdentity, ...input.headings].map(normalized).filter(Boolean));
+  const exactMetadataCandidates = products.filter((product) => {
     if (product.jsonLdType !== "Product") return false;
-    return normalized(product.name) === normalized(pageIdentity);
+    return metadataIdentities.has(normalized(product.name));
   });
-  if (metadataCandidates.length === 1) {
-    const selectedId = metadataCandidates[0].id;
-    const metadataOffer = authoritativeOffer;
+  let productPathForMetadata = false;
+  try { productPathForMetadata = PRODUCT_PATH.test(new URL(input.sourceUrl).pathname); } catch { productPathForMetadata = false; }
+  let productDetailPathForMetadata = false;
+  try { productDetailPathForMetadata = productPathForMetadata && !/\/(?:collections?|catalog)(?:\/|$)/i.test(new URL(input.sourceUrl).pathname); } catch { productDetailPathForMetadata = false; }
+  const samePageProducts = products.filter((product) => product.jsonLdType === "Product" && product.sourceUrl === input.sourceUrl);
+  const metadataCandidates = exactMetadataCandidates.length
+    ? exactMetadataCandidates
+    : productPathForMetadata && samePageProducts.length === 1
+      ? samePageProducts
+      : [];
+  let pathIdentity = "";
+  try {
+    const segments = new URL(input.sourceUrl).pathname.split("/").filter(Boolean);
+    pathIdentity = normalized(decodeURIComponent(segments.at(-1) || "").replace(/[-_]+/g, " "));
+  } catch { pathIdentity = ""; }
+  const headingIdentities = new Set([...input.document.matchAll(/<h1\b[^>]*>([\s\S]*?)<\/h1>/gi)]
+    .map((match) => normalized(clean((match[1] || "").replace(/<[^>]+>/g, " "))))
+    .filter(Boolean));
+  const headingBoundCandidates = metadataCandidates.filter((product) => headingIdentities.has(product.normalizedName));
+  const uniqueHeadingIdentity = headingBoundCandidates.length > 0
+    && new Set(headingBoundCandidates.map((product) => product.normalizedName)).size === 1;
+  const pageBoundMetadataCandidates = metadataCandidates.filter((product) => product.normalizedName === normalized(pageIdentity)
+    || (pathIdentity.length >= 4 && product.normalizedName === pathIdentity)
+    || (uniqueHeadingIdentity && headingIdentities.has(product.normalizedName)));
+  const canBindMetadataCandidate = pageBoundMetadataCandidates.length === 1 && productDetailPathForMetadata;
+  if (authoritativeMetadata.present) {
+    const oneMetadataIdentity = pageBoundMetadataCandidates.length > 0
+      && new Set(pageBoundMetadataCandidates.map((product) => product.normalizedName)).size === 1;
+    const scopedTargets = authoritativeMetadata.scope === "product"
+      ? oneMetadataIdentity && productDetailPathForMetadata
+        ? pageBoundMetadataCandidates
+        : []
+      : canBindMetadataCandidate
+        ? metadataCandidates
+        : [];
+    const samePageProductIds = new Set(scopedTargets.map((product) => product.id));
+    products = products.map((product) => {
+      if (!samePageProductIds.has(product.id)) return product;
+      const structuredCurrencies = [...new Set(product.priceSignals
+        .map((signal) => String(signal.currency || "").trim().toUpperCase())
+        .filter(isSupportedCurrency))];
+      const structuredAmounts = [...new Set(product.priceSignals
+        .filter((signal) => typeof signal.amount === "number" && Number.isFinite(signal.amount) && signal.amount > 0)
+        .map((signal) => Number(signal.amount).toFixed(6)))];
+      const incompleteCurrencyConflict = authoritativeMetadata.currencies.length === 1
+        && structuredCurrencies.some((currency) => currency !== authoritativeMetadata.currencies[0]);
+      const incompleteAmountConflict = authoritativeMetadata.amounts.length > 0
+        && structuredAmounts.length > 0 && !compatibleObservedAmounts(authoritativeMetadata.amounts, structuredAmounts);
+      if (!authoritativeMetadata.conflict && !incompleteCurrencyConflict && !incompleteAmountConflict) return product;
+      return {
+        ...product,
+        priceSignals: [],
+        attributes: [...new Set([...product.attributes, authoritativeMetadata.conflict
+          ? "Price evidence conflict: contradictory direct metadata namespace"
+          : authoritativeMetadata.signals.length === 0
+            ? "Price evidence conflict: incomplete direct metadata contradicts structured evidence"
+            : incompleteCurrencyConflict
+              ? "Price evidence conflict: direct metadata contradicts structured currency"
+              : "Price evidence conflict: direct metadata contradicts structured amount"])],
+      };
+    });
+  }
+  if (canBindMetadataCandidate) {
+    const selectedId = pageBoundMetadataCandidates[0].id;
+    const validMetadataSignals = authoritativeMetadata.signals.filter((signal) => typeof signal.amount === "number"
+      && Number.isFinite(signal.amount) && signal.amount > 0 && isSupportedCurrency(signal.currency));
     const metadataImage = openGraphImage(input.document, input.sourceUrl);
-    products = products.map((product) => product.id === selectedId ? {
-      ...product,
-      priceSignals: hasComparablePublicPrice(product) || !metadataOffer ? product.priceSignals : [metadataOffer],
-      imageUrl: product.imageUrl || metadataImage,
-    } : product);
+    products = products.map((product) => {
+      if (product.id !== selectedId) return product;
+      const structuredCurrencies = new Set(product.priceSignals
+        .map((signal) => String(signal.currency || "").trim().toUpperCase())
+        .filter(isSupportedCurrency));
+      const metadataCurrency = String(authoritativeMetadata.currencies[0] || "").trim().toUpperCase();
+      const metadataContradictsStructured = Boolean(validMetadataSignals.length && metadataCurrency
+        && structuredCurrencies.size > 0
+        && [...structuredCurrencies].some((currency) => currency !== metadataCurrency));
+      const structuredAmounts = product.priceSignals
+        .filter((signal) => typeof signal.amount === "number" && Number.isFinite(signal.amount) && signal.amount > 0 && String(signal.currency || "").trim().toUpperCase() === metadataCurrency)
+        .map((signal) => Number(signal.amount).toFixed(6));
+      const metadataContradictsStructuredAmount = Boolean(validMetadataSignals.length
+        && structuredAmounts.length > 0
+        && !compatibleObservedAmounts(authoritativeMetadata.amounts, structuredAmounts));
+      const existingMetadataConflict = product.attributes.some((attribute) => attribute.startsWith("Price evidence conflict: direct metadata contradicts structured")
+        || attribute === "Price evidence conflict: incomplete direct metadata contradicts structured evidence");
+      const metadataConflict = authoritativeMetadata.conflict || existingMetadataConflict || metadataContradictsStructured || metadataContradictsStructuredAmount;
+      return {
+        ...product,
+        priceSignals: metadataConflict
+          ? []
+          : !hasComparablePublicPrice(product) && promotableMetadataSignals(validMetadataSignals).length
+            ? promotableMetadataSignals(validMetadataSignals)
+            : product.priceSignals,
+        attributes: metadataConflict
+          ? [...new Set([...product.attributes, authoritativeMetadata.conflict
+            ? "Price evidence conflict: contradictory direct metadata namespace"
+            : metadataContradictsStructured
+              ? "Price evidence conflict: direct metadata contradicts structured currency"
+              : "Price evidence conflict: direct metadata contradicts structured amount"])]
+          : product.attributes,
+        imageUrl: product.imageUrl || metadataImage,
+      };
+    });
   }
   let productPath = false;
   let pagePath = "";
   try { pagePath = new URL(input.sourceUrl).pathname; productPath = PRODUCT_PATH.test(pagePath); } catch { productPath = false; }
-  if (!products.length && (isProductLikePage(input) || (productPath && Boolean(authoritativeOffer)))) {
+  if (!products.length && (isProductLikePage(input) || (productPath && authoritativeMetadata.signals.length > 0))) {
     const titleName = clean(input.pageTitle.split(/\s+(?:\||—|–|-)\s+/)[0] || input.pageTitle);
     const observedHeading = input.headings.find((heading) => !/\b(?:logo|menu|skip navigation|home)\b/i.test(heading));
     const headingName = clean(observedHeading || "");
@@ -738,8 +917,8 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
         description: clean(input.pageDescription).slice(0, 400),
         category: new URL(input.sourceUrl).pathname.split("/").filter(Boolean)[0] || "product page",
         jsonLdType: "PageSignal",
-        priceSignals: authoritativeOffer
-          ? [authoritativeOffer]
+        priceSignals: promotableMetadataSignals(authoritativeMetadata.signals).length
+          ? promotableMetadataSignals(authoritativeMetadata.signals)
           : PRICING_PATH.test(pagePath)
             ? input.pagePriceSignals.map((value) => priceSignal(value)).filter((value): value is ProductPriceSignal => Boolean(value)).slice(0, 12)
             : [],
@@ -879,6 +1058,12 @@ export function extractProductsFromSitemap(document: string, domain: string, obs
 }
 
 export function selectPreferredProducts(items: ProductRecord[]) {
+  const localizedProductSource = (product: ProductRecord) => {
+    try {
+      const segments = new URL(product.sourceUrl).pathname.split("/").filter(Boolean);
+      return segments.length > 2 && LOCALE_PATH_PREFIX.test(segments[0]) && PRODUCT_ROUTE_SEGMENTS.has(segments[1]);
+    } catch { return false; }
+  };
   const mergeIdentifiers = (preferred: ProductIdentifiers | undefined, supplemental: ProductIdentifiers | undefined) => {
     if (!preferred && !supplemental) return undefined;
     return {
@@ -919,40 +1104,166 @@ export function selectPreferredProducts(items: ProductRecord[]) {
   };
   const selected = new Map<string, ProductRecord>();
   for (const item of items) {
-    const key = productIdentityKey(item);
-    const current = selected.get(key);
+    let key = productIdentityKey(item);
+    let current = selected.get(key);
+    if (!current) {
+      const source = canonicalProductSourceKey(item);
+      const localizedEntry = source ? [...selected.entries()].find(([, candidate]) => canonicalProductSourceKey(candidate) === source
+        && candidate.sourceUrl.split("#")[0].replace(/\/$/, "") !== item.sourceUrl.split("#")[0].replace(/\/$/, "")
+        && (localizedProductSource(candidate) || localizedProductSource(item))) : undefined;
+      if (localizedEntry) [key, current] = localizedEntry;
+    }
     if (!current) {
       selected.set(key, item);
       continue;
     }
     const preferred = quality(item) > quality(current) ? item : current;
     const supplemental = preferred === item ? current : item;
+    const priceEvidence = (Date.parse(item.observedAt) || 0) >= (Date.parse(current.observedAt) || 0) ? item : current;
+    const otherEvidence = priceEvidence === item ? current : item;
     const preferredSource = canonicalProductSourceKey(preferred);
     const supplementalSource = canonicalProductSourceKey(supplemental);
-    const sameSource = preferred.sourceUrl.split("#")[0].replace(/\/$/, "") === supplemental.sourceUrl.split("#")[0].replace(/\/$/, "")
+    const preferredMarket = publicSourceMarketContext(preferred.sourceUrl);
+    const supplementalMarket = publicSourceMarketContext(supplemental.sourceUrl);
+    const marketIdentityCompatible = !preferredMarket.conflict && !supplementalMarket.conflict
+      && preferredMarket.contextKey === supplementalMarket.contextKey;
+    const sameSource = marketIdentityCompatible && (preferred.sourceUrl.split("#")[0].replace(/\/$/, "") === supplemental.sourceUrl.split("#")[0].replace(/\/$/, "")
       || Boolean(preferredSource && preferredSource === supplementalSource)
-      || Boolean(sharedValidGtin(preferred.identifiers, supplemental.identifiers));
+      || Boolean(sharedValidGtin(preferred.identifiers, supplemental.identifiers)));
     if (!sameSource) {
       selected.set(key, preferred);
       continue;
     }
     const secureImage = [preferred.imageUrl, supplemental.imageUrl].find((value) => /^https:\/\//i.test(value));
     selected.set(key, {
-      ...preferred,
-      description: preferred.description || supplemental.description,
-      priceSignals: preferred.priceSignals.length ? preferred.priceSignals : supplemental.priceSignals,
+      ...priceEvidence,
+      description: priceEvidence.description || otherEvidence.description,
+      priceSignals: priceEvidence.priceSignals,
       attributes: [...new Set([
-        ...(preferred.attributes.length ? preferred.attributes : supplemental.attributes),
-        ...supplemental.attributes.filter((attribute) => attribute.startsWith(CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX)),
+        ...priceEvidence.attributes,
+        ...otherEvidence.attributes.filter((attribute) => attribute.startsWith(CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX)),
       ])],
       aliases: mergeAliases(preferred, supplemental),
       identifiers: mergeIdentifiers(preferred.identifiers, supplemental.identifiers),
-      quantity: preferred.quantity || supplemental.quantity,
-      imageUrl: secureImage || preferred.imageUrl || supplemental.imageUrl,
+      quantity: priceEvidence.quantity || otherEvidence.quantity,
+      imageUrl: secureImage || priceEvidence.imageUrl || otherEvidence.imageUrl,
+      observedAt: priceEvidence.observedAt,
       claimIds: [...new Set([...preferred.claimIds, ...supplemental.claimIds])],
     });
   }
   return [...selected.values()];
+}
+
+const MARKET_QUERY_PRIORITY = [
+  new Set(["country", "country_code", "countrycode"]),
+  new Set(["market", "region"]),
+  new Set(["locale"]),
+] as const;
+const CURRENCY_QUERY_KEYS = new Set(["currency", "currency_code", "currencycode"]);
+const GENERICIZED_COUNTRY_TLDS = new Set(["AD", "AI", "AS", "BZ", "CC", "CD", "CO", "DJ", "FM", "GG", "IO", "LA", "LY", "ME", "MS", "NU", "SC", "SH", "SR", "SU", "TK", "TO", "TV", "WS"]);
+// These two-letter path tokens are overwhelmingly language selectors in
+// storefront URLs and collide with ISO country codes. Treat them as ambiguous
+// unless a query, locale pair, or country TLD supplies market evidence.
+const AMBIGUOUS_LANGUAGE_PATH_CODES = new Set(["AR", "DE", "ES", "FR", "IT", "NL", "PL", "PT", "SV"]);
+const COMMON_LANGUAGE_CODES = new Set(["AR", "DA", "DE", "EN", "ES", "FI", "FR", "HE", "HI", "ID", "IT", "JA", "KO", "NL", "NO", "PL", "PT", "SV", "TH", "TR", "VI", "ZH"]);
+const ISO_COUNTRY_CODES = new Set("AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW".split(" "));
+
+function normalizedMarketCountryCode(value: string) {
+  const normalized = clean(value).replace(/_/g, "-").toUpperCase();
+  const candidate = /^[A-Z]{2}$/.test(normalized)
+    ? normalized
+    : normalized.match(/^[A-Z]{2}-([A-Z]{2})$/)?.[1] || "";
+  const country = candidate === "UK" ? "GB" : candidate;
+  return ISO_COUNTRY_CODES.has(country) ? country : "";
+}
+
+type PublicSourceMarketContext = { countryCode: string; currencyCode: string; explicit: boolean; conflict: boolean; contextKey: string };
+
+function sourceMarketContext(value: string): PublicSourceMarketContext {
+  try {
+    const url = new URL(value);
+    const countries = new Set<string>();
+    const currencies = new Set<string>();
+    let explicit = false;
+    let unresolvedCountrySelector = false;
+    let unresolvedCurrencySelector = false;
+    for (const priority of MARKET_QUERY_PRIORITY) {
+      const selected = [...url.searchParams.entries()].filter(([key]) => priority.has(key.toLowerCase() as never));
+      if (!selected.length) continue;
+      for (const [key, queryValue] of selected) {
+        const normalizedKey = key.toLowerCase();
+        if (/^(?:EU|[A-Z]{2}[-_]EU)$/i.test(queryValue.trim())) continue;
+        explicit = true;
+        if (normalizedKey === "locale" && !/^[a-z]{2}[-_][a-z]{2}$/i.test(queryValue.trim())) {
+          unresolvedCountrySelector = true;
+          continue;
+        }
+        const country = normalizedMarketCountryCode(queryValue);
+        if (country) countries.add(country);
+        else unresolvedCountrySelector = true;
+      }
+      break;
+    }
+    for (const [key, queryValue] of url.searchParams.entries()) {
+      const normalizedKey = key.toLowerCase();
+      if (CURRENCY_QUERY_KEYS.has(normalizedKey)) {
+        explicit = true;
+        const currency = clean(queryValue).toUpperCase();
+        if (isSupportedCurrency(currency)) currencies.add(currency);
+        else unresolvedCurrencySelector = true;
+      }
+    }
+    const pathSegments = url.pathname.split("/").filter(Boolean);
+    const productRouteIndex = pathSegments.findIndex((segment) => PRODUCT_ROUTE_SEGMENTS.has(segment.toLowerCase()));
+    const selectorSegments = pathSegments.slice(0, productRouteIndex >= 0 ? productRouteIndex : Math.min(pathSegments.length, 1));
+    for (const segment of selectorSegments) {
+      const normalizedSegment = clean(segment).replace(/_/g, "-").toUpperCase();
+      const localeParts = normalizedSegment.match(/^([A-Z]{2})-([A-Z]{2})$/);
+      if (localeParts) {
+        if (localeParts[2] === "EU") continue;
+        explicit = true;
+        const countryToken = COMMON_LANGUAGE_CODES.has(localeParts[1]) ? localeParts[2] : localeParts[1];
+        const country = countryToken === "UK" ? "" : normalizedMarketCountryCode(countryToken);
+        if (country) countries.add(country);
+        else unresolvedCountrySelector = true;
+        continue;
+      }
+      if (!/^[A-Z]{2}$/.test(normalizedSegment)) continue;
+      if (AMBIGUOUS_LANGUAGE_PATH_CODES.has(normalizedSegment)
+        || (COMMON_LANGUAGE_CODES.has(normalizedSegment) && !normalizedMarketCountryCode(normalizedSegment))) continue;
+      explicit = true;
+      if (normalizedSegment === "UK") {
+        unresolvedCountrySelector = true;
+        continue;
+      }
+      const country = normalizedMarketCountryCode(normalizedSegment);
+      if (country) countries.add(country);
+      else unresolvedCountrySelector = true;
+    }
+    const host = canonicalHost(url.hostname);
+    const countryTld = /\.(?:co\.)?uk$/i.test(host) ? "GB" : normalizedMarketCountryCode(host.match(/\.([a-z]{2})$/i)?.[1] || "");
+    if (countryTld && !GENERICIZED_COUNTRY_TLDS.has(countryTld)) countries.add(countryTld);
+    const conflict = countries.size > 1 || currencies.size > 1;
+    const countryCode = conflict ? "" : [...countries][0] || "";
+    const currencyCode = conflict ? "" : [...currencies][0] || "";
+    const contextParts = [countryCode ? `country:${countryCode}` : explicit && unresolvedCountrySelector ? "country:?" : "", currencyCode ? `currency:${currencyCode}` : explicit && unresolvedCurrencySelector ? "currency:?" : ""].filter(Boolean);
+    return { countryCode, currencyCode, explicit, conflict, contextKey: conflict ? "conflict" : contextParts.join("|") };
+  } catch {
+    return { countryCode: "", currencyCode: "", explicit: false, conflict: false, contextKey: "" };
+  }
+}
+
+export function publicSourceMarketEvidence(value: string): { countryCode: string; explicit: boolean; conflict: boolean } {
+  const { countryCode, explicit, conflict } = sourceMarketContext(value);
+  return { countryCode, explicit, conflict };
+}
+
+export function publicSourceMarketContext(value: string) {
+  return sourceMarketContext(value);
+}
+
+export function publicSourceMarketCountryCode(value: string) {
+  return publicSourceMarketEvidence(value).countryCode;
 }
 
 function canonicalProductSourceKey(product: ProductRecord) {
@@ -961,10 +1272,11 @@ function canonicalProductSourceKey(product: ProductRecord) {
     const segments = url.pathname.split("/").filter(Boolean).map((segment) => {
       try { return decodeURIComponent(segment).toLowerCase(); } catch { return segment.toLowerCase(); }
     });
-    if (segments.length > 2 && LOCALE_PATH_PREFIX.test(segments[0]) && PRODUCT_ROUTE_SEGMENTS.has(segments[1])) segments.shift();
+    const sourceMarket = publicSourceMarketContext(product.sourceUrl).contextKey;
+    if (segments.length > 2 && /^[a-z]{2}$/i.test(segments[0]) && PRODUCT_ROUTE_SEGMENTS.has(segments[1])) segments.shift();
     const productIndex = segments.findIndex((segment) => PRODUCT_ROUTE_SEGMENTS.has(segment));
     if (productIndex < 0 || !segments[productIndex + 1]) return "";
-    return `${canonicalHost(product.domain)}|/${segments.slice(productIndex).join("/")}`;
+    return `${canonicalHost(product.domain)}|${sourceMarket ? `@${sourceMarket}` : ""}/${segments.slice(productIndex).join("/")}`;
   } catch {
     return "";
   }
@@ -993,11 +1305,12 @@ function productNameTokens(product: ProductRecord) {
 
 export function productIdentityKey(product: ProductRecord) {
   const domain = canonicalHost(product.domain);
+  const market = publicSourceMarketContext(product.sourceUrl).contextKey;
   const gtin = [...(product.identifiers?.gtins || [])].sort()[0];
-  if (gtin) return `${domain}|gtin|${gtin}`;
+  if (gtin) return `${domain}|${market ? `market|${market}|` : ""}gtin|${gtin}`;
   const source = canonicalProductSourceKey(product);
-  if (source) return `${domain}|source|${source}`;
   const quantity = product.quantity ? `${product.quantity.kind}|${product.quantity.amount}|${product.quantity.unit}` : "";
+  if (source) return `${domain}|source|${source}|${bilingualNormalize(product.name)}|${quantity}`;
   return `${domain}|name|${bilingualNormalize(product.name)}|${quantity}`;
 }
 
@@ -1170,7 +1483,8 @@ function canonicalProductPageUrl(value: string) {
   try {
     const url = new URL(value);
     const path = url.pathname.replace(/\/+$/, "") || "/";
-    return `${canonicalHost(url.hostname)}${path}`;
+    const market = publicSourceMarketContext(value);
+    return `${canonicalHost(url.hostname)}${path}${market.contextKey ? `|${market.contextKey}` : ""}`;
   } catch {
     return "";
   }
@@ -1461,7 +1775,13 @@ export function buildProductComparison(primaryDomain: string, catalogs: Array<{ 
 }
 
 function hasComparablePublicPrice(product: ProductRecord) {
-  return product.priceSignals.some((signal) => typeof signal.amount === "number" && Boolean(signal.currency));
+  if (!product.priceSignals.length) return false;
+  const currencies = new Set<string>();
+  for (const signal of product.priceSignals) {
+    if (typeof signal.amount !== "number" || !Number.isFinite(signal.amount) || signal.amount <= 0 || !String(signal.raw || "").trim() || !isSupportedCurrency(signal.currency)) return false;
+    currencies.add(String(signal.currency).trim().toUpperCase());
+  }
+  return currencies.size === 1;
 }
 
 function safeProductSource(product: ProductRecord) {
@@ -1520,12 +1840,13 @@ export function planPreliminaryCatalogReconciliation(comparison: ProductComparis
     const realMatches = row.matches.filter((match) => Boolean(match.product));
     if (realMatches.length) matchedScoreById.set(row.primary.id, Math.max(...realMatches.map((match) => match.score)));
   }
-  const seenUrls = new Set<string>();
+  const seenTargets = new Set<string>();
   const eligible = primaryProducts.flatMap((product) => {
     if (product.jsonLdType !== "Product" || hasComparablePublicPrice(product)) return [];
     const sourceUrl = safeProductSource(product);
-    if (!sourceUrl || seenUrls.has(sourceUrl)) return [];
-    seenUrls.add(sourceUrl);
+    const targetKey = `${canonicalHost(product.domain)}\n${product.id}\n${sourceUrl}`;
+    if (!sourceUrl || seenTargets.has(targetKey)) return [];
+    seenTargets.add(targetKey);
     return [{ product, sourceUrl, pairScore: matchedScoreById.get(product.id) || 0 }];
   }).sort((left, right) => Number(right.pairScore > 0) - Number(left.pairScore > 0)
     || right.pairScore - left.pairScore
@@ -1547,54 +1868,94 @@ export function planPreliminaryCatalogReconciliation(comparison: ProductComparis
 export function planFinalProductEnrichmentTargets(comparison: ProductComparison, maxPages = 24) {
   const boundedMax = Math.max(0, Math.min(1_000, Math.floor(maxPages)));
   const eligible: ProductEnrichmentTarget[] = [];
-  const seenUrls = new Set<string>();
-  const add = (product: ProductRecord, role: ProductEnrichmentTarget["role"], pairScore: number) => {
+  const seenTargets = new Set<string>();
+  const deferredPriceTargets = new Set<string>();
+  const targetKey = (product: ProductRecord, sourceUrl: string) => `${canonicalHost(product.domain)}\n${product.id}\n${sourceUrl}`;
+  const add = (product: ProductRecord, role: ProductEnrichmentTarget["role"], pairScore: number, need: "price" | "image") => {
     if (product.jsonLdType !== "Product") return;
     const sourceUrl = safeProductSource(product);
     const needsPrice = !hasComparablePublicPrice(product);
     const needsSecureImage = !/^https:\/\//i.test(product.imageUrl);
-    if (!sourceUrl || (!needsPrice && !needsSecureImage) || seenUrls.has(sourceUrl)) return;
-    seenUrls.add(sourceUrl);
+    const key = targetKey(product, sourceUrl);
+    if (!sourceUrl || (need === "price" ? !needsPrice : !needsSecureImage) || seenTargets.has(key)) return;
+    seenTargets.add(key);
+    deferredPriceTargets.delete(key);
     eligible.push({ domain: product.domain, sourceUrl, productId: product.id, expectedName: product.name, expectedType: product.jsonLdType, pairScore, role });
   };
 
-  // A valid rival price is the publication gate. Give every primary family its
-  // strongest rival lookup before spending the remaining budget on secondary
-  // rivals or primary-side presentation details.
-  const acceptedByRow = comparison.rows.map((row) => ({
+  // Complete the most viable accepted pairs before spending any capacity on
+  // presentation-only image gaps. A single missing side is cheapest to finish,
+  // while pairs missing both sides are kept adjacent so a tight budget creates
+  // complete comparisons instead of many half-enriched rows.
+  const acceptedByRow = comparison.rows.map((row, rowIndex) => ({
+    rowIndex,
     row,
     accepted: row.matches.filter((match) => match.product && match.confidence === "Medium").sort((left, right) => right.score - left.score
       || left.domain.localeCompare(right.domain)
       || (left.product?.id || "").localeCompare(right.product?.id || "")),
   }));
-  for (const { accepted } of acceptedByRow) {
-    const strongest = accepted[0];
-    if (strongest?.product) add(strongest.product, "rival", strongest.score);
-  }
-  for (const { accepted } of acceptedByRow) {
-    for (const match of accepted.slice(1)) if (match.product) add(match.product, "rival", match.score);
-  }
-  for (const { row, accepted } of acceptedByRow) {
-    if (accepted[0]) add(row.primary, "primary", accepted[0].score);
+  const pairs = acceptedByRow.flatMap(({ row, rowIndex, accepted }) => accepted.map((match, matchIndex) => ({ row, rowIndex, match, matchIndex })))
+    .filter((pair): pair is typeof pair & { match: ProductMatch & { product: ProductRecord } } => Boolean(pair.match.product))
+    .sort((left, right) => right.match.score - left.match.score
+      || left.rowIndex - right.rowIndex
+      || left.match.domain.localeCompare(right.match.domain)
+      || left.match.product.id.localeCompare(right.match.product.id));
+  const strongest = pairs.filter((pair) => pair.matchIndex === 0);
+  const secondary = pairs.filter((pair) => pair.matchIndex > 0);
+  const schedulePair = (pair: (typeof pairs)[number]) => {
+    const missing = [
+      { product: pair.match.product, role: "rival" as const },
+      { product: pair.row.primary, role: "primary" as const },
+    ].flatMap((candidate) => {
+      if (hasComparablePublicPrice(candidate.product)) return [];
+      const sourceUrl = safeProductSource(candidate.product);
+      return sourceUrl && !seenTargets.has(targetKey(candidate.product, sourceUrl)) ? [{ ...candidate, sourceUrl }] : [];
+    });
+    const uniqueMissing = missing.filter((candidate, index) => missing.findIndex((other) => targetKey(other.product, other.sourceUrl) === targetKey(candidate.product, candidate.sourceUrl)) === index);
+    if (eligible.length + uniqueMissing.length > boundedMax) {
+      uniqueMissing.forEach((candidate) => deferredPriceTargets.add(targetKey(candidate.product, candidate.sourceUrl)));
+      return;
+    }
+    uniqueMissing.forEach((candidate) => add(candidate.product, candidate.role, pair.match.score, "price"));
+  };
+  // Schedule each pair as an atomic, globally score-ranked unit. This never
+  // spends the last page on half of a two-page comparison and gives every
+  // row's strongest match priority over secondary matches.
+  pairs.forEach(schedulePair);
+  if (deferredPriceTargets.size === 0) {
+    for (const pair of strongest) {
+      add(pair.match.product, "rival", pair.match.score, "image");
+      add(pair.row.primary, "primary", pair.match.score, "image");
+    }
+    for (const pair of secondary) add(pair.match.product, "rival", pair.match.score, "image");
   }
 
   const targets = eligible.slice(0, boundedMax);
-  return { targets, totalEligible: eligible.length, truncated: eligible.length > targets.length };
+  const totalEligible = eligible.length + deferredPriceTargets.size;
+  return { targets, totalEligible, truncated: totalEligible > targets.length };
 }
 
 export function selectFinalProductEnrichmentTargets(comparison: ProductComparison, maxPages = 24): ProductEnrichmentTarget[] {
   return planFinalProductEnrichmentTargets(comparison, maxPages).targets;
 }
 
+function sameProductMarketContext(left: ProductRecord, right: ProductRecord) {
+  const leftMarket = publicSourceMarketContext(left.sourceUrl);
+  const rightMarket = publicSourceMarketContext(right.sourceUrl);
+  return !leftMarket.conflict && !rightMarket.conflict && leftMarket.contextKey === rightMarket.contextKey;
+}
+
 function sameLiveCatalogIdentity(left: ProductRecord, right: ProductRecord) {
+  if (!sameProductMarketContext(left, right)) return false;
   return Boolean(sharedValidGtin(left.identifiers, right.identifiers))
     || (left.normalizedName === right.normalizedName
       && (quantitiesEqual(left.quantity, right.quantity) || (!left.quantity && !right.quantity)));
 }
 
 export function applyPreMatchCatalogEnrichment(catalog: ProductRecord[], enriched: ProductRecord[]) {
-  const freshById = new Map(enriched.map((product) => [product.id, product]));
-  const catalogIds = new Set(catalog.map((product) => product.id));
+  const enrichmentKey = (product: ProductRecord) => `${product.id}|${publicSourceMarketContext(product.sourceUrl).contextKey}`;
+  const freshById = new Map(enriched.map((product) => [enrichmentKey(product), product]));
+  const catalogIds = new Set(catalog.map(enrichmentKey));
   const auditsById = new Map<string, string[]>();
   const merged: ProductRecord[] = [];
   const mergeIdentifiers = (fresh: ProductIdentifiers | undefined, base: ProductIdentifiers | undefined) => {
@@ -1608,8 +1969,12 @@ export function applyPreMatchCatalogEnrichment(catalog: ProductRecord[], enriche
   };
 
   for (const base of catalog) {
-    const fresh = freshById.get(base.id);
+    const fresh = freshById.get(enrichmentKey(base));
     if (!fresh) {
+      merged.push(base);
+      continue;
+    }
+    if (!sameProductMarketContext(base, fresh)) {
       merged.push(base);
       continue;
     }
@@ -1630,7 +1995,7 @@ export function applyPreMatchCatalogEnrichment(catalog: ProductRecord[], enriche
       id: base.id,
       description: fresh.description || base.description,
       category: fresh.category || base.category,
-      priceSignals: fresh.priceSignals.length ? fresh.priceSignals : base.priceSignals,
+      priceSignals: fresh.priceSignals,
       attributes: fresh.attributes.length ? fresh.attributes : base.attributes,
       identifiers: mergeIdentifiers(fresh.identifiers, base.identifiers),
       quantity: fresh.quantity || base.quantity,
@@ -1640,7 +2005,7 @@ export function applyPreMatchCatalogEnrichment(catalog: ProductRecord[], enriche
   }
 
   for (const fresh of enriched) {
-    if (!catalogIds.has(fresh.id)) merged.push(fresh);
+    if (!catalogIds.has(enrichmentKey(fresh))) merged.push(fresh);
   }
   return selectPreferredProducts(merged.map((product) => {
     const audits = auditsById.get(product.id) || [];
@@ -1663,8 +2028,10 @@ export function applyFinalProductEnrichment(
     } satisfies ProductIdentifiers;
   };
   const merge = (base: ProductRecord) => {
-    const fresh = products.find((product) => product.id === base.id
-      || (canonicalHost(product.domain) === canonicalHost(base.domain) && canonicalProductPageUrl(product.sourceUrl) === canonicalProductPageUrl(base.sourceUrl)));
+    const fresh = products.find((product) => (product.id === base.id && sameProductMarketContext(product, base))
+      || (canonicalHost(product.domain) === canonicalHost(base.domain)
+        && canonicalProductPageUrl(product.sourceUrl) === canonicalProductPageUrl(base.sourceUrl)
+        && sameLiveCatalogIdentity(product, base)));
     if (!fresh || isCatalogReplacementProduct(fresh)) return base;
     const secureImage = [fresh.imageUrl, base.imageUrl].find((value) => /^https:\/\//i.test(value));
     return {
@@ -1673,13 +2040,14 @@ export function applyFinalProductEnrichment(
       normalizedName: fresh.normalizedName,
       description: fresh.description || base.description,
       category: fresh.category || base.category,
-      priceSignals: fresh.priceSignals.length ? fresh.priceSignals : base.priceSignals,
+      priceSignals: fresh.priceSignals,
       attributes: fresh.attributes.length ? fresh.attributes : base.attributes,
       identifiers: mergeIdentifiers(fresh.identifiers, base.identifiers),
       quantity: fresh.quantity || base.quantity,
       extraction: fresh.extraction,
       confidence: fresh.confidence,
       imageUrl: secureImage || fresh.imageUrl || base.imageUrl,
+      sourceUrl: fresh.sourceUrl,
       observedAt: fresh.observedAt || base.observedAt,
       claimIds: [...new Set([...base.claimIds, ...fresh.claimIds])],
     } satisfies ProductRecord;

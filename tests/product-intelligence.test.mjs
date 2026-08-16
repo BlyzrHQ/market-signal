@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyFinalProductEnrichment, applyPreMatchCatalogEnrichment, buildProductComparison, buildProductPairCandidateIndex, catalogReplacementAuditAttribute, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, planPreliminaryCatalogReconciliation, retrieveProductPairCandidates, scoreProductPair, selectFinalProductEnrichmentTargets, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
+import { applyFinalProductEnrichment, applyPreMatchCatalogEnrichment, buildProductComparison, buildProductPairCandidateIndex, catalogReplacementAuditAttribute, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, planFinalProductEnrichmentTargets, planPreliminaryCatalogReconciliation, publicSourceMarketContext, publicSourceMarketCountryCode, retrieveProductPairCandidates, scoreProductPair, selectFinalProductEnrichmentTargets, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
+import { publishPricedProductComparison } from "../app/lib/product-match-lifecycle.ts";
+
+const TEST_NOW = new Date().toISOString();
 
 function extraction(overrides = {}) {
   return extractProductsFromHtml({
     document: "<html><head><title>Acme</title></head><body><h1>Acme</h1></body></html>",
     sourceUrl: "https://acme.com/",
     domain: "acme.com",
-    observedAt: "2026-07-12T00:00:00.000Z",
+    observedAt: TEST_NOW,
     pageTitle: "Acme",
     pageDescription: "",
     headings: ["Acme"],
@@ -33,7 +36,7 @@ function product(id, domain, name, category = "inventory", description = "invent
     confidence: "High",
     sourceUrl: `https://${domain}/${id}`,
     imageUrl: "",
-    observedAt: "2026-07-12T00:00:00.000Z",
+    observedAt: TEST_NOW,
     claimIds: [`${id}-observed`],
   };
 }
@@ -226,6 +229,268 @@ test("rejects conflicting or inactive Open Graph price metadata", () => {
     const result = extraction({ document: `<script type="application/ld+json">${JSON.stringify(product)}</script>${inert}`, sourceUrl: "https://acme.com/products/metadata-widget" });
     assert.deepEqual(result.products[0].priceSignals, []);
   }
+});
+
+test("keeps coherent product-scoped metadata separate from stale generic metadata", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="100"><meta property="product:price:currency" content="USD"><meta property="og:price:amount" content="80"><meta property="og:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Scoped Jacket" })}</script>`,
+    sourceUrl: "https://acme.com/products/scoped-jacket",
+    pageTitle: "Scoped Jacket",
+    headings: ["Scoped Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 100 }]);
+});
+
+test("does not fabricate a metadata offer from different namespaces", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="100"><meta property="og:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Half Pair Jacket" })}</script>`,
+    sourceUrl: "https://acme.com/products/half-pair-jacket",
+    pageTitle: "Half Pair Jacket",
+    headings: ["Half Pair Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals, []);
+});
+
+test("normalizes equivalent metadata amount formats before conflict detection", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="10"><meta property="product:price:amount" content="10.00"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Equivalent Price Jacket" })}</script>`,
+    sourceUrl: "https://acme.com/products/equivalent-price-jacket",
+    pageTitle: "Equivalent Price Jacket",
+    headings: ["Equivalent Price Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 10 }]);
+});
+
+test("same-namespace metadata currency conflicts suppress structured prices immediately", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="100"><meta property="product:price:currency" content="USD"><meta property="product:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Conflicted Currency Jacket", image: "https://acme.com/jacket.jpg", offers: { price: 100, priceCurrency: "USD" } })}</script>`,
+    sourceUrl: "https://acme.com/products/conflicted-currency-jacket",
+    pageTitle: "Conflicted Currency Jacket",
+    headings: ["Conflicted Currency Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals, []);
+  assert.ok(result.products[0].attributes.includes("Price evidence conflict: contradictory direct metadata namespace"));
+});
+
+test("same-namespace conflicts suppress every duplicate same-page JSON-LD product", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="100"><meta property="product:price:currency" content="USD"><meta property="product:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify([{ "@type": "Product", name: "Duplicate Jacket", offers: { price: 100, priceCurrency: "USD" } }, { "@type": "Product", name: "Duplicate Jacket", offers: { price: 100, priceCurrency: "USD" } }])}</script>`,
+    sourceUrl: "https://acme.com/products/duplicate-jacket",
+    pageTitle: "Duplicate Jacket",
+    headings: ["Duplicate Jacket"],
+  });
+  assert.ok(result.products.length > 0);
+  assert.ok(result.products.every((product) => product.priceSignals.length === 0));
+  assert.ok(result.products.every((product) => product.attributes.includes("Price evidence conflict: contradictory direct metadata namespace")));
+});
+
+test("currency-only product metadata suppresses contradictory structured market currency", () => {
+  const result = extraction({
+    document: `<meta property="product:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Currency Half Pair Jacket", image: "https://acme.com/jacket.jpg", offers: { price: 100, priceCurrency: "USD" } })}</script>`,
+    sourceUrl: "https://acme.com/products/currency-half-pair-jacket",
+    pageTitle: "Currency Half Pair Jacket",
+    headings: ["Currency Half Pair Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals, []);
+  assert.ok(result.products[0].attributes.includes("Price evidence conflict: incomplete direct metadata contradicts structured evidence"));
+});
+
+test("amount-only product metadata suppresses a contradictory structured amount", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="100"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Amount Half Pair Jacket", image: "https://acme.com/jacket.jpg", offers: { price: 12000, priceCurrency: "USD" } })}</script>`,
+    sourceUrl: "https://acme.com/products/amount-half-pair-jacket",
+    pageTitle: "Amount Half Pair Jacket",
+    headings: ["Amount Half Pair Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals, []);
+  assert.ok(result.products[0].attributes.includes("Price evidence conflict: incomplete direct metadata contradicts structured evidence"));
+});
+
+test("matching product metadata range endpoints preserve the structured range", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="10"><meta property="product:price:amount" content="20"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Range Jacket", offers: { lowPrice: 10, highPrice: 20, priceCurrency: "USD" } })}</script>`,
+    sourceUrl: "https://acme.com/products/range-jacket",
+    pageTitle: "Range Jacket",
+    headings: ["Range Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 10 }, { currency: "USD", amount: 20 }]);
+});
+
+test("generic multi-product card metadata cannot erase scoped JSON-LD prices", () => {
+  const result = extraction({
+    document: `<meta itemprop="price" content="10"><meta itemprop="price" content="20"><meta itemprop="priceCurrency" content="USD"><script type="application/ld+json">${JSON.stringify([{ "@type": "Product", name: "Catalog Jacket A", offers: { price: 10, priceCurrency: "USD" } }, { "@type": "Product", name: "Catalog Jacket B", offers: { price: 20, priceCurrency: "USD" } }])}</script>`,
+    sourceUrl: "https://acme.com/collections/jackets",
+    pageTitle: "Jackets",
+    headings: ["Catalog Jacket A", "Catalog Jacket B"],
+  });
+  assert.deepEqual(result.products.map((product) => product.priceSignals[0]?.amount), [10, 20]);
+});
+
+test("a collection heading cannot bind generic metadata to one product", () => {
+  const result = extraction({
+    document: `<meta itemprop="price" content="999"><meta itemprop="priceCurrency" content="USD"><script type="application/ld+json">${JSON.stringify([{ "@type": "Product", name: "Catalog Jacket A" }, { "@type": "Product", name: "Catalog Jacket B", offers: { price: 20, priceCurrency: "USD" } }])}</script>`,
+    sourceUrl: "https://acme.com/collections/jackets",
+    pageTitle: "Jackets",
+    headings: ["Catalog Jacket A"],
+  });
+  assert.deepEqual(result.products.map((product) => product.priceSignals.map((signal) => signal.amount)), [[], [20]]);
+});
+
+test("ambiguous product metadata on a collection page cannot erase sibling JSON-LD prices", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="10"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify([{ "@type": "Product", name: "Catalog Jacket A", offers: { price: 10, priceCurrency: "USD" } }, { "@type": "Product", name: "Catalog Jacket B", offers: { price: 20, priceCurrency: "USD" } }])}</script>`,
+    sourceUrl: "https://acme.com/collections/jackets",
+    pageTitle: "Jackets",
+    headings: ["Jackets"],
+  });
+  assert.deepEqual(result.products.map((product) => product.priceSignals[0]?.amount), [10, 20]);
+});
+
+test("product metadata on a collection page cannot bind through one heading", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="999"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify([{ "@type": "Product", name: "Catalog Jacket A" }, { "@type": "Product", name: "Catalog Jacket B", offers: { price: 20, priceCurrency: "USD" } }])}</script>`,
+    sourceUrl: "https://acme.com/collections/jackets",
+    pageTitle: "Jackets",
+    headings: ["Catalog Jacket A"],
+  });
+  assert.deepEqual(result.products.map((product) => product.priceSignals.map((signal) => signal.amount)), [[], [20]]);
+});
+
+test("repeated metadata amounts do not turn a structured sale price into a fabricated range", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="10"><meta property="product:price:amount" content="20"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Range Jacket", offers: { price: 10, priceCurrency: "USD" } })}</script>`,
+    sourceUrl: "https://acme.com/products/range-jacket",
+    pageTitle: "Range Jacket",
+    headings: ["Range Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals.map((signal) => signal.amount), [10]);
+});
+
+test("repeated metadata amounts without explicit range semantics are not published as a range", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="120"><meta property="product:price:amount" content="100"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Sale Jacket", offers: { price: 100, priceCurrency: "USD" } })}</script>`,
+    sourceUrl: "https://acme.com/products/sale-jacket",
+    pageTitle: "Sale Jacket",
+    headings: ["Sale Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 100 }]);
+});
+
+test("nested list and sale price specifications do not become a fabricated range", () => {
+  const result = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Sale Jacket", offers: { price: 100, priceCurrency: "USD", priceSpecification: [{ price: 120, priceCurrency: "USD", name: "List price" }] } })}</script>`,
+    sourceUrl: "https://acme.com/products/sale-jacket",
+    pageTitle: "Sale Jacket",
+    headings: ["Sale Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 100 }]);
+});
+
+test("a list-only price specification is not promoted to a current price", () => {
+  const result = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "List Only Jacket", offers: { priceSpecification: { price: 120, priceCurrency: "USD", name: "List price" } } })}</script>`,
+    sourceUrl: "https://acme.com/products/list-only-jacket",
+    pageTitle: "List Only Jacket",
+    headings: ["List Only Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals, []);
+});
+
+test("a scalar structured price range is not collapsed to its first number", () => {
+  const result = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Scalar Range Jacket", offers: { price: "USD 10 - USD 20", priceCurrency: "USD" } })}</script>`,
+    sourceUrl: "https://acme.com/products/scalar-range-jacket",
+    pageTitle: "Scalar Range Jacket",
+    headings: ["Scalar Range Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals, []);
+});
+
+test("expired structured offers are not published as current prices", () => {
+  const result = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Expired Jacket", offers: { price: 100, priceCurrency: "USD", priceValidUntil: "2020-01-01" } })}</script>`,
+    sourceUrl: "https://acme.com/products/expired-jacket",
+    pageTitle: "Expired Jacket",
+    headings: ["Expired Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals, []);
+});
+
+test("contradictory currency embedded in direct amount metadata fails closed", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="USD 100"><meta property="product:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Currency Jacket", offers: { price: 100, priceCurrency: "GBP" } })}</script>`,
+    sourceUrl: "https://acme.com/products/currency-jacket",
+    pageTitle: "Currency Jacket",
+    headings: ["Currency Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals, []);
+  assert.ok(result.products[0].attributes.some((attribute) => attribute.startsWith("Price evidence conflict:")));
+});
+
+test("independent list and current offers do not become a fabricated range", () => {
+  const result = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Two Offer Jacket", offers: [{ price: 120, priceCurrency: "USD", name: "List price" }, { price: 100, priceCurrency: "USD", name: "Sale price" }] })}</script>`,
+    sourceUrl: "https://acme.com/products/two-offer-jacket",
+    pageTitle: "Two Offer Jacket",
+    headings: ["Two Offer Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 100 }]);
+});
+
+test("product-page metadata cannot bind to a related-product heading", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="999"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Related Jacket" })}</script>`,
+    sourceUrl: "https://acme.com/products/main-jacket",
+    pageTitle: "Main Jacket",
+    headings: ["Main Jacket", "Related Jacket"],
+  });
+  assert.equal(result.products.length, 1);
+  assert.equal(result.products[0].name, "Related Jacket");
+  assert.deepEqual(result.products[0].priceSignals, []);
+});
+
+test("product-page metadata cannot bind through a slug substring", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="100"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify([{ "@type": "Product", name: "Custom Jacket Cover" }, { "@type": "Product", name: "Custom Embroidered Jacket" }])}</script>`,
+    sourceUrl: "https://acme.com/products/custom-jacket",
+    pageTitle: "Workwear Collection",
+    headings: ["Custom Jacket Cover", "Custom Embroidered Jacket"],
+  });
+  assert.deepEqual(result.products.map((product) => product.priceSignals), [[], []]);
+});
+
+test("product-scoped direct metadata conflict suppresses price until visible evidence corroborates it", () => {
+  const result = extraction({
+    document: `<head><title>Custom Embroidered Columbia Jackets No Minimum – Arklavo</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="GBP"></head><script type="application/ld+json">${JSON.stringify({
+      "@type": "Product",
+      name: "Custom Embroidered Columbia Jackets No Minimum",
+      offers: { price: "12000", priceCurrency: "USD" },
+    })}</script>`,
+    sourceUrl: "https://arklavo.test/products/custom-embroidered-columbia-jackets-no-minimum",
+    pageTitle: "Custom Embroidered Columbia Jackets No Minimum – Arklavo",
+    headings: ["Custom Embroidered Columbia Jackets No Minimum"],
+  });
+
+  assert.deepEqual(result.products[0].priceSignals, []);
+  assert.ok(result.products[0].attributes.includes("Price evidence conflict: direct metadata contradicts structured currency"));
+});
+
+test("same-currency metadata conflict cannot bypass enrichment planning or publication", () => {
+  const result = extraction({
+    document: `<head><meta property="product:price:amount" content="100"><meta property="product:price:currency" content="USD"></head><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Custom Embroidered Jacket", offers: { price: "120", priceCurrency: "USD" }, image: "https://shop.test/jacket.jpg" })}</script>`,
+    sourceUrl: "https://shop.test/products/custom-embroidered-jacket",
+    domain: "shop.test",
+    pageTitle: "Custom Embroidered Jacket",
+    headings: ["Custom Embroidered Jacket"],
+  });
+  const primary = result.products[0];
+  const rival = { ...product("rival-jacket", "rival.test", "Custom Embroidered Jacket"), jsonLdType: "Product", sourceUrl: "https://rival.test/products/custom-embroidered-jacket", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }], imageUrl: "https://rival.test/jacket.jpg" };
+  const comparison = { primaryDomain: "shop.test", comparisonDomains: ["rival.test"], rows: [{ primary, matches: [{ domain: "rival.test", product: rival, score: 0.95, confidence: "Medium", sharedTerms: ["jacket"], claimIds: [], decision: null }] }], unmatched: [], coverage: { primaryProductsAvailable: 1, primaryProductsScanned: 1, primaryProductFamiliesCompared: 1, competitorProductsAvailable: 1, competitorProductsScanned: 1, assignedPairCount: 1, verifiedPairCount: 1, rowsReturned: 1, rowLimit: 1, truncated: false } };
+
+  assert.deepEqual(primary.priceSignals, []);
+  assert.ok(primary.attributes.includes("Price evidence conflict: direct metadata contradicts structured amount"));
+  assert.deepEqual(selectFinalProductEnrichmentTargets(comparison, 1).map((target) => target.productId), [primary.id]);
+  assert.equal(publishPricedProductComparison(comparison).rows[0].matches[0].publication.reason, "missing-valid-primary-price");
 });
 
 test("does not infer ISO currencies from lowercase ordinary prose", () => {
@@ -472,6 +737,168 @@ test("catalog deduplication preserves high-confidence structured evidence", () =
   const pageSignal = { ...structured, id: "page", extraction: "page-signal", confidence: "Medium", sourceUrl: "https://acme.com/billing" };
   assert.equal(selectPreferredProducts([structured, pageSignal])[0].id, "structured");
   assert.equal(selectPreferredProducts([pageSignal, structured])[0].id, "structured");
+});
+
+test("catalog deduplication never transfers a sibling price across one shared URL", () => {
+  const sharedUrl = "https://acme.com/products/workwear-collection";
+  const jacketA = { ...product("jacket-a", "acme.com", "Jacket A"), jsonLdType: "Product", sourceUrl: sharedUrl, priceSignals: [] };
+  const jacketB = { ...product("jacket-b", "acme.com", "Jacket B"), jsonLdType: "Product", sourceUrl: sharedUrl, confidence: "Medium", priceSignals: [{ raw: "USD 20", currency: "USD", amount: 20 }] };
+  const selected = selectPreferredProducts([jacketA, jacketB]);
+  assert.equal(selected.length, 2);
+  assert.deepEqual(selected.find((item) => item.id === "jacket-a").priceSignals, []);
+  assert.deepEqual(selected.find((item) => item.id === "jacket-b").priceSignals.map((signal) => signal.amount), [20]);
+});
+
+test("catalog deduplication lets the newest observation clear a stale price", () => {
+  const sourceUrl = "https://wearform.test/products/custom-jacket";
+  const stale = { ...product("stale", "wearform.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl, priceSignals: [{ raw: "USD 90", currency: "USD", amount: 90 }], observedAt: "2026-08-01T00:00:00.000Z" };
+  const fresh = { ...stale, id: "fresh", priceSignals: [], observedAt: "2026-08-16T00:00:00.000Z", claimIds: ["fresh-observed"] };
+  const selected = selectPreferredProducts([stale, fresh]);
+  assert.equal(selected.length, 1);
+  assert.deepEqual(selected[0].priceSignals, []);
+  assert.equal(selected[0].observedAt, fresh.observedAt);
+});
+
+test("catalog deduplication preserves a fresh price conflict instead of reviving stale evidence", () => {
+  const sourceUrl = "https://wearform.test/products/custom-jacket";
+  const stale = { ...product("stale", "wearform.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl, priceSignals: [{ raw: "USD 90", currency: "USD", amount: 90 }], observedAt: "2026-08-01T00:00:00.000Z" };
+  const conflict = "Price evidence conflict: contradictory direct metadata namespace";
+  const fresh = { ...stale, id: "fresh", priceSignals: [], attributes: [conflict], observedAt: "2026-08-16T00:00:00.000Z", claimIds: ["fresh-observed"] };
+  const selected = selectPreferredProducts([fresh, stale]);
+  assert.equal(selected.length, 1);
+  assert.deepEqual(selected[0].priceSignals, []);
+  assert.ok(selected[0].attributes.includes(conflict));
+  assert.equal(selected[0].observedAt, fresh.observedAt);
+});
+
+test("catalog deduplication keeps regional locale markets separate", () => {
+  const us = { ...product("jacket-us", "shop.example", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.example/en-us/products/custom-jacket", priceSignals: [{ raw: "USD 100", currency: "USD", amount: 100 }], observedAt: "2026-08-15T00:00:00.000Z" };
+  const canada = { ...us, id: "jacket-ca", sourceUrl: "https://shop.example/en-ca/products/custom-jacket", priceSignals: [{ raw: "CAD 120", currency: "CAD", amount: 120 }], observedAt: "2026-08-16T00:00:00.000Z", claimIds: ["jacket-ca-observed"] };
+  const selected = selectPreferredProducts([us, canada]);
+  assert.equal(selected.length, 2);
+  assert.deepEqual(selected.map((item) => item.sourceUrl).sort(), [canada.sourceUrl, us.sourceUrl].sort());
+});
+
+test("catalog deduplication keeps query-selected regional markets separate", () => {
+  const us = { ...product("jacket-us", "shop.example", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.example/products/custom-jacket?country=US", priceSignals: [{ raw: "USD 100", currency: "USD", amount: 100 }], observedAt: "2026-08-15T00:00:00.000Z" };
+  const gb = { ...us, id: "jacket-gb", sourceUrl: "https://shop.example/products/custom-jacket?country=GB", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }], observedAt: "2026-08-16T00:00:00.000Z", claimIds: ["jacket-gb-observed"] };
+  const selected = selectPreferredProducts([us, gb]);
+  assert.equal(selected.length, 2);
+  assert.deepEqual(selected.map((item) => item.sourceUrl).sort(), [gb.sourceUrl, us.sourceUrl].sort());
+});
+
+test("catalog deduplication keeps country-path regional markets separate", () => {
+  const us = { ...product("jacket-us", "shop.example", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.example/us/products/custom-jacket", priceSignals: [{ raw: "USD 100", currency: "USD", amount: 100 }], observedAt: "2026-08-15T00:00:00.000Z" };
+  const gb = { ...us, id: "jacket-gb", sourceUrl: "https://shop.example/gb/products/custom-jacket", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }], observedAt: "2026-08-16T00:00:00.000Z", claimIds: ["jacket-gb-observed"] };
+  assert.equal(selectPreferredProducts([us, gb]).length, 2);
+});
+
+test("catalog deduplication keeps shared GTIN observations in different markets separate", () => {
+  const us = { ...product("gtin-us", "shop.example", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.example/us/products/custom-jacket", identifiers: { gtins: ["4006381333931"] } };
+  const gb = { ...us, id: "gtin-gb", sourceUrl: "https://shop.example/gb/products/custom-jacket", claimIds: ["gtin-gb-observed"] };
+  assert.equal(selectPreferredProducts([us, gb]).length, 2);
+});
+
+test("catalog deduplication keeps nested country-path GTIN observations separate", () => {
+  const gb = { ...product("nested-gb", "shop.example", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.example/store/gb/products/custom-jacket", identifiers: { gtins: ["4006381333931"] } };
+  const us = { ...gb, id: "nested-us", sourceUrl: "https://shop.example/store/us/products/custom-jacket", claimIds: ["nested-us-observed"] };
+  assert.equal(selectPreferredProducts([gb, us]).length, 2);
+});
+
+test("market parsing prioritizes country selectors and recognizes all ISO countries", () => {
+  assert.equal(publicSourceMarketCountryCode("https://shop.example/products/item?locale=en-GB&country=US"), "US");
+  assert.equal(publicSourceMarketCountryCode("https://shop.example/tr/products/item"), "TR");
+  assert.equal(publicSourceMarketCountryCode("https://shop.example/store/gb/products/item"), "GB");
+  assert.equal(publicSourceMarketCountryCode("https://shop.gr/products/item"), "GR");
+});
+
+test("market parsing rejects contradictory locale and country path selectors", () => {
+  for (const url of [
+    "https://shop.example/us/gb/products/item",
+    "https://shop.example/en-US/gb/products/item",
+    "https://shop.example/en-US/fr-FR/products/item",
+  ]) {
+    assert.equal(publicSourceMarketContext(url).conflict, true, url);
+    assert.equal(publicSourceMarketCountryCode(url), "", url);
+  }
+  assert.equal(publicSourceMarketContext("https://shop.example/uk/products/item").contextKey, "country:?");
+  assert.equal(publicSourceMarketCountryCode("https://shop.example/gb-en/product/item"), "GB");
+});
+
+test("catalog deduplication keeps currency-selected GTIN observations separate", () => {
+  const usd = { ...product("usd", "shop.example", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.example/products/custom-jacket?currency=USD", identifiers: { gtins: ["4006381333931"] } };
+  const cad = { ...usd, id: "cad", sourceUrl: "https://shop.example/products/custom-jacket?currency=CAD", claimIds: ["cad-observed"] };
+  assert.equal(selectPreferredProducts([usd, cad]).length, 2);
+});
+
+test("non-current labels and reversed structured ranges never publish as current prices", () => {
+  for (const label of [
+    "Original price",
+    "RRP",
+    "Retail price",
+    "Member price",
+    "ListPrice",
+    "https://schema.org/ListPrice",
+    "RegularPrice",
+    "MemberPrice",
+    "SRP",
+    "InvoicePrice",
+    "MinimumAdvertisedPrice",
+  ]) {
+    const result = extraction({
+      document: `<h1>Work Jacket</h1><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Work Jacket", offers: { lowPrice: 80, highPrice: 120, priceCurrency: "USD", priceType: label } })}</script>`,
+      sourceUrl: "https://acme.com/products/work-jacket",
+      pageTitle: "Work Jacket",
+      headings: ["Work Jacket"],
+    });
+    assert.deepEqual(result.products[0].priceSignals, [], label);
+  }
+  const reversed = extraction({
+    document: `<h1>Work Jacket</h1><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Work Jacket", offers: { lowPrice: 120, highPrice: 80, priceCurrency: "USD" } })}</script>`,
+    sourceUrl: "https://acme.com/products/work-jacket",
+    pageTitle: "Work Jacket",
+    headings: ["Work Jacket"],
+  });
+  assert.deepEqual(reversed.products[0].priceSignals, []);
+});
+
+test("a collapsed structured range cannot legitimize an unrelated point as range evidence", () => {
+  const result = extraction({
+    document: `<h1>Work Jacket</h1><script type="application/ld+json">${JSON.stringify({
+      "@type": "Product",
+      name: "Work Jacket",
+      offers: [
+        { "@type": "AggregateOffer", lowPrice: 20, highPrice: 20, priceCurrency: "USD" },
+        { "@type": "Offer", price: 30, priceCurrency: "USD" },
+      ],
+    })}</script>`,
+    sourceUrl: "https://acme.com/products/work-jacket",
+    pageTitle: "Work Jacket",
+    headings: ["Work Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals, []);
+});
+
+test("an exact product H1 binds direct metadata conflicts even when title and slug differ", () => {
+  const result = extraction({
+    document: `<head><title>Custom Embroidered Columbia Jackets No Minimum | Arklavo</title><meta property="og:price:amount" content="100"><meta property="og:price:currency" content="GBP"></head><body><h1>Custom Women's Columbia Embroidered Soft Shell Jacket</h1><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Custom Women's Columbia Embroidered Soft Shell Jacket", offers: { price: 100, priceCurrency: "USD" } })}</script></body>`,
+    sourceUrl: "https://arklavo.com/products/custom-embroidered-columbia-jackets-no-minimum",
+    domain: "arklavo.com",
+    pageTitle: "Custom Embroidered Columbia Jackets No Minimum | Arklavo",
+    headings: ["Custom Women's Columbia Embroidered Soft Shell Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals, []);
+  assert.match(result.products[0].attributes.join(" "), /Price evidence conflict/);
+});
+
+test("generic related-card itemprop metadata cannot price the main product", () => {
+  const result = extraction({
+    document: `<h1>Primary Jacket</h1><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Primary Jacket" })}</script><h2>Pairs well with</h2><article><span itemprop="name">Leather Belt</span><meta itemprop="price" content="45"><meta itemprop="priceCurrency" content="USD"></article>`,
+    sourceUrl: "https://acme.com/products/primary-jacket",
+    pageTitle: "Primary Jacket",
+    headings: ["Primary Jacket", "Pairs well with"],
+  });
+  assert.deepEqual(result.products[0].priceSignals, []);
 });
 
 test("catalog deduplication collapses locale variants of the same product URL", () => {
@@ -1208,7 +1635,7 @@ test("final match enrichment can cover both sides of twenty-nine selected rows",
   assert.equal(targets.filter((target) => target.role === "rival").length, 29);
 });
 
-test("final enrichment gives every product family its strongest rival before primary presentation gaps", () => {
+test("final enrichment completes accepted pairs before spending capacity on secondary or image-only gaps", () => {
   const rows = Array.from({ length: 70 }, (_, index) => {
     const primary = { ...product(`primary-${index}`, "shop.test", `Product ${index} 500g`), jsonLdType: "Product", sourceUrl: `https://shop.test/products/product-${index}` };
     const weaker = { ...product(`weaker-${index}`, "a-rival.test", `Product ${index} 500g`), jsonLdType: "Product", sourceUrl: `https://a-rival.test/products/product-${index}` };
@@ -1219,9 +1646,75 @@ test("final enrichment gives every product family its strongest rival before pri
   const comparison = { primaryDomain: "shop.test", comparisonDomains: ["a-rival.test", "z-rival.test"], rows, unmatched: [], coverage: { primaryProductsAvailable: 70, primaryProductsScanned: 70, primaryProductFamiliesCompared: 70, competitorProductsAvailable: 140, competitorProductsScanned: 140, assignedPairCount: 140, verifiedPairCount: 140, rowsReturned: 70, rowLimit: 70, truncated: false } };
   const targets = selectFinalProductEnrichmentTargets(comparison, 80);
   assert.equal(targets.length, 80);
-  assert.equal(targets.slice(0, 70).every((target) => target.role === "rival"), true);
-  assert.equal(targets.slice(0, 70).every((target) => target.productId.startsWith("strongest-")), true);
-  assert.equal(targets.slice(70).every((target) => target.productId.startsWith("weaker-")), true);
+  assert.deepEqual(targets.slice(0, 4).map((target) => target.productId), ["strongest-0", "primary-0", "strongest-1", "primary-1"]);
+  assert.equal(targets.every((target) => target.productId.startsWith("strongest-") || target.productId.startsWith("primary-")), true);
+  assert.equal(targets.filter((target) => target.role === "primary").length, 40);
+});
+
+test("a unique product heading reconciles direct metadata on a multi-product page", () => {
+  const main = { "@type": "Product", name: "Custom Embroidered Jacket", offers: { price: "12000", priceCurrency: "USD" }, image: "https://cdn.acme.com/main.jpg" };
+  const related = { "@type": "Product", name: "Related Work Vest", offers: { price: "80", priceCurrency: "USD" } };
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="100"><meta property="product:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify([main, related])}</script>`,
+    sourceUrl: "https://acme.com/products/custom-embroidered-jacket",
+    pageTitle: "Workwear Store | Acme",
+    headings: ["Custom Embroidered Jacket"],
+  });
+  const selected = result.products.find((item) => item.name === "Custom Embroidered Jacket");
+  const untouched = result.products.find((item) => item.name === "Related Work Vest");
+
+  assert.deepEqual(selected.priceSignals, []);
+  assert.ok(selected.attributes.some((attribute) => attribute.startsWith("Price evidence conflict:")));
+  assert.deepEqual(untouched.priceSignals.map((signal) => signal.amount), [80]);
+});
+
+test("final enrichment prioritizes missing primary prices over already-priced rival image gaps", () => {
+  const rows = Array.from({ length: 30 }, (_, index) => {
+    const primary = { ...product(`primary-${index}`, "wearform.test", `Uniform ${index}`), jsonLdType: "Product", sourceUrl: `https://wearform.test/products/uniform-${index}`, imageUrl: "https://cdn.wearform.test/uniform.jpg" };
+    const rival = { ...product(`rival-${index}`, "rival.test", `Uniform ${index}`), jsonLdType: "Product", sourceUrl: `https://rival.test/products/uniform-${index}`, priceSignals: [{ raw: "USD 25", currency: "USD", amount: 25 }], imageUrl: "" };
+    return { primary, matches: [{ domain: rival.domain, product: rival, score: 0.95, confidence: "Medium", sharedTerms: ["uniform"], claimIds: [], decision: null }] };
+  });
+  const comparison = { primaryDomain: "wearform.test", comparisonDomains: ["rival.test"], rows, unmatched: [], coverage: { primaryProductsAvailable: 30, primaryProductsScanned: 30, primaryProductFamiliesCompared: 30, competitorProductsAvailable: 30, competitorProductsScanned: 30, assignedPairCount: 30, verifiedPairCount: 30, rowsReturned: 30, rowLimit: 30, truncated: false } };
+
+  const targets = selectFinalProductEnrichmentTargets(comparison, 20);
+
+  assert.equal(targets.length, 20);
+  assert.equal(targets.every((target) => target.role === "primary"), true);
+  assert.equal(targets.every((target) => target.productId.startsWith("primary-")), true);
+});
+
+test("final enrichment re-reads a non-positive existing product price", () => {
+  const primary = { ...product("primary-zero", "wearform.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://wearform.test/products/custom-jacket", priceSignals: [{ raw: "USD 0", currency: "USD", amount: 0 }], imageUrl: "https://wearform.test/jacket.jpg" };
+  const rival = { ...product("rival-priced", "rival.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://rival.test/products/custom-jacket", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }], imageUrl: "https://rival.test/jacket.jpg" };
+  const comparison = { primaryDomain: "wearform.test", comparisonDomains: ["rival.test"], rows: [{ primary, matches: [{ domain: rival.domain, product: rival, score: 0.95, confidence: "Medium", sharedTerms: ["jacket"], claimIds: [], decision: null }] }], unmatched: [], coverage: { primaryProductsAvailable: 1, primaryProductsScanned: 1, primaryProductFamiliesCompared: 1, competitorProductsAvailable: 1, competitorProductsScanned: 1, assignedPairCount: 1, verifiedPairCount: 1, rowsReturned: 1, rowLimit: 1, truncated: false } };
+  assert.deepEqual(selectFinalProductEnrichmentTargets(comparison, 1).map((target) => target.productId), [primary.id]);
+});
+
+test("a strongest both-missing pair is scheduled before a weaker secondary single-missing pair", () => {
+  const primary = { ...product("primary-strong", "shop.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/custom-jacket" };
+  const strongest = { ...product("rival-strong", "strong.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://strong.test/products/custom-jacket" };
+  const secondary = { ...product("rival-weak", "weak.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://weak.test/products/custom-jacket", priceSignals: [{ raw: "USD 70", currency: "USD", amount: 70 }] };
+  const match = (rival, score) => ({ domain: rival.domain, product: rival, score, confidence: "Medium", sharedTerms: ["custom", "jacket"], claimIds: [], decision: null });
+  const comparison = { primaryDomain: "shop.test", comparisonDomains: ["strong.test", "weak.test"], rows: [{ primary, matches: [match(secondary, 0.7), match(strongest, 0.99)] }], unmatched: [], coverage: { primaryProductsAvailable: 1, primaryProductsScanned: 1, primaryProductFamiliesCompared: 1, competitorProductsAvailable: 2, competitorProductsScanned: 2, assignedPairCount: 2, verifiedPairCount: 2, rowsReturned: 1, rowLimit: 1, truncated: false } };
+
+  const targets = selectFinalProductEnrichmentTargets(comparison, 2);
+
+  assert.deepEqual(targets.map((target) => target.productId), ["rival-strong", "primary-strong"]);
+});
+
+test("an atomic pair that cannot fit does not let a weaker row starve the next highest score", () => {
+  const primaryA = { ...product("primary-a", "shop.test", "Jacket A"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/jacket-a" };
+  const impossible = { ...product("rival-impossible", "strong.test", "Jacket A"), jsonLdType: "Product", sourceUrl: "https://strong.test/products/jacket-a" };
+  const publishable = { ...product("rival-publishable", "secondary.test", "Jacket A"), jsonLdType: "Product", sourceUrl: "https://secondary.test/products/jacket-a", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }] };
+  const primaryB = { ...product("primary-b", "shop.test", "Jacket B"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/jacket-b", priceSignals: [{ raw: "USD 90", currency: "USD", amount: 90 }] };
+  const weak = { ...product("rival-weak-b", "weak.test", "Jacket B"), jsonLdType: "Product", sourceUrl: "https://weak.test/products/jacket-b" };
+  const match = (rival, score) => ({ domain: rival.domain, product: rival, score, confidence: "Medium", sharedTerms: ["jacket"], claimIds: [], decision: null });
+  const rows = [{ primary: primaryA, matches: [match(publishable, 0.98), match(impossible, 0.99)] }, { primary: primaryB, matches: [match(weak, 0.5)] }];
+  const comparison = { primaryDomain: "shop.test", comparisonDomains: ["strong.test", "secondary.test", "weak.test"], rows, unmatched: [], coverage: { primaryProductsAvailable: 2, primaryProductsScanned: 2, primaryProductFamiliesCompared: 2, competitorProductsAvailable: 3, competitorProductsScanned: 3, assignedPairCount: 3, verifiedPairCount: 3, rowsReturned: 2, rowLimit: 2, truncated: false } };
+
+  const targets = selectFinalProductEnrichmentTargets(comparison, 1);
+
+  assert.deepEqual(targets.map((target) => target.productId), ["primary-a"]);
 });
 
 test("final enrichment updates the selected pair and recomputes its price decision", () => {
@@ -1237,6 +1730,67 @@ test("final enrichment updates the selected pair and recomputes its price decisi
   assert.equal(enriched.rows[0].matches[0].product.imageUrl, "https://cdn.tea.test/tea.jpg");
   assert.match(enriched.rows[0].matches[0].decision.priceVerdict, /GBP 2\.00 cheaper/);
   assert.deepEqual(enriched.enrichment, { pagesRequested: 2, pagesFetched: 2, maxPages: 24, gaps: [] });
+});
+
+test("final enrichment clears a stale price when fresh page evidence records a currency conflict", () => {
+  const primary = { ...product("jacket", "wearform.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://wearform.test/products/custom-jacket", priceSignals: [{ raw: "USD 90", currency: "USD", amount: 90 }] };
+  const rival = { ...product("rival-jacket", "rival.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://rival.test/products/custom-jacket", priceSignals: [{ raw: "USD 12000", currency: "USD", amount: 12000 }] };
+  const comparison = buildProductComparison("wearform.test", [{ domain: "wearform.test", products: [primary] }, { domain: "rival.test", products: [rival] }]);
+  const fresh = { ...rival, priceSignals: [], attributes: ["Price evidence conflict: direct metadata contradicts structured currency"] };
+
+  const enriched = applyFinalProductEnrichment(comparison, [fresh], { pagesRequested: 1, pagesFetched: 1, maxPages: 24, gaps: [] });
+
+  assert.deepEqual(enriched.rows[0].matches[0].product.priceSignals, []);
+  assert.ok(enriched.rows[0].matches[0].product.attributes.some((attribute) => attribute.startsWith("Price evidence conflict:")));
+});
+
+test("final enrichment cannot revive a stale price after a fresh non-positive observation", () => {
+  const primary = { ...product("jacket", "wearform.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://wearform.test/products/custom-jacket", priceSignals: [{ raw: "USD 90", currency: "USD", amount: 90 }] };
+  const rival = { ...product("rival-jacket", "rival.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://rival.test/products/custom-jacket", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }] };
+  const comparison = buildProductComparison("wearform.test", [{ domain: "wearform.test", products: [primary] }, { domain: "rival.test", products: [rival] }]);
+  const fresh = { ...rival, priceSignals: [], attributes: ["Price evidence conflict: observed price is non-positive or invalid"] };
+
+  const enriched = applyFinalProductEnrichment(comparison, [fresh], { pagesRequested: 1, pagesFetched: 1, maxPages: 24, gaps: [] });
+
+  assert.deepEqual(enriched.rows[0].matches[0].product.priceSignals, []);
+  assert.ok(enriched.rows[0].matches[0].product.attributes.includes("Price evidence conflict: observed price is non-positive or invalid"));
+});
+
+test("final enrichment cannot revive or re-date a stale price after a fresh unpriced observation", () => {
+  const primary = { ...product("jacket", "wearform.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://wearform.test/products/custom-jacket", priceSignals: [{ raw: "USD 90", currency: "USD", amount: 90 }], observedAt: "2026-08-01T00:00:00.000Z" };
+  const rival = { ...product("rival-jacket", "rival.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://rival.test/products/custom-jacket", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }] };
+  const comparison = buildProductComparison("wearform.test", [{ domain: "wearform.test", products: [primary] }, { domain: "rival.test", products: [rival] }]);
+  const fresh = { ...primary, priceSignals: [], attributes: [], observedAt: "2026-08-16T00:00:00.000Z" };
+
+  const enriched = applyFinalProductEnrichment(comparison, [fresh], { pagesRequested: 1, pagesFetched: 1, maxPages: 24, gaps: [] });
+
+  assert.deepEqual(enriched.rows[0].primary.priceSignals, []);
+  assert.equal(enriched.rows[0].primary.observedAt, "2026-08-16T00:00:00.000Z");
+});
+
+test("final enrichment cannot replace a selected market with a different localized market", () => {
+  const primary = { ...product("jacket", "shop.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.test/en-us/products/custom-jacket", priceSignals: [{ raw: "USD 90", currency: "USD", amount: 90 }] };
+  const rival = { ...product("rival-jacket", "rival.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://rival.test/en-us/products/custom-jacket", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }] };
+  const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "rival.test", products: [rival] }]);
+  const fresh = { ...rival, sourceUrl: "https://rival.test/en-ca/products/custom-jacket", priceSignals: [{ raw: "CAD 130", currency: "CAD", amount: 130 }], observedAt: TEST_NOW };
+  const enriched = applyFinalProductEnrichment(comparison, [fresh], { pagesRequested: 1, pagesFetched: 1, maxPages: 24, gaps: [] });
+  assert.equal(enriched.rows[0].matches[0].product.sourceUrl, rival.sourceUrl);
+  assert.deepEqual(enriched.rows[0].matches[0].product.priceSignals, rival.priceSignals);
+  assert.equal(enriched.rows[0].matches[0].product.observedAt, rival.observedAt);
+});
+
+test("pre-match reconciliation cannot restore a stale range after fresh currency-conflict evidence", () => {
+  const primary = { ...product("jacket", "wearform.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://wearform.test/products/custom-jacket", priceSignals: [{ raw: "USD 100", currency: "USD", amount: 100 }, { raw: "USD 120", currency: "USD", amount: 120 }] };
+  const rival = { ...product("rival-jacket", "rival.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://rival.test/products/custom-jacket", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }] };
+  const fresh = { ...primary, priceSignals: [], attributes: ["Price evidence conflict: fresh page currencies disagree"] };
+
+  const reconciled = applyPreMatchCatalogEnrichment([primary], [fresh]);
+  const comparison = buildProductComparison("wearform.test", [{ domain: "wearform.test", products: reconciled }, { domain: "rival.test", products: [rival] }]);
+  const published = publishPricedProductComparison(comparison);
+
+  assert.deepEqual(reconciled[0].priceSignals, []);
+  assert.equal(published.rows[0].matches[0].product, null);
+  assert.equal(published.rows[0].matches[0].publication.reason, "missing-valid-primary-price");
 });
 
 test("pre-match catalog reconciliation replaces stale identity without inheriting stale fields", () => {
@@ -1358,6 +1912,48 @@ test("final enrichment joins equivalent canonical product URLs after host and sc
 
   assert.equal(enriched.rows[0].primary.priceSignals[0].amount, 8);
   assert.equal(enriched.rows[0].primary.imageUrl, "https://cdn.shop.test/tea.jpg");
+});
+
+test("catalog planners retain distinct sibling identities that share one page URL", () => {
+  const sharedUrl = "https://shop.test/products/workwear-collection";
+  const first = { ...product("jacket-a", "shop.test", "Jacket A"), jsonLdType: "Product", sourceUrl: sharedUrl };
+  const second = { ...product("jacket-b", "shop.test", "Jacket B"), jsonLdType: "Product", sourceUrl: sharedUrl };
+  const firstRival = { ...product("rival-a", "rival.test", "Jacket A"), jsonLdType: "Product", sourceUrl: "https://rival.test/products/jacket-a", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }], imageUrl: "https://rival.test/images/jacket-a.jpg" };
+  const secondRival = { ...product("rival-b", "rival.test", "Jacket B"), jsonLdType: "Product", sourceUrl: "https://rival.test/products/jacket-b", priceSignals: [{ raw: "USD 70", currency: "USD", amount: 70 }], imageUrl: "https://rival.test/images/jacket-b.jpg" };
+  const match = (rival) => ({ domain: rival.domain, product: rival, score: 0.95, confidence: "Medium", sharedTerms: ["jacket"], claimIds: [], decision: null });
+  const comparison = {
+    primaryDomain: "shop.test",
+    comparisonDomains: ["rival.test"],
+    rows: [{ primary: first, matches: [match(firstRival)] }, { primary: second, matches: [match(secondRival)] }],
+    unmatched: [],
+    coverage: { primaryProductsAvailable: 2, primaryProductsScanned: 2, primaryProductFamiliesCompared: 2, competitorProductsAvailable: 2, competitorProductsScanned: 2, assignedPairCount: 2, verifiedPairCount: 2, rowsReturned: 2, rowLimit: 2, truncated: false },
+  };
+
+  const preliminary = planPreliminaryCatalogReconciliation(comparison, [first, second], 64);
+  assert.deepEqual(preliminary.targets.map((target) => target.productId).sort(), ["jacket-a", "jacket-b"]);
+  assert.equal(preliminary.totalEligible, 2);
+  assert.equal(preliminary.truncated, false);
+
+  const final = planFinalProductEnrichmentTargets(comparison, 2);
+  assert.deepEqual(final.targets.map((target) => target.productId).sort(), ["jacket-a", "jacket-b"]);
+  assert.equal(final.totalEligible, 2);
+  assert.equal(final.truncated, false);
+});
+
+test("final enrichment never copies same-page sibling evidence across product identities", () => {
+  const sharedUrl = "https://shop.test/products/workwear-collection";
+  const jacketA = { ...product("a", "shop.test", "Jacket A"), jsonLdType: "Product", sourceUrl: sharedUrl };
+  const jacketB = { ...product("b", "shop.test", "Jacket B"), jsonLdType: "Product", sourceUrl: sharedUrl };
+  const rivalA = { ...product("rival-a", "rival.test", "Jacket A"), jsonLdType: "Product", sourceUrl: "https://rival.test/products/jacket-a", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }] };
+  const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: [jacketA, jacketB] }, { domain: "rival.test", products: [rivalA] }]);
+  const freshA = { ...jacketA, id: "fresh-a", name: "Jacket A", normalizedName: "jacket a", priceSignals: [{ raw: "USD 100", currency: "USD", amount: 100 }] };
+
+  const enriched = applyFinalProductEnrichment(comparison, [freshA], { pagesRequested: 1, pagesFetched: 1, maxPages: 24, gaps: [] });
+  const rows = new Map(enriched.rows.map((row) => [row.primary.id, row.primary]));
+
+  assert.deepEqual(rows.get("a").priceSignals.map((signal) => signal.amount), [100]);
+  assert.deepEqual(rows.get("b").priceSignals, []);
+  assert.equal(rows.get("b").name, "Jacket B");
 });
 
 test("final enrichment joins a validated redirected product by its selected product id", () => {

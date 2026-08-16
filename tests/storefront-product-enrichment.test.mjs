@@ -638,7 +638,7 @@ test("ignores script-only Shopify currency and uses explicit structured product 
   }
 });
 
-test("does not fall back to structured currency when direct metadata currencies conflict", async () => {
+test("product-scoped currency takes precedence over generic metadata currency", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
     const url = String(input);
@@ -648,7 +648,370 @@ test("does not fall back to structured currency when direct metadata currencies 
   };
   try {
     const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, [{ raw: "USD 13.4", currency: "USD", amount: 13.4 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("rejects contradictory structured currency and keeps product-scoped direct GBP evidence", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response(`<html><head><title>Custom Women's Columbia Embroidered Soft Shell Jacket</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Custom Women's Columbia Embroidered Soft Shell Jacket", offers: { price: "12000", priceCurrency: "USD" } })}</script></head><body><h1>Custom Women's Columbia Embroidered Soft Shell Jacket</h1><div class="summary"><p class="price">£100.00</p></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Custom Women's Columbia Embroidered Soft Shell Jacket", sourceUrl: "https://shop.test/products/custom-columbia-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "GBP", amount: 100 }]);
+    assert.ok(result.products[0].attributes.some((attribute) => attribute.startsWith("Price evidence conflict:")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("ignores a generic carousel after a textual related-products heading", () => {
+  const evidence = extractScopedProductPageEvidence(`
+    <main><h1>White Onion</h1><div class="summary"><p class="price">GBP 1.14</p></div></main>
+    <div class="carousel"><h2>Related products</h2><p class="price">GBP 99.00</p></div>
+  `);
+  assert.deepEqual(evidence.priceSignals, [{ raw: "GBP 1.14", currency: "GBP", amount: 1.14 }]);
+});
+
+test("ignores common recommendation-heading variants", () => {
+  for (const heading of ["You might also like", "Frequently bought together", "Customers also bought", "Complete the look"]) {
+    const evidence = extractScopedProductPageEvidence(`<main><h1>Main Jacket</h1><div class="summary"></div></main><div class="carousel"><h2>${heading}</h2><p class="price">USD 99.00</p></div>`);
+    assert.deepEqual(evidence.priceSignals, [], heading);
+  }
+});
+
+test("does not combine a query-selected page currency with an unscoped Shopify amount", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.includes(".js")) return Response.json({ title: "Market Jacket", handle: "market-jacket", variants: [{ title: "Default Title", price: 10000 }] }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>Market Jacket</title><meta property="product:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Market Jacket" })}</script></head><body><h1>Market Jacket</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Market Jacket", sourceUrl: "https://shop.test/products/market-jacket?country=GB" })], 1);
     assert.deepEqual(result.products[0].priceSignals, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("rejects enrichment when a redirect drops the requested market", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.includes("country=GB")) return new Response(null, { status: 302, headers: { location: "https://shop.test/products/market-jacket" } });
+    return new Response("<html><head><title>Market Jacket</title></head><body><h1>Market Jacket</h1><div class=summary><p class=price>USD 100</p></div></body></html>", { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Market Jacket", sourceUrl: "https://shop.test/products/market-jacket?country=GB" })], 1);
+    assert.equal(result.products.length, 0);
+    assert.equal(result.coverage.gaps[0].failureKind, "redirect");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("a redirect-added market cannot qualify an unscoped Shopify amount", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith("/products/market-jacket")) return new Response(null, { status: 302, headers: { location: "https://shop.test/products/market-jacket?country=GB" } });
+    if (url.includes(".js")) return Response.json({ title: "Market Jacket", handle: "market-jacket", variants: [{ title: "Default Title", price: 10000 }] }, { headers: { "content-type": "application/json" } });
+    return new Response(`<html><head><title>Market Jacket</title><meta property="product:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Market Jacket" })}</script></head><body><h1>Market Jacket</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Market Jacket", sourceUrl: "https://shop.test/products/market-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("a regional WooCommerce page cannot inherit the unscoped Store API price", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.includes("/wp-json/wc/store/v1/products")) return Response.json([{ id: 1, name: "Market Jacket", slug: "market-jacket", prices: { price: "10000", currency_code: "USD", currency_minor_unit: 2 }, images: [] }], { headers: { "content-type": "application/json" } });
+    return new Response(`<html><head><title>Market Jacket</title><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Market Jacket" })}</script></head><body><h1>Market Jacket</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Market Jacket", sourceUrl: "https://shop.test/us/product/market-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("a nested regional WooCommerce page cannot inherit the unscoped Store API price", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.includes("/wp-json/wc/store/v1/products")) return Response.json([{ id: 1, name: "Market Jacket", slug: "market-jacket", prices: { price: "10000", currency_code: "USD", currency_minor_unit: 2 }, images: [] }], { headers: { "content-type": "application/json" } });
+    return new Response(`<html><head><title>Market Jacket</title><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Market Jacket" })}</script></head><body><h1>Market Jacket</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Market Jacket", sourceUrl: "https://shop.test/shop/en-gb/product/market-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("a language-prefixed WooCommerce page cannot inherit the unscoped Store API price", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.includes("/wp-json/wc/store/v1/products")) return Response.json([{ id: 10, name: "Work Jacket", slug: "work-jacket", prices: { price: "10000", currency_code: "USD", currency_minor_unit: 2 } }]);
+    return new Response(`<html><head><title>Work Jacket</title></head><body><h1>Work Jacket</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Work Jacket", sourceUrl: "https://shop.test/fr/product/work-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("a country-TLD redirect cannot switch to a conflicting query-selected market", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (!url.includes("country=US")) return new Response(null, { status: 302, headers: { location: "https://shop.co.uk/products/work-jacket?country=US" } });
+    return new Response(`<html><head><title>Work Jacket</title></head><body><h1>Work Jacket</h1><p class="price">USD 100</p></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ domain: "shop.co.uk", expectedName: "Work Jacket", sourceUrl: "https://shop.co.uk/products/work-jacket" })], 1);
+    assert.equal(result.products.length, 0);
+    assert.equal(result.coverage.gaps[0].failureKind, "redirect");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("visible product currency contradicting structured currency fails closed without direct metadata", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response(`<html><head><title>Custom Embroidered Jacket</title><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Custom Embroidered Jacket", offers: { price: "12000", priceCurrency: "USD" } })}</script></head><body><h1>Custom Embroidered Jacket</h1><div class="summary"><p class="price">GBP 100.00</p></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Custom Embroidered Jacket", sourceUrl: "https://shop.test/products/custom-embroidered-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+    assert.ok(result.products[0].attributes.some((attribute) => attribute.startsWith("Price evidence conflict:")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("publishes no price when direct metadata contradicts visible and structured product evidence", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response(`<html><head><title>Custom Embroidered Jacket</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Custom Embroidered Jacket", offers: { price: "80", priceCurrency: "USD" } })}</script></head><body><h1>Custom Embroidered Jacket</h1><div class="summary"><p class="price">USD 80.00</p></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Custom Embroidered Jacket", sourceUrl: "https://shop.test/products/custom-embroidered-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+    assert.ok(result.products[0].attributes.some((attribute) => attribute.startsWith("Price evidence conflict:")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("publishes no price when same-currency direct visible and structured amounts all disagree", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response(`<html><head><title>Custom Embroidered Jacket</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Custom Embroidered Jacket", offers: { price: "120", priceCurrency: "USD" } })}</script></head><body><h1>Custom Embroidered Jacket</h1><div class="summary"><p class="price">USD 80.00</p></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Custom Embroidered Jacket", sourceUrl: "https://shop.test/products/custom-embroidered-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+    assert.ok(result.products[0].attributes.includes("Price evidence conflict: product-scoped price amounts disagree"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("uses corroborated direct and visible price when same-currency structured amount disagrees", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response(`<html><head><title>Custom Embroidered Jacket</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Custom Embroidered Jacket", offers: { price: "120", priceCurrency: "USD" } })}</script></head><body><h1>Custom Embroidered Jacket</h1><div class="summary"><p class="price">USD 100.00</p></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Custom Embroidered Jacket", sourceUrl: "https://shop.test/products/custom-embroidered-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 100 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("accepts a direct point price that matches a visible range endpoint", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response(`<html><head><title>Variant Jacket</title><meta property="product:price:amount" content="10"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Variant Jacket", offers: { lowPrice: 10, highPrice: 20, priceCurrency: "USD" } })}</script></head><body><h1>Variant Jacket</h1><div class="summary"><p class="price">USD 10.00 – USD 20.00</p></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Variant Jacket", sourceUrl: "https://shop.test/products/variant-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 10 }, { currency: "USD", amount: 20 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("rejects a direct point price outside the visible product range", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response(`<html><head><title>Variant Jacket</title><meta property="product:price:amount" content="15"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Variant Jacket", offers: { price: 15, priceCurrency: "USD" } })}</script></head><body><h1>Variant Jacket</h1><div class="summary"><p class="price">USD 10.00 – USD 20.00</p></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Variant Jacket", sourceUrl: "https://shop.test/products/variant-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+    assert.ok(result.products[0].attributes.includes("Price evidence conflict: product-scoped price amounts disagree"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fails closed when same-currency direct and structured amounts disagree without visible evidence", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response(`<html><head><title>Custom Embroidered Jacket</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Custom Embroidered Jacket", offers: { price: "120", priceCurrency: "USD" } })}</script></head><body><h1>Custom Embroidered Jacket</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Custom Embroidered Jacket", sourceUrl: "https://shop.test/products/custom-embroidered-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+    assert.ok(result.products[0].attributes.includes("Price evidence conflict: direct metadata contradicts structured amount"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("coherent product-scoped and structured price survives stale generic and visible currencies", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response(`<html><head><title>Custom Embroidered Jacket</title><meta property="product:price:amount" content="120.00"><meta property="product:price:currency" content="USD"><meta property="og:price:amount" content="110.00"><meta property="og:price:currency" content="EUR"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Custom Embroidered Jacket", offers: { price: "120", priceCurrency: "USD" } })}</script></head><body><h1>Custom Embroidered Jacket</h1><div class="summary"><p class="price">GBP 100.00</p></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Custom Embroidered Jacket", sourceUrl: "https://shop.test/products/custom-embroidered-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 120 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a currency-less Shopify adapter cannot revive a direct-versus-structured currency conflict", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({ title: "Custom Embroidered Jacket", handle: "custom-embroidered-jacket", variants: [{ title: "Default Title", price: 10000 }] }, { headers: { "content-type": "application/json" } });
+    return new Response(`<html><head><title>Custom Embroidered Jacket</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Custom Embroidered Jacket", offers: { price: "12000", priceCurrency: "USD" } })}</script></head><body><h1>Custom Embroidered Jacket</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Custom Embroidered Jacket", sourceUrl: "https://shop.test/products/custom-embroidered-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+    assert.ok(result.products[0].attributes.some((attribute) => attribute.startsWith("Price evidence conflict:")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a WooCommerce adapter cannot revive a direct-versus-structured currency conflict", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.includes("/wp-json/wc/store/v1/products")) return Response.json([{ name: "Custom Embroidered Jacket", slug: "custom-embroidered-jacket", prices: { price: "1200000", currency_code: "USD", currency_minor_unit: 2 } }]);
+    return new Response(`<html><head><title>Custom Embroidered Jacket</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Custom Embroidered Jacket", offers: { price: "12000", priceCurrency: "USD" } })}</script></head><body><h1>Custom Embroidered Jacket</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Custom Embroidered Jacket", sourceUrl: "https://shop.test/product/custom-embroidered-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+    assert.ok(result.products[0].attributes.some((attribute) => attribute.startsWith("Price evidence conflict:")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("keeps corroborated page evidence while rejecting a contradictory Shopify amount", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({ title: "Custom Embroidered Jacket", handle: "custom-embroidered-jacket", variants: [{ title: "Default Title", price: 12000 }] }, { headers: { "content-type": "application/json" } });
+    return new Response(`<html><head><title>Custom Embroidered Jacket</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Custom Embroidered Jacket", offers: { price: "100", priceCurrency: "USD" } })}</script></head><body><h1>Custom Embroidered Jacket</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Custom Embroidered Jacket", sourceUrl: "https://shop.test/products/custom-embroidered-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 100 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("keeps corroborated direct and visible price when Shopify amount disagrees", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({ title: "Custom Embroidered Jacket", handle: "custom-embroidered-jacket", variants: [{ title: "Default Title", price: 12000 }] }, { headers: { "content-type": "application/json" } });
+    return new Response(`<html><head><title>Custom Embroidered Jacket</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Custom Embroidered Jacket", offers: { price: "100", priceCurrency: "USD" } })}</script></head><body><h1>Custom Embroidered Jacket</h1><div class="summary"><p class="price">USD 100.00</p></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Custom Embroidered Jacket", sourceUrl: "https://shop.test/products/custom-embroidered-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 100 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("WooCommerce cannot contradict a direct page currency that has no amount", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.includes("/wp-json/wc/store/v1/products")) return Response.json([{ name: "Custom Embroidered Jacket", slug: "custom-embroidered-jacket", prices: { price: "1200000", currency_code: "USD", currency_minor_unit: 2 } }]);
+    return new Response(`<html><head><title>Custom Embroidered Jacket</title><meta property="product:price:currency" content="GBP"></head><body><h1>Custom Embroidered Jacket</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const ordinary = await enrichProductTargets([target({ expectedName: "Custom Embroidered Jacket", sourceUrl: "https://shop.test/product/custom-embroidered-jacket" })], 1);
+    const replacement = await enrichProductTargets([target({ expectedName: "Old Catalog Jacket", sourceUrl: "https://shop.test/product/custom-embroidered-jacket", allowCatalogReplacement: true })], 1);
+    for (const result of [ordinary, replacement]) {
+      assert.deepEqual(result.products[0].priceSignals, []);
+      assert.ok(result.products[0].attributes.some((attribute) => attribute.startsWith("Price evidence conflict:")));
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("catalog replacement cannot revive a direct-versus-structured currency conflict through WooCommerce", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.includes("/wp-json/wc/store/v1/products")) return Response.json([{ name: "Custom Embroidered Jacket", slug: "custom-embroidered-jacket", prices: { price: "1200000", currency_code: "USD", currency_minor_unit: 2 } }]);
+    return new Response(`<html><head><title>Custom Embroidered Jacket</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Custom Embroidered Jacket", offers: { price: "12000", priceCurrency: "USD" } })}</script></head><body><h1>Custom Embroidered Jacket</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Old Catalog Jacket", sourceUrl: "https://shop.test/product/custom-embroidered-jacket", allowCatalogReplacement: true })], 1);
+    assert.equal(result.products.length, 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+    assert.ok(result.products[0].attributes.some((attribute) => attribute.startsWith("Price evidence conflict:")));
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1056,6 +1419,7 @@ test("keeps non-positive, non-finite, or unsupported-currency Shopify prices non
       })], 1);
       assert.equal(result.products.length, 1);
       assert.deepEqual(result.products[0].priceSignals, []);
+      assert.ok(result.products[0].attributes.includes("Price evidence conflict: observed price is non-positive or invalid"));
       assert.equal(calls.at(-1), "https://shop.test/products/cornerstone-enhanced-visibility-beanie.js");
     } finally {
       globalThis.fetch = originalFetch;
@@ -1237,6 +1601,68 @@ test("catalog drift stays rejected unless the pre-match caller explicitly permit
     assert.match(replaced.products[0].attributes.join(" "), /Previous sitemap identity: Maamoul Walnut 500g/);
     assert.equal(replaced.products[0].claimIds.some((id) => id.includes("catalog-replacement")), true);
     assert.equal(replaced.coverage.gaps.length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("cuts off additional common related-product heading variants", () => {
+  for (const heading of ["You may also love", "Pairs well with", "More from our collection", "Recently viewed", "People also bought"]) {
+    const evidence = extractScopedProductPageEvidence(`<h1>Primary Jacket</h1><div class="summary"><p class="price">USD 100</p></div><h2>${heading}</h2><p class="price">USD 45</p>`);
+    assert.deepEqual(evidence.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }], heading);
+  }
+});
+
+test("collection-level product metadata cannot erase valid sibling JSON-LD prices", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response(`<html><head><title>Workwear</title><meta property="product:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify([
+      { "@type": "Product", name: "Jacket A", offers: { price: "10", priceCurrency: "USD" } },
+      { "@type": "Product", name: "Jacket B", offers: { price: "20", priceCurrency: "USD" } },
+    ])}</script></head><body><h1>Workwear</h1><h2>Jacket A</h2><h2>Jacket B</h2></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Jacket A", sourceUrl: "https://shop.test/shop/collections/workwear" })], 1);
+    assert.equal(result.products.length, 1);
+    assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 10 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("collection-level visible price cannot attach a sibling price to an unpriced requested product", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response(`<html><head><title>Workwear</title><script type="application/ld+json">${JSON.stringify([
+      { "@type": "Product", name: "Jacket A" },
+      { "@type": "Product", name: "Jacket B", offers: { price: "20", priceCurrency: "USD" } },
+    ])}</script></head><body><h1>Workwear</h1><h2>Jacket A</h2><article><h2>Jacket B</h2><p class="price">USD 20</p></article></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Jacket A", sourceUrl: "https://shop.test/shop/collections/workwear" })], 1);
+    assert.equal(result.products.length, 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("catalog replacement preserves a canonical range when an adapter exposes one endpoint", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({ title: "New Work Jacket", handle: "old-work-jacket", variants: [{ title: "Default Title", price: 1000 }] });
+    return new Response(`<html><head><title>New Work Jacket</title><meta property="product:price:amount" content="10"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "New Work Jacket", offers: { lowPrice: 10, highPrice: 20, priceCurrency: "USD" } })}</script></head><body><h1>New Work Jacket</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Old Work Jacket", sourceUrl: "https://shop.test/products/old-work-jacket", allowCatalogReplacement: true })], 1);
+    assert.equal(result.products.length, 1);
+    assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 10 }, { currency: "USD", amount: 20 }]);
   } finally {
     globalThis.fetch = originalFetch;
   }

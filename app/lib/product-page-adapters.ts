@@ -89,7 +89,10 @@ export function storefrontAdapterRequest(sourceUrl: string): StorefrontAdapterRe
   const routeName = route.segments[route.routeIndex].toLowerCase();
   if (routeName === "products") {
     const endpoint = new URL(route.url.toString());
+    const currencySelectors = [...route.url.searchParams.entries()]
+      .filter(([key]) => /^(?:currency|currency_code|currencycode)$/i.test(key));
     endpoint.search = "";
+    currencySelectors.forEach(([key, currency]) => endpoint.searchParams.append(key, currency));
     endpoint.hash = "";
     endpoint.pathname = `/${route.segments.slice(0, route.routeIndex + 2).join("/")}.js`;
     return { kind: "shopify", endpointUrl: endpoint.toString(), requestedKey: route.key };
@@ -122,9 +125,12 @@ function isoCurrency(value: unknown) {
 }
 
 function directProductCurrencies(document: string) {
-  const metadata = ["product:price:currency", "og:price:currency", "priceCurrency"]
-    .flatMap((key) => metaContents(document, key));
-  return [...new Set(metadata.map(isoCurrency).filter(Boolean))];
+  for (const [amountKey, currencyKey] of [["product:price:amount", "product:price:currency"], ["og:price:amount", "og:price:currency"], ["price", "priceCurrency"]]) {
+    const amounts = metaContents(document, amountKey);
+    const currencies = metaContents(document, currencyKey);
+    if (amounts.length > 0 || currencies.length > 0) return [...new Set(currencies.map(isoCurrency).filter(Boolean))];
+  }
+  return [];
 }
 
 export function hasConflictingDirectProductCurrency(document: string) {

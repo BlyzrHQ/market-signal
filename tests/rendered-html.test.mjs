@@ -117,7 +117,7 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /"\/how-it-works"/);
   assert.doesNotMatch(page, /Watch how they show up|: "Ads"|advertising signals|إشارات الإعلانات/);
   assert.match(page, /dir=\{ar \? "rtl" : "ltr"\}/);
-  assert.match(savedReport, /<ProductDesignLab comparison=\{comparison\} battles=\{battles\}/);
+  assert.match(savedReport, /<ProductDesignLab key=\{publicId\} comparison=\{comparison\} battles=\{battles\}/);
   assert.match(productLab, /<PricePosition comparisonValue=\{row\.decision\.priceComparison\}/);
   assert.match(pricePosition, /resolvePriceClaim\(\{ comparisonValue, primaryRaw, rivalRaw, primaryQuantity, rivalQuantity \}\)/);
   assert.match(pricePosition, /formatPriceClaim\(claim, locale\)/);
@@ -156,6 +156,10 @@ test("real-data route and product metadata are present", async () => {
   assert.match(productLab, /rival_currency/);
   assert.match(productLab, /suggested_action_source/);
   assert.match(productLab, /Evidence-grounded AI/);
+  assert.match(productLab, /insufficient-match-confidence/);
+  assert.match(productLab, /low-confidence matches/);
+  assert.match(productLab, /matches with incompatible currencies/);
+  assert.match(productLab, /matches from a different regional market/);
   assert.match(productLab, /Action rationale/);
   assert.match(productLab, /showDetail=\{false\}/);
   assert.match(productLab, /showValues=\{false\}/);

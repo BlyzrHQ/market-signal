@@ -1,6 +1,6 @@
 import { canonicalDomain } from "./domain.ts";
 import { bilingualNormalize, bilingualTokens, parseCanonicalQuantity, quantitiesConflict } from "./product-normalization.ts";
-import { CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX, catalogReplacementAuditAttribute, extractProductsFromHtml, isSupportedCurrency, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "./product-intelligence.ts";
+import { CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX, catalogReplacementAuditAttribute, directProductMetadataOffer, directProductScopedMetadataOffer, extractProductsFromHtml, isSupportedCurrency, publicSourceMarketContext, publicSourceMarketEvidence, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "./product-intelligence.ts";
 import { confirmedProductCurrency, hasConflictingDirectProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "./product-page-adapters.ts";
 import { fetchPublicText } from "./public-fetch.ts";
 import { sharedRobotsPolicyResolver } from "./robots-policy.ts";
@@ -196,7 +196,7 @@ function productScope(document: string) {
   const summaryIndex = activeDocument.search(/class\s*=\s*["'][^"']*(?:summary|product-summary)[^"']*["']/i);
   const start = Math.max(0, title?.index ?? summaryIndex);
   const bounded = activeDocument.slice(start, Math.min(activeDocument.length, start + 160_000));
-  const marker = /(?:^|[\s_-])(?:related(?:[\s_-]+products?)?|upsells?|cross[\s_-]*sells?|recommend(?:ed|ations?)|product[\s_-]*recommendations?|you[\s_-]*may[\s_-]*also[\s_-]*like|similar[\s_-]*products?)(?:$|[\s_-])/i;
+  const marker = /(?:^|[\s_-])(?:related(?:[\s_-]+products?)?|upsells?|cross[\s_-]*sells?|recommend(?:ed|ations?)|product[\s_-]*recommendations?|you[\s_-]*(?:may|might)[\s_-]*also[\s_-]*(?:like|love)|similar[\s_-]*products?|frequently[\s_-]*bought[\s_-]*together|customers?[\s_-]*also[\s_-]*bought|people[\s_-]*also[\s_-]*bought|recently[\s_-]*viewed|pairs?[\s_-]*well[\s_-]*with|more[\s_-]*from[\s_-]*(?:our[\s_-]*)?collection|complete[\s_-]*the[\s_-]*look)(?:$|[\s_-])/i;
   let relatedAt = -1;
   for (const tag of bounded.matchAll(/<([a-z][\w:-]*)\b[^>]*>/gi)) {
     const markup = tag[0];
@@ -208,7 +208,30 @@ function productScope(document: string) {
       break;
     }
   }
+  for (const heading of bounded.matchAll(/<h[2-4]\b[^>]*>([\s\S]*?)<\/h[2-4]>/gi)) {
+    const label = decodeEvidence(heading[1].replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+    if (!marker.test(label)) continue;
+    const index = heading.index ?? -1;
+    if (index >= 0 && (relatedAt < 0 || index < relatedAt)) relatedAt = index;
+  }
   return relatedAt >= 0 ? bounded.slice(0, relatedAt) : bounded;
+}
+
+function hasUrlMarketSelector(value: string) {
+  try {
+    const url = new URL(value);
+    const querySelected = [...url.searchParams.keys()].some((key) => /^(?:country|country_code|countrycode|market|region|locale|currency|currency_code|currencycode)$/i.test(key));
+    const market = publicSourceMarketEvidence(value);
+    return querySelected || market.explicit || market.conflict;
+  } catch { return false; }
+}
+
+function hasRegionalOrLanguagePathSelector(value: string) {
+  try {
+    const segments = new URL(value).pathname.split("/").filter(Boolean);
+    const routeIndex = segments.findIndex((segment) => /^(?:products?|shop)$/.test(segment.toLowerCase()));
+    return segments.slice(0, routeIndex >= 0 ? routeIndex : 0).some((segment) => /^[a-z]{2}(?:[-_][a-z]{2})?$/i.test(segment));
+  } catch { return false; }
 }
 
 function htmlTagSpans(value: string) {
@@ -578,18 +601,57 @@ export function extractScopedProductPageEvidence(document: string, sourceUrl = "
 
 function addScopedProductPageEvidence(document: string, sourceUrl: string, expected: ProductRecord, products: ProductRecord[], pageTitle: string) {
   const evidence = extractScopedProductPageEvidence(document, sourceUrl);
-  if (!evidence.priceSignals.length && !evidence.imageUrl) return;
+  const directOffer = directProductMetadataOffer(document);
+  if (!evidence.priceSignals.length && !evidence.imageUrl && !directOffer) return;
+  let detailProductPage = false;
+  try {
+    const path = new URL(sourceUrl).pathname;
+    detailProductPage = /\/(?:products?|shop|store)\//i.test(path)
+      && !/\/(?:collections?|catalog)(?:\/|$)/i.test(path);
+  } catch { detailProductPage = false; }
+  // Visible summary markup is only page-scoped. On collections it can belong
+  // to any sibling card, so only product-bound structured evidence may survive.
+  if (!detailProductPage) return;
   const identity = validateProductPageIdentity([expected], products, pageTitle, { allowScopedPageSignal: true });
   if (!identity.accepted) return;
   const selected = identity.products[0];
   const selectedPositive = withPositivePrices(selected);
-  products.push({
+  const directSignals = directOffer && typeof directOffer.amount === "number" && Number.isFinite(directOffer.amount) && directOffer.amount > 0
+    ? [directOffer]
+    : [];
+  const selectedCurrencies = new Set(selectedPositive.priceSignals.map((signal) => String(signal.currency || "").trim().toUpperCase()).filter(Boolean));
+  const evidenceCurrencies = new Set(evidence.priceSignals.map((signal) => String(signal.currency || "").trim().toUpperCase()).filter(Boolean));
+  const currencyMismatch = selectedCurrencies.size > 0 && evidenceCurrencies.size > 0
+    && [...selectedCurrencies].some((currency) => !evidenceCurrencies.has(currency));
+  const directCurrency = confirmedProductCurrency(document, { allowStructured: false });
+  const directSupportsVisible = directCurrency && evidenceCurrencies.size === 1 && evidenceCurrencies.has(directCurrency);
+  const directSupportsSelected = directCurrency && selectedCurrencies.size === 1 && selectedCurrencies.has(directCurrency);
+  const directVisibleConflict = directSignals.length > 0 && evidence.priceSignals.length > 0 && !priceSignalsAgree(directSignals, evidence.priceSignals);
+  const selectedVisibleConflict = selectedPositive.priceSignals.length > 0 && evidence.priceSignals.length > 0 && !priceSignalsAgree(selectedPositive.priceSignals, evidence.priceSignals);
+  const directSelectedConflict = directSignals.length > 0 && selectedPositive.priceSignals.length > 0 && !priceSignalsAgree(directSignals, selectedPositive.priceSignals);
+  const corroboratedDirectVisible = priceSignalsAgree(directSignals, evidence.priceSignals);
+  const amountConflict = directVisibleConflict || (!corroboratedDirectVisible && (selectedVisibleConflict || directSelectedConflict));
+  const priceSignals = amountConflict
+    ? []
+    : corroboratedDirectVisible
+      ? evidence.priceSignals
+      : currencyMismatch
+        ? directSupportsVisible
+          ? evidence.priceSignals
+          : directSupportsSelected
+            ? selectedPositive.priceSignals
+            : []
+        : selectedPositive.priceSignals.length ? selectedPositive.priceSignals : evidence.priceSignals;
+  const merged: ProductRecord = {
     ...selected,
-    priceSignals: selectedPositive.priceSignals.length ? selectedPositive.priceSignals : evidence.priceSignals,
+    priceSignals,
     imageUrl: selected.imageUrl || evidence.imageUrl,
-    attributes: [...new Set([...selected.attributes, ...(evidence.priceSignals.length ? [`Price evidence: ${evidence.basis}`] : [])])],
+    attributes: [...new Set([...selected.attributes, ...(evidence.priceSignals.length ? [`Price evidence: ${evidence.basis}`] : []), ...(amountConflict ? ["Price evidence conflict: product-scoped price amounts disagree"] : []), ...(currencyMismatch && !directSupportsVisible && !directSupportsSelected ? ["Price evidence conflict: visible product currency contradicts structured currency"] : [])])],
     extraction: selected.extraction === "json-ld" ? selected.extraction : "page-signal",
-  });
+  };
+  const selectedIndex = products.indexOf(selected);
+  if (selectedIndex >= 0) products[selectedIndex] = merged;
+  else products.push(merged);
 }
 
 function pageExtraction(document: string, sourceUrl: string, domain: string) {
@@ -599,6 +661,38 @@ function pageExtraction(document: string, sourceUrl: string, domain: string) {
   const readable = clean(document.replace(/<(script|style|noscript)[^>]*>[\s\S]*?<\/\1>/gi, " "));
   const pagePriceSignals = [...new Set(readable.match(/(?:[$€£]\s?\d{1,5}(?:[,.]\d{1,2})?|\d{1,5}(?:[,.]\d{1,2})?\s?(?:USD|EUR|GBP))/gi) || [])].slice(0, 12);
   return { pageTitle, result: extractProductsFromHtml({ document, sourceUrl, domain, observedAt: new Date().toISOString(), pageTitle, pageDescription, headings, pagePriceSignals }) };
+}
+
+function rejectContradictoryPageCurrencies(document: string, products: ProductRecord[], sourceUrl: string, expected: ProductRecord, pageTitle: string) {
+  let detailPage = false;
+  try {
+    const path = new URL(sourceUrl).pathname;
+    detailPage = /\/(?:products?|shop|store)\//i.test(path) && !/\/(?:collections?|catalog)(?:\/|$)/i.test(path);
+  } catch { detailPage = false; }
+  if (!detailPage) return products;
+  const identity = validateProductPageIdentity([expected], products, pageTitle, { allowScopedPageSignal: true });
+  if (!identity.accepted || identity.products.length !== 1) return products;
+  const selectedId = identity.products[0].id;
+  const directConflict = hasConflictingDirectProductCurrency(document);
+  const directCurrency = confirmedProductCurrency(document, { allowStructured: false });
+  if (!directConflict && !directCurrency) return products;
+  return products.map((product) => {
+    if (product.id !== selectedId) return product;
+    const supported = product.priceSignals.filter((signal) => isSupportedCurrency(signal.currency));
+    const contradiction = directConflict
+      ? supported.length > 0
+      : supported.some((signal) => String(signal.currency).trim().toUpperCase() !== directCurrency);
+    if (!contradiction) return product;
+    return {
+      ...product,
+      priceSignals: directConflict
+        ? []
+        : product.priceSignals.filter((signal) => String(signal.currency || "").trim().toUpperCase() === directCurrency),
+      attributes: [...new Set([...product.attributes, directConflict
+        ? "Price evidence conflict: multiple direct metadata currencies"
+        : "Price evidence conflict: contradictory structured currency rejected"])],
+    };
+  });
 }
 
 function expectedProduct(item: ProductEnrichmentTarget): ProductRecord {
@@ -665,6 +759,9 @@ function observedCatalogReplacement(item: ProductEnrichmentTarget, products: Pro
       || Number(/^https:\/\//i.test(right.imageUrl)) - Number(/^https:\/\//i.test(left.imageUrl))
       || left.name.localeCompare(right.name))[0];
   if (!product) return null;
+  const richestPriceEvidence = [...groups[0]].filter((candidate) => candidate.priceSignals.length > 0)
+    .sort((left, right) => right.priceSignals.length - left.priceSignals.length
+      || Number(right.extraction === "json-ld") - Number(left.extraction === "json-ld"))[0];
   const observedAt = product.observedAt || new Date().toISOString();
   const audit = catalogReplacementAuditAttribute(item.expectedName, item.sourceUrl);
   return {
@@ -672,6 +769,7 @@ function observedCatalogReplacement(item: ProductEnrichmentTarget, products: Pro
     id: item.productId,
     domain: canonicalDomain(item.domain),
     normalizedName: bilingualNormalize(product.name),
+    priceSignals: richestPriceEvidence?.priceSignals || product.priceSignals,
     attributes: [...new Set([...product.attributes.filter((attribute) => !attribute.startsWith(CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX)), audit])],
     sourceUrl: item.sourceUrl,
     observedAt,
@@ -684,10 +782,37 @@ function isPositivePriceSignal(signal: ProductRecord["priceSignals"][number]) {
   return typeof signal.amount === "number" && Number.isFinite(signal.amount) && signal.amount > 0 && isSupportedCurrency(signal.currency);
 }
 
+function comparablePriceAmounts(signals: ProductRecord["priceSignals"]) {
+  return [...new Set(signals
+    .filter(isPositivePriceSignal)
+    .map((signal) => `${String(signal.currency).trim().toUpperCase()}:${Number(signal.amount).toFixed(6)}`))].sort();
+}
+
+function priceSignalsAgree(left: ProductRecord["priceSignals"], right: ProductRecord["priceSignals"]) {
+  const leftAmounts = comparablePriceAmounts(left);
+  const rightAmounts = comparablePriceAmounts(right);
+  if (!leftAmounts.length || !rightAmounts.length) return false;
+  if (leftAmounts.length === rightAmounts.length && leftAmounts.every((amount, index) => amount === rightAmounts[index])) return true;
+  if (leftAmounts.length === 1) return rightAmounts.includes(leftAmounts[0]);
+  if (rightAmounts.length === 1) return leftAmounts.includes(rightAmounts[0]);
+  return false;
+}
+
+function directMetadataPriceSignals(document: string) {
+  const offer = directProductScopedMetadataOffer(document);
+  return offer && isPositivePriceSignal(offer) ? [offer] : [];
+}
+
 function withPositivePrices(product: ProductRecord) {
   const positive = product.priceSignals.filter(isPositivePriceSignal);
   const removedObservedAmount = product.priceSignals.some((signal) => typeof signal.amount === "number" && Number.isFinite(signal.amount) && !isPositivePriceSignal(signal));
-  return { ...product, priceSignals: removedObservedAmount && product.priceSignals.length > 1 ? [] : positive };
+  return {
+    ...product,
+    priceSignals: removedObservedAmount && product.priceSignals.length > 1 ? [] : positive,
+    attributes: removedObservedAmount
+      ? [...new Set([...product.attributes, "Price evidence conflict: observed price is non-positive or invalid"])]
+      : product.attributes,
+  };
 }
 
 function hasConfirmedPrice(products: ProductRecord[]) {
@@ -696,6 +821,7 @@ function hasConfirmedPrice(products: ProductRecord[]) {
 
 function confirmedAdapterCurrency(document: string, matchedProduct?: ProductRecord) {
   if (hasConflictingDirectProductCurrency(document)) return "";
+  if (matchedProduct?.attributes.some((attribute) => attribute.startsWith("Price evidence conflict:"))) return "";
   const storefrontCurrency = confirmedProductCurrency(document, { allowStructured: false });
   const matchedCurrencies = [...new Set((matchedProduct?.priceSignals || [])
     .map((signal) => {
@@ -797,18 +923,31 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       const fetched = await fetchSameDomain(item.sourceUrl, item.domain, "text/html,application/xhtml+xml", fetchImpl);
       if (!fetched.ok) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed", fetched.status, "http") };
       if (!/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed", fetched.status, "content") };
+      const requestedMarket = publicSourceMarketEvidence(item.sourceUrl);
+      const fetchedMarket = publicSourceMarketEvidence(fetched.url);
+      const requestedContext = publicSourceMarketContext(item.sourceUrl);
+      const fetchedContext = publicSourceMarketContext(fetched.url);
+      if (requestedMarket.conflict || fetchedMarket.conflict
+        || requestedContext.contextKey.includes("country:?")
+        || fetchedContext.contextKey.includes("country:?")
+        || (requestedMarket.countryCode && requestedMarket.countryCode !== fetchedMarket.countryCode)
+        || (requestedContext.currencyCode && requestedContext.currencyCode !== fetchedContext.currencyCode)) {
+        return { product: null, gap: gap("Selected product redirect lost, changed, or conflicted with the requested market.", "identity_mismatch", undefined, "redirect") };
+      }
       const extracted = pageExtraction(fetched.text, fetched.url, item.domain);
       const expected = expectedProduct(item);
       addScopedProductPageEvidence(fetched.text, fetched.url, expected, extracted.result.products, extracted.pageTitle);
+      extracted.result.products = rejectContradictoryPageCurrencies(fetched.text, extracted.result.products, fetched.url, expected, extracted.pageTitle);
       const canonicalCrossLanguageOptions = { allowCanonicalCrossLanguageIdentity: canonicalSelectedPage(item.sourceUrl) === canonicalSelectedPage(fetched.url) };
       const rawInitialIdentity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle, { allowScopedPageSignal: true, ...canonicalCrossLanguageOptions });
       const rawMatchedProduct = rawInitialIdentity.products[0];
+      const pagePriceConflicts = [...new Set(extracted.result.products.flatMap((product) => product.attributes.filter((attribute) => attribute.startsWith("Price evidence conflict:"))))];
       extracted.result.products = extracted.result.products.map(withPositivePrices);
       const initialIdentity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle, canonicalCrossLanguageOptions);
       const replacementCandidates = [...extracted.result.products];
       let adapterGap = "";
       let adapterEvidenceProduct: ProductRecord | null = null;
-      const adapter = storefrontAdapterRequest(item.sourceUrl);
+      const adapter = storefrontAdapterRequest(fetched.url);
       const strongestInitialProduct = initialIdentity.products[0];
       if (adapter && (!initialIdentity.accepted || !strongestInitialProduct || !hasConfirmedPrice([strongestInitialProduct]) || !hasSecureImage([strongestInitialProduct]))) {
         const adapterLabel = adapter.kind === "shopify" ? "Shopify product" : "WooCommerce Store API";
@@ -823,18 +962,54 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
             } else {
               const payload = JSON.parse(adapterResponse.text);
               const observedAt = new Date().toISOString();
+              const selectedMarket = hasUrlMarketSelector(fetched.url);
+              // Shopify's legacy .js payload has no currency field. A page
+              // currency cannot qualify its amount when the selected market is
+              // carried only by URL query state that the endpoint may ignore.
+              const directPageCurrency = selectedMarket ? "" : confirmedAdapterCurrency(fetched.text, rawMatchedProduct);
               const adapterResult = adapter.kind === "shopify"
-                ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: confirmedAdapterCurrency(fetched.text, rawMatchedProduct), expectedQuantity: expected.quantity })
+                ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: directPageCurrency, expectedQuantity: expected.quantity })
                 : parseWooCommerceProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt: new Date().toISOString() });
+              const adapterCurrencies = new Set((adapterResult.product?.priceSignals || []).map((signal) => signal.currency?.toUpperCase()).filter(Boolean));
+              const adapterCurrencyConflict = directPageCurrency && [...adapterCurrencies].some((currency) => currency !== directPageCurrency.toUpperCase())
+                ? [`Price evidence conflict: direct page currency ${directPageCurrency.toUpperCase()} contradicts ${adapterLabel} currency ${[...adapterCurrencies].join(", ")}.`]
+                : [];
+              const regionalWooCommerce = adapter.kind === "woocommerce" && (selectedMarket || hasRegionalOrLanguagePathSelector(fetched.url));
+              const positiveAdapterProduct = adapterResult.product ? withPositivePrices(adapterResult.product) : null;
+              const adapterPriceSignals = positiveAdapterProduct?.priceSignals || [];
+              const directPageSignals = directMetadataPriceSignals(fetched.text);
+              const visiblePageSignals = extractScopedProductPageEvidence(fetched.text, fetched.url).priceSignals;
+              const selectedPageSignals = rawMatchedProduct?.extraction === "json-ld"
+                ? withPositivePrices(rawMatchedProduct).priceSignals
+                : [];
+              const adapterAmountConflict = Boolean(adapterPriceSignals.length
+                && [directPageSignals, visiblePageSignals, selectedPageSignals]
+                  .filter((signals) => signals.length > 0)
+                  .some((signals) => !priceSignalsAgree(adapterPriceSignals, signals)));
+              const adapterAmountConflictMessage = adapterAmountConflict
+                ? [`Price evidence conflict: page amounts contradict ${adapterLabel} amounts.`]
+                : [];
+              const adapterConflicts = [...new Set([...pagePriceConflicts, ...adapterCurrencyConflict, ...adapterAmountConflictMessage])];
               if (adapterResult.product) {
-                adapterEvidenceProduct = withPositivePrices(adapterResult.product);
+                adapterEvidenceProduct = {
+                  ...positiveAdapterProduct!,
+                  priceSignals: adapterConflicts.length || regionalWooCommerce ? [] : positiveAdapterProduct!.priceSignals,
+                  attributes: [...new Set([...adapterResult.product.attributes, ...adapterConflicts])],
+                };
                 extracted.result.products.push(adapterEvidenceProduct);
               }
               if (item.allowCatalogReplacement === true && !initialIdentity.accepted) {
                 const replacementAdapterResult = adapter.kind === "shopify"
-                  ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: confirmedAdapterCurrency(fetched.text, rawMatchedProduct) })
+                  ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: directPageCurrency })
                   : adapterResult;
-                if (replacementAdapterResult.product) replacementCandidates.push(withPositivePrices(replacementAdapterResult.product));
+                if (replacementAdapterResult.product) {
+                  const positiveReplacementProduct = withPositivePrices(replacementAdapterResult.product);
+                  replacementCandidates.push({
+                    ...positiveReplacementProduct,
+                    priceSignals: adapterConflicts.length || regionalWooCommerce ? [] : positiveReplacementProduct.priceSignals,
+                    attributes: [...new Set([...replacementAdapterResult.product.attributes, ...adapterConflicts])],
+                  });
+                }
               }
               adapterGap = adapterResult.gap;
             }
@@ -849,8 +1024,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
         return replacement ? { product: replacement, gap: null } : { product: null, gap: gap(identity.reason, "identity_mismatch", undefined, "identity") };
       }
       const originalIdentityProduct = strongestInitialProduct
-        && identity.products.includes(strongestInitialProduct)
-        ? strongestInitialProduct
+        ? identity.products.find((product) => product.id === strongestInitialProduct.id) || null
         : null;
       const adapterIdentityProduct = adapterEvidenceProduct
         && identity.products.includes(adapterEvidenceProduct)
