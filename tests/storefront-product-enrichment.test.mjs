@@ -736,6 +736,26 @@ test("a WooCommerce adapter cannot revive a direct-versus-structured currency co
   }
 });
 
+test("WooCommerce cannot contradict a direct page currency that has no amount", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.includes("/wp-json/wc/store/v1/products")) return Response.json([{ name: "Custom Embroidered Jacket", slug: "custom-embroidered-jacket", prices: { price: "1200000", currency_code: "USD", currency_minor_unit: 2 } }]);
+    return new Response(`<html><head><title>Custom Embroidered Jacket</title><meta property="product:price:currency" content="GBP"></head><body><h1>Custom Embroidered Jacket</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const ordinary = await enrichProductTargets([target({ expectedName: "Custom Embroidered Jacket", sourceUrl: "https://shop.test/product/custom-embroidered-jacket" })], 1);
+    const replacement = await enrichProductTargets([target({ expectedName: "Old Catalog Jacket", sourceUrl: "https://shop.test/product/custom-embroidered-jacket", allowCatalogReplacement: true })], 1);
+    for (const result of [ordinary, replacement]) {
+      assert.deepEqual(result.products[0].priceSignals, []);
+      assert.ok(result.products[0].attributes.some((attribute) => attribute.startsWith("Price evidence conflict:")));
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("catalog replacement cannot revive a direct-versus-structured currency conflict through WooCommerce", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
