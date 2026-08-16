@@ -52,9 +52,11 @@ export default defineConfig(async () => {
     name: "market-signal:node-runtime-externals",
     enforce: "pre" as const,
     resolveId(source: string) {
-      return nodeTarget && source === "cloudflare:workers"
-        ? { id: source, external: true }
-        : null;
+      if (!nodeTarget) return null;
+      if (source === "cloudflare:workers" || source === "better-sqlite3") {
+        return { id: source, external: true };
+      }
+      return null;
     },
   };
   return {

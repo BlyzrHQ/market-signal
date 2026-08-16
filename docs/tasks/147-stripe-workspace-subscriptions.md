@@ -44,4 +44,5 @@ The VPS needs server-only Stripe restricted-key, webhook-signing-secret, and tes
 - Verified Fable 5 re-inspected the correct revised tree, independently reran typecheck, lint, both deployment builds, and all 878 tests, and returned `VERDICT: PASS` with no blockers.
 - Non-blocking follow-ups: prune old webhook-event receipts, improve post-Checkout webhook-pending UX, and consider preventing simultaneous different-plan Checkout sessions.
 - Stripe release hygiene: Checkout uses a stable label with the required eight-letter random suffix, and the VPS template lists every server-only hosted-billing setting.
+- VPS candidate validation exposed and fixed an ESM crash caused by bundling `better-sqlite3`; Node builds now keep the native package external and assert that its binding loader is absent from the server bundle.
 - Remaining release gate: publish the reviewed commit, deploy that exact commit with server-owned test-mode secrets, and verify Checkout, signed webhook delivery, subscription state, quota enforcement, and Customer Portal before merge.
