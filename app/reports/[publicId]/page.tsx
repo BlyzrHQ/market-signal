@@ -6,6 +6,7 @@ import { ProductDesignLab } from "../../components/product-design-lab";
 import { ExperienceBenchmark } from "../../components/experience-benchmark";
 import { reportCoverage, type ReportCoverageEvent } from "../../lib/report-coverage";
 import { jsonResponseErrorMessage, readJsonResponse } from "../../lib/json-response";
+import { countLegacyUngatedProductMatches } from "../../lib/report-price-publication";
 
 type Block = { type: string; id: string } & Record<string, unknown>;
 type ReportEvent = ReportCoverageEvent;
@@ -121,7 +122,7 @@ function ReportWorkspace({ blocks, primaryProducts, publicId, primaryDomain, obs
 
   const competitors = useMemo(() => blocks.filter((block) => block.type === "competitor").sort((a, b) => numeric(b.verificationScore) - numeric(a.verificationScore)), [blocks]);
   const comparison = blocks.find((block) => block.type === "product-comparison");
-  const legacyUngatedMatchCount = useMemo(() => list(comparison?.rows).reduce((total, row) => total + list(object(row).matches).filter((match) => typeof object(object(match).publication).priceEligible !== "boolean").length, 0), [comparison]);
+  const legacyUngatedMatchCount = useMemo(() => countLegacyUngatedProductMatches(comparison), [comparison]);
   const battles = useMemo(() => list(comparison?.rows).flatMap((row, rowIndex) => {
     const item = object(row); const primary = object(item.primary);
     return list(item.matches).flatMap((match, matchIndex) => { const candidate = object(match); const rival = object(candidate.product); return object(candidate.publication).priceEligible === true && rival.name ? [{ primary, rival, match: candidate, key: `${rowIndex}-${matchIndex}` }] : []; });
