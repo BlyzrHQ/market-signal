@@ -15,6 +15,8 @@ export type PublicFetchOptions = {
   fetchImpl?: FetchLike;
   dnsFetchImpl?: FetchLike;
   readErrorBody?: boolean;
+  jsonRpcBody?: string;
+  protocolVersion?: "2025-06-18";
 };
 
 class PublicFetchTransportError extends Error {
@@ -138,6 +140,9 @@ export async function fetchPublicText(url: string, accept: string, options: Publ
   let closePinnedTransport: (() => Promise<void>) | null = null;
   let response: Response | null = null;
   try {
+    if (options.jsonRpcBody && new TextEncoder().encode(options.jsonRpcBody).byteLength > 50_000) {
+      throw new PublicFetchTransportError("network", "The public JSON-RPC request exceeded its safety limit.");
+    }
     let currentUrl = url;
     let redirectCount = 0;
     for (let redirect = 0; redirect <= 3; redirect += 1) {
@@ -154,7 +159,18 @@ export async function fetchPublicText(url: string, accept: string, options: Publ
           : "The hostname did not resolve to an exclusively public IPv4 address.");
       }
       try {
-        const init = { redirect: "manual" as const, signal: controller.signal, headers: { Accept: accept, "User-Agent": options.userAgent } };
+        const init = {
+          method: options.jsonRpcBody ? "POST" : "GET",
+          redirect: "manual" as const,
+          signal: controller.signal,
+          headers: {
+            Accept: accept,
+            "User-Agent": options.userAgent,
+            ...(options.jsonRpcBody ? { "Content-Type": "application/json" } : {}),
+            ...(options.protocolVersion ? { "MCP-Protocol-Version": options.protocolVersion } : {}),
+          },
+          ...(options.jsonRpcBody ? { body: options.jsonRpcBody } : {}),
+        };
         if (publicAddresses) {
           const pinned = await fetchPinnedToPublicAddress(currentUrl, init, publicAddresses);
           response = pinned.response;
