@@ -17,6 +17,11 @@ type AccountUser = {
   name: string;
 };
 
+export type AccountContext = {
+  user: { id: string; name: string; email: string };
+  workspaceId: string;
+};
+
 type AccountAuthEnvironment = Record<string, string | undefined>;
 
 let authPromise: ReturnType<typeof createAccountAuth> | null = null;
@@ -104,7 +109,7 @@ export async function createAccountAuth(config: AccountAuthConfig) {
     baseURL: config.baseURL,
     database,
     secret: config.secret,
-    emailAndPassword: { enabled: false },
+    emailAndPassword: { enabled: true },
     databaseHooks: {
       user: {
         create: {
@@ -251,5 +256,30 @@ async function getAccountAuth(config: AccountAuthConfig) {
   } catch (error) {
     authPromise = null;
     throw error;
+  }
+}
+
+export async function accountContext(request: Request): Promise<AccountContext | null> {
+  const config = accountAuthConfigFromEnvironment(process.env);
+  if (!config) return null;
+  const auth = await getAccountAuth(config);
+  const session = await auth.api.getSession({ headers: request.headers });
+  if (!session?.user?.id) return null;
+  const databasePath = await canonicalNodeSqlitePath(config.databasePath);
+  const database = new Database(databasePath);
+  try {
+    database.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
+    database.pragma("foreign_keys = ON");
+    ensureAccountSchema(database);
+    const workspaceId = ensurePersonalWorkspace(database, {
+      id: session.user.id,
+      name: session.user.name || "Personal",
+    });
+    return {
+      user: { id: session.user.id, name: session.user.name || "", email: session.user.email },
+      workspaceId,
+    };
+  } finally {
+    database.close();
   }
 }

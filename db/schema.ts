@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const accountUsers = sqliteTable("user", {
@@ -72,6 +73,44 @@ export const workspaceMembers = sqliteTable("workspace_members", {
   index("workspace_members_user_idx").on(table.userId),
 ]);
 
+export const workspaceSubscriptions = sqliteTable("workspace_subscriptions", {
+  workspaceId: text("workspace_id").primaryKey().references(() => workspaces.id, { onDelete: "cascade" }),
+  stripeCustomerId: text("stripe_customer_id").notNull().unique(),
+  stripeSubscriptionId: text("stripe_subscription_id").notNull().default(""),
+  stripePriceId: text("stripe_price_id").notNull().default(""),
+  planTier: text("plan_tier").notNull().default(""),
+  status: text("status").notNull().default("incomplete"),
+  cancelAtPeriodEnd: integer("cancel_at_period_end", { mode: "boolean" }).notNull().default(false),
+  currentPeriodStart: text("current_period_start").notNull().default(""),
+  currentPeriodEnd: text("current_period_end").notNull().default(""),
+  lastEventCreated: integer("last_event_created").notNull().default(0),
+  lastEventId: text("last_event_id").notNull().default(""),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("workspace_subscriptions_subscription_uidx").on(table.stripeSubscriptionId).where(sql`${table.stripeSubscriptionId} != ''`),
+]);
+
+export const stripeWebhookEvents = sqliteTable("stripe_webhook_events", {
+  eventId: text("event_id").primaryKey(),
+  eventType: text("event_type").notNull(),
+  eventCreated: integer("event_created").notNull(),
+  processedAt: text("processed_at").notNull(),
+});
+
+export const billingReportReservations = sqliteTable("billing_report_reservations", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  periodStart: text("period_start").notNull(),
+  periodEnd: text("period_end").notNull(),
+  status: text("status").notNull(),
+  runId: text("run_id").notNull().default(""),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("billing_report_reservations_run_uidx").on(table.runId).where(sql`${table.runId} != ''`),
+  index("billing_report_reservations_usage_idx").on(table.workspaceId, table.periodStart, table.periodEnd, table.status),
+]);
+
 export const verifiedCompetitors = sqliteTable("verified_competitors", {
   primaryDomain: text("primary_domain").notNull(),
   competitorDomain: text("competitor_domain").notNull(),
@@ -91,6 +130,8 @@ export const reportRuns = sqliteTable("report_runs", {
   publicId: text("public_id").notNull(),
   primaryDomain: text("primary_domain").notNull(),
   locale: text("locale").notNull().default("en"),
+  workspaceId: text("workspace_id").notNull().default(""),
+  billingReservationId: text("billing_reservation_id").notNull().default(""),
   status: text("status").notNull(),
   currentPhase: text("current_phase").notNull(),
   attemptCount: integer("attempt_count").notNull().default(1),

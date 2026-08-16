@@ -42,6 +42,7 @@ test("GitHub VPS deployment is manual, pinned, immutable, and non-destructive", 
     : read("deploy/vps/deploy-vps.workflow.yml");
   const deploy = read("deploy/vps/deploy-approved-release.sh");
   const updateKey = read("deploy/vps/update-openai-key.sh");
+  const updateBilling = read("deploy/vps/update-billing-secrets.sh");
   const installer = read("deploy/vps/install-github-deploy-user.sh");
   const runnerInstaller = read("deploy/vps/run-ephemeral-github-runner.sh");
   const handoff = read("docs/GITHUB_VPS_HANDOFF.md");
@@ -72,6 +73,9 @@ test("GitHub VPS deployment is manual, pinned, immutable, and non-destructive", 
   assert.match(workflow, /docker buildx imagetools inspect/);
   assert.match(workflow, /--retry 6 --retry-all-errors --retry-delay 2/);
   assert.match(workflow, /OPENAI_API_KEY:[^\n]*secrets\.OPENAI_API_KEY/);
+  assert.match(workflow, /STRIPE_RESTRICTED_KEY:[^\n]*secrets\.STRIPE_RESTRICTED_KEY/);
+  assert.match(workflow, /STRIPE_WEBHOOK_SECRET:[^\n]*secrets\.STRIPE_WEBHOOK_SECRET/);
+  assert.match(workflow, /market-signal-update-billing-secrets/);
   assert.doesNotMatch(workflow, /TRIGGER_SECRET_KEY|MARKET_SIGNAL_CALLBACK_TOKEN/);
   assert.doesNotMatch(workflow, /docker (?:image |system )?prune|down -v|ssh-keyscan/);
 
@@ -94,9 +98,23 @@ test("GitHub VPS deployment is manual, pinned, immutable, and non-destructive", 
   assert.match(updateKey, /mv -f -- "\$\{temporary\}" "\$\{env_file\}"/);
   assert.doesNotMatch(updateKey, /echo .*api_key|set -x/);
 
+  assert.match(updateBilling, /IFS= read -r restricted_key/);
+  assert.match(updateBilling, /IFS= read -r webhook_secret/);
+  assert.match(updateBilling, /MARKET_SIGNAL_HOSTED_BILLING=true/);
+  assert.match(updateBilling, /expected exactly one STRIPE_RESTRICTED_KEY entry/);
+  assert.match(updateBilling, /expected exactly one STRIPE_WEBHOOK_SECRET entry/);
+  assert.match(updateBilling, /expected exactly one STRIPE_PRICE_STARTER entry/);
+  assert.match(updateBilling, /expected exactly one STRIPE_PRICE_SOLO entry/);
+  assert.match(updateBilling, /expected exactly one STRIPE_PRICE_GROWTH entry/);
+  assert.match(updateBilling, /expected exactly one STRIPE_PRICE_AGENCY entry/);
+  assert.match(updateBilling, /STRIPE_PRICE_STARTER is missing or invalid/);
+  assert.match(updateBilling, /mv -f -- "\$\{temporary\}" "\$\{env_file\}"/);
+  assert.doesNotMatch(updateBilling, /echo .*restricted_key|echo .*webhook_secret|set -x/);
+
   assert.match(installer, /market-deploy/);
   assert.match(installer, /ssh-ed25519/);
   assert.match(installer, /visudo -cf/);
+  assert.match(installer, /market-signal-update-billing-secrets/);
   assert.match(installer, /chown -R "\$\{deploy_user\}:\$\{deploy_group\}" \/opt\/market-signal\/releases/);
 
   assert.match(runnerInstaller, /runner_version="2\.336\.0"/);

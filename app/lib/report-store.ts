@@ -255,7 +255,7 @@ const emittedStorageDiagnostics = new Set<string>();
 const REPORT_STORAGE_DIAGNOSTIC = /^(?:database-(?:import-failed|binding-missing)|schema-statement-[1-9]\d?-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api))$/;
 
 const SCHEMA_STATEMENTS = [
-  `CREATE TABLE IF NOT EXISTS report_runs (id text PRIMARY KEY NOT NULL, public_id text NOT NULL, primary_domain text NOT NULL, locale text DEFAULT 'en' NOT NULL, status text NOT NULL, current_phase text NOT NULL, attempt_count integer DEFAULT 1 NOT NULL, created_at text NOT NULL, updated_at text NOT NULL, heartbeat_at text NOT NULL, expires_at text NOT NULL, error_code text DEFAULT '' NOT NULL, error_message text DEFAULT '' NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS report_runs (id text PRIMARY KEY NOT NULL, public_id text NOT NULL, primary_domain text NOT NULL, locale text DEFAULT 'en' NOT NULL, workspace_id text DEFAULT '' NOT NULL, billing_reservation_id text DEFAULT '' NOT NULL, status text NOT NULL, current_phase text NOT NULL, attempt_count integer DEFAULT 1 NOT NULL, created_at text NOT NULL, updated_at text NOT NULL, heartbeat_at text NOT NULL, expires_at text NOT NULL, error_code text DEFAULT '' NOT NULL, error_message text DEFAULT '' NOT NULL)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS report_runs_public_id_uidx ON report_runs (public_id)`,
   `CREATE INDEX IF NOT EXISTS report_runs_domain_recent_idx ON report_runs (primary_domain, created_at)`,
   `CREATE INDEX IF NOT EXISTS report_runs_expiry_idx ON report_runs (expires_at)`,
@@ -331,6 +331,11 @@ const REPORT_EVALUATION_COLUMN_MIGRATIONS = [
   ["client_request_id", "ALTER TABLE report_evaluations ADD COLUMN client_request_id text DEFAULT '' NOT NULL"],
   ["provider_response_id", "ALTER TABLE report_evaluations ADD COLUMN provider_response_id text DEFAULT '' NOT NULL"],
   ["provider_request_id", "ALTER TABLE report_evaluations ADD COLUMN provider_request_id text DEFAULT '' NOT NULL"],
+] as const;
+
+const REPORT_RUN_COLUMN_MIGRATIONS = [
+  ["workspace_id", "ALTER TABLE report_runs ADD COLUMN workspace_id text DEFAULT '' NOT NULL"],
+  ["billing_reservation_id", "ALTER TABLE report_runs ADD COLUMN billing_reservation_id text DEFAULT '' NOT NULL"],
 ] as const;
 
 const REPORT_PURGE_AUDIT_COLUMN_MIGRATIONS = [
@@ -583,6 +588,12 @@ async function initializeSchema(database: D1DatabaseLike) {
   const names = new Set((columns.results || []).map((column) => String(column.name || "")));
   for (const [name, statement] of REPORT_EVALUATION_COLUMN_MIGRATIONS) {
     if (names.has(name)) continue;
+    await database.prepare(statement).run();
+  }
+  const runColumns = await database.prepare("PRAGMA table_info(report_runs)").all<Record<string, unknown>>();
+  const runNames = new Set((runColumns.results || []).map((column) => String(column.name || "")));
+  for (const [name, statement] of REPORT_RUN_COLUMN_MIGRATIONS) {
+    if (runNames.has(name)) continue;
     await database.prepare(statement).run();
   }
   const auditColumns = await database.prepare("PRAGMA table_info(report_purge_audits)").all<Record<string, unknown>>();
@@ -912,7 +923,7 @@ export async function saveReportMatchBatchCheckpoint(publicReportId: string, inp
   return { checkpoint: rowMatchBatchCheckpoint(existing), replayed };
 }
 
-export async function createReportRun(input: { primaryDomain: string; locale?: string; entitlement?: ProductEntitlement }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+export async function createReportRun(input: { primaryDomain: string; locale?: string; entitlement?: ProductEntitlement; workspaceId?: string; billingReservationId?: string }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
   const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
   if (!database) throw new Error(STORAGE_UNAVAILABLE_MESSAGE);
   const primaryDomain = canonicalDomain(input.primaryDomain);
@@ -927,7 +938,7 @@ export async function createReportRun(input: { primaryDomain: string; locale?: s
   await ensureSchema(database);
   try {
     await database.batch([
-      database.prepare(`INSERT INTO report_runs (id, public_id, primary_domain, locale, status, current_phase, attempt_count, created_at, updated_at, heartbeat_at, expires_at, error_code, error_message) VALUES (?, ?, ?, ?, 'queued', 'queued', 1, ?, ?, ?, ?, '', '')`).bind(id, shareId, primaryDomain, locale, observedAt, observedAt, observedAt, expiresAt),
+      database.prepare(`INSERT INTO report_runs (id, public_id, primary_domain, locale, workspace_id, billing_reservation_id, status, current_phase, attempt_count, created_at, updated_at, heartbeat_at, expires_at, error_code, error_message) VALUES (?, ?, ?, ?, ?, ?, 'queued', 'queued', 1, ?, ?, ?, ?, '', '')`).bind(id, shareId, primaryDomain, locale, String(input.workspaceId || ""), String(input.billingReservationId || ""), observedAt, observedAt, observedAt, expiresAt),
       database.prepare(`INSERT INTO report_product_entitlements (run_id, plan_tier, product_limit, resolved_at) VALUES (?, ?, ?, ?)`).bind(id, productPlan, productLimit, observedAt),
       database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) VALUES (?, 1, 'run-created', 'queued', 'queued', 'Report queued for public-source collection.', ?, ?)`).bind(id, JSON.stringify({ productPlan, productLimit }), observedAt),
     ]);
@@ -939,7 +950,7 @@ export async function createReportRun(input: { primaryDomain: string; locale?: s
   return { id, publicId: shareId, primaryDomain, locale, status: "queued" as const, currentPhase: "queued" as const, attemptCount: 1, createdAt: observedAt, expiresAt, productPlan, productLimit };
 }
 
-export async function createReportRunResult(input: { primaryDomain: string; locale?: string; entitlement?: ProductEntitlement }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+export async function createReportRunResult(input: { primaryDomain: string; locale?: string; entitlement?: ProductEntitlement; workspaceId?: string; billingReservationId?: string }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
   try {
     return { ok: true as const, report: await createReportRun(input, now, databaseOverride) };
   } catch (error) {

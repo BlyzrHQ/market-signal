@@ -167,6 +167,33 @@ test("Better Auth serves its standard session endpoint over Request and Response
   }
 });
 
+test("email signup creates a user, password account, session, and personal workspace", async () => {
+  const { directory, databasePath } = await fixture();
+  let auth;
+  try {
+    auth = await createAccountAuth({
+      baseURL: "https://signal.example.test",
+      databasePath,
+      secret: "a-signup-test-secret-with-at-least-32-characters",
+    });
+    const response = await auth.handler(new Request("https://signal.example.test/api/auth/sign-up/email", {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "https://signal.example.test" },
+      body: JSON.stringify({ name: "Paid User", email: "paid@example.test", password: "secure-password-123" }),
+    }));
+    assert.equal(response.status, 200);
+    const database = auth.options.database;
+    assert.equal(database.prepare('SELECT count(*) AS total FROM "user"').get().total, 1);
+    assert.equal(database.prepare("SELECT count(*) AS total FROM account WHERE providerId = 'credential' AND password IS NOT NULL").get().total, 1);
+    assert.equal(database.prepare("SELECT count(*) AS total FROM session").get().total, 1);
+    assert.equal(database.prepare("SELECT count(*) AS total FROM workspaces").get().total, 1);
+    assert.equal(database.prepare("SELECT count(*) AS total FROM workspace_members WHERE role = 'owner'").get().total, 1);
+  } finally {
+    auth?.options.database.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("VPS requests cannot authenticate through user-supplied ChatGPT headers", async () => {
   const headers = new Headers({
     "oai-authenticated-user-email": "forged@example.test",
