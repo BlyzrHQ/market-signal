@@ -15,21 +15,68 @@ Requirements:
 - Node.js 22.13 or newer
 - Go 1.22 or newer for the optional CLI
 
+Install exactly the dependency versions in the lockfile, then run the
+credential-free startup check:
+
 ```bash
-npm install
+npm ci
+npm run test:open-source
+```
+
+The smoke test starts the local web application, checks the home, pricing, and
+account pages, and verifies that unconfigured account auth fails closed. It
+does not create a report or contact a paid provider.
+
+For interactive development, copy the environment template and start Vite.
+
+macOS/Linux:
+
+```bash
 cp .env.example .env.local
+npm run dev
+```
+
+PowerShell:
+
+```powershell
+Copy-Item .env.example .env.local
 npm run dev
 ```
 
 For durable local reports, set `MARKET_SIGNAL_SQLITE_PATH` to a writable SQLite
 file and configure the server-only values documented in `.env.example`.
-Provider keys are optional for UI development, but live competitor discovery,
-matching, and report orchestration require their corresponding server-side
-credentials.
+Provider keys are optional for UI development. A complete live report also
+needs a durable SQLite path, a Trigger.dev project and callback configuration,
+and the server-side provider credentials for the capabilities you enable. The
+hosted Stripe and account settings are optional and remain disabled when their
+documented values are absent.
+
+The Go CLI requires `MARKET_SIGNAL_API_TOKEN` on both the local API and CLI
+process. Keep it distinct from the Trigger callback token; see
+[`docs/CLI.md`](docs/CLI.md) for shell-specific examples.
+
+### Run your own background workers
+
+The repository is not connected to Blyzr's hosted Trigger.dev project. For a
+complete local report, create your own Trigger.dev project, put its project ref
+and development secret in `.env.local`, and run the web app and worker in
+separate terminals:
+
+```bash
+npm run dev
+npm run trigger:dev
+```
+
+This runs the task code on your machine. Trigger.dev still requires a control
+server: use either your own Trigger.dev Cloud project or your own self-hosted
+Trigger.dev instance. For self-hosting, also set `TRIGGER_API_URL`. See
+[`docs/OPEN_SOURCE_SETUP.md`](docs/OPEN_SOURCE_SETUP.md) for both paths and the
+security boundary.
 
 ## Validate a contribution
 
 ```bash
+npm run test:open-source
 npm test
 npm run lint
 go -C cli test ./...
@@ -83,6 +130,7 @@ documented in [deploy/vps/README.md](deploy/vps/README.md).
 ## Useful commands
 
 - `npm run dev` — start local development
+- `npm run test:open-source` — verify first startup without private credentials
 - `npm run build` — build the Node application
 - `npm run build:vps` — build and assert VPS packaging boundaries
 - `npm test` — typecheck, build, and run tests

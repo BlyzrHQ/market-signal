@@ -51,3 +51,23 @@ func TestClientRetriesTransientFailureOnce(t *testing.T) {
 		t.Fatalf("expected two attempts, got %d", attempts)
 	}
 }
+
+func TestClientSendsConfiguredAPITokenWithoutLoggingIt(t *testing.T) {
+	const token = "local-api-token-12345678901234567890"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer "+token {
+			t.Fatalf("expected bearer API token, got %q", request.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, time.Second, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Post(context.Background(), "/api/crawl", nil); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -24,7 +24,9 @@ async function request(handler, authorization) {
 
 test("worker endpoints fail closed before parsing the request body", async () => {
   const previous = process.env.MARKET_SIGNAL_CALLBACK_TOKEN;
+  const previousApi = process.env.MARKET_SIGNAL_API_TOKEN;
   process.env.MARKET_SIGNAL_CALLBACK_TOKEN = TOKEN;
+  delete process.env.MARKET_SIGNAL_API_TOKEN;
   try {
     for (const [name, handler] of routes) {
       for (const authorization of [undefined, `Basic ${TOKEN}`, "Bearer wrong-token"]) {
@@ -36,12 +38,16 @@ test("worker endpoints fail closed before parsing the request body", async () =>
   } finally {
     if (previous === undefined) delete process.env.MARKET_SIGNAL_CALLBACK_TOKEN;
     else process.env.MARKET_SIGNAL_CALLBACK_TOKEN = previous;
+    if (previousApi === undefined) delete process.env.MARKET_SIGNAL_API_TOKEN;
+    else process.env.MARKET_SIGNAL_API_TOKEN = previousApi;
   }
 });
 
 test("worker endpoints fail closed when the callback token is unconfigured", async () => {
   const previous = process.env.MARKET_SIGNAL_CALLBACK_TOKEN;
+  const previousApi = process.env.MARKET_SIGNAL_API_TOKEN;
   delete process.env.MARKET_SIGNAL_CALLBACK_TOKEN;
+  delete process.env.MARKET_SIGNAL_API_TOKEN;
   try {
     for (const [name, handler] of routes) {
       const response = await request(handler, `Bearer ${TOKEN}`);
@@ -50,6 +56,8 @@ test("worker endpoints fail closed when the callback token is unconfigured", asy
   } finally {
     if (previous === undefined) delete process.env.MARKET_SIGNAL_CALLBACK_TOKEN;
     else process.env.MARKET_SIGNAL_CALLBACK_TOKEN = previous;
+    if (previousApi === undefined) delete process.env.MARKET_SIGNAL_API_TOKEN;
+    else process.env.MARKET_SIGNAL_API_TOKEN = previousApi;
   }
 });
 
@@ -67,13 +75,35 @@ test("worker endpoints accept the configured callback token", async () => {
   }
 });
 
+test("analysis endpoints accept a separate configured CLI token", async () => {
+  const previousCallback = process.env.MARKET_SIGNAL_CALLBACK_TOKEN;
+  const previousApi = process.env.MARKET_SIGNAL_API_TOKEN;
+  delete process.env.MARKET_SIGNAL_CALLBACK_TOKEN;
+  process.env.MARKET_SIGNAL_API_TOKEN = TOKEN;
+  try {
+    for (const [name, handler] of [["crawl", crawl], ["ads", ads]]) {
+      const response = await request(handler, `Bearer ${TOKEN}`);
+      assert.equal(response.status, 400, `${name} must reach body validation with a valid CLI token`);
+    }
+    const enrichResponse = await request(enrichProducts, `Bearer ${TOKEN}`);
+    assert.equal(enrichResponse.status, 401, "CLI access must not open the worker-only enrichment endpoint");
+  } finally {
+    if (previousCallback === undefined) delete process.env.MARKET_SIGNAL_CALLBACK_TOKEN;
+    else process.env.MARKET_SIGNAL_CALLBACK_TOKEN = previousCallback;
+    if (previousApi === undefined) delete process.env.MARKET_SIGNAL_API_TOKEN;
+    else process.env.MARKET_SIGNAL_API_TOKEN = previousApi;
+  }
+});
+
 test("every worker endpoint checks authorization before parsing or doing work", async () => {
   for (const name of routeSources) {
     const source = await readFile(new URL(`../app/api/${name}/route.ts`, import.meta.url), "utf8");
-    assert.match(source, /hasValidInternalAuthorization/);
+    assert.match(source, /hasValid(?:Internal|Analysis)Authorization/);
     assert.match(source, /unauthorizedInternalResponse/);
     const post = source.indexOf("export async function POST");
-    const authorization = source.indexOf("hasValidInternalAuthorization", post);
+    const internalAuthorization = source.indexOf("hasValidInternalAuthorization", post);
+    const analysisAuthorization = source.indexOf("hasValidAnalysisAuthorization", post);
+    const authorization = Math.max(internalAuthorization, analysisAuthorization);
     const bodyParsing = source.indexOf("request.json()", post);
     assert.ok(post >= 0, `${name} must expose a POST handler`);
     assert.ok(authorization > post, `${name} must authorize inside its POST handler`);

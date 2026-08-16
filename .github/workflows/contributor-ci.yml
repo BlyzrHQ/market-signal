@@ -1,0 +1,56 @@
+name: Contributor validation
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: contributor-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out source without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.18.0
+          cache: npm
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: 1.22.0
+          cache-dependency-path: |
+            cli/go.sum
+
+      - name: Install locked Node dependencies
+        run: npm ci
+
+      - name: Test credential-free first startup
+        run: |
+          npm run test:open-source
+          npm run trigger:dev -- --help
+
+      - name: Validate the Node application
+        run: |
+          npm test
+          npm run lint
+
+      - name: Validate the Go CLI and contracts
+        run: |
+          go -C cli test ./...
+          go -C cli vet ./...
+          go -C cli run ./cmd/marketsignal --help
+          go -C cli run ./cmd/marketsignal version

@@ -18,6 +18,22 @@ export async function hasValidInternalAuthorization(authorization: string | null
   return hasValidBearerAuthorization(authorization, expected);
 }
 
+export type AnalysisAuthorizationOverrides = { callback: string; api: string };
+
+export async function hasValidAnalysisAuthorization(authorization: string | null, overrides?: AnalysisAuthorizationOverrides) {
+  const [callback, api] = overrides
+    ? [overrides.callback, overrides.api]
+    : await Promise.all([
+      runtimeEnvironmentValue("MARKET_SIGNAL_CALLBACK_TOKEN"),
+      runtimeEnvironmentValue("MARKET_SIGNAL_API_TOKEN"),
+    ]);
+  const [callbackValid, apiValid] = await Promise.all([
+    hasValidBearerAuthorization(authorization, callback),
+    hasValidBearerAuthorization(authorization, api, 32),
+  ]);
+  return callbackValid || apiValid;
+}
+
 export type OwnerAuthorizationOverrides = { read: string; write: string; callback: string };
 export type MonitorAuthorizationOverrides = { read: string; acknowledge: string; ownerRead: string; ownerWrite: string; callback: string };
 

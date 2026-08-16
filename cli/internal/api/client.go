@@ -18,6 +18,7 @@ type Client struct {
 	baseURL    *url.URL
 	httpClient *http.Client
 	timeout    time.Duration
+	token      string
 }
 
 type APIError struct {
@@ -32,7 +33,7 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("Market Signal API returned HTTP %d: %s", e.Status, e.Msg)
 }
 
-func NewClient(baseURL string, timeout time.Duration) (*Client, error) {
+func NewClient(baseURL string, timeout time.Duration, tokens ...string) (*Client, error) {
 	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(baseURL), "/"))
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return nil, fmt.Errorf("invalid base URL %q", baseURL)
@@ -40,9 +41,14 @@ func NewClient(baseURL string, timeout time.Duration) (*Client, error) {
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return nil, fmt.Errorf("base URL must use HTTP or HTTPS")
 	}
+	token := ""
+	if len(tokens) > 0 {
+		token = strings.TrimSpace(tokens[0])
+	}
 	return &Client{
 		baseURL: parsed,
 		timeout: timeout,
+		token:   token,
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
@@ -67,6 +73,9 @@ func (c *Client) Post(ctx context.Context, path string, payload any) ([]byte, er
 		request.Header.Set("Accept", "application/json")
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("User-Agent", "MarketSignalCLI/0.1")
+		if c.token != "" {
+			request.Header.Set("Authorization", "Bearer "+c.token)
+		}
 
 		response, err := c.httpClient.Do(request)
 		if err != nil {
