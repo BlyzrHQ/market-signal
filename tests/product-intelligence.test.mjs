@@ -1914,6 +1914,35 @@ test("final enrichment joins equivalent canonical product URLs after host and sc
   assert.equal(enriched.rows[0].primary.imageUrl, "https://cdn.shop.test/tea.jpg");
 });
 
+test("final enrichment joins an implicit product URL to its explicit US locale redirect", () => {
+  const primary = { ...product("coveralls-primary", "shop.test", "Duck Insulated Coveralls"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/duck-insulated-coveralls", priceSignals: [{ raw: "USD 149.99", currency: "USD", amount: 149.99 }] };
+  const rival = { ...product("coveralls", "dickies.com", "Duck Insulated Coveralls"), jsonLdType: "Product", sourceUrl: "https://www.dickies.com/products/duck-insulated-coveralls-dk0tv2390bd" };
+  const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "dickies.com", products: [rival] }]);
+  const fresh = {
+    ...rival,
+    sourceUrl: "https://www.dickies.com/en-us/products/duck-insulated-coveralls-dk0tv2390bd?variant=45194536091836",
+    priceSignals: [{ raw: "USD 129.99", currency: "USD", amount: 129.99 }],
+    imageUrl: "https://cdn.dickies.com/coveralls.jpg",
+  };
+
+  const enriched = applyFinalProductEnrichment(comparison, [fresh], { pagesRequested: 1, pagesFetched: 1, maxPages: 24, gaps: [] });
+
+  assert.equal(enriched.rows[0].matches[0].product.priceSignals[0].amount, 129.99);
+  assert.equal(enriched.rows[0].matches[0].product.sourceUrl, fresh.sourceUrl);
+});
+
+test("final enrichment still rejects two explicit locale markets for the same product route", () => {
+  const primary = { ...product("coveralls-primary", "shop.test", "Duck Insulated Coveralls"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/duck-insulated-coveralls", priceSignals: [{ raw: "USD 149.99", currency: "USD", amount: 149.99 }] };
+  const rival = { ...product("coveralls", "dickies.com", "Duck Insulated Coveralls"), jsonLdType: "Product", sourceUrl: "https://www.dickies.com/en-us/products/duck-insulated-coveralls-dk0tv2390bd", priceSignals: [{ raw: "USD 129.99", currency: "USD", amount: 129.99 }] };
+  const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "dickies.com", products: [rival] }]);
+  const fresh = { ...rival, sourceUrl: "https://www.dickies.com/en-ca/products/duck-insulated-coveralls-dk0tv2390bd", priceSignals: [{ raw: "CAD 179.99", currency: "CAD", amount: 179.99 }] };
+
+  const enriched = applyFinalProductEnrichment(comparison, [fresh], { pagesRequested: 1, pagesFetched: 1, maxPages: 24, gaps: [] });
+
+  assert.equal(enriched.rows[0].matches[0].product.sourceUrl, rival.sourceUrl);
+  assert.deepEqual(enriched.rows[0].matches[0].product.priceSignals, rival.priceSignals);
+});
+
 test("catalog planners retain distinct sibling identities that share one page URL", () => {
   const sharedUrl = "https://shop.test/products/workwear-collection";
   const first = { ...product("jacket-a", "shop.test", "Jacket A"), jsonLdType: "Product", sourceUrl: sharedUrl };
