@@ -249,6 +249,27 @@ test("does not fabricate a metadata offer from different namespaces", () => {
   assert.deepEqual(result.products[0].priceSignals, []);
 });
 
+test("normalizes equivalent metadata amount formats before conflict detection", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="10"><meta property="product:price:amount" content="10.00"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Equivalent Price Jacket" })}</script>`,
+    sourceUrl: "https://acme.com/products/equivalent-price-jacket",
+    pageTitle: "Equivalent Price Jacket",
+    headings: ["Equivalent Price Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 10 }]);
+});
+
+test("same-namespace metadata currency conflicts suppress structured prices immediately", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="100"><meta property="product:price:currency" content="USD"><meta property="product:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Conflicted Currency Jacket", image: "https://acme.com/jacket.jpg", offers: { price: 100, priceCurrency: "USD" } })}</script>`,
+    sourceUrl: "https://acme.com/products/conflicted-currency-jacket",
+    pageTitle: "Conflicted Currency Jacket",
+    headings: ["Conflicted Currency Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals, []);
+  assert.ok(result.products[0].attributes.includes("Price evidence conflict: contradictory direct metadata namespace"));
+});
+
 test("product-scoped direct metadata conflict suppresses price until visible evidence corroborates it", () => {
   const result = extraction({
     document: `<head><title>Custom Embroidered Columbia Jackets No Minimum – Arklavo</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="GBP"></head><script type="application/ld+json">${JSON.stringify({

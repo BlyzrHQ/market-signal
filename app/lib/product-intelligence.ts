@@ -467,9 +467,15 @@ function metadataOfferForNamespace(document: string, amountKey: string, currency
   const amountValues = metaContents(document, amountKey);
   const currencyValues = metaContents(document, currencyKey);
   const present = amountValues.length > 0 || currencyValues.length > 0;
-  const amounts = [...new Set(amountValues)];
-  const currencies = [...new Set(currencyValues.map((value) => value.toUpperCase()).filter(isSupportedCurrency))];
-  return { present, offer: amounts.length === 1 && currencies.length === 1 ? priceSignal(amounts[0], currencies[0]) : null };
+  const parsedAmounts = amountValues.map((value) => priceSignal(value, "USD"))
+    .filter((signal): signal is ProductPriceSignal => Boolean(signal && typeof signal.amount === "number" && Number.isFinite(signal.amount) && signal.amount > 0));
+  const amounts = [...new Set(parsedAmounts.map((signal) => Number(signal.amount).toFixed(6)))];
+  const rawCurrencies = [...new Set(currencyValues.map((value) => value.trim().toUpperCase()).filter(Boolean))];
+  const currencies = rawCurrencies.filter(isSupportedCurrency);
+  const complete = amountValues.length > 0 && currencyValues.length > 0;
+  const conflict = complete && (parsedAmounts.length !== amountValues.length || amounts.length !== 1
+    || currencies.length !== rawCurrencies.length || currencies.length !== 1);
+  return { present, conflict, offer: !conflict ? priceSignal(amountValues[0], currencies[0]) : null };
 }
 
 export function directProductMetadataOffer(document: string) {
@@ -478,6 +484,14 @@ export function directProductMetadataOffer(document: string) {
     if (namespace.present) return namespace.offer;
   }
   return null;
+}
+
+function directProductMetadataEvidence(document: string) {
+  for (const [amountKey, currencyKey] of [["product:price:amount", "product:price:currency"], ["og:price:amount", "og:price:currency"], ["price", "priceCurrency"]]) {
+    const namespace = metadataOfferForNamespace(document, amountKey, currencyKey);
+    if (namespace.present) return namespace;
+  }
+  return { present: false, conflict: false, offer: null };
 }
 
 export function directProductScopedMetadataOffer(document: string) {
@@ -706,7 +720,8 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
   let products: ProductRecord[] = extractSaasPlans(input);
   const thirdPartyReferenced: ProductRecord[] = [];
   const gaps: string[] = [];
-  const authoritativeOffer = directProductMetadataOffer(input.document);
+  const authoritativeMetadata = directProductMetadataEvidence(input.document);
+  const authoritativeOffer = authoritativeMetadata.offer;
   const scripts = [...input.document.matchAll(/<script[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
   for (const script of scripts) {
     try {
@@ -759,7 +774,7 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
       const metadataContradictsStructuredAmount = Boolean(validMetadataOffer && metadataOffer
         && structuredAmounts.length > 0
         && !structuredAmounts.includes(Number(metadataOffer.amount).toFixed(6)));
-      const metadataConflict = metadataContradictsStructured || metadataContradictsStructuredAmount;
+      const metadataConflict = authoritativeMetadata.conflict || metadataContradictsStructured || metadataContradictsStructuredAmount;
       return {
         ...product,
         priceSignals: metadataConflict
@@ -768,9 +783,11 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
             ? [metadataOffer]
             : product.priceSignals,
         attributes: metadataConflict
-          ? [...new Set([...product.attributes, metadataContradictsStructured
-            ? "Price evidence conflict: direct metadata contradicts structured currency"
-            : "Price evidence conflict: direct metadata contradicts structured amount"])]
+          ? [...new Set([...product.attributes, authoritativeMetadata.conflict
+            ? "Price evidence conflict: contradictory direct metadata namespace"
+            : metadataContradictsStructured
+              ? "Price evidence conflict: direct metadata contradicts structured currency"
+              : "Price evidence conflict: direct metadata contradicts structured amount"])]
           : product.attributes,
         imageUrl: product.imageUrl || metadataImage,
       };
