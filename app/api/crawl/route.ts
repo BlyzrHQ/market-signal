@@ -979,8 +979,6 @@ export async function POST(request: Request) {
         errorCode: edgeRecoveryFailure?.code || "primary-page-unavailable",
         error,
         primaryDomain,
-        results: submittedResults,
-        document: buildDocument(submittedResults, primaryDomain),
       }, { status: 422 });
     }
     const productRecoveryOptions: ProductEnrichmentRecoveryOptions = {

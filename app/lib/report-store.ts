@@ -545,8 +545,8 @@ const RUN_FAILURE_EVALUATOR_VERSION = "run-failure-v1";
 function runFailureSignal(run: StoredReportRun) {
   const code = cleanText(run.errorCode || "report-run-failed", 80) || "report-run-failed";
   const stage = code.includes("dispatch") ? "dispatch"
-    : code.includes("crawl") || run.currentPhase === "crawl" ? "crawl"
-      : code.includes("worker") || run.status === "interrupted" ? "worker"
+    : code.includes("crawl") || code.startsWith("edge-") || code === "primary-page-unavailable" || run.currentPhase === "crawl" ? "crawl"
+      : code.includes("worker") ? "worker"
         : run.currentPhase === "persistence" ? "persistence"
           : "orchestration";
   const explanation = cleanText(run.errorMessage, 240) || `The report ended in ${run.status} during ${stage}.`;
@@ -565,7 +565,7 @@ function runFailureSignal(run: StoredReportRun) {
 }
 
 async function ensureRunFailureEvaluation(database: D1DatabaseLike, run: StoredReportRun, now = new Date()) {
-  if (run.status !== "failed" && run.status !== "interrupted") return null;
+  if (run.status !== "failed") return null;
   const existing = await database.prepare(`SELECT * FROM report_evaluations WHERE run_id = ? AND evaluation_type = 'run_failure' ORDER BY created_at DESC LIMIT 1`).bind(run.id).all<Record<string, unknown>>();
   if (existing.results?.[0]) return rowEvaluation(existing.results[0]);
   const eventRows = await database.prepare(`SELECT sequence, idempotency_key, phase, status, message, observed_at FROM report_events WHERE run_id = ? ORDER BY sequence`).bind(run.id).all<Record<string, unknown>>();
@@ -594,7 +594,7 @@ async function ensureRunFailureEvaluation(database: D1DatabaseLike, run: StoredR
   const weakness = { issueCode: signal.code, subjectKind: "run", subjectId: run.publicId, explanation: signal.explanation, evidenceIds: terminalInput.events.slice(-3).map((event) => event.idempotencyKey) };
   const proposal = { issueCode: `${signal.stage}-recovery`, subjectKind: "run", subjectId: run.publicId, explanation: signal.proposal, evidenceIds: weakness.evidenceIds };
   await database.batch([
-    database.prepare(`INSERT INTO report_evaluations (id, run_id, evaluation_type, input_hash, fact_manifest_hash, evaluator_version, rubric_version, status, rating_basis, overall_score, user_value_score, evidence_integrity_score, evidence_yield_score, presentation_score, deterministic_score, grade, deterministic_json, agent_json, findings_json, proposals_json, model, prompt_version, pricing_version, cost_microusd, input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, usage_status, reserved_cost_microusd, error_code, dispatch_attempts, deterministic_at, created_at, started_at, completed_at) SELECT ?, ?, 'run_failure', ?, '', ?, ?, 'complete', 'deterministic_only', 0, 0, NULL, 0, 0, 0, 'F', ?, ?, ?, ?, '', '', '', 0, 0, 0, 0, 0, 'known', 0, ?, 0, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND status IN ('failed','interrupted')) ON CONFLICT(run_id, input_hash, evaluator_version, evaluation_type) DO NOTHING`).bind(
+    database.prepare(`INSERT INTO report_evaluations (id, run_id, evaluation_type, input_hash, fact_manifest_hash, evaluator_version, rubric_version, status, rating_basis, overall_score, user_value_score, evidence_integrity_score, evidence_yield_score, presentation_score, deterministic_score, grade, deterministic_json, agent_json, findings_json, proposals_json, model, prompt_version, pricing_version, cost_microusd, input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, usage_status, reserved_cost_microusd, error_code, dispatch_attempts, deterministic_at, created_at, started_at, completed_at) SELECT ?, ?, 'run_failure', ?, '', ?, ?, 'complete', 'deterministic_only', 0, 0, NULL, 0, 0, 0, 'F', ?, ?, ?, ?, '', '', '', 0, 0, 0, 0, 0, 'known', 0, ?, 0, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND status = 'failed') ON CONFLICT(run_id, input_hash, evaluator_version, evaluation_type) DO NOTHING`).bind(
       evaluationId,
       run.id,
       inputHash,
@@ -1069,7 +1069,7 @@ export async function appendReportEvent(publicReportId: string, input: { attempt
   ]);
   const persistedRun = await findRun(database, publicReportId);
   if (!persistedRun || persistedRun.attemptCount !== attemptNumber) throw new Error("Report callback attempt is stale or invalid.");
-  if (persistedRun.status === "failed" || persistedRun.status === "interrupted") await ensureRunFailureEvaluation(database, persistedRun, now);
+  if (persistedRun.status === "failed") await ensureRunFailureEvaluation(database, persistedRun, now);
   return { publicId: run.publicId, phase: input.phase, status: input.status, observedAt };
 }
 
@@ -1814,7 +1814,7 @@ export async function getStoredReport(publicReportId: string, now = new Date(), 
       run = await findRun(database, publicReportId) || run;
     }
   }
-  if (run.status === "failed" || run.status === "interrupted") await ensureRunFailureEvaluation(database, run, now);
+  if (run.status === "failed") await ensureRunFailureEvaluation(database, run, now);
   const [eventsResult, documentResult, manifestResult] = await Promise.all([
     database.prepare(`SELECT sequence, idempotency_key, phase, status, message, metadata_json, observed_at FROM report_events WHERE run_id = ? ORDER BY sequence ASC LIMIT 100`).bind(run.id).all<Record<string, unknown>>(),
     database.prepare(`SELECT schema_version, document_json, observed_at, updated_at FROM report_documents WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>(),

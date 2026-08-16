@@ -113,6 +113,11 @@ function message(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+function boundedErrorCode(error: unknown) {
+  if (!error || typeof error !== "object" || !("errorCode" in error)) return "";
+  return String((error as { errorCode?: unknown }).errorCode || "").replace(/[^a-z0-9-]/gi, "").slice(0, 80);
+}
+
 export async function orchestrateReport(
   rawPayload: unknown,
   attempt: ReportAttemptContext,
@@ -150,8 +155,9 @@ export async function orchestrateReport(
     if (!crawl || (crawl.ok !== true && crawl.code !== "parked-domain" && crawl.code !== "unavailable-domain")) throw new Error("The public crawl could not be completed.");
   } catch (error) {
     const detail = message(error, "The public crawl could not be completed.");
+    const errorCode = boundedErrorCode(error);
     await port.appendEvent(payload.publicId, attempt.isFinalAttempt
-      ? { idempotencyKey: "crawl-failed", phase: "failed", status: "failed", message: detail, metadata: { attempt: attempt.attemptNumber } }
+      ? { idempotencyKey: "crawl-failed", phase: "failed", status: "failed", message: detail, metadata: { attempt: attempt.attemptNumber }, ...(errorCode ? { errorCode } : {}) }
       : event(`crawl-report-${attempt.attemptNumber}-task-${attempt.taskAttemptNumber || 1}-failed`, "crawl", "The crawl attempt failed and is eligible for one bounded retry.", { reportAttempt: attempt.attemptNumber, taskAttempt: attempt.taskAttemptNumber || 1 }));
     terminalFailureRecorded = attempt.isFinalAttempt;
     throw error;

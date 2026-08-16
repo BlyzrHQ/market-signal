@@ -16,9 +16,17 @@ terminal evaluation.
   off-domain product or company facts;
 - return bounded, typed edge-recovery diagnostics to the Trigger worker;
 - reserve a report at dispatch, commit it only for `complete` or `limited`, and
-  release it for `failed` or `interrupted` terminal states;
-- create deterministic, zero-AI-cost `run_failure` evaluations for failed and
-  interrupted reports so every terminal run enters the feedback loop.
+  release it only for an irreversible `failed` state while an `interrupted`
+  run keeps its reservation for explicit recovery;
+- create deterministic, zero-AI-cost `run_failure` evaluations only for failed
+  reports; interrupted reports remain recoverable and are not permanently graded.
+
+The reservation lease is four hours, safely beyond the bounded two-attempt
+worker window. Reservation state is monotonic: committed usage can never be
+released by a stale callback. The historically miscommitted Asalbarri test row
+will be corrected once with an explicit audited database operation after the
+runtime fix is deployed; that backward transition is deliberately unavailable
+through application code.
 
 ## Validation
 
@@ -33,7 +41,18 @@ terminal evaluation.
 ## Data boundaries
 
 Third-party discovery pages are accepted only when explicitly declared in the
-edge result's bounded candidate evidence. Product, company, and price source
+edge result's bounded candidate evidence fields. The allowance is path-scoped,
+not domain-scoped, so repeating that URL in product, company, or price source
+data is rejected. Product, company, and price source
 URLs remain constrained to observed result domains or the existing trusted
 evidence hosts. Failure evaluations contain terminal run/event metadata only
 and make no model call.
+
+## Review record
+
+Verified Fable 5 reviewed commit `324bcd675458705d2324198709c3233089bf5987`
+and blocked it on reservation lifetime, interrupted-state handling, billing
+state regression, public internal identifiers, over-broad discovery evidence,
+and lost typed crawl diagnostics. The follow-up implementation addresses all
+six findings and must receive a fresh strict review on its exact commit before
+merge.

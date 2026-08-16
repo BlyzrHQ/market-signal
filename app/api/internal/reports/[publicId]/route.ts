@@ -193,7 +193,7 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
           const existing = report.events.find((item) => item.idempotencyKey === key);
           if (existing) {
             if (!eventReplayMatches(existing, body)) return Response.json({ ok: false, error: "The callback idempotency key conflicts with a different event." }, { status: 409 });
-            await terminal.settle(report.run, existing.status);
+            await terminal.settle(report.run, report.run.status);
             return Response.json({ ok: true, event: existing, replayed: true });
           }
           if (["complete", "limited", "failed", "interrupted"].includes(report.run.status)) {
@@ -208,7 +208,9 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
             metadata: body.metadata,
             errorCode: clean(body.errorCode, 80),
           });
-          await terminal.settle(report.run, body.status as ReportRunStatus);
+          const persisted = await store.get(id);
+          if (!persisted) throw new Error("The updated report was not persisted.");
+          await terminal.settle(persisted.run, persisted.run.status);
           return Response.json({ ok: true, event, replayed: false });
         }
         if (body.action === "fact-chunk") {
@@ -246,7 +248,9 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
             status: body.status === "limited" ? "limited" : "complete",
             observedAt: typeof body.observedAt === "string" ? body.observedAt : undefined,
           });
-          await terminal.settle(report.run, body.status === "limited" ? "limited" : "complete");
+          const persisted = await store.get(id);
+          if (!persisted) throw new Error("The completed report was not persisted.");
+          await terminal.settle(persisted.run, persisted.run.status);
           if (saved.evaluation?.status === "deterministic" && await reportEvaluationPilotEnabled({ primaryDomain: report.run.primaryDomain, publicReportId: id })) {
             let payload: Awaited<ReturnType<typeof beginReportEvaluationDispatch>> | null = null;
             try {

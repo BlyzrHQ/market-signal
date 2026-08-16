@@ -73,10 +73,24 @@ test("subscription events are idempotent, stale-safe, and quota reservations are
     const limited = reserveReport(database, "workspace-1", now);
     assert.equal(limited?.id, "");
     assert.deepEqual({ used: limited?.used, limit: limited?.limit }, { used: 5, limit: 5 });
-    finishReportReservation(database, reservations[0].id, "committed", "run-1", now);
-    finishReportReservation(database, reservations[0].id, "released", "run-1", now);
-    assert.equal(database.prepare("SELECT status, run_id FROM billing_report_reservations WHERE id = ?").get(reservations[0].id).status, "released");
-    assert.ok(reserveReport(database, "workspace-1", now)?.id);
+    assert.equal(finishReportReservation(database, reservations[0].id, "committed", "run-1", now), true);
+    assert.equal(finishReportReservation(database, reservations[0].id, "released", "run-1", now), false);
+    assert.deepEqual(database.prepare("SELECT status, run_id FROM billing_report_reservations WHERE id = ?").get(reservations[0].id), { status: "committed", run_id: "run-1" });
+    assert.equal(reserveReport(database, "workspace-1", now)?.id, "");
+  } finally { database.close(); }
+});
+
+test("active report reservations survive the bounded retry window and stale reservations are eventually reclaimed", () => {
+  const database = billingDatabase();
+  try {
+    applySubscriptionUpdate(database, subscription());
+    const started = new Date("2026-08-16T08:00:00.000Z");
+    const first = reserveReport(database, "workspace-1", started);
+    assert.ok(first?.id);
+    reserveReport(database, "workspace-1", new Date("2026-08-16T11:59:00.000Z"));
+    assert.equal(database.prepare("SELECT status FROM billing_report_reservations WHERE id = ?").get(first.id).status, "reserved");
+    reserveReport(database, "workspace-1", new Date("2026-08-16T12:01:00.000Z"));
+    assert.equal(database.prepare("SELECT status FROM billing_report_reservations WHERE id = ?").get(first.id).status, "released");
   } finally { database.close(); }
 });
 

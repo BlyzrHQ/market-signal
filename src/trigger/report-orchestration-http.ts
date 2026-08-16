@@ -67,13 +67,15 @@ export const WORST_CASE_CRITICAL_PATH_MS = (OPERATION_BUDGETS_MS.report * (11 + 
 export class OrchestrationHttpError extends Error {
   readonly status: number;
   readonly retryable: boolean;
+  readonly errorCode: string;
 
-  constructor(operation: string, status = 0, retryable = false, detail = "") {
+  constructor(operation: string, status = 0, retryable = false, detail = "", errorCode = "") {
     const cleanDetail = detail.replace(/\s+/g, " ").trim().slice(0, 280);
     super(cleanDetail || (status ? `${operation} request failed with HTTP ${status}.` : `${operation} request could not be completed.`));
     this.name = "OrchestrationHttpError";
     this.status = status;
     this.retryable = retryable;
+    this.errorCode = errorCode.replace(/[^a-z0-9-]/gi, "").slice(0, 80);
   }
 }
 
@@ -206,7 +208,7 @@ async function acceptedCrawlFailureError(response: Response, expectedPrimaryDoma
     || !/^(?:edge-(?:request-failed|http-rejected|content-type-invalid|response-too-large|response-invalid)|primary-page-unavailable)$/.test(errorCode)
     || !detail
     || detail.length > 280) return undefined;
-  return new OrchestrationHttpError("Public crawl", response.status, false, detail);
+  return new OrchestrationHttpError("Public crawl", response.status, false, detail, errorCode);
 }
 
 async function requestJson(fetchImpl: FetchLike, url: string, token: string, operation: string, timeoutMs: number, body?: unknown, acceptError?: (response: Response) => Promise<unknown | undefined>) {

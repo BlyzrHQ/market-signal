@@ -53,49 +53,46 @@ function validHttpsUrl(value: string, allowedDomains: Set<string>, imageOnly: bo
   }
 }
 
-function validateNestedEvidence(value: unknown, allowedDomains: Set<string>, depth = 0, parentKey = ""): boolean {
+function structurallyValidHttpsUrl(value: string) {
+  try {
+    const url = normalizeDomain(value);
+    return url.protocol === "https:" && !url.username && !url.password && Boolean(canonicalDomain(url.hostname));
+  } catch {
+    return false;
+  }
+}
+
+function isDiscoveryEvidencePath(path: Array<string | number>) {
+  return (path.length === 4
+    && path[0] === "discovery"
+    && path[1] === "candidates"
+    && typeof path[2] === "number"
+    && path[3] === "sourceUrl")
+    || (path.length === 6
+      && path[0] === "discovery"
+      && path[1] === "candidates"
+      && typeof path[2] === "number"
+      && path[3] === "evidence"
+      && typeof path[4] === "number"
+      && path[5] === "url");
+}
+
+function validateNestedEvidence(value: unknown, allowedDomains: Set<string>, depth = 0, parentKey = "", path: Array<string | number> = []): boolean {
   if (depth > 20) return false;
   if (typeof value === "string") {
     if (value.length > 50_000) return false;
     if (!value && /url$/i.test(parentKey)) return true;
     if (/imageurl$/i.test(parentKey)) return validHttpsUrl(value, allowedDomains, true);
-    if (/^(?:url|sourceurl|evidenceurl|attemptedurl|openurl|targeturl)$/i.test(parentKey)) return validHttpsUrl(value, allowedDomains, false);
+    if (/^(?:url|sourceurl|evidenceurl|attemptedurl|openurl|targeturl)$/i.test(parentKey)) {
+      return validHttpsUrl(value, allowedDomains, false) || (isDiscoveryEvidencePath(path) && structurallyValidHttpsUrl(value));
+    }
     return true;
   }
   if (value === null || typeof value === "number" || typeof value === "boolean") return true;
-  if (Array.isArray(value)) return value.length <= 5_000 && value.every((item) => validateNestedEvidence(item, allowedDomains, depth + 1, parentKey));
+  if (Array.isArray(value)) return value.length <= 5_000 && value.every((item, index) => validateNestedEvidence(item, allowedDomains, depth + 1, parentKey, [...path, index]));
   if (!value || typeof value !== "object") return false;
   return Object.entries(value as Record<string, unknown>).length <= 250
-    && Object.entries(value as Record<string, unknown>).every(([key, item]) => validateNestedEvidence(item, allowedDomains, depth + 1, key));
-}
-
-function declaredDiscoveryEvidenceDomains(parsed: EdgeResult) {
-  const discovery = parsed.discovery && typeof parsed.discovery === "object" && !Array.isArray(parsed.discovery)
-    ? parsed.discovery as Record<string, unknown>
-    : null;
-  const candidates = Array.isArray(discovery?.candidates) ? discovery.candidates.slice(0, 100) : [];
-  const domains = new Set<string>();
-  const accept = (value: unknown) => {
-    if (typeof value !== "string" || !value || value.length > 2_000) return false;
-    try {
-      const url = normalizeDomain(value);
-      if (url.protocol !== "https:" || url.username || url.password) return false;
-      domains.add(canonicalDomain(url.hostname));
-      return true;
-    } catch { return false; }
-  };
-  for (const candidate of candidates) {
-    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
-    const row = candidate as Record<string, unknown>;
-    if (row.sourceUrl !== undefined && !accept(row.sourceUrl)) return null;
-    const evidence = Array.isArray(row.evidence) ? row.evidence.slice(0, 20) : [];
-    for (const item of evidence) {
-      if (!item || typeof item !== "object" || Array.isArray(item)) return null;
-      const url = (item as Record<string, unknown>).url;
-      if (url !== undefined && !accept(url)) return null;
-    }
-  }
-  return domains;
+    && Object.entries(value as Record<string, unknown>).every(([key, item]) => validateNestedEvidence(item, allowedDomains, depth + 1, key, [...path, key]));
 }
 
 function validateEdgeResult(parsed: EdgeResult, payload: EdgePayload) {
@@ -110,9 +107,6 @@ function validateEdgeResult(parsed: EdgeResult, payload: EdgePayload) {
       allowedDomains.add(domain);
     } catch { return null; }
   }
-  const discoveryDomains = declaredDiscoveryEvidenceDomains(parsed);
-  if (!discoveryDomains) return null;
-  for (const domain of discoveryDomains) allowedDomains.add(domain);
   const primary = parsed.results.find((item) => canonicalDomain(String(item.domain || "")) === primaryDomain);
   if (!primary?.homepage || !Array.isArray(primary.products)) return null;
   if (parsed.document && (!Array.isArray(parsed.document.blocks) || parsed.document.blocks.length > 5_000)) return null;

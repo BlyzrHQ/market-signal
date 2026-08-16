@@ -278,16 +278,26 @@ test("authenticated callbacks are replay-safe and conflicting idempotency keys f
 });
 
 test("terminal callbacks settle the exact report reservation after persistence", async () => {
-  const stored = report({ billingReservationId: "reservation-1", workspaceId: "workspace-1" });
+  let stored = report({ billingReservationId: "reservation-1", workspaceId: "workspace-1" });
   const settlements = [];
   const handlers = createInternalReportHandlers({
     get: async () => stored,
-    append: async (_id, input) => input,
+    append: async (_id, input) => { stored = { ...stored, run: { ...stored.run, status: input.status } }; return input; },
     save: async () => ({ status: "complete" }),
   }, TOKEN, undefined, { settle: async (run, status) => settlements.push([run.id, run.billingReservationId, status]) });
   const failed = await handlers.post(request({ action: "event", idempotencyKey: "crawl-failed", phase: "failed", status: "failed", message: "Blocked-page recovery failed.", errorCode: "edge-response-invalid" }), { params: { publicId: PUBLIC_ID } });
   assert.equal(failed.status, 200);
   assert.deepEqual(settlements, [["internal", "reservation-1", "failed"]]);
+});
+
+test("stale terminal callback intent settles only the persisted monotonic status", async () => {
+  const stored = report({ status: "complete", currentPhase: "complete", billingReservationId: "reservation-1", workspaceId: "workspace-1" });
+  stored.events = [{ sequence: 2, idempotencyKey: "report-saved", phase: "complete", status: "complete", message: "Saved.", metadata: {}, observedAt: "now" }];
+  const settlements = [];
+  const handlers = createInternalReportHandlers({ get: async () => stored, append: async () => { throw new Error("must not append"); }, save: async () => { throw new Error("must not save"); } }, TOKEN, undefined, { settle: async (_run, status) => settlements.push(status) });
+  const replay = await handlers.post(request({ action: "event", idempotencyKey: "report-saved", phase: "complete", status: "complete", message: "Saved.", metadata: {} }), { params: { publicId: PUBLIC_ID } });
+  assert.equal(replay.status, 200);
+  assert.deepEqual(settlements, ["complete"]);
 });
 
 test("authenticated fact callbacks preserve chunk and manifest contracts", async () => {

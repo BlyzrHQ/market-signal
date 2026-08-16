@@ -330,6 +330,22 @@ test("failed reports create a deterministic zero-cost run-failure evaluation", a
   }
 });
 
+test("recoverable interrupted reports do not create permanent failure evaluations", async () => {
+  const value = await fixture();
+  const database = await NodeSqliteDatabase.open(value.databasePath);
+  try {
+    const started = new Date("2026-08-16T10:00:00.000Z");
+    const created = await createReportRun({ primaryDomain: "recoverable.example" }, started, database);
+    await appendReportEvent(created.publicId, { attemptNumber: 1, idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Collecting public pages." }, started, database);
+    const interrupted = await getStoredReport(created.publicId, new Date("2026-08-16T10:20:00.000Z"), database);
+    assert.equal(interrupted.run.status, "interrupted");
+    assert.equal(await getReportEvaluation(created.publicId, database), null);
+  } finally {
+    database.close();
+    await rm(value.directory, { recursive: true, force: true });
+  }
+});
+
 test("partial manifests can be atomically superseded while invalid domains and references fail closed", async () => {
   const { directory, databasePath } = await fixture();
   const database = await NodeSqliteDatabase.open(databasePath);

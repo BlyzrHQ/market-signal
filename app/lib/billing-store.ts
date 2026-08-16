@@ -5,7 +5,10 @@ import { BILLING_PLANS, type BillingPlan } from "./billing-plans.ts";
 import type { ProductPlan } from "./product-entitlements.ts";
 
 const ACTIVE_STATUSES = new Set(["active", "trialing"]);
-const RESERVATION_TTL_MS = 30 * 60 * 1_000;
+// A full Agency report can span multiple 52-minute worker attempts. Keep the
+// reservation beyond that bounded retry window; genuinely abandoned rows are
+// still reclaimed on a later reservation.
+const RESERVATION_TTL_MS = 4 * 60 * 60 * 1_000;
 
 export type WorkspaceSubscription = {
   workspaceId: string;
@@ -176,14 +179,15 @@ export function reserveReport(database: Database.Database, workspaceId: string, 
   }).immediate();
 }
 
-export function finishReportReservation(database: Database.Database, reservationId: string, outcome: "committed" | "released", runId = "", now = new Date()): void {
+export function finishReportReservation(database: Database.Database, reservationId: string, outcome: "committed" | "released", runId = "", now = new Date()): boolean {
   if (outcome === "committed") {
-    database.prepare(`UPDATE billing_report_reservations SET status = 'committed', run_id = ?, updated_at = ? WHERE id = ? AND status = 'reserved'`)
+    const result = database.prepare(`UPDATE billing_report_reservations SET status = 'committed', run_id = ?, updated_at = ? WHERE id = ? AND status = 'reserved'`)
       .run(runId, now.toISOString(), reservationId);
-    return;
+    return result.changes === 1;
   }
-  database.prepare(`UPDATE billing_report_reservations SET status = 'released', run_id = '', updated_at = ? WHERE id = ? AND (status = 'reserved' OR (status = 'committed' AND run_id = ?))`)
-    .run(now.toISOString(), reservationId, runId);
+  const result = database.prepare(`UPDATE billing_report_reservations SET status = 'released', run_id = '', updated_at = ? WHERE id = ? AND status = 'reserved'`)
+    .run(now.toISOString(), reservationId);
+  return result.changes === 1;
 }
 
 export function workspaceUsage(database: Database.Database, workspaceId: string): { used: number; limit: number } {

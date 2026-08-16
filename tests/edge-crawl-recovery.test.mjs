@@ -90,7 +90,7 @@ test("accepts explicitly declared third-party discovery evidence without opening
         primaryDomain: "shop.test",
         discovery: { candidates: [{ domain: "rival.test", sourceUrl: "https://directory.test/shops", evidence: [{ url: "https://directory.test/shops" }] }] },
         results: [{ domain: "shop.test", homepage: { sourceUrl: "https://shop.test/" }, products: [], gaps: [] }],
-        document: { blocks: [{ type: "candidate", url: "https://directory.test/shops" }] },
+        document: { blocks: [] },
       }),
     },
   );
@@ -106,6 +106,23 @@ test("accepts explicitly declared third-party discovery evidence without opening
     },
   );
   assert.equal(rejected, null);
+  const reusedDiscoveryEvidence = await recoverCrawlThroughEdge(
+    { primary: "shop.test", domains: ["shop.test"] },
+    {
+      configuredUrl: edgeUrl,
+      requestUrl: "https://signal.blyzr.com/api/crawl",
+      callbackToken: token,
+      deployTarget: "node",
+      fetchImpl: async () => Response.json({
+        ok: true,
+        live: true,
+        primaryDomain: "shop.test",
+        discovery: { candidates: [{ sourceUrl: "https://directory.test/shops" }] },
+        results: [{ domain: "shop.test", homepage: { sourceUrl: "https://shop.test/" }, products: [{ sourceUrl: "https://directory.test/shops" }] }],
+      }),
+    },
+  );
+  assert.equal(reusedDiscoveryEvidence, null);
 });
 
 test("rejects oversized, non-JSON, failed, or identity-mismatched edge responses", async (t) => {

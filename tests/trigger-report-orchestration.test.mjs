@@ -518,6 +518,17 @@ test("the HTTP crawl adapter accepts only a bounded same-domain unavailable-doma
   }
 });
 
+test("typed crawl diagnostics reach the terminal orchestration event", async () => {
+  const port = mockPort({
+    async loadReport() {
+      return { run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "queued", attemptCount: 2, createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:00:00.000Z" }, events: [] };
+    },
+    async crawl() { throw new OrchestrationHttpError("Public crawl", 422, false, "Edge validation failed.", "edge-response-invalid"); },
+  });
+  await assert.rejects(orchestrateReport(recoveryPayload, { attemptNumber: 2, isFinalAttempt: true }, port), /Edge validation failed/);
+  assert.equal(port.events.at(-1).errorCode, "edge-response-invalid");
+});
+
 test("the HTTP crawl adapter preserves a validated blocked-page recovery diagnostic", async () => {
   const port = createReportOrchestrationHttpPort({
     appOrigin: "https://market.example",
