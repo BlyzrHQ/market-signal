@@ -229,12 +229,16 @@ export async function orchestrateReport(
     const baseline = baselineBlock ? baselineBlock as unknown as ProductComparison : null;
     const catalogs = crawl.results.map((result) => ({ domain: result.domain, products: result.products }));
     const attempts: ProductComparison[] = [];
+    const primaryHomepage = primary.homepage as { regionCountryCode?: unknown };
+    const marketCountryCode = /^[A-Z]{2}$/.test(String(primaryHomepage.regionCountryCode || "").toUpperCase())
+      ? String(primaryHomepage.regionCountryCode).toUpperCase()
+      : "";
     let requestCount = 0;
     let transportFailed = false;
     try {
       requestCount += 1;
       const first = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, primaryDomain: crawl.primaryDomain, productLimit: payload.productLimit, catalogs, pinnedPairs: crawl.matchHints });
-      attempts.push(first.comparison);
+      attempts.push({ ...first.comparison, ...(marketCountryCode ? { marketCountryCode } : {}) });
     } catch {
       transportFailed = true;
     }
@@ -243,10 +247,11 @@ export async function orchestrateReport(
         await port.appendEvent(payload.publicId, event("matching-retry-started", "matching", "Resuming only incomplete product judge batches from durable checkpoints."));
         requestCount += 1;
         const retry = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, primaryDomain: crawl.primaryDomain, productLimit: payload.productLimit, catalogs, pinnedPairs: crawl.matchHints });
-        attempts.push(retry.comparison);
+        attempts.push({ ...retry.comparison, ...(marketCountryCode ? { marketCountryCode } : {}) });
       } catch { /* the bounded second application attempt remains a visible gap */ }
     }
     comparison = composeProductMatchAttempts(baseline, attempts, requestCount);
+    if (comparison && marketCountryCode) comparison = { ...comparison, marketCountryCode };
     if (comparison) {
       const enrichmentPlan = planFinalProductEnrichmentTargets(comparison, Math.min(payload.productLimit, MAX_FINAL_ENRICHMENT_TARGETS));
       const targets = enrichmentPlan.targets;

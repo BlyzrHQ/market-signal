@@ -77,6 +77,7 @@ function suppressionReasonLabel(reason: string, count: number, ar: boolean) {
     "missing-valid-primary-price": { en: "matches missing your valid public price", ar: "مطابقات ينقصها سعرك العام الصالح" },
     "missing-valid-rival-price": { en: "matches missing a valid rival public price", ar: "مطابقات ينقصها سعر منافس عام صالح" },
     "incompatible-price-currency": { en: "matches with incompatible currencies", ar: "مطابقات بعملات غير متوافقة" },
+    "incompatible-market": { en: "matches from a different regional market", ar: "مطابقات من سوق إقليمي مختلف" },
   };
   const label = labels[reason]?.[ar ? "ar" : "en"] || (ar ? "مطابقات مستبعدة أخرى" : "other excluded matches");
   return `${count} ${label}`;

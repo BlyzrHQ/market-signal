@@ -700,14 +700,12 @@ test("catalog deduplication preserves a fresh price conflict instead of reviving
   assert.equal(selected[0].observedAt, fresh.observedAt);
 });
 
-test("catalog deduplication keeps localized price, timestamp, and source URL atomic", () => {
+test("catalog deduplication keeps regional locale markets separate", () => {
   const us = { ...product("jacket-us", "shop.example", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.example/en-us/products/custom-jacket", priceSignals: [{ raw: "USD 100", currency: "USD", amount: 100 }], observedAt: "2026-08-15T00:00:00.000Z" };
   const canada = { ...us, id: "jacket-ca", sourceUrl: "https://shop.example/en-ca/products/custom-jacket", priceSignals: [{ raw: "CAD 120", currency: "CAD", amount: 120 }], observedAt: "2026-08-16T00:00:00.000Z", claimIds: ["jacket-ca-observed"] };
   const selected = selectPreferredProducts([us, canada]);
-  assert.equal(selected.length, 1);
-  assert.equal(selected[0].sourceUrl, canada.sourceUrl);
-  assert.equal(selected[0].observedAt, canada.observedAt);
-  assert.deepEqual(selected[0].priceSignals, canada.priceSignals);
+  assert.equal(selected.length, 2);
+  assert.deepEqual(selected.map((item) => item.sourceUrl).sort(), [canada.sourceUrl, us.sourceUrl].sort());
 });
 
 test("catalog deduplication collapses locale variants of the same product URL", () => {
@@ -1575,6 +1573,17 @@ test("final enrichment cannot revive or re-date a stale price after a fresh unpr
 
   assert.deepEqual(enriched.rows[0].primary.priceSignals, []);
   assert.equal(enriched.rows[0].primary.observedAt, "2026-08-16T00:00:00.000Z");
+});
+
+test("final enrichment keeps localized price provenance on the fresh source URL", () => {
+  const primary = { ...product("jacket", "shop.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.test/en-us/products/custom-jacket", priceSignals: [{ raw: "USD 90", currency: "USD", amount: 90 }] };
+  const rival = { ...product("rival-jacket", "rival.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://rival.test/en-us/products/custom-jacket", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }] };
+  const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "rival.test", products: [rival] }]);
+  const fresh = { ...rival, sourceUrl: "https://rival.test/en-ca/products/custom-jacket", priceSignals: [{ raw: "CAD 130", currency: "CAD", amount: 130 }], observedAt: TEST_NOW };
+  const enriched = applyFinalProductEnrichment(comparison, [fresh], { pagesRequested: 1, pagesFetched: 1, maxPages: 24, gaps: [] });
+  assert.equal(enriched.rows[0].matches[0].product.sourceUrl, fresh.sourceUrl);
+  assert.deepEqual(enriched.rows[0].matches[0].product.priceSignals, fresh.priceSignals);
+  assert.equal(enriched.rows[0].matches[0].product.observedAt, fresh.observedAt);
 });
 
 test("pre-match reconciliation cannot restore a stale range after fresh currency-conflict evidence", () => {

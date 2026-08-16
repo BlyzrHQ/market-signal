@@ -159,6 +159,7 @@ test("real-data route and product metadata are present", async () => {
   assert.match(productLab, /insufficient-match-confidence/);
   assert.match(productLab, /low-confidence matches/);
   assert.match(productLab, /matches with incompatible currencies/);
+  assert.match(productLab, /matches from a different regional market/);
   assert.match(productLab, /Action rationale/);
   assert.match(productLab, /showDetail=\{false\}/);
   assert.match(productLab, /showValues=\{false\}/);

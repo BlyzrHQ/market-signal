@@ -124,13 +124,14 @@ export type ProductMatch = {
   };
   publication?: {
     priceEligible: boolean;
-    reason?: "insufficient-match-confidence" | "missing-valid-primary-price" | "missing-valid-rival-price" | "incompatible-price-currency";
+    reason?: "insufficient-match-confidence" | "missing-valid-primary-price" | "missing-valid-rival-price" | "incompatible-price-currency" | "incompatible-market";
   };
   excludedProduct?: ProductRecord;
 };
 
 export type ProductComparison = {
   primaryDomain: string;
+  marketCountryCode?: string;
   comparisonDomains: string[];
   rows: Array<{ primary: ProductRecord; matches: ProductMatch[] }>;
   unmatched: Array<{ domain: string; products: ProductRecord[] }>;
@@ -1110,10 +1111,11 @@ function canonicalProductSourceKey(product: ProductRecord) {
     const segments = url.pathname.split("/").filter(Boolean).map((segment) => {
       try { return decodeURIComponent(segment).toLowerCase(); } catch { return segment.toLowerCase(); }
     });
-    if (segments.length > 2 && LOCALE_PATH_PREFIX.test(segments[0]) && PRODUCT_ROUTE_SEGMENTS.has(segments[1])) segments.shift();
+    const regionalLocale = /^[a-z]{2}-[a-z]{2}$/i.test(segments[0] || "") ? segments[0] : "";
+    if (segments.length > 2 && /^[a-z]{2}$/i.test(segments[0]) && PRODUCT_ROUTE_SEGMENTS.has(segments[1])) segments.shift();
     const productIndex = segments.findIndex((segment) => PRODUCT_ROUTE_SEGMENTS.has(segment));
     if (productIndex < 0 || !segments[productIndex + 1]) return "";
-    return `${canonicalHost(product.domain)}|/${segments.slice(productIndex).join("/")}`;
+    return `${canonicalHost(product.domain)}|${regionalLocale ? `/${regionalLocale}` : ""}/${segments.slice(productIndex).join("/")}`;
   } catch {
     return "";
   }
@@ -1870,6 +1872,7 @@ export function applyFinalProductEnrichment(
       extraction: fresh.extraction,
       confidence: fresh.confidence,
       imageUrl: secureImage || fresh.imageUrl || base.imageUrl,
+      sourceUrl: fresh.sourceUrl,
       observedAt: fresh.observedAt || base.observedAt,
       claimIds: [...new Set([...base.claimIds, ...fresh.claimIds])],
     } satisfies ProductRecord;

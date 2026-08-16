@@ -128,6 +128,26 @@ export function publishPricedProductComparison(comparison: ProductComparison): P
   const observedCurrencies = (product: ProductRecord) => new Set(product.priceSignals
     .filter((signal) => typeof signal.amount === "number" && Number.isFinite(signal.amount) && signal.amount > 0 && Boolean(String(signal.raw || "").trim()) && isSupportedCurrency(signal.currency))
     .map((signal) => String(signal.currency).trim().toUpperCase()));
+  const explicitSourceMarket = (product: ProductRecord) => {
+    try {
+      const url = new URL(product.sourceUrl);
+      const locale = url.pathname.split("/").filter(Boolean).find((segment) => /^[a-z]{2}[-_][a-z]{2}$/i.test(segment));
+      if (locale) return locale.split(/[-_]/)[1].toUpperCase();
+      const host = canonicalDomain(url.hostname);
+      if (/\.(?:co\.)?uk$/i.test(host)) return "GB";
+      const countryTld = host.match(/\.([a-z]{2})$/i)?.[1]?.toUpperCase() || "";
+      return countryTld === "UK" ? "GB" : countryTld;
+    } catch { return ""; }
+  };
+  const targetMarket = /^[A-Z]{2}$/.test(String(comparison.marketCountryCode || "").toUpperCase())
+    ? String(comparison.marketCountryCode).toUpperCase()
+    : "";
+  const marketCompatible = (primary: ProductRecord, rival: ProductRecord) => {
+    const primaryMarket = explicitSourceMarket(primary);
+    const rivalMarket = explicitSourceMarket(rival);
+    if (targetMarket && ((primaryMarket && primaryMarket !== targetMarket) || (rivalMarket && rivalMarket !== targetMarket))) return false;
+    return !(primaryMarket && rivalMarket && primaryMarket !== rivalMarket);
+  };
   const validPublicSource = (product: ProductRecord) => {
     try {
       const url = new URL(publicHttpUrl(product.sourceUrl, false));
@@ -161,6 +181,7 @@ export function publishPricedProductComparison(comparison: ProductComparison): P
       if (match.confidence !== "Medium") suppress("insufficient-match-confidence");
       else if (!completeObservedPrice(row.primary)) suppress("missing-valid-primary-price");
       else if (!completeObservedPrice(match.product)) suppress("missing-valid-rival-price");
+      else if (!marketCompatible(row.primary, match.product)) suppress("incompatible-market");
       else {
         const primaryCurrencies = observedCurrencies(row.primary);
         const rivalCurrencies = observedCurrencies(match.product);
@@ -175,6 +196,8 @@ export function publishPricedProductComparison(comparison: ProductComparison): P
           ? "missing-valid-primary-price"
           : !completeObservedPrice(match.product)
             ? "missing-valid-rival-price"
+            : !marketCompatible(row.primary, match.product)
+              ? "incompatible-market"
             : "incompatible-price-currency";
       return {
         ...match,
