@@ -1462,6 +1462,22 @@ test("final enrichment joins equivalent canonical product URLs after host and sc
   assert.equal(enriched.rows[0].primary.imageUrl, "https://cdn.shop.test/tea.jpg");
 });
 
+test("final enrichment never copies same-page sibling evidence across product identities", () => {
+  const sharedUrl = "https://shop.test/products/workwear-collection";
+  const jacketA = { ...product("a", "shop.test", "Jacket A"), jsonLdType: "Product", sourceUrl: sharedUrl };
+  const jacketB = { ...product("b", "shop.test", "Jacket B"), jsonLdType: "Product", sourceUrl: sharedUrl };
+  const rivalA = { ...product("rival-a", "rival.test", "Jacket A"), jsonLdType: "Product", sourceUrl: "https://rival.test/products/jacket-a", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }] };
+  const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: [jacketA, jacketB] }, { domain: "rival.test", products: [rivalA] }]);
+  const freshA = { ...jacketA, id: "fresh-a", name: "Jacket A", normalizedName: "jacket a", priceSignals: [{ raw: "USD 100", currency: "USD", amount: 100 }] };
+
+  const enriched = applyFinalProductEnrichment(comparison, [freshA], { pagesRequested: 1, pagesFetched: 1, maxPages: 24, gaps: [] });
+  const rows = new Map(enriched.rows.map((row) => [row.primary.id, row.primary]));
+
+  assert.deepEqual(rows.get("a").priceSignals.map((signal) => signal.amount), [100]);
+  assert.deepEqual(rows.get("b").priceSignals, []);
+  assert.equal(rows.get("b").name, "Jacket B");
+});
+
 test("final enrichment joins a validated redirected product by its selected product id", () => {
   const primary = { ...product("tea", "shop.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/lemon-ginger-tea" };
   const rival = { ...product("rival-tea", "tea.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://tea.test/products/lemon-ginger-tea" };

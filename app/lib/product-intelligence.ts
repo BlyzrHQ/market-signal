@@ -1730,7 +1730,9 @@ export function applyFinalProductEnrichment(
   };
   const merge = (base: ProductRecord) => {
     const fresh = products.find((product) => product.id === base.id
-      || (canonicalHost(product.domain) === canonicalHost(base.domain) && canonicalProductPageUrl(product.sourceUrl) === canonicalProductPageUrl(base.sourceUrl)));
+      || (canonicalHost(product.domain) === canonicalHost(base.domain)
+        && canonicalProductPageUrl(product.sourceUrl) === canonicalProductPageUrl(base.sourceUrl)
+        && sameLiveCatalogIdentity(product, base)));
     if (!fresh || isCatalogReplacementProduct(fresh)) return base;
     const secureImage = [fresh.imageUrl, base.imageUrl].find((value) => /^https:\/\//i.test(value));
     const priceConflict = fresh.attributes.some((attribute) => attribute.startsWith("Price evidence conflict:"));
