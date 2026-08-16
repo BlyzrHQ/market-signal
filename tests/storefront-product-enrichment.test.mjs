@@ -686,6 +686,22 @@ test("publishes no price when direct metadata contradicts visible and structured
   }
 });
 
+test("multiple conflicting direct currencies cannot be revived by a third visible currency", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response(`<html><head><title>Custom Embroidered Jacket</title><meta property="product:price:amount" content="120.00"><meta property="product:price:currency" content="USD"><meta property="og:price:amount" content="110.00"><meta property="og:price:currency" content="EUR"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Custom Embroidered Jacket", offers: { price: "120", priceCurrency: "USD" } })}</script></head><body><h1>Custom Embroidered Jacket</h1><div class="summary"><p class="price">GBP 100.00</p></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Custom Embroidered Jacket", sourceUrl: "https://shop.test/products/custom-embroidered-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+    assert.ok(result.products[0].attributes.some((attribute) => attribute.startsWith("Price evidence conflict:")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("a currency-less Shopify adapter cannot revive a direct-versus-structured currency conflict", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {

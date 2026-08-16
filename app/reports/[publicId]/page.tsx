@@ -122,10 +122,9 @@ function ReportWorkspace({ blocks, primaryProducts, publicId, primaryDomain, obs
   const competitors = useMemo(() => blocks.filter((block) => block.type === "competitor").sort((a, b) => numeric(b.verificationScore) - numeric(a.verificationScore)), [blocks]);
   const comparison = blocks.find((block) => block.type === "product-comparison");
   const compaction = blocks.find((block) => block.type === "presentation-compaction");
-  const authoritativeMatchTotal = compaction?.relationalFactsAuthoritative ? numeric(object(compaction.factCounts).matches) : 0;
   const battles = useMemo(() => list(comparison?.rows).flatMap((row, rowIndex) => {
     const item = object(row); const primary = object(item.primary);
-    return list(item.matches).flatMap((match, matchIndex) => { const candidate = object(match); const rival = object(candidate.product); return rival.name ? [{ primary, rival, match: candidate, key: `${rowIndex}-${matchIndex}` }] : []; });
+    return list(item.matches).flatMap((match, matchIndex) => { const candidate = object(match); const rival = object(candidate.product); return object(candidate.publication).priceEligible === true && rival.name ? [{ primary, rival, match: candidate, key: `${rowIndex}-${matchIndex}` }] : []; });
   }), [comparison]);
   const adBlock = blocks.find((block) => block.type === "ad-intelligence");
   const adCompanies = list(adBlock?.companies).map(object);
@@ -157,7 +156,7 @@ function ReportWorkspace({ blocks, primaryProducts, publicId, primaryDomain, obs
         <time dateTime={observedAt}>{ar ? "حُدث" : "Updated"} {new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</time>
       </section>
       <nav className="workspace-tabs" role="tablist" aria-orientation={compactNav ? "horizontal" : "vertical"} aria-label={ar ? "أقسام التقرير" : "Report sections"}>
-        {activeViews.map((item, index) => <button key={item} ref={(node) => { tabs.current[index] = node; }} id={`tab-${item}`} type="button" role="tab" aria-selected={view === item} aria-controls={`panel-${item}`} tabIndex={view === item ? 0 : -1} onClick={() => selectView(item)} onKeyDown={(event) => onTabKey(event, index)}>{VIEW_LABELS[item][ar ? "ar" : "en"]}{item === "competitors" && <b>{competitors.length}</b>}{item === "products" && <b>{authoritativeMatchTotal || battles.length}</b>}</button>)}
+        {activeViews.map((item, index) => <button key={item} ref={(node) => { tabs.current[index] = node; }} id={`tab-${item}`} type="button" role="tab" aria-selected={view === item} aria-controls={`panel-${item}`} tabIndex={view === item ? 0 : -1} onClick={() => selectView(item)} onKeyDown={(event) => onTabKey(event, index)}>{VIEW_LABELS[item][ar ? "ar" : "en"]}{item === "competitors" && <b>{competitors.length}</b>}{item === "products" && <b>{battles.length}</b>}</button>)}
       </nav>
     </aside>
     <div className="report-dashboard-main">
@@ -177,7 +176,7 @@ function ReportWorkspace({ blocks, primaryProducts, publicId, primaryDomain, obs
         {!competitors.length && <div className="truth-state limited"><strong>{ar ? "لم يتم التحقق من منافس" : "No competitor was verified"}</strong><p>{ar ? "هذا نقص في التغطية، وليس دليلاً على عدم وجود منافسين." : "This is a coverage gap, not proof that no competitors exist."}</p></div>}
       </>}
 
-      {view === "products" && <ProductDesignLab comparison={comparison} battles={battles} primaryProducts={primaryProducts} publicId={publicId} authoritativeMatchTotal={authoritativeMatchTotal || undefined} primaryDomain={primaryDomain} observedAt={observedAt} ar={ar} />}
+      {view === "products" && <ProductDesignLab comparison={comparison} battles={battles} primaryProducts={primaryProducts} publicId={publicId} authoritativeMatchTotal={battles.length || undefined} primaryDomain={primaryDomain} observedAt={observedAt} ar={ar} />}
 
       {view === "ads" && <>
         <header className="panel-intro compact"><div><span>{ar ? "مراقبة الإعلانات" : "AD WATCH"}</span><h2>{ar ? "من يعلن فعلاً، وماذا تقول إعلاناته؟" : "Who is verifiably advertising, and what are their ads saying?"}</h2><p>{display(adBlock?.limitation, ar ? "تختلف تغطية مكتبات الإعلانات حسب السوق والمنصة." : "Ad-library coverage varies by market and platform.")}</p></div></header>

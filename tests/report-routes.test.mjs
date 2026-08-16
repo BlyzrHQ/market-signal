@@ -88,6 +88,10 @@ test("saved reports use a persistent dashboard shell without the old report hero
 
 test("saved product and ad views preserve truth boundaries and source links", () => {
   assert.match(report, /<ProductDesignLab comparison=\{comparison\} battles=\{battles\}/);
+  assert.match(report, /object\(candidate\.publication\)\.priceEligible === true/);
+  assert.match(report, /item === "products" && <b>\{battles\.length\}<\/b>/);
+  assert.match(report, /authoritativeMatchTotal=\{battles\.length \|\| undefined\}/);
+  assert.doesNotMatch(report, /const authoritativeMatchTotal/);
   assert.match(productLab, /className="product-compact-table"/);
   assert.match(productLab, /<table className="product-compact-table" role="table">/);
   assert.match(productLab, /<thead role="rowgroup"><tr role="row">/);

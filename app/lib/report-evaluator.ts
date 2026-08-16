@@ -232,8 +232,10 @@ export function profileDeterministicEvaluation(input: DeterministicEvaluationInp
   const productMap = new Map(products.map((product) => [`${text(product.domain)}\n${text(product.product_id ?? product.productId)}`, product]));
   const sourceLinkedMatches = matches.filter((match) => {
     const evidence = matchEvidence(match);
+    const publication = record(evidence.publication);
     const rivalDomain = text(match.rival_domain ?? match.rivalDomain);
-    return productKeys.has(`${primaryDomain}\n${text(match.primary_product_id ?? match.primaryProductId)}`)
+    return publication.priceEligible === true
+      && productKeys.has(`${primaryDomain}\n${text(match.primary_product_id ?? match.primaryProductId)}`)
       && productKeys.has(`${rivalDomain}\n${text(match.rival_product_id ?? match.rivalProductId)}`)
       && belongsTo(evidence.primarySourceUrl, primaryDomain)
       && belongsTo(evidence.rivalSourceUrl, rivalDomain);

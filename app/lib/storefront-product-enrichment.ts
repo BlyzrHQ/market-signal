@@ -821,9 +821,9 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       if (!fetched.ok) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed", fetched.status, "http") };
       if (!/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed", fetched.status, "content") };
       const extracted = pageExtraction(fetched.text, fetched.url, item.domain);
-      extracted.result.products = rejectContradictoryPageCurrencies(fetched.text, extracted.result.products);
       const expected = expectedProduct(item);
       addScopedProductPageEvidence(fetched.text, fetched.url, expected, extracted.result.products, extracted.pageTitle);
+      extracted.result.products = rejectContradictoryPageCurrencies(fetched.text, extracted.result.products);
       const canonicalCrossLanguageOptions = { allowCanonicalCrossLanguageIdentity: canonicalSelectedPage(item.sourceUrl) === canonicalSelectedPage(fetched.url) };
       const rawInitialIdentity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle, { allowScopedPageSignal: true, ...canonicalCrossLanguageOptions });
       const rawMatchedProduct = rawInitialIdentity.products[0];

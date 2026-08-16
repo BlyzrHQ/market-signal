@@ -24,6 +24,7 @@ function ecommerceInput() {
       evidence_json: JSON.stringify({
         primarySourceUrl: `https://shop.example/products/${index}`,
         rivalSourceUrl: `https://${rivalDomain}/products/${index}`,
+        publication: { priceEligible: true },
         claimIds: [`claim-${index}`],
         decision: index < 3 ? { recommendedMove: `Test action ${index}`, actionPlan: { actionEn: `Test action ${index}` } } : {},
       }),
@@ -55,6 +56,18 @@ test("deterministic ecommerce formulas reach 100 only from complete relational e
   assert.equal(result.deterministic.components.evidenceIntegrity.unavailablePhaseExplanation.score, 5);
   assert.equal(result.deterministic.components.presentation.renderedGapCoverage.score, 15);
   assert.ok(result.signals.some((signal) => signal.issueKey === "ad-coverage-unknown"));
+});
+
+test("excluded semantic matches never earn accepted-pair or observed-price evaluation credit", () => {
+  const input = ecommerceInput();
+  const excluded = JSON.parse(input.matches[0].evidence_json);
+  excluded.publication = { priceEligible: false, reason: "incompatible-price-currency" };
+  input.matches[0].evidence_json = JSON.stringify(excluded);
+
+  const result = profileDeterministicEvaluation(input);
+
+  assert.equal(result.deterministic.raw.acceptedSourceLinkedPairs, 9);
+  assert.equal(result.deterministic.components.userValue.observedPairPriceCoverage.denominator, 9);
 });
 
 test("zero denominators and unsupported evidence remain explicit and trigger future caps", () => {
