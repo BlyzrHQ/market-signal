@@ -120,6 +120,9 @@ export function upsertProductComparisonBlock<T extends ReportDocument>(document:
 }
 
 export function publishPricedProductComparison(comparison: ProductComparison): ProductComparison {
+  const now = Date.now();
+  const maxObservationAgeMs = 366 * 24 * 60 * 60 * 1000;
+  const maxFutureSkewMs = 5 * 60 * 1000;
   let suppressedAcceptedPairs = 0;
   const reasons: Record<string, number> = {};
   const observedCurrencies = (product: ProductRecord) => new Set(product.priceSignals
@@ -131,6 +134,13 @@ export function publishPricedProductComparison(comparison: ProductComparison): P
       return canonicalDomain(url.hostname) === canonicalDomain(product.domain);
     } catch { return false; }
   };
+  const validObservedAt = (value: string) => {
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false;
+    const parsed = Date.parse(value);
+    if (!Number.isFinite(parsed) || new Date(parsed).toISOString() !== value) return false;
+    const age = now - parsed;
+    return age >= -maxFutureSkewMs && age <= maxObservationAgeMs;
+  };
   const completeObservedPrice = (product: ProductRecord) => product.priceSignals.length > 0
     && product.priceSignals.every((signal) => typeof signal.amount === "number"
       && Number.isFinite(signal.amount)
@@ -139,7 +149,7 @@ export function publishPricedProductComparison(comparison: ProductComparison): P
       && isSupportedCurrency(signal.currency))
     && hasValidObservedRivalPrice(product)
     && validPublicSource(product)
-    && Number.isFinite(Date.parse(product.observedAt));
+    && validObservedAt(product.observedAt);
   const suppress = (reason: string) => {
     suppressedAcceptedPairs += 1;
     reasons[reason] = (reasons[reason] || 0) + 1;

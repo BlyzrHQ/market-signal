@@ -764,13 +764,12 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
     : productPathForMetadata && samePageProducts.length === 1
       ? samePageProducts
       : [];
-  const canBindMetadataCandidate = metadataCandidates.length === 1
-    && (authoritativeMetadata.scope === "product" || productDetailPathForMetadata);
+  const canBindMetadataCandidate = metadataCandidates.length === 1 && productDetailPathForMetadata;
   if (authoritativeMetadata.present) {
     const oneMetadataIdentity = metadataCandidates.length > 0
       && new Set(metadataCandidates.map((product) => product.normalizedName)).size === 1;
     const scopedTargets = authoritativeMetadata.scope === "product"
-      ? oneMetadataIdentity
+      ? oneMetadataIdentity && productDetailPathForMetadata
         ? metadataCandidates
         : []
       : canBindMetadataCandidate
@@ -830,7 +829,9 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
         ...product,
         priceSignals: metadataConflict
           ? []
-          : !hasComparablePublicPrice(product) && validMetadataSignals.length
+          : validMetadataSignals.length === 2 && structuredAmounts.length === 1
+            ? validMetadataSignals
+            : !hasComparablePublicPrice(product) && validMetadataSignals.length
             ? validMetadataSignals
             : product.priceSignals,
         attributes: metadataConflict
@@ -1004,6 +1005,12 @@ export function extractProductsFromSitemap(document: string, domain: string, obs
 }
 
 export function selectPreferredProducts(items: ProductRecord[]) {
+  const localizedProductSource = (product: ProductRecord) => {
+    try {
+      const segments = new URL(product.sourceUrl).pathname.split("/").filter(Boolean);
+      return segments.length > 2 && LOCALE_PATH_PREFIX.test(segments[0]) && PRODUCT_ROUTE_SEGMENTS.has(segments[1]);
+    } catch { return false; }
+  };
   const mergeIdentifiers = (preferred: ProductIdentifiers | undefined, supplemental: ProductIdentifiers | undefined) => {
     if (!preferred && !supplemental) return undefined;
     return {
@@ -1044,8 +1051,15 @@ export function selectPreferredProducts(items: ProductRecord[]) {
   };
   const selected = new Map<string, ProductRecord>();
   for (const item of items) {
-    const key = productIdentityKey(item);
-    const current = selected.get(key);
+    let key = productIdentityKey(item);
+    let current = selected.get(key);
+    if (!current) {
+      const source = canonicalProductSourceKey(item);
+      const localizedEntry = source ? [...selected.entries()].find(([, candidate]) => canonicalProductSourceKey(candidate) === source
+        && candidate.sourceUrl.split("#")[0].replace(/\/$/, "") !== item.sourceUrl.split("#")[0].replace(/\/$/, "")
+        && (localizedProductSource(candidate) || localizedProductSource(item))) : undefined;
+      if (localizedEntry) [key, current] = localizedEntry;
+    }
     if (!current) {
       selected.set(key, item);
       continue;
@@ -1121,8 +1135,8 @@ export function productIdentityKey(product: ProductRecord) {
   const gtin = [...(product.identifiers?.gtins || [])].sort()[0];
   if (gtin) return `${domain}|gtin|${gtin}`;
   const source = canonicalProductSourceKey(product);
-  if (source) return `${domain}|source|${source}`;
   const quantity = product.quantity ? `${product.quantity.kind}|${product.quantity.amount}|${product.quantity.unit}` : "";
+  if (source) return `${domain}|source|${source}|${bilingualNormalize(product.name)}|${quantity}`;
   return `${domain}|name|${bilingualNormalize(product.name)}|${quantity}`;
 }
 
@@ -1586,7 +1600,13 @@ export function buildProductComparison(primaryDomain: string, catalogs: Array<{ 
 }
 
 function hasComparablePublicPrice(product: ProductRecord) {
-  return product.priceSignals.some((signal) => typeof signal.amount === "number" && Boolean(signal.currency));
+  if (!product.priceSignals.length) return false;
+  const currencies = new Set<string>();
+  for (const signal of product.priceSignals) {
+    if (typeof signal.amount !== "number" || !Number.isFinite(signal.amount) || signal.amount <= 0 || !String(signal.raw || "").trim() || !isSupportedCurrency(signal.currency)) return false;
+    currencies.add(String(signal.currency).trim().toUpperCase());
+  }
+  return currencies.size === 1;
 }
 
 function safeProductSource(product: ProductRecord) {

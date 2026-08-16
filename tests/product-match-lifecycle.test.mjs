@@ -9,6 +9,8 @@ import {
 } from "../app/lib/product-match-lifecycle.ts";
 import { applyFinalProductEnrichment } from "../app/lib/product-intelligence.ts";
 
+const TEST_NOW = new Date().toISOString();
+
 function product(id, domain = "shop.test") {
   return {
     id,
@@ -25,7 +27,7 @@ function product(id, domain = "shop.test") {
     confidence: "High",
     sourceUrl: `https://${domain}/products/${id}`,
     imageUrl: "",
-    observedAt: "2026-07-15T00:00:00.000Z",
+    observedAt: TEST_NOW,
     claimIds: [`claim-${id}`],
   };
 }
@@ -280,6 +282,20 @@ test("the final publication gate requires parseable source and observation prove
 
   assert.equal(published.rows[0].matches[0].product, null);
   assert.equal(published.rows[0].matches[0].publication.reason, "missing-valid-primary-price");
+});
+
+test("the final publication gate requires canonical and temporally bounded observation timestamps", () => {
+  for (const observedAt of ["1", "1900-01-01T00:00:00.000Z", "2999-01-01T00:00:00.000Z", "2026-08-16T00:00:00Z"]) {
+    const candidate = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "r1")], accepted: 1 });
+    candidate.rows[0].primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+    candidate.rows[0].matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+    candidate.rows[0].primary.observedAt = observedAt;
+
+    const published = publishPricedProductComparison(candidate);
+
+    assert.equal(published.rows[0].matches[0].product, null, observedAt);
+    assert.equal(published.rows[0].matches[0].publication.reason, "missing-valid-primary-price", observedAt);
+  }
 });
 
 test("the final publication gate requires a public source owned by the product domain", () => {

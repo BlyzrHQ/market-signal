@@ -4,12 +4,14 @@ import test from "node:test";
 import { applyFinalProductEnrichment, applyPreMatchCatalogEnrichment, buildProductComparison, buildProductPairCandidateIndex, catalogReplacementAuditAttribute, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, planFinalProductEnrichmentTargets, planPreliminaryCatalogReconciliation, retrieveProductPairCandidates, scoreProductPair, selectFinalProductEnrichmentTargets, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
 import { publishPricedProductComparison } from "../app/lib/product-match-lifecycle.ts";
 
+const TEST_NOW = new Date().toISOString();
+
 function extraction(overrides = {}) {
   return extractProductsFromHtml({
     document: "<html><head><title>Acme</title></head><body><h1>Acme</h1></body></html>",
     sourceUrl: "https://acme.com/",
     domain: "acme.com",
-    observedAt: "2026-07-12T00:00:00.000Z",
+    observedAt: TEST_NOW,
     pageTitle: "Acme",
     pageDescription: "",
     headings: ["Acme"],
@@ -34,7 +36,7 @@ function product(id, domain, name, category = "inventory", description = "invent
     confidence: "High",
     sourceUrl: `https://${domain}/${id}`,
     imageUrl: "",
-    observedAt: "2026-07-12T00:00:00.000Z",
+    observedAt: TEST_NOW,
     claimIds: [`${id}-observed`],
   };
 }
@@ -344,6 +346,26 @@ test("ambiguous product metadata on a collection page cannot erase sibling JSON-
   assert.deepEqual(result.products.map((product) => product.priceSignals[0]?.amount), [10, 20]);
 });
 
+test("product metadata on a collection page cannot bind through one heading", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="999"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify([{ "@type": "Product", name: "Catalog Jacket A" }, { "@type": "Product", name: "Catalog Jacket B", offers: { price: 20, priceCurrency: "USD" } }])}</script>`,
+    sourceUrl: "https://acme.com/collections/jackets",
+    pageTitle: "Jackets",
+    headings: ["Catalog Jacket A"],
+  });
+  assert.deepEqual(result.products.map((product) => product.priceSignals.map((signal) => signal.amount)), [[], [20]]);
+});
+
+test("a direct metadata range enriches a matching structured endpoint", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="10"><meta property="product:price:amount" content="20"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Range Jacket", offers: { price: 10, priceCurrency: "USD" } })}</script>`,
+    sourceUrl: "https://acme.com/products/range-jacket",
+    pageTitle: "Range Jacket",
+    headings: ["Range Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals.map((signal) => signal.amount), [10, 20]);
+});
+
 test("product-scoped direct metadata conflict suppresses price until visible evidence corroborates it", () => {
   const result = extraction({
     document: `<head><title>Custom Embroidered Columbia Jackets No Minimum – Arklavo</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="GBP"></head><script type="application/ld+json">${JSON.stringify({
@@ -622,6 +644,16 @@ test("catalog deduplication preserves high-confidence structured evidence", () =
   const pageSignal = { ...structured, id: "page", extraction: "page-signal", confidence: "Medium", sourceUrl: "https://acme.com/billing" };
   assert.equal(selectPreferredProducts([structured, pageSignal])[0].id, "structured");
   assert.equal(selectPreferredProducts([pageSignal, structured])[0].id, "structured");
+});
+
+test("catalog deduplication never transfers a sibling price across one shared URL", () => {
+  const sharedUrl = "https://acme.com/products/workwear-collection";
+  const jacketA = { ...product("jacket-a", "acme.com", "Jacket A"), jsonLdType: "Product", sourceUrl: sharedUrl, priceSignals: [] };
+  const jacketB = { ...product("jacket-b", "acme.com", "Jacket B"), jsonLdType: "Product", sourceUrl: sharedUrl, confidence: "Medium", priceSignals: [{ raw: "USD 20", currency: "USD", amount: 20 }] };
+  const selected = selectPreferredProducts([jacketA, jacketB]);
+  assert.equal(selected.length, 2);
+  assert.deepEqual(selected.find((item) => item.id === "jacket-a").priceSignals, []);
+  assert.deepEqual(selected.find((item) => item.id === "jacket-b").priceSignals.map((signal) => signal.amount), [20]);
 });
 
 test("catalog deduplication collapses locale variants of the same product URL", () => {
@@ -1404,6 +1436,13 @@ test("final enrichment prioritizes missing primary prices over already-priced ri
   assert.equal(targets.length, 20);
   assert.equal(targets.every((target) => target.role === "primary"), true);
   assert.equal(targets.every((target) => target.productId.startsWith("primary-")), true);
+});
+
+test("final enrichment re-reads a non-positive existing product price", () => {
+  const primary = { ...product("primary-zero", "wearform.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://wearform.test/products/custom-jacket", priceSignals: [{ raw: "USD 0", currency: "USD", amount: 0 }], imageUrl: "https://wearform.test/jacket.jpg" };
+  const rival = { ...product("rival-priced", "rival.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://rival.test/products/custom-jacket", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }], imageUrl: "https://rival.test/jacket.jpg" };
+  const comparison = { primaryDomain: "wearform.test", comparisonDomains: ["rival.test"], rows: [{ primary, matches: [{ domain: rival.domain, product: rival, score: 0.95, confidence: "Medium", sharedTerms: ["jacket"], claimIds: [], decision: null }] }], unmatched: [], coverage: { primaryProductsAvailable: 1, primaryProductsScanned: 1, primaryProductFamiliesCompared: 1, competitorProductsAvailable: 1, competitorProductsScanned: 1, assignedPairCount: 1, verifiedPairCount: 1, rowsReturned: 1, rowLimit: 1, truncated: false } };
+  assert.deepEqual(selectFinalProductEnrichmentTargets(comparison, 1).map((target) => target.productId), [primary.id]);
 });
 
 test("a strongest both-missing pair is scheduled before a weaker secondary single-missing pair", () => {

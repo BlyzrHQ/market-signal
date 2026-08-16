@@ -67,6 +67,10 @@ function productLayoutFromLocation(): ProductLayout {
   return LAYOUTS.includes(value as ProductLayout) ? value as ProductLayout : "table";
 }
 function csvCell(value: unknown) { return `"${String(value ?? "").replace(/"/g, '""')}"`; }
+function observedDate(value: string, ar: boolean) {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? new Date(parsed).toLocaleDateString(ar ? "ar" : "en") : (ar ? "غير معروف" : "Unknown");
+}
 
 type ProductRow = ReturnType<typeof prepareRow>;
 
@@ -108,7 +112,9 @@ function prepareRow(battle: ProductBattle, ar: boolean) {
   const confidence = display(battle.match.confidence, ar ? "ثقة محدودة" : "Limited confidence");
   const matchConfidence = display(battle.match.confidence);
   const matchStatus = matchConfidence && matchConfidence !== "Low" ? "accepted" : "limited";
-  return { battle, domain, assessment, decision, primaryDisplay, rivalDisplay, primarySource, rivalSource, reasons, verdict, fullAction, shortAction, actionRationale, actionSource, actionModel, actionPromptVersion, actionEvidenceKeys, priceClaim, priceStatus, priceSignal, priceDetail, lane, claimType, confidence, matchStatus };
+  const primaryObservedAt = display(battle.primary.observedAt);
+  const rivalObservedAt = display(battle.rival.observedAt);
+  return { battle, domain, assessment, decision, primaryDisplay, rivalDisplay, primarySource, rivalSource, primaryObservedAt, rivalObservedAt, reasons, verdict, fullAction, shortAction, actionRationale, actionSource, actionModel, actionPromptVersion, actionEvidenceKeys, priceClaim, priceStatus, priceSignal, priceDetail, lane, claimType, confidence, matchStatus };
 }
 
 function ProductIdentity({ role, product, price, source, domain, ar, compact = false, showPrice = true }: { role: "you" | "rival"; product: Record<string, unknown>; price: string; source: string; domain?: string; ar: boolean; compact?: boolean; showPrice?: boolean }) {
@@ -120,11 +126,11 @@ function ProductIdentity({ role, product, price, source, domain, ar, compact = f
   </div>;
 }
 
-function MatchDetails({ row, observedAt, ar }: { row: ProductRow; observedAt: string; ar: boolean }) {
+function MatchDetails({ row, ar }: { row: ProductRow; ar: boolean }) {
   return <details className="product-match-details"><summary>{ar ? "لماذا هذه المطابقة؟" : "Why this match?"}</summary><div>
     <section><span>{ar ? "أساس المطابقة" : "MATCH BASIS"}</span><strong>{row.verdict.replace(/_/g, " ")}</strong><p>{row.reasons || (ar ? "لم تُحفظ أسباب إضافية." : "No additional match reasons were saved.")}</p></section>
     <section><span>{ar ? "سبب الخطوة" : "ACTION RATIONALE"}</span><strong>{row.actionSource === "ai" ? (ar ? "توصية صاغها الذكاء الاصطناعي" : "AI-drafted recommendation") : (ar ? "توصية قائمة على القواعد" : "Rule-based recommendation")}</strong><p>{row.actionRationale || row.fullAction}</p>{row.actionSource === "ai" && <small>{[row.actionModel, row.actionPromptVersion].filter(Boolean).join(" · ")}</small>}</section>
-    <section><span>{ar ? "حالة الدليل" : "EVIDENCE STATE"}</span><strong>{row.claimType} · {row.confidence}</strong><p>{ar ? "لوحظ" : "Observed"} {new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</p></section>
+    <section><span>{ar ? "حالة الدليل" : "EVIDENCE STATE"}</span><strong>{row.claimType} · {row.confidence}</strong><p>{ar ? "منتجك" : "Your product"}: <time dateTime={row.primaryObservedAt}>{observedDate(row.primaryObservedAt, ar)}</time> · {ar ? "المنافس" : "Rival"}: <time dateTime={row.rivalObservedAt}>{observedDate(row.rivalObservedAt, ar)}</time></p></section>
     <section><span>{ar ? "المصادر" : "SOURCES"}</span><div className="product-detail-links">{row.primarySource && <a href={row.primarySource} target="_blank" rel="noreferrer">{ar ? "مصدر منتجك ↗" : "Your source ↗"}</a>}{row.rivalSource && <a href={row.rivalSource} target="_blank" rel="noreferrer">{ar ? "مصدر المنافس ↗" : "Rival source ↗"}</a>}</div></section>
   </div></details>;
 }
@@ -133,7 +139,7 @@ function ProductTablePrice({ value, ar }: { value: string; ar: boolean }) {
   return <strong className={`product-table-price ${value ? "observed" : "unavailable"}`} dir="auto">{value || (ar ? "غير مرصود" : "Not observed")}</strong>;
 }
 
-function ProductTableDetails({ row, observedAt, ar }: { row: ProductRow; observedAt: string; ar: boolean }) {
+function ProductTableDetails({ row, ar }: { row: ProductRow; ar: boolean }) {
   return <details className="product-row-details">
     <summary>{ar ? "لماذا هذه المطابقة؟" : "Why this match?"}</summary>
     <div>
@@ -142,14 +148,14 @@ function ProductTableDetails({ row, observedAt, ar }: { row: ProductRow; observe
       <p><b>{ar ? "مصدر التوصية" : "Recommendation source"}</b><span>{row.actionSource === "ai" ? `${ar ? "ذكاء اصطناعي مقيّد بالأدلة" : "Evidence-grounded AI"}${row.actionModel ? ` · ${row.actionModel}` : ""}${row.actionPromptVersion ? ` · ${row.actionPromptVersion}` : ""}` : (ar ? "قواعد حتمية" : "Deterministic rules")}</span></p>
       {row.actionEvidenceKeys.length > 0 && <p><b>{ar ? "الأدلة المستخدمة" : "Evidence used"}</b><span>{row.actionEvidenceKeys.join(" · ")}</span></p>}
       <p><b>{ar ? "حالة الدليل" : "Evidence state"}</b><span>{row.verdict.replace(/_/g, " ")} · {row.claimType} · {row.confidence}</span></p>
-      <p><b>{ar ? "لوحظ" : "Observed"}</b><time dateTime={observedAt}>{new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</time></p>
+      <p><b>{ar ? "لوحظ" : "Observed"}</b><span>{ar ? "منتجك" : "Your product"}: <time dateTime={row.primaryObservedAt}>{observedDate(row.primaryObservedAt, ar)}</time> · {ar ? "المنافس" : "Rival"}: <time dateTime={row.rivalObservedAt}>{observedDate(row.rivalObservedAt, ar)}</time></span></p>
     </div>
   </details>;
 }
 
 type MatchPagePayload = { ok: boolean; error?: string; errorCode?: string; page?: { authoritative: true; manifestHash: string; totalCount: number; directPriceCount: number; domainCounts: Record<string, number>; items: ProductBattle[]; nextCursor: string | null } };
 
-export function ProductDesignLab({ comparison, battles, primaryProducts, publicId, authoritativeMatchTotal, onAuthoritativeSummary, primaryDomain, observedAt, ar }: ProductDesignLabProps) {
+export function ProductDesignLab({ comparison, battles, primaryProducts, publicId, authoritativeMatchTotal, onAuthoritativeSummary, primaryDomain, ar }: ProductDesignLabProps) {
   const [layout, setLayout] = useState<ProductLayout>("table");
   const [shareStatus, setShareStatus] = useState("");
   const [shareFallback, setShareFallback] = useState("");
@@ -250,8 +256,8 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
     }
     if (activeReportId.current !== publicId) return;
     const exportRows = exportBattles.map((battle) => prepareRow(battle, ar));
-    const headers = ["your_product", "your_price_raw", "your_price_amount", "your_currency", "rival_domain", "rival_product", "rival_price_raw", "rival_price_amount", "rival_currency", "price_status", "price_signal", "suggested_action", "suggested_action_source", "match_status", "confidence", "observed_at", "your_source", "rival_source"];
-    const data = exportRows.map((row) => [display(row.battle.primary.name), row.primaryDisplay, row.priceClaim.primary?.amount ?? "", row.priceClaim.primary?.currency ?? "", row.domain, display(row.battle.rival.name), row.rivalDisplay, row.priceClaim.rival?.amount ?? "", row.priceClaim.rival?.currency ?? "", row.priceStatus, row.priceSignal, row.fullAction, row.actionSource, `${row.matchStatus}-${row.claimType}`, row.confidence, observedAt, row.primarySource, row.rivalSource]);
+    const headers = ["your_product", "your_price_raw", "your_price_amount", "your_currency", "rival_domain", "rival_product", "rival_price_raw", "rival_price_amount", "rival_currency", "price_status", "price_signal", "suggested_action", "suggested_action_source", "match_status", "confidence", "your_observed_at", "rival_observed_at", "your_source", "rival_source"];
+    const data = exportRows.map((row) => [display(row.battle.primary.name), row.primaryDisplay, row.priceClaim.primary?.amount ?? "", row.priceClaim.primary?.currency ?? "", row.domain, display(row.battle.rival.name), row.rivalDisplay, row.priceClaim.rival?.amount ?? "", row.priceClaim.rival?.currency ?? "", row.priceStatus, row.priceSignal, row.fullAction, row.actionSource, `${row.matchStatus}-${row.claimType}`, row.confidence, row.primaryObservedAt, row.rivalObservedAt, row.primarySource, row.rivalSource]);
     const csv = `\uFEFF${[headers, ...data].map((line) => line.map(csvCell).join(",")).join("\r\n")}`;
     const href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })); const anchor = document.createElement("a"); anchor.href = href; anchor.download = `${slug(primaryDomain)}-product-comparison.csv`; document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(href), 0);
   };
@@ -292,16 +298,16 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
               <td role="cell" className="product-table-product-cell product-table-rival-product"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "أقرب منافس" : "Closest rival"}</span><ProductIdentity role="rival" product={row.battle.rival} price={row.rivalDisplay} source={row.rivalSource} domain={row.domain} ar={ar} compact showPrice={false} /></td>
               <td role="cell" className="product-table-price-cell product-table-rival-price"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "سعر المنافس" : "Rival price"}</span><ProductTablePrice value={row.rivalDisplay} ar={ar} /></td>
               <td role="cell" className="product-table-difference-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "الفرق" : "Difference"}</span><strong className={`product-signal ${row.lane}`}>{row.priceSignal}</strong>{row.priceDetail && <small dir="auto">{row.priceDetail}</small>}</td>
-              <td role="cell" className="product-table-action-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "الخطوة التالية" : "Next move"}</span><strong className="product-next-move">{row.shortAction}</strong><ProductTableDetails row={row} observedAt={observedAt} ar={ar} /></td>
+              <td role="cell" className="product-table-action-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "الخطوة التالية" : "Next move"}</span><strong className="product-next-move">{row.shortAction}</strong><ProductTableDetails row={row} ar={ar} /></td>
             </tr>;
           })}</tbody>
         </table>
       </div>
     </section>}
 
-    {layout === "matchups" && <section id="product-layout-matchups" role="tabpanel" aria-labelledby="product-layout-tab-matchups" className="product-layout-panel matchup-layout"><ul>{rows.map((row, index) => <li key={row.battle.key} id={rowAnchor(row, index)}><div className="matchup-products"><ProductIdentity role="you" product={row.battle.primary} price={row.primaryDisplay} source={row.primarySource} ar={ar} /><span aria-hidden="true">VS</span><ProductIdentity role="rival" product={row.battle.rival} price={row.rivalDisplay} source={row.rivalSource} domain={row.domain} ar={ar} /></div><div className="matchup-decision"><PricePosition comparisonValue={row.decision.priceComparison} primaryRaw={row.primaryDisplay} rivalRaw={row.rivalDisplay} priceVerdict={display(row.decision.priceVerdict)} locale={ar ? "ar" : "en"} primaryQuantity={row.battle.primary.quantity} rivalQuantity={row.battle.rival.quantity} showDetail={false} showValues={false} /><section><span>{ar ? "الخطوة التالية" : "NEXT MOVE"}</span><strong>{row.shortAction}</strong></section></div><MatchDetails row={row} observedAt={observedAt} ar={ar} /></li>)}</ul></section>}
+    {layout === "matchups" && <section id="product-layout-matchups" role="tabpanel" aria-labelledby="product-layout-tab-matchups" className="product-layout-panel matchup-layout"><ul>{rows.map((row, index) => <li key={row.battle.key} id={rowAnchor(row, index)}><div className="matchup-products"><ProductIdentity role="you" product={row.battle.primary} price={row.primaryDisplay} source={row.primarySource} ar={ar} /><span aria-hidden="true">VS</span><ProductIdentity role="rival" product={row.battle.rival} price={row.rivalDisplay} source={row.rivalSource} domain={row.domain} ar={ar} /></div><div className="matchup-decision"><PricePosition comparisonValue={row.decision.priceComparison} primaryRaw={row.primaryDisplay} rivalRaw={row.rivalDisplay} priceVerdict={display(row.decision.priceVerdict)} locale={ar ? "ar" : "en"} primaryQuantity={row.battle.primary.quantity} rivalQuantity={row.battle.rival.quantity} showDetail={false} showValues={false} /><section><span>{ar ? "الخطوة التالية" : "NEXT MOVE"}</span><strong>{row.shortAction}</strong></section></div><MatchDetails row={row} ar={ar} /></li>)}</ul></section>}
 
-    {layout === "opportunities" && <section id="product-layout-opportunities" role="tabpanel" aria-labelledby="product-layout-tab-opportunities" className="product-layout-panel opportunity-layout"><div className="opportunity-lanes">{lanes.map((lane) => { const items = rows.map((row, index) => ({ row, index })).filter(({ row }) => row.lane === lane.id); return <section className={`opportunity-lane ${lane.id}`} aria-labelledby={`lane-${lane.id}`} key={lane.id}><header><div><h3 id={`lane-${lane.id}`}>{lane.title}</h3><p>{lane.description}</p></div><b>{items.length}</b></header><ul>{items.map(({ row, index }) => <li key={row.battle.key} id={rowAnchor(row, index)}><span>{row.domain}</span><div className="opportunity-pair"><strong dir="auto">{display(row.battle.primary.name)}</strong><i aria-hidden="true">→</i><strong dir="auto">{display(row.battle.rival.name)}</strong></div><div className="opportunity-prices"><b dir="auto">{row.primaryDisplay || (ar ? "سعرك غير مرصود" : "Your price not observed")}</b><b dir="auto">{row.rivalDisplay || (ar ? "سعر المنافس غير مرصود" : "Rival price not observed")}</b></div><p className="opportunity-signal">{row.priceSignal}</p><strong className="opportunity-action">{row.shortAction}</strong><MatchDetails row={row} observedAt={observedAt} ar={ar} /></li>)}</ul>{!items.length && <div className="opportunity-empty">{ar ? "لا توجد أزواج في هذه الفئة." : "No pairs in this group."}</div>}</section>; })}</div></section>}
+    {layout === "opportunities" && <section id="product-layout-opportunities" role="tabpanel" aria-labelledby="product-layout-tab-opportunities" className="product-layout-panel opportunity-layout"><div className="opportunity-lanes">{lanes.map((lane) => { const items = rows.map((row, index) => ({ row, index })).filter(({ row }) => row.lane === lane.id); return <section className={`opportunity-lane ${lane.id}`} aria-labelledby={`lane-${lane.id}`} key={lane.id}><header><div><h3 id={`lane-${lane.id}`}>{lane.title}</h3><p>{lane.description}</p></div><b>{items.length}</b></header><ul>{items.map(({ row, index }) => <li key={row.battle.key} id={rowAnchor(row, index)}><span>{row.domain}</span><div className="opportunity-pair"><strong dir="auto">{display(row.battle.primary.name)}</strong><i aria-hidden="true">→</i><strong dir="auto">{display(row.battle.rival.name)}</strong></div><div className="opportunity-prices"><b dir="auto">{row.primaryDisplay || (ar ? "سعرك غير مرصود" : "Your price not observed")}</b><b dir="auto">{row.rivalDisplay || (ar ? "سعر المنافس غير مرصود" : "Rival price not observed")}</b></div><p className="opportunity-signal">{row.priceSignal}</p><strong className="opportunity-action">{row.shortAction}</strong><MatchDetails row={row} ar={ar} /></li>)}</ul>{!items.length && <div className="opportunity-empty">{ar ? "لا توجد أزواج في هذه الفئة." : "No pairs in this group."}</div>}</section>; })}</div></section>}
 
     {catalogProducts.length > 0 && <details className="primary-catalog-panel"><summary><span>{ar ? "كتالوجك المحفوظ" : "Your saved catalog"}</span><strong>{catalogProducts.length}{primaryProducts?.truncated ? ` / ${primaryProducts.totalCount}` : ""}</strong></summary><div className="primary-catalog-grid">{catalogProducts.map((product) => <article key={display(product.id)}><ProductIdentity role="you" product={product} price={productPrice(product)} source={safeUrl(product.sourceUrl)} ar={ar} compact /></article>)}</div></details>}
 
