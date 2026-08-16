@@ -122,9 +122,12 @@ function isoCurrency(value: unknown) {
 }
 
 function directProductCurrencies(document: string) {
-  const metadata = ["product:price:currency", "og:price:currency", "priceCurrency"]
-    .flatMap((key) => metaContents(document, key));
-  return [...new Set(metadata.map(isoCurrency).filter(Boolean))];
+  for (const [amountKey, currencyKey] of [["product:price:amount", "product:price:currency"], ["og:price:amount", "og:price:currency"], ["price", "priceCurrency"]]) {
+    const amounts = metaContents(document, amountKey);
+    const currencies = metaContents(document, currencyKey);
+    if (amounts.length > 0 || currencies.length > 0) return [...new Set(currencies.map(isoCurrency).filter(Boolean))];
+  }
+  return [];
 }
 
 export function hasConflictingDirectProductCurrency(document: string) {

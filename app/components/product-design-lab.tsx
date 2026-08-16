@@ -160,6 +160,7 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
   const [matchLoadState, setMatchLoadState] = useState<"loading" | "ready" | "fallback" | "more" | "exporting">("loading");
   const [matchLoadMessage, setMatchLoadMessage] = useState("");
   const layoutTabs = useRef<Array<HTMLButtonElement | null>>([]);
+  const activeReportId = useRef(publicId);
   const displayedBattles = authoritativeBattles ?? battles;
   const rows = useMemo(() => displayedBattles.map((battle) => prepareRow(battle, ar)), [displayedBattles, ar]);
   const catalogProducts = primaryProducts?.authoritative ? primaryProducts.products : [];
@@ -172,10 +173,12 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
     const response = await fetch(`/api/reports/${publicId}/matches?${query}`, { headers: { accept: "application/json" } });
     const body = await readJsonResponse<MatchPagePayload>(response, "Saved report matches");
     if (!response.ok || !body.ok || !body.page?.authoritative) throw Object.assign(new Error(body.error || "The complete saved matches are unavailable."), { fallback: body.errorCode === "facts-unavailable" || response.status === 409 });
+    if (activeReportId.current !== publicId) throw new DOMException("Report changed", "AbortError");
     return body.page;
   };
 
   useEffect(() => {
+    activeReportId.current = publicId;
     let current = true;
     fetchMatchPage().then((page) => {
       if (!current) return;
@@ -184,7 +187,7 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
       if (!current) return;
       setMatchLoadState("fallback"); setMatchLoadMessage(jsonResponseErrorMessage(cause, "The compact saved comparison remains available."));
     });
-    return () => { current = false; };
+    return () => { current = false; if (activeReportId.current === publicId) activeReportId.current = ""; };
   // The public report id identifies an immutable completed fact manifest.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [publicId, onAuthoritativeSummary]);
@@ -245,6 +248,7 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
         setMatchLoadState("ready"); setMatchLoadMessage(jsonResponseErrorMessage(cause, "The complete CSV could not be prepared.")); return;
       }
     }
+    if (activeReportId.current !== publicId) return;
     const exportRows = exportBattles.map((battle) => prepareRow(battle, ar));
     const headers = ["your_product", "your_price_raw", "your_price_amount", "your_currency", "rival_domain", "rival_product", "rival_price_raw", "rival_price_amount", "rival_currency", "price_status", "price_signal", "suggested_action", "suggested_action_source", "match_status", "confidence", "observed_at", "your_source", "rival_source"];
     const data = exportRows.map((row) => [display(row.battle.primary.name), row.primaryDisplay, row.priceClaim.primary?.amount ?? "", row.priceClaim.primary?.currency ?? "", row.domain, display(row.battle.rival.name), row.rivalDisplay, row.priceClaim.rival?.amount ?? "", row.priceClaim.rival?.currency ?? "", row.priceStatus, row.priceSignal, row.fullAction, row.actionSource, `${row.matchStatus}-${row.claimType}`, row.confidence, observedAt, row.primarySource, row.rivalSource]);

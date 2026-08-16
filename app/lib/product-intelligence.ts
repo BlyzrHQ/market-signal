@@ -463,21 +463,25 @@ function metaContent(document: string, key: string) {
   return metaContents(document, key)[0] || "";
 }
 
+function metadataOfferForNamespace(document: string, amountKey: string, currencyKey: string) {
+  const amountValues = metaContents(document, amountKey);
+  const currencyValues = metaContents(document, currencyKey);
+  const present = amountValues.length > 0 || currencyValues.length > 0;
+  const amounts = [...new Set(amountValues)];
+  const currencies = [...new Set(currencyValues.map((value) => value.toUpperCase()).filter(isSupportedCurrency))];
+  return { present, offer: amounts.length === 1 && currencies.length === 1 ? priceSignal(amounts[0], currencies[0]) : null };
+}
+
 export function directProductMetadataOffer(document: string) {
-  const amounts = [...new Set(["product:price:amount", "og:price:amount", "price"].flatMap((key) => metaContents(document, key)))];
-  const currencies = [...new Set(["product:price:currency", "og:price:currency", "priceCurrency"]
-    .flatMap((key) => metaContents(document, key))
-    .map((value) => value.toUpperCase())
-    .filter(isSupportedCurrency))];
-  return amounts.length === 1 && currencies.length === 1 ? priceSignal(amounts[0], currencies[0]) : null;
+  for (const [amountKey, currencyKey] of [["product:price:amount", "product:price:currency"], ["og:price:amount", "og:price:currency"], ["price", "priceCurrency"]]) {
+    const namespace = metadataOfferForNamespace(document, amountKey, currencyKey);
+    if (namespace.present) return namespace.offer;
+  }
+  return null;
 }
 
 export function directProductScopedMetadataOffer(document: string) {
-  const amounts = [...new Set(metaContents(document, "product:price:amount"))];
-  const currencies = [...new Set(metaContents(document, "product:price:currency")
-    .map((value) => value.toUpperCase())
-    .filter(isSupportedCurrency))];
-  return amounts.length === 1 && currencies.length === 1 ? priceSignal(amounts[0], currencies[0]) : null;
+  return metadataOfferForNamespace(document, "product:price:amount", "product:price:currency").offer;
 }
 
 function publicImageUrl(value: string, sourceUrl: string) {

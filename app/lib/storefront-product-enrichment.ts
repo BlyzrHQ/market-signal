@@ -745,8 +745,11 @@ function comparablePriceAmounts(signals: ProductRecord["priceSignals"]) {
 function priceSignalsAgree(left: ProductRecord["priceSignals"], right: ProductRecord["priceSignals"]) {
   const leftAmounts = comparablePriceAmounts(left);
   const rightAmounts = comparablePriceAmounts(right);
-  return leftAmounts.length > 0 && leftAmounts.length === rightAmounts.length
-    && leftAmounts.every((amount, index) => amount === rightAmounts[index]);
+  if (!leftAmounts.length || !rightAmounts.length) return false;
+  if (leftAmounts.length === rightAmounts.length && leftAmounts.every((amount, index) => amount === rightAmounts[index])) return true;
+  if (leftAmounts.length === 1) return rightAmounts.includes(leftAmounts[0]);
+  if (rightAmounts.length === 1) return leftAmounts.includes(rightAmounts[0]);
+  return false;
 }
 
 function directMetadataPriceSignals(document: string) {

@@ -229,6 +229,26 @@ test("rejects conflicting or inactive Open Graph price metadata", () => {
   }
 });
 
+test("keeps coherent product-scoped metadata separate from stale generic metadata", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="100"><meta property="product:price:currency" content="USD"><meta property="og:price:amount" content="80"><meta property="og:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Scoped Jacket" })}</script>`,
+    sourceUrl: "https://acme.com/products/scoped-jacket",
+    pageTitle: "Scoped Jacket",
+    headings: ["Scoped Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 100 }]);
+});
+
+test("does not fabricate a metadata offer from different namespaces", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="100"><meta property="og:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Half Pair Jacket" })}</script>`,
+    sourceUrl: "https://acme.com/products/half-pair-jacket",
+    pageTitle: "Half Pair Jacket",
+    headings: ["Half Pair Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals, []);
+});
+
 test("product-scoped direct metadata conflict suppresses price until visible evidence corroborates it", () => {
   const result = extraction({
     document: `<head><title>Custom Embroidered Columbia Jackets No Minimum – Arklavo</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="GBP"></head><script type="application/ld+json">${JSON.stringify({

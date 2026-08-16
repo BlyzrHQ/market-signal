@@ -638,7 +638,7 @@ test("ignores script-only Shopify currency and uses explicit structured product 
   }
 });
 
-test("does not fall back to structured currency when direct metadata currencies conflict", async () => {
+test("product-scoped currency takes precedence over generic metadata currency", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
     const url = String(input);
@@ -648,7 +648,7 @@ test("does not fall back to structured currency when direct metadata currencies 
   };
   try {
     const result = await enrichProductTargets([target({ expectedName: "CornerStone Enhanced Visibility Beanie", sourceUrl: "https://shop.test/products/cornerstone-enhanced-visibility-beanie" })], 1);
-    assert.deepEqual(result.products[0].priceSignals, []);
+    assert.deepEqual(result.products[0].priceSignals, [{ raw: "USD 13.4", currency: "USD", amount: 13.4 }]);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -733,6 +733,37 @@ test("uses corroborated direct and visible price when same-currency structured a
   }
 });
 
+test("accepts a direct point price that matches a visible range endpoint", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response(`<html><head><title>Variant Jacket</title><meta property="product:price:amount" content="10"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Variant Jacket", offers: { lowPrice: 10, highPrice: 20, priceCurrency: "USD" } })}</script></head><body><h1>Variant Jacket</h1><div class="summary"><p class="price">USD 10.00 – USD 20.00</p></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Variant Jacket", sourceUrl: "https://shop.test/products/variant-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 10 }, { currency: "USD", amount: 20 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("rejects a direct point price outside the visible product range", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response(`<html><head><title>Variant Jacket</title><meta property="product:price:amount" content="15"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Variant Jacket", offers: { price: 15, priceCurrency: "USD" } })}</script></head><body><h1>Variant Jacket</h1><div class="summary"><p class="price">USD 10.00 – USD 20.00</p></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Variant Jacket", sourceUrl: "https://shop.test/products/variant-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+    assert.ok(result.products[0].attributes.includes("Price evidence conflict: product-scoped price amounts disagree"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("fails closed when same-currency direct and structured amounts disagree without visible evidence", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
@@ -749,7 +780,7 @@ test("fails closed when same-currency direct and structured amounts disagree wit
   }
 });
 
-test("multiple conflicting direct currencies cannot be revived by a third visible currency", async () => {
+test("coherent product-scoped and structured price survives stale generic and visible currencies", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
     const url = String(input);
@@ -758,8 +789,7 @@ test("multiple conflicting direct currencies cannot be revived by a third visibl
   };
   try {
     const result = await enrichProductTargets([target({ expectedName: "Custom Embroidered Jacket", sourceUrl: "https://shop.test/products/custom-embroidered-jacket" })], 1);
-    assert.deepEqual(result.products[0].priceSignals, []);
-    assert.ok(result.products[0].attributes.some((attribute) => attribute.startsWith("Price evidence conflict:")));
+    assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 120 }]);
   } finally {
     globalThis.fetch = originalFetch;
   }
