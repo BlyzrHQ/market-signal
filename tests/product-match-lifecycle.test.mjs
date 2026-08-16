@@ -258,6 +258,18 @@ test("the final publication gate excludes a country-domain rival outside the rep
   assert.equal(published.rows[0].matches[0].publication.reason, "incompatible-market");
 });
 
+test("the final publication gate excludes a query-selected regional rival outside the report market", () => {
+  const candidate = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "r1")], accepted: 1 });
+  candidate.marketCountryCode = "US";
+  candidate.rows[0].primary.sourceUrl = "https://shop.test/products/p1?country=US";
+  candidate.rows[0].primary.priceSignals = [{ raw: "USD 90", currency: "USD", amount: 90 }];
+  candidate.rows[0].matches[0].product.sourceUrl = "https://rival.test/products/r1?country=GB";
+  candidate.rows[0].matches[0].product.priceSignals = [{ raw: "USD 80", currency: "USD", amount: 80 }];
+  const published = publishPricedProductComparison(candidate);
+  assert.equal(published.rows[0].matches[0].product, null);
+  assert.equal(published.rows[0].matches[0].publication.reason, "incompatible-market");
+});
+
 test("the final publication gate keeps complete same-currency observations", () => {
   const candidate = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "r1")], accepted: 1 });
   candidate.rows[0].primary.priceSignals = [{ raw: "USD 90", currency: "USD", amount: 90 }];

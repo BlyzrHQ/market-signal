@@ -356,14 +356,24 @@ test("product metadata on a collection page cannot bind through one heading", ()
   assert.deepEqual(result.products.map((product) => product.priceSignals.map((signal) => signal.amount)), [[], [20]]);
 });
 
-test("a direct metadata range enriches a matching structured endpoint", () => {
+test("repeated metadata amounts do not turn a structured sale price into a fabricated range", () => {
   const result = extraction({
     document: `<meta property="product:price:amount" content="10"><meta property="product:price:amount" content="20"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Range Jacket", offers: { price: 10, priceCurrency: "USD" } })}</script>`,
     sourceUrl: "https://acme.com/products/range-jacket",
     pageTitle: "Range Jacket",
     headings: ["Range Jacket"],
   });
-  assert.deepEqual(result.products[0].priceSignals.map((signal) => signal.amount), [10, 20]);
+  assert.deepEqual(result.products[0].priceSignals.map((signal) => signal.amount), [10]);
+});
+
+test("repeated metadata amounts without explicit range semantics are not published as a range", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="120"><meta property="product:price:amount" content="100"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Sale Jacket", offers: { price: 100, priceCurrency: "USD" } })}</script>`,
+    sourceUrl: "https://acme.com/products/sale-jacket",
+    pageTitle: "Sale Jacket",
+    headings: ["Sale Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 100 }]);
 });
 
 test("product-page metadata cannot bind to a related-product heading", () => {
@@ -706,6 +716,14 @@ test("catalog deduplication keeps regional locale markets separate", () => {
   const selected = selectPreferredProducts([us, canada]);
   assert.equal(selected.length, 2);
   assert.deepEqual(selected.map((item) => item.sourceUrl).sort(), [canada.sourceUrl, us.sourceUrl].sort());
+});
+
+test("catalog deduplication keeps query-selected regional markets separate", () => {
+  const us = { ...product("jacket-us", "shop.example", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.example/products/custom-jacket?country=US", priceSignals: [{ raw: "USD 100", currency: "USD", amount: 100 }], observedAt: "2026-08-15T00:00:00.000Z" };
+  const gb = { ...us, id: "jacket-gb", sourceUrl: "https://shop.example/products/custom-jacket?country=GB", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }], observedAt: "2026-08-16T00:00:00.000Z", claimIds: ["jacket-gb-observed"] };
+  const selected = selectPreferredProducts([us, gb]);
+  assert.equal(selected.length, 2);
+  assert.deepEqual(selected.map((item) => item.sourceUrl).sort(), [gb.sourceUrl, us.sourceUrl].sort());
 });
 
 test("catalog deduplication collapses locale variants of the same product URL", () => {

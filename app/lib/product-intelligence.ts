@@ -484,6 +484,12 @@ function metadataOfferForNamespace(document: string, amountKey: string, currency
   return { present, conflict, scope, amounts, currencies, signals, offer: signals.length === 1 ? signals[0] : null };
 }
 
+function promotableMetadataSignals(signals: ProductPriceSignal[]) {
+  // Repeated price metadata often represents list/current sale prices. Without
+  // explicit lowPrice/highPrice semantics it is not an observed price range.
+  return signals.length === 1 ? signals : [];
+}
+
 export function directProductMetadataOffer(document: string) {
   for (const [amountKey, currencyKey, scope] of [["product:price:amount", "product:price:currency", "product"], ["og:price:amount", "og:price:currency", "og"], ["price", "priceCurrency", "generic"]] as const) {
     const namespace = metadataOfferForNamespace(document, amountKey, currencyKey, scope);
@@ -837,10 +843,8 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
         ...product,
         priceSignals: metadataConflict
           ? []
-          : validMetadataSignals.length === 2 && structuredAmounts.length === 1
-            ? validMetadataSignals
-            : !hasComparablePublicPrice(product) && validMetadataSignals.length
-            ? validMetadataSignals
+          : !hasComparablePublicPrice(product) && promotableMetadataSignals(validMetadataSignals).length
+            ? promotableMetadataSignals(validMetadataSignals)
             : product.priceSignals,
         attributes: metadataConflict
           ? [...new Set([...product.attributes, authoritativeMetadata.conflict
@@ -872,8 +876,8 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
         description: clean(input.pageDescription).slice(0, 400),
         category: new URL(input.sourceUrl).pathname.split("/").filter(Boolean)[0] || "product page",
         jsonLdType: "PageSignal",
-        priceSignals: authoritativeMetadata.signals.length
-          ? authoritativeMetadata.signals
+        priceSignals: promotableMetadataSignals(authoritativeMetadata.signals).length
+          ? promotableMetadataSignals(authoritativeMetadata.signals)
           : PRICING_PATH.test(pagePath)
             ? input.pagePriceSignals.map((value) => priceSignal(value)).filter((value): value is ProductPriceSignal => Boolean(value)).slice(0, 12)
             : [],
@@ -1105,17 +1109,48 @@ export function selectPreferredProducts(items: ProductRecord[]) {
   return [...selected.values()];
 }
 
+const MARKET_QUERY_KEYS = new Set(["country", "country_code", "countrycode", "market", "region", "locale"]);
+const GENERICIZED_COUNTRY_TLDS = new Set(["AI", "CC", "CO", "FM", "GG", "IO", "LY", "ME", "SH", "TO", "TV"]);
+
+function normalizedMarketCountryCode(value: string) {
+  const normalized = clean(value).replace(/_/g, "-").toUpperCase();
+  if (/^[A-Z]{2}$/.test(normalized)) return normalized === "UK" ? "GB" : normalized;
+  const localeCountry = normalized.match(/^[A-Z]{2}-([A-Z]{2})$/)?.[1] || "";
+  return localeCountry === "UK" ? "GB" : localeCountry;
+}
+
+export function publicSourceMarketCountryCode(value: string) {
+  try {
+    const url = new URL(value);
+    for (const [key, queryValue] of url.searchParams.entries()) {
+      const normalizedKey = key.toLowerCase();
+      if (!MARKET_QUERY_KEYS.has(normalizedKey)) continue;
+      if (normalizedKey === "locale" && !/^[a-z]{2}[-_][a-z]{2}$/i.test(queryValue.trim())) continue;
+      const country = normalizedMarketCountryCode(queryValue);
+      if (country) return country;
+    }
+    const locale = url.pathname.split("/").filter(Boolean).find((segment) => /^[a-z]{2}[-_][a-z]{2}$/i.test(segment));
+    if (locale) return normalizedMarketCountryCode(locale);
+    const host = canonicalHost(url.hostname);
+    if (/\.(?:co\.)?uk$/i.test(host)) return "GB";
+    const countryTld = normalizedMarketCountryCode(host.match(/\.([a-z]{2})$/i)?.[1] || "");
+    return GENERICIZED_COUNTRY_TLDS.has(countryTld) ? "" : countryTld;
+  } catch {
+    return "";
+  }
+}
+
 function canonicalProductSourceKey(product: ProductRecord) {
   try {
     const url = new URL(product.sourceUrl);
     const segments = url.pathname.split("/").filter(Boolean).map((segment) => {
       try { return decodeURIComponent(segment).toLowerCase(); } catch { return segment.toLowerCase(); }
     });
-    const regionalLocale = /^[a-z]{2}-[a-z]{2}$/i.test(segments[0] || "") ? segments[0] : "";
+    const sourceMarket = publicSourceMarketCountryCode(product.sourceUrl);
     if (segments.length > 2 && /^[a-z]{2}$/i.test(segments[0]) && PRODUCT_ROUTE_SEGMENTS.has(segments[1])) segments.shift();
     const productIndex = segments.findIndex((segment) => PRODUCT_ROUTE_SEGMENTS.has(segment));
     if (productIndex < 0 || !segments[productIndex + 1]) return "";
-    return `${canonicalHost(product.domain)}|${regionalLocale ? `/${regionalLocale}` : ""}/${segments.slice(productIndex).join("/")}`;
+    return `${canonicalHost(product.domain)}|${sourceMarket ? `@${sourceMarket}` : ""}/${segments.slice(productIndex).join("/")}`;
   } catch {
     return "";
   }

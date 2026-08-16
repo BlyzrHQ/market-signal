@@ -20,7 +20,8 @@ Claude Fable 5 could not be started because the installed Claude client returned
 ## Validation
 
 - Focused price, planner, storefront, provenance, and compaction regressions passed.
-- Full `npm test`: 823 tests passed, including type checks and production build.
+- Full `npm test`: 826 tests passed, including type checks and production build.
+- A strict fallback review of head `309ad94504c9029a8efc4a365daeed423c1cd2c2` found two release blockers: query-selected regional catalogs could merge, and repeated list/current metadata could be presented as a range. Both now fail closed with focused regressions; a fresh exact-head review is required.
 - `npm run lint`: 0 errors and 2 pre-existing `<img>` performance warnings.
 - Exact-head fallback re-review and production deployment remain pending.
 
