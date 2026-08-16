@@ -1,4 +1,4 @@
-import type { ProductComparison, ProductRecord } from "../../app/lib/product-intelligence.ts";
+import { isSupportedCurrency, type ProductComparison, type ProductRecord } from "../../app/lib/product-intelligence.ts";
 import type { ReportFactChunkInput, ReportFactKind, ReportFactManifestInput } from "../../app/lib/report-store.ts";
 import { canonicalDomain } from "../../app/lib/domain.ts";
 import { publicHttpUrl } from "../../app/lib/public-url.ts";
@@ -231,6 +231,18 @@ function companyFacts(results: CrawlFactResult[], comparison: ProductComparison 
 }
 
 function productFact(product: ProductRecord, fallbackObservedAt: string) {
+  const parsedObservedAt = Date.parse(product.observedAt);
+  const age = Date.parse(fallbackObservedAt) - parsedObservedAt;
+  const priceObservationIsFresh = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(product.observedAt)
+    && Number.isFinite(parsedObservedAt)
+    && new Date(parsedObservedAt).toISOString() === product.observedAt
+    && age >= -(5 * 60 * 1000)
+    && age <= 366 * 24 * 60 * 60 * 1000;
+  const pricesAreValid = product.priceSignals.every((price) => typeof price.amount === "number"
+    && Number.isFinite(price.amount)
+    && price.amount > 0
+    && Boolean(String(price.raw || "").trim())
+    && isSupportedCurrency(price.currency));
   return {
     domain: product.domain,
     productId: product.id,
@@ -238,7 +250,7 @@ function productFact(product: ProductRecord, fallbackObservedAt: string) {
     normalizedName: product.normalizedName,
     sourceUrl: product.sourceUrl,
     imageUrl: product.imageUrl,
-    prices: product.priceSignals,
+    prices: priceObservationIsFresh && pricesAreValid ? product.priceSignals : [],
     metadata: {
       description: product.description,
       category: product.category,

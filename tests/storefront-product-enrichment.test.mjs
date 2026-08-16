@@ -670,6 +670,14 @@ test("rejects contradictory structured currency and keeps product-scoped direct 
   }
 });
 
+test("ignores a generic carousel after a textual related-products heading", () => {
+  const evidence = extractScopedProductPageEvidence(`
+    <main><h1>White Onion</h1><div class="summary"><p class="price">GBP 1.14</p></div></main>
+    <div class="carousel"><h2>Related products</h2><p class="price">GBP 99.00</p></div>
+  `);
+  assert.deepEqual(evidence.priceSignals, [{ raw: "GBP 1.14", currency: "GBP", amount: 1.14 }]);
+});
+
 test("does not combine a query-selected page currency with an unscoped Shopify amount", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
@@ -684,6 +692,50 @@ test("does not combine a query-selected page currency with an unscoped Shopify a
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("rejects enrichment when a redirect drops the requested market", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.includes("country=GB")) return new Response(null, { status: 302, headers: { location: "https://shop.test/products/market-jacket" } });
+    return new Response("<html><head><title>Market Jacket</title></head><body><h1>Market Jacket</h1><div class=summary><p class=price>USD 100</p></div></body></html>", { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Market Jacket", sourceUrl: "https://shop.test/products/market-jacket?country=GB" })], 1);
+    assert.equal(result.products.length, 0);
+    assert.equal(result.coverage.gaps[0].failureKind, "redirect");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("a redirect-added market cannot qualify an unscoped Shopify amount", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith("/products/market-jacket")) return new Response(null, { status: 302, headers: { location: "https://shop.test/products/market-jacket?country=GB" } });
+    if (url.includes(".js")) return Response.json({ title: "Market Jacket", handle: "market-jacket", variants: [{ title: "Default Title", price: 10000 }] }, { headers: { "content-type": "application/json" } });
+    return new Response(`<html><head><title>Market Jacket</title><meta property="product:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Market Jacket" })}</script></head><body><h1>Market Jacket</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Market Jacket", sourceUrl: "https://shop.test/products/market-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("a regional WooCommerce page cannot inherit the unscoped Store API price", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.includes("/wp-json/wc/store/v1/products")) return Response.json([{ id: 1, name: "Market Jacket", slug: "market-jacket", prices: { price: "10000", currency_code: "USD", currency_minor_unit: 2 }, images: [] }], { headers: { "content-type": "application/json" } });
+    return new Response(`<html><head><title>Market Jacket</title><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Market Jacket" })}</script></head><body><h1>Market Jacket</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Market Jacket", sourceUrl: "https://shop.test/us/product/market-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+  } finally { globalThis.fetch = originalFetch; }
 });
 
 test("visible product currency contradicting structured currency fails closed without direct metadata", async () => {

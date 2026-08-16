@@ -20,9 +20,10 @@ Claude Fable 5 could not be started because the installed Claude client returned
 ## Validation
 
 - Focused price, planner, storefront, provenance, and compaction regressions passed.
-- Full `npm test`: 833 tests passed, including type checks and production build.
+- Full `npm test`: 844 tests passed, including type checks and production build.
 - A strict fallback review of head `309ad94504c9029a8efc4a365daeed423c1cd2c2` found two release blockers: query-selected regional catalogs could merge, and repeated list/current metadata could be presented as a range. Both now fail closed with focused regressions; a fresh exact-head review is required.
 - Two strict fallback reviews of head `22d1c73b8af96557567e9287f6a9e5571f3f7152` found collection sibling contamination, country-path and generic-ccTLD classification gaps, nested sale/list specifications, an unscoped Shopify query-market amount, and non-country region grouping errors. Each reproduction now fails closed; another fresh exact-head review is required.
+- Two strict fallback reviews of head `35e09c5b83feb7173d881a30cbdbdc8f2c34ced5` found selector-precedence and conflict gaps, market-losing redirects, regional storefront API leakage, cross-market GTIN merging, list/range fabrication, related-carousel leakage, and stale saved prices. The current draft adds complete ISO-country recognition with conservative ambiguous-language handling, explicit-selector precedence and conflict rejection, redirect market continuity, regional Shopify/WooCommerce safeguards, market-aware GTIN identity, current-offer-only structured extraction, textual related-product boundaries, and stale-price sanitization. Fresh exact-head reviews are required.
 - `npm run lint`: 0 errors and 2 pre-existing `<img>` performance warnings.
 - Exact-head fallback re-review and production deployment remain pending.
 

@@ -45,6 +45,20 @@ test("product fact canonicalization drops cross-domain locale aliases", () => {
   assert.deepEqual(fact.metadata.aliases, [{ extraction: "sitemap", locale: "en", name: "Observed product", normalizedName: "observed product", sourceUrl: "https://catalog.example/en/products/one" }]);
 });
 
+test("report facts do not persist stale product prices", async () => {
+  const staleObservedAt = new Date(Date.now() - 367 * 24 * 60 * 60 * 1000).toISOString();
+  const staleProduct = {
+    id: "stale", domain: "catalog.example", name: "Stale jacket", normalizedName: "stale jacket",
+    description: "", category: "apparel", jsonLdType: "Product",
+    priceSignals: [{ raw: "USD 20", currency: "USD", amount: 20 }], attributes: [],
+    ownership: "path-inferred", extraction: "json-ld", confidence: "High",
+    sourceUrl: "https://catalog.example/products/stale", imageUrl: "", observedAt: staleObservedAt, claimIds: [],
+  };
+  const bundle = await buildReportFactBundle({ publicId: "a".repeat(32), crawlResults: [{ domain: "catalog.example", role: "primary", products: [staleProduct], fetchedAt: new Date().toISOString() }], comparison: null, adBlock: null, observedAt: new Date().toISOString() });
+  const fact = bundle.chunks.find((chunk) => chunk.kind === "products").items[0];
+  assert.deepEqual(fact.prices, []);
+});
+
 test("Node SQLite preserves reports and competitor memory after reopening", async () => {
   const { directory, databasePath } = await fixture();
   let database;

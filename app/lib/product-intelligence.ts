@@ -416,7 +416,9 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown, options: { allo
   const accountingNegative = /\(\s*(?:[A-Z]{3}\s*|[$£€]\s*)?\d+(?:\.\d+)?(?:\s*[A-Z]{3})?\s*\)/u.test(normalizedAmountText);
   const trailingNegative = /\d+(?:\.\d+)?\s*-\s*(?:[A-Z]{3})?\s*$/u.test(normalizedAmountText);
   if (separatedNegative || labeledNegative || accountingNegative || trailingNegative) return null;
-  const amountMatch = normalizedAmountText.match(/[+-]?\d+(?:\.\d+)?/);
+  const amountMatches = [...normalizedAmountText.matchAll(/[+-]?\d+(?:\.\d+)?/g)];
+  if (amountMatches.length !== 1) return null;
+  const amountMatch = amountMatches[0];
   const amount = amountMatch ? Number(amountMatch[0]) : undefined;
   if (typeof amount === "number" && Number.isFinite(amount) && amount < 0) return null;
   const raw = explicitCurrency && !rawText.toUpperCase().includes(explicitCurrency) ? `${explicitCurrency} ${rawText}` : rawText;
@@ -425,6 +427,7 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown, options: { allo
 
 function offerSignals(value: unknown): ProductPriceSignal[] {
   const found: ProductPriceSignal[] = [];
+  let explicitRange = false;
   for (const offer of records(value)) {
     const currency = offer.priceCurrency;
     const hasRangeEndpoint = offer.lowPrice !== undefined || offer.highPrice !== undefined;
@@ -439,9 +442,12 @@ function offerSignals(value: unknown): ProductPriceSignal[] {
       if (completePositiveRange) {
         found.push(low, high);
         hasDirectPriceEvidence = true;
+        explicitRange = true;
       }
     } else {
-      const price = priceSignal(offer.price, currency);
+      const priceLabel = text(offer.priceType || offer.name).toLowerCase();
+      const nonCurrentPrice = /(?:list|regular|was|msrp|strike|compare[ -]?at)/i.test(priceLabel);
+      const price = nonCurrentPrice ? null : priceSignal(offer.price, currency);
       if (price) {
         found.push(price);
         hasDirectPriceEvidence = true;
@@ -450,15 +456,13 @@ function offerSignals(value: unknown): ProductPriceSignal[] {
     if (!hasDirectPriceEvidence) {
       const nestedOffers = offerSignals(offer.offers);
       if (nestedOffers.length) found.push(...nestedOffers);
-      else {
-        const specifications = offerSignals(offer.priceSpecification);
-        // Multiple unlabeled specifications commonly mean list/current sale
-        // prices; only one unambiguous fallback can act as the current offer.
-        if (specifications.length === 1) found.push(specifications[0]);
-      }
+      // priceSpecification can describe list, member, unit, or strikeout
+      // prices. It is never promoted as a standalone current offer.
     }
   }
-  return [...new Map(found.map((signal) => [signal.raw, signal])).values()].slice(0, 12);
+  const unique = [...new Map(found.map((signal) => [`${signal.currency}|${signal.amount}`, signal])).values()].slice(0, 12);
+  if (unique.length <= 1) return unique;
+  return explicitRange && unique.length === 2 ? unique : [];
 }
 
 function metaContents(document: string, key: string) {
@@ -1097,9 +1101,12 @@ export function selectPreferredProducts(items: ProductRecord[]) {
     const otherEvidence = priceEvidence === item ? current : item;
     const preferredSource = canonicalProductSourceKey(preferred);
     const supplementalSource = canonicalProductSourceKey(supplemental);
-    const sameSource = preferred.sourceUrl.split("#")[0].replace(/\/$/, "") === supplemental.sourceUrl.split("#")[0].replace(/\/$/, "")
+    const preferredMarket = publicSourceMarketCountryCode(preferred.sourceUrl);
+    const supplementalMarket = publicSourceMarketCountryCode(supplemental.sourceUrl);
+    const marketIdentityCompatible = preferredMarket === supplementalMarket;
+    const sameSource = marketIdentityCompatible && (preferred.sourceUrl.split("#")[0].replace(/\/$/, "") === supplemental.sourceUrl.split("#")[0].replace(/\/$/, "")
       || Boolean(preferredSource && preferredSource === supplementalSource)
-      || Boolean(sharedValidGtin(preferred.identifiers, supplemental.identifiers));
+      || Boolean(sharedValidGtin(preferred.identifiers, supplemental.identifiers)));
     if (!sameSource) {
       selected.set(key, preferred);
       continue;
@@ -1124,9 +1131,17 @@ export function selectPreferredProducts(items: ProductRecord[]) {
   return [...selected.values()];
 }
 
-const MARKET_QUERY_KEYS = new Set(["country", "country_code", "countrycode", "market", "region", "locale"]);
+const MARKET_QUERY_PRIORITY = [
+  new Set(["country", "country_code", "countrycode"]),
+  new Set(["market", "region"]),
+  new Set(["locale"]),
+] as const;
 const GENERICIZED_COUNTRY_TLDS = new Set(["AD", "AI", "AS", "BZ", "CC", "CD", "CO", "DJ", "FM", "GG", "IO", "LA", "LY", "ME", "MS", "NU", "SC", "SH", "SR", "SU", "TK", "TO", "TV", "WS"]);
-const COUNTRY_PATH_MARKETS = new Set(["AE", "AT", "AU", "BE", "BH", "BR", "CA", "CH", "CN", "DE", "DK", "EG", "ES", "FI", "FR", "GB", "IE", "IN", "IT", "JO", "JP", "KR", "KW", "MX", "NL", "NO", "NZ", "OM", "PL", "PT", "QA", "SA", "SE", "SG", "UK", "US", "ZA"]);
+// These two-letter path tokens are overwhelmingly language selectors in
+// storefront URLs and collide with ISO country codes. Treat them as ambiguous
+// unless a query, locale pair, or country TLD supplies market evidence.
+const AMBIGUOUS_LANGUAGE_PATH_CODES = new Set(["AR", "DE", "ES", "FR", "IT", "NL", "PL", "PT", "SV"]);
+const ISO_COUNTRY_CODES = new Set("AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW".split(" "));
 
 function normalizedMarketCountryCode(value: string) {
   const normalized = clean(value).replace(/_/g, "-").toUpperCase();
@@ -1134,30 +1149,47 @@ function normalizedMarketCountryCode(value: string) {
     ? normalized
     : normalized.match(/^[A-Z]{2}-([A-Z]{2})$/)?.[1] || "";
   const country = candidate === "UK" ? "GB" : candidate;
-  return COUNTRY_PATH_MARKETS.has(country) ? country : "";
+  return ISO_COUNTRY_CODES.has(country) ? country : "";
+}
+
+export function publicSourceMarketEvidence(value: string): { countryCode: string; explicit: boolean; conflict: boolean } {
+  try {
+    const url = new URL(value);
+    for (const priority of MARKET_QUERY_PRIORITY) {
+      const countries = new Set<string>();
+      let explicit = false;
+      for (const [key, queryValue] of url.searchParams.entries()) {
+        const normalizedKey = key.toLowerCase();
+        if (!priority.has(normalizedKey as never)) continue;
+        if (/^(?:EU|[A-Z]{2}[-_]EU)$/i.test(queryValue.trim())) continue;
+        explicit = true;
+        if (normalizedKey === "locale" && !/^[a-z]{2}[-_][a-z]{2}$/i.test(queryValue.trim())) continue;
+        const country = normalizedMarketCountryCode(queryValue);
+        if (country) countries.add(country);
+      }
+      if (countries.size > 1) return { countryCode: "", explicit: true, conflict: true };
+      if (countries.size === 1) return { countryCode: [...countries][0], explicit: true, conflict: false };
+      if (explicit) return { countryCode: "", explicit: true, conflict: false };
+    }
+    const locale = url.pathname.split("/").filter(Boolean).find((segment) => /^[a-z]{2}[-_][a-z]{2}$/i.test(segment));
+    if (locale) {
+      const localeCountry = normalizedMarketCountryCode(locale);
+      if (localeCountry) return { countryCode: localeCountry, explicit: true, conflict: false };
+    }
+    const firstPathSegment = url.pathname.split("/").filter(Boolean)[0]?.toUpperCase() || "";
+    const pathCountry = normalizedMarketCountryCode(firstPathSegment);
+    if (pathCountry && !AMBIGUOUS_LANGUAGE_PATH_CODES.has(pathCountry)) return { countryCode: pathCountry, explicit: true, conflict: false };
+    const host = canonicalHost(url.hostname);
+    if (/\.(?:co\.)?uk$/i.test(host)) return { countryCode: "GB", explicit: false, conflict: false };
+    const countryTld = normalizedMarketCountryCode(host.match(/\.([a-z]{2})$/i)?.[1] || "");
+    return { countryCode: GENERICIZED_COUNTRY_TLDS.has(countryTld) ? "" : countryTld, explicit: false, conflict: false };
+  } catch {
+    return { countryCode: "", explicit: false, conflict: false };
+  }
 }
 
 export function publicSourceMarketCountryCode(value: string) {
-  try {
-    const url = new URL(value);
-    for (const [key, queryValue] of url.searchParams.entries()) {
-      const normalizedKey = key.toLowerCase();
-      if (!MARKET_QUERY_KEYS.has(normalizedKey)) continue;
-      if (normalizedKey === "locale" && !/^[a-z]{2}[-_][a-z]{2}$/i.test(queryValue.trim())) continue;
-      const country = normalizedMarketCountryCode(queryValue);
-      if (country) return country;
-    }
-    const locale = url.pathname.split("/").filter(Boolean).find((segment) => /^[a-z]{2}[-_][a-z]{2}$/i.test(segment));
-    if (locale) return normalizedMarketCountryCode(locale);
-    const firstPathSegment = url.pathname.split("/").filter(Boolean)[0]?.toUpperCase() || "";
-    if (COUNTRY_PATH_MARKETS.has(firstPathSegment)) return firstPathSegment === "UK" ? "GB" : firstPathSegment;
-    const host = canonicalHost(url.hostname);
-    if (/\.(?:co\.)?uk$/i.test(host)) return "GB";
-    const countryTld = normalizedMarketCountryCode(host.match(/\.([a-z]{2})$/i)?.[1] || "");
-    return GENERICIZED_COUNTRY_TLDS.has(countryTld) ? "" : countryTld;
-  } catch {
-    return "";
-  }
+  return publicSourceMarketEvidence(value).countryCode;
 }
 
 function canonicalProductSourceKey(product: ProductRecord) {
@@ -1199,8 +1231,9 @@ function productNameTokens(product: ProductRecord) {
 
 export function productIdentityKey(product: ProductRecord) {
   const domain = canonicalHost(product.domain);
+  const market = publicSourceMarketCountryCode(product.sourceUrl);
   const gtin = [...(product.identifiers?.gtins || [])].sort()[0];
-  if (gtin) return `${domain}|gtin|${gtin}`;
+  if (gtin) return `${domain}|${market ? `market|${market}|` : ""}gtin|${gtin}`;
   const source = canonicalProductSourceKey(product);
   const quantity = product.quantity ? `${product.quantity.kind}|${product.quantity.amount}|${product.quantity.unit}` : "";
   if (source) return `${domain}|source|${source}|${bilingualNormalize(product.name)}|${quantity}`;

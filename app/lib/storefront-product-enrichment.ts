@@ -1,6 +1,6 @@
 import { canonicalDomain } from "./domain.ts";
 import { bilingualNormalize, bilingualTokens, parseCanonicalQuantity, quantitiesConflict } from "./product-normalization.ts";
-import { CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX, catalogReplacementAuditAttribute, directProductMetadataOffer, directProductScopedMetadataOffer, extractProductsFromHtml, isSupportedCurrency, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "./product-intelligence.ts";
+import { CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX, catalogReplacementAuditAttribute, directProductMetadataOffer, directProductScopedMetadataOffer, extractProductsFromHtml, isSupportedCurrency, publicSourceMarketEvidence, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "./product-intelligence.ts";
 import { confirmedProductCurrency, hasConflictingDirectProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "./product-page-adapters.ts";
 import { fetchPublicText } from "./public-fetch.ts";
 import { sharedRobotsPolicyResolver } from "./robots-policy.ts";
@@ -208,7 +208,22 @@ function productScope(document: string) {
       break;
     }
   }
+  for (const heading of bounded.matchAll(/<h[2-4]\b[^>]*>([\s\S]*?)<\/h[2-4]>/gi)) {
+    const label = decodeEvidence(heading[1].replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+    if (!marker.test(label)) continue;
+    const index = heading.index ?? -1;
+    if (index >= 0 && (relatedAt < 0 || index < relatedAt)) relatedAt = index;
+  }
   return relatedAt >= 0 ? bounded.slice(0, relatedAt) : bounded;
+}
+
+function hasUrlMarketSelector(value: string) {
+  try {
+    const url = new URL(value);
+    const querySelected = [...url.searchParams.keys()].some((key) => /^(?:country|country_code|countrycode|market|region|locale)$/i.test(key));
+    const firstPath = url.pathname.split("/").filter(Boolean)[0] || "";
+    return querySelected || /^[a-z]{2}(?:[-_][a-z]{2})?$/i.test(firstPath);
+  } catch { return false; }
 }
 
 function htmlTagSpans(value: string) {
@@ -900,6 +915,14 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       const fetched = await fetchSameDomain(item.sourceUrl, item.domain, "text/html,application/xhtml+xml", fetchImpl);
       if (!fetched.ok) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed", fetched.status, "http") };
       if (!/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed", fetched.status, "content") };
+      const requestedMarket = publicSourceMarketEvidence(item.sourceUrl);
+      const fetchedMarket = publicSourceMarketEvidence(fetched.url);
+      if (requestedMarket.conflict || fetchedMarket.conflict
+        || (requestedMarket.explicit && !requestedMarket.countryCode)
+        || (fetchedMarket.explicit && !fetchedMarket.countryCode)
+        || (requestedMarket.explicit && requestedMarket.countryCode !== fetchedMarket.countryCode)) {
+        return { product: null, gap: gap("Selected product redirect lost, changed, or conflicted with the requested market.", "identity_mismatch", undefined, "redirect") };
+      }
       const extracted = pageExtraction(fetched.text, fetched.url, item.domain);
       const expected = expectedProduct(item);
       addScopedProductPageEvidence(fetched.text, fetched.url, expected, extracted.result.products, extracted.pageTitle);
@@ -913,7 +936,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       const replacementCandidates = [...extracted.result.products];
       let adapterGap = "";
       let adapterEvidenceProduct: ProductRecord | null = null;
-      const adapter = storefrontAdapterRequest(item.sourceUrl);
+      const adapter = storefrontAdapterRequest(fetched.url);
       const strongestInitialProduct = initialIdentity.products[0];
       if (adapter && (!initialIdentity.accepted || !strongestInitialProduct || !hasConfirmedPrice([strongestInitialProduct]) || !hasSecureImage([strongestInitialProduct]))) {
         const adapterLabel = adapter.kind === "shopify" ? "Shopify product" : "WooCommerce Store API";
@@ -928,15 +951,11 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
             } else {
               const payload = JSON.parse(adapterResponse.text);
               const observedAt = new Date().toISOString();
-              let querySelectedMarket = false;
-              try {
-                querySelectedMarket = [...new URL(item.sourceUrl).searchParams.keys()]
-                  .some((key) => /^(?:country|country_code|countrycode|market|region|locale)$/i.test(key));
-              } catch { querySelectedMarket = false; }
+              const selectedMarket = hasUrlMarketSelector(fetched.url);
               // Shopify's legacy .js payload has no currency field. A page
               // currency cannot qualify its amount when the selected market is
               // carried only by URL query state that the endpoint may ignore.
-              const directPageCurrency = querySelectedMarket ? "" : confirmedAdapterCurrency(fetched.text, rawMatchedProduct);
+              const directPageCurrency = selectedMarket ? "" : confirmedAdapterCurrency(fetched.text, rawMatchedProduct);
               const adapterResult = adapter.kind === "shopify"
                 ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: directPageCurrency, expectedQuantity: expected.quantity })
                 : parseWooCommerceProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt: new Date().toISOString() });
@@ -944,6 +963,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
               const adapterCurrencyConflict = directPageCurrency && [...adapterCurrencies].some((currency) => currency !== directPageCurrency.toUpperCase())
                 ? [`Price evidence conflict: direct page currency ${directPageCurrency.toUpperCase()} contradicts ${adapterLabel} currency ${[...adapterCurrencies].join(", ")}.`]
                 : [];
+              const regionalWooCommerce = adapter.kind === "woocommerce" && selectedMarket;
               const positiveAdapterProduct = adapterResult.product ? withPositivePrices(adapterResult.product) : null;
               const adapterPriceSignals = positiveAdapterProduct?.priceSignals || [];
               const directPageSignals = directMetadataPriceSignals(fetched.text);
@@ -962,7 +982,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
               if (adapterResult.product) {
                 adapterEvidenceProduct = {
                   ...positiveAdapterProduct!,
-                  priceSignals: adapterConflicts.length ? [] : positiveAdapterProduct!.priceSignals,
+                  priceSignals: adapterConflicts.length || regionalWooCommerce ? [] : positiveAdapterProduct!.priceSignals,
                   attributes: [...new Set([...adapterResult.product.attributes, ...adapterConflicts])],
                 };
                 extracted.result.products.push(adapterEvidenceProduct);
@@ -975,7 +995,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
                   const positiveReplacementProduct = withPositivePrices(replacementAdapterResult.product);
                   replacementCandidates.push({
                     ...positiveReplacementProduct,
-                    priceSignals: adapterConflicts.length ? [] : positiveReplacementProduct.priceSignals,
+                    priceSignals: adapterConflicts.length || regionalWooCommerce ? [] : positiveReplacementProduct.priceSignals,
                     attributes: [...new Set([...replacementAdapterResult.product.attributes, ...adapterConflicts])],
                   });
                 }

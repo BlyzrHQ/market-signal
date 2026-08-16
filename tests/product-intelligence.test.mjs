@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyFinalProductEnrichment, applyPreMatchCatalogEnrichment, buildProductComparison, buildProductPairCandidateIndex, catalogReplacementAuditAttribute, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, planFinalProductEnrichmentTargets, planPreliminaryCatalogReconciliation, retrieveProductPairCandidates, scoreProductPair, selectFinalProductEnrichmentTargets, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
+import { applyFinalProductEnrichment, applyPreMatchCatalogEnrichment, buildProductComparison, buildProductPairCandidateIndex, catalogReplacementAuditAttribute, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, planFinalProductEnrichmentTargets, planPreliminaryCatalogReconciliation, publicSourceMarketCountryCode, retrieveProductPairCandidates, scoreProductPair, selectFinalProductEnrichmentTargets, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
 import { publishPricedProductComparison } from "../app/lib/product-match-lifecycle.ts";
 
 const TEST_NOW = new Date().toISOString();
@@ -386,6 +386,36 @@ test("nested list and sale price specifications do not become a fabricated range
   assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 100 }]);
 });
 
+test("a list-only price specification is not promoted to a current price", () => {
+  const result = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "List Only Jacket", offers: { priceSpecification: { price: 120, priceCurrency: "USD", name: "List price" } } })}</script>`,
+    sourceUrl: "https://acme.com/products/list-only-jacket",
+    pageTitle: "List Only Jacket",
+    headings: ["List Only Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals, []);
+});
+
+test("a scalar structured price range is not collapsed to its first number", () => {
+  const result = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Scalar Range Jacket", offers: { price: "USD 10 - USD 20", priceCurrency: "USD" } })}</script>`,
+    sourceUrl: "https://acme.com/products/scalar-range-jacket",
+    pageTitle: "Scalar Range Jacket",
+    headings: ["Scalar Range Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals, []);
+});
+
+test("independent list and current offers do not become a fabricated range", () => {
+  const result = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Two Offer Jacket", offers: [{ price: 120, priceCurrency: "USD", name: "List price" }, { price: 100, priceCurrency: "USD", name: "Sale price" }] })}</script>`,
+    sourceUrl: "https://acme.com/products/two-offer-jacket",
+    pageTitle: "Two Offer Jacket",
+    headings: ["Two Offer Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 100 }]);
+});
+
 test("product-page metadata cannot bind to a related-product heading", () => {
   const result = extraction({
     document: `<meta property="product:price:amount" content="999"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Related Jacket" })}</script>`,
@@ -740,6 +770,18 @@ test("catalog deduplication keeps country-path regional markets separate", () =>
   const us = { ...product("jacket-us", "shop.example", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.example/us/products/custom-jacket", priceSignals: [{ raw: "USD 100", currency: "USD", amount: 100 }], observedAt: "2026-08-15T00:00:00.000Z" };
   const gb = { ...us, id: "jacket-gb", sourceUrl: "https://shop.example/gb/products/custom-jacket", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }], observedAt: "2026-08-16T00:00:00.000Z", claimIds: ["jacket-gb-observed"] };
   assert.equal(selectPreferredProducts([us, gb]).length, 2);
+});
+
+test("catalog deduplication keeps shared GTIN observations in different markets separate", () => {
+  const us = { ...product("gtin-us", "shop.example", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.example/us/products/custom-jacket", identifiers: { gtins: ["4006381333931"] } };
+  const gb = { ...us, id: "gtin-gb", sourceUrl: "https://shop.example/gb/products/custom-jacket", claimIds: ["gtin-gb-observed"] };
+  assert.equal(selectPreferredProducts([us, gb]).length, 2);
+});
+
+test("market parsing prioritizes country selectors and recognizes all ISO countries", () => {
+  assert.equal(publicSourceMarketCountryCode("https://shop.example/products/item?locale=en-GB&country=US"), "US");
+  assert.equal(publicSourceMarketCountryCode("https://shop.example/tr/products/item"), "TR");
+  assert.equal(publicSourceMarketCountryCode("https://shop.gr/products/item"), "GR");
 });
 
 test("catalog deduplication collapses locale variants of the same product URL", () => {

@@ -1,4 +1,4 @@
-import { hasValidObservedRivalPrice, isSupportedCurrency, publicSourceMarketCountryCode, type ProductComparison, type ProductMatch, type ProductRecord } from "./product-intelligence.ts";
+import { hasValidObservedRivalPrice, isSupportedCurrency, publicSourceMarketCountryCode, publicSourceMarketEvidence, type ProductComparison, type ProductMatch, type ProductRecord } from "./product-intelligence.ts";
 import { canonicalDomain } from "./domain.ts";
 import { publicHttpUrl } from "./public-url.ts";
 
@@ -132,6 +132,10 @@ export function publishPricedProductComparison(comparison: ProductComparison): P
     ? String(comparison.marketCountryCode).toUpperCase()
     : "";
   const marketCompatible = (primary: ProductRecord, rival: ProductRecord) => {
+    const primaryEvidence = publicSourceMarketEvidence(primary.sourceUrl);
+    const rivalEvidence = publicSourceMarketEvidence(rival.sourceUrl);
+    if (primaryEvidence.conflict || rivalEvidence.conflict) return false;
+    if ((primaryEvidence.explicit && !primaryEvidence.countryCode) || (rivalEvidence.explicit && !rivalEvidence.countryCode)) return false;
     const primaryMarket = publicSourceMarketCountryCode(primary.sourceUrl);
     const rivalMarket = publicSourceMarketCountryCode(rival.sourceUrl);
     if (targetMarket && ((primaryMarket && primaryMarket !== targetMarket) || (rivalMarket && rivalMarket !== targetMarket))) return false;
