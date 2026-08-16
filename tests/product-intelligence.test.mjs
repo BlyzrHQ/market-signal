@@ -406,6 +406,27 @@ test("a scalar structured price range is not collapsed to its first number", () 
   assert.deepEqual(result.products[0].priceSignals, []);
 });
 
+test("expired structured offers are not published as current prices", () => {
+  const result = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Expired Jacket", offers: { price: 100, priceCurrency: "USD", priceValidUntil: "2020-01-01" } })}</script>`,
+    sourceUrl: "https://acme.com/products/expired-jacket",
+    pageTitle: "Expired Jacket",
+    headings: ["Expired Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals, []);
+});
+
+test("contradictory currency embedded in direct amount metadata fails closed", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="USD 100"><meta property="product:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Currency Jacket", offers: { price: 100, priceCurrency: "GBP" } })}</script>`,
+    sourceUrl: "https://acme.com/products/currency-jacket",
+    pageTitle: "Currency Jacket",
+    headings: ["Currency Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals, []);
+  assert.ok(result.products[0].attributes.some((attribute) => attribute.startsWith("Price evidence conflict:")));
+});
+
 test("independent list and current offers do not become a fabricated range", () => {
   const result = extraction({
     document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Two Offer Jacket", offers: [{ price: 120, priceCurrency: "USD", name: "List price" }, { price: 100, priceCurrency: "USD", name: "Sale price" }] })}</script>`,
@@ -778,9 +799,16 @@ test("catalog deduplication keeps shared GTIN observations in different markets 
   assert.equal(selectPreferredProducts([us, gb]).length, 2);
 });
 
+test("catalog deduplication keeps nested country-path GTIN observations separate", () => {
+  const gb = { ...product("nested-gb", "shop.example", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.example/store/gb/products/custom-jacket", identifiers: { gtins: ["4006381333931"] } };
+  const us = { ...gb, id: "nested-us", sourceUrl: "https://shop.example/store/us/products/custom-jacket", claimIds: ["nested-us-observed"] };
+  assert.equal(selectPreferredProducts([gb, us]).length, 2);
+});
+
 test("market parsing prioritizes country selectors and recognizes all ISO countries", () => {
   assert.equal(publicSourceMarketCountryCode("https://shop.example/products/item?locale=en-GB&country=US"), "US");
   assert.equal(publicSourceMarketCountryCode("https://shop.example/tr/products/item"), "TR");
+  assert.equal(publicSourceMarketCountryCode("https://shop.example/store/gb/products/item"), "GB");
   assert.equal(publicSourceMarketCountryCode("https://shop.gr/products/item"), "GR");
 });
 

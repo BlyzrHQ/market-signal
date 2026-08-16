@@ -196,7 +196,7 @@ function productScope(document: string) {
   const summaryIndex = activeDocument.search(/class\s*=\s*["'][^"']*(?:summary|product-summary)[^"']*["']/i);
   const start = Math.max(0, title?.index ?? summaryIndex);
   const bounded = activeDocument.slice(start, Math.min(activeDocument.length, start + 160_000));
-  const marker = /(?:^|[\s_-])(?:related(?:[\s_-]+products?)?|upsells?|cross[\s_-]*sells?|recommend(?:ed|ations?)|product[\s_-]*recommendations?|you[\s_-]*may[\s_-]*also[\s_-]*like|similar[\s_-]*products?)(?:$|[\s_-])/i;
+  const marker = /(?:^|[\s_-])(?:related(?:[\s_-]+products?)?|upsells?|cross[\s_-]*sells?|recommend(?:ed|ations?)|product[\s_-]*recommendations?|you[\s_-]*(?:may|might)[\s_-]*also[\s_-]*like|similar[\s_-]*products?|frequently[\s_-]*bought[\s_-]*together|customers?[\s_-]*also[\s_-]*bought|complete[\s_-]*the[\s_-]*look)(?:$|[\s_-])/i;
   let relatedAt = -1;
   for (const tag of bounded.matchAll(/<([a-z][\w:-]*)\b[^>]*>/gi)) {
     const markup = tag[0];
@@ -221,8 +221,8 @@ function hasUrlMarketSelector(value: string) {
   try {
     const url = new URL(value);
     const querySelected = [...url.searchParams.keys()].some((key) => /^(?:country|country_code|countrycode|market|region|locale)$/i.test(key));
-    const firstPath = url.pathname.split("/").filter(Boolean)[0] || "";
-    return querySelected || /^[a-z]{2}(?:[-_][a-z]{2})?$/i.test(firstPath);
+    const market = publicSourceMarketEvidence(value);
+    return querySelected || market.explicit || market.conflict;
   } catch { return false; }
 }
 

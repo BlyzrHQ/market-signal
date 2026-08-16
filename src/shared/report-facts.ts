@@ -232,7 +232,7 @@ function companyFacts(results: CrawlFactResult[], comparison: ProductComparison 
 
 function productFact(product: ProductRecord, fallbackObservedAt: string) {
   const parsedObservedAt = Date.parse(product.observedAt);
-  const age = Date.parse(fallbackObservedAt) - parsedObservedAt;
+  const age = Date.now() - parsedObservedAt;
   const priceObservationIsFresh = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(product.observedAt)
     && Number.isFinite(parsedObservedAt)
     && new Date(parsedObservedAt).toISOString() === product.observedAt

@@ -59,6 +59,22 @@ test("report facts do not persist stale product prices", async () => {
   assert.deepEqual(fact.prices, []);
 });
 
+test("report facts retain fresh prices observed after report creation", async () => {
+  const observedAt = new Date().toISOString();
+  const product = {
+    id: "fresh", domain: "catalog.example", name: "Fresh jacket", normalizedName: "fresh jacket",
+    description: "", category: "apparel", jsonLdType: "Product",
+    priceSignals: [{ raw: "USD 20", currency: "USD", amount: 20 }], attributes: [],
+    ownership: "path-inferred", extraction: "json-ld", confidence: "High",
+    sourceUrl: "https://catalog.example/products/fresh", imageUrl: "", observedAt, claimIds: [],
+  };
+  const bundle = await buildReportFactBundle({ publicId: "c".repeat(32), crawlResults: [{ domain: "catalog.example", role: "primary", products: [product], fetchedAt: observedAt }], comparison: null, adBlock: null, observedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString() });
+  const fact = bundle.chunks.find((chunk) => chunk.kind === "products").items[0];
+  assert.equal(fact.prices.length, 1);
+  assert.equal(fact.prices[0].amount, 20);
+  assert.equal(fact.prices[0].currency, "USD");
+});
+
 test("Node SQLite preserves reports and competitor memory after reopening", async () => {
   const { directory, databasePath } = await fixture();
   let database;

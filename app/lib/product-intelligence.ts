@@ -429,6 +429,10 @@ function offerSignals(value: unknown): ProductPriceSignal[] {
   const found: ProductPriceSignal[] = [];
   let explicitRange = false;
   for (const offer of records(value)) {
+    if (offer.priceValidUntil !== undefined) {
+      const validUntil = Date.parse(text(offer.priceValidUntil));
+      if (!Number.isFinite(validUntil) || validUntil < Date.now()) continue;
+    }
     const currency = offer.priceCurrency;
     const hasRangeEndpoint = offer.lowPrice !== undefined || offer.highPrice !== undefined;
     let hasDirectPriceEvidence = false;
@@ -487,7 +491,7 @@ function metadataOfferForNamespace(document: string, amountKey: string, currency
   const amountValues = metaContents(document, amountKey);
   const currencyValues = metaContents(document, currencyKey);
   const present = amountValues.length > 0 || currencyValues.length > 0;
-  const parsedAmountEntries = amountValues.map((value) => ({ value, signal: priceSignal(value, "USD") }))
+  const parsedAmountEntries = amountValues.map((value) => ({ value, signal: priceSignal(value) }))
     .filter((entry): entry is { value: string; signal: ProductPriceSignal } => Boolean(entry.signal && typeof entry.signal.amount === "number" && Number.isFinite(entry.signal.amount) && entry.signal.amount > 0));
   const normalizedAmountValues = new Map<string, string>();
   parsedAmountEntries.forEach(({ value, signal }) => normalizedAmountValues.set(Number(signal.amount).toFixed(6), value));
@@ -495,11 +499,12 @@ function metadataOfferForNamespace(document: string, amountKey: string, currency
   const rawCurrencies = [...new Set(currencyValues.map((value) => value.trim().toUpperCase()).filter(Boolean))];
   const currencies = rawCurrencies.filter(isSupportedCurrency);
   const complete = amountValues.length > 0 && currencyValues.length > 0;
-  const conflict = complete && (parsedAmountEntries.length !== amountValues.length || amounts.length < 1 || amounts.length > 2
+  const preliminaryConflict = complete && (parsedAmountEntries.length !== amountValues.length || amounts.length < 1 || amounts.length > 2
     || currencies.length !== rawCurrencies.length || currencies.length !== 1);
-  const signals = complete && !conflict
+  const signals = complete && !preliminaryConflict
     ? amounts.map((amount) => priceSignal(normalizedAmountValues.get(amount), currencies[0])).filter((signal): signal is ProductPriceSignal => Boolean(signal))
     : [];
+  const conflict = preliminaryConflict || (complete && signals.length !== amounts.length);
   return { present, conflict, scope, amounts, currencies, signals, offer: signals.length === 1 ? signals[0] : null };
 }
 
@@ -1171,12 +1176,17 @@ export function publicSourceMarketEvidence(value: string): { countryCode: string
       if (countries.size === 1) return { countryCode: [...countries][0], explicit: true, conflict: false };
       if (explicit) return { countryCode: "", explicit: true, conflict: false };
     }
-    const locale = url.pathname.split("/").filter(Boolean).find((segment) => /^[a-z]{2}[-_][a-z]{2}$/i.test(segment));
+    const pathSegments = url.pathname.split("/").filter(Boolean);
+    const locale = pathSegments.find((segment) => /^[a-z]{2}[-_][a-z]{2}$/i.test(segment));
     if (locale) {
       const localeCountry = normalizedMarketCountryCode(locale);
       if (localeCountry) return { countryCode: localeCountry, explicit: true, conflict: false };
     }
-    const firstPathSegment = url.pathname.split("/").filter(Boolean)[0]?.toUpperCase() || "";
+    const productRouteIndex = pathSegments.findIndex((segment) => PRODUCT_ROUTE_SEGMENTS.has(segment.toLowerCase()));
+    const adjacentPathSegment = productRouteIndex > 0 ? pathSegments[productRouteIndex - 1].toUpperCase() : "";
+    const adjacentCountry = normalizedMarketCountryCode(adjacentPathSegment);
+    if (adjacentCountry && !AMBIGUOUS_LANGUAGE_PATH_CODES.has(adjacentCountry)) return { countryCode: adjacentCountry, explicit: true, conflict: false };
+    const firstPathSegment = pathSegments[0]?.toUpperCase() || "";
     const pathCountry = normalizedMarketCountryCode(firstPathSegment);
     if (pathCountry && !AMBIGUOUS_LANGUAGE_PATH_CODES.has(pathCountry)) return { countryCode: pathCountry, explicit: true, conflict: false };
     const host = canonicalHost(url.hostname);

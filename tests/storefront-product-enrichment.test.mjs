@@ -678,6 +678,13 @@ test("ignores a generic carousel after a textual related-products heading", () =
   assert.deepEqual(evidence.priceSignals, [{ raw: "GBP 1.14", currency: "GBP", amount: 1.14 }]);
 });
 
+test("ignores common recommendation-heading variants", () => {
+  for (const heading of ["You might also like", "Frequently bought together", "Customers also bought", "Complete the look"]) {
+    const evidence = extractScopedProductPageEvidence(`<main><h1>Main Jacket</h1><div class="summary"></div></main><div class="carousel"><h2>${heading}</h2><p class="price">USD 99.00</p></div>`);
+    assert.deepEqual(evidence.priceSignals, [], heading);
+  }
+});
+
 test("does not combine a query-selected page currency with an unscoped Shopify amount", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
@@ -734,6 +741,20 @@ test("a regional WooCommerce page cannot inherit the unscoped Store API price", 
   };
   try {
     const result = await enrichProductTargets([target({ expectedName: "Market Jacket", sourceUrl: "https://shop.test/us/product/market-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("a nested regional WooCommerce page cannot inherit the unscoped Store API price", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.includes("/wp-json/wc/store/v1/products")) return Response.json([{ id: 1, name: "Market Jacket", slug: "market-jacket", prices: { price: "10000", currency_code: "USD", currency_minor_unit: 2 }, images: [] }], { headers: { "content-type": "application/json" } });
+    return new Response(`<html><head><title>Market Jacket</title><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Market Jacket" })}</script></head><body><h1>Market Jacket</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Market Jacket", sourceUrl: "https://shop.test/shop/en-gb/product/market-jacket" })], 1);
     assert.deepEqual(result.products[0].priceSignals, []);
   } finally { globalThis.fetch = originalFetch; }
 });
