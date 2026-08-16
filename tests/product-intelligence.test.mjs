@@ -1267,6 +1267,21 @@ test("a strongest both-missing pair is scheduled before a weaker secondary singl
   assert.deepEqual(targets.map((target) => target.productId), ["rival-strong", "primary-strong"]);
 });
 
+test("an atomic pair that cannot fit does not let a weaker row starve the next highest score", () => {
+  const primaryA = { ...product("primary-a", "shop.test", "Jacket A"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/jacket-a" };
+  const impossible = { ...product("rival-impossible", "strong.test", "Jacket A"), jsonLdType: "Product", sourceUrl: "https://strong.test/products/jacket-a" };
+  const publishable = { ...product("rival-publishable", "secondary.test", "Jacket A"), jsonLdType: "Product", sourceUrl: "https://secondary.test/products/jacket-a", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }] };
+  const primaryB = { ...product("primary-b", "shop.test", "Jacket B"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/jacket-b", priceSignals: [{ raw: "USD 90", currency: "USD", amount: 90 }] };
+  const weak = { ...product("rival-weak-b", "weak.test", "Jacket B"), jsonLdType: "Product", sourceUrl: "https://weak.test/products/jacket-b" };
+  const match = (rival, score) => ({ domain: rival.domain, product: rival, score, confidence: "Medium", sharedTerms: ["jacket"], claimIds: [], decision: null });
+  const rows = [{ primary: primaryA, matches: [match(publishable, 0.98), match(impossible, 0.99)] }, { primary: primaryB, matches: [match(weak, 0.5)] }];
+  const comparison = { primaryDomain: "shop.test", comparisonDomains: ["strong.test", "secondary.test", "weak.test"], rows, unmatched: [], coverage: { primaryProductsAvailable: 2, primaryProductsScanned: 2, primaryProductFamiliesCompared: 2, competitorProductsAvailable: 3, competitorProductsScanned: 3, assignedPairCount: 3, verifiedPairCount: 3, rowsReturned: 2, rowLimit: 2, truncated: false } };
+
+  const targets = selectFinalProductEnrichmentTargets(comparison, 1);
+
+  assert.deepEqual(targets.map((target) => target.productId), ["primary-a"]);
+});
+
 test("final enrichment updates the selected pair and recomputes its price decision", () => {
   const primary = { ...product("tea", "shop.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/lemon-ginger-tea", extraction: "sitemap", confidence: "Medium" };
   const rival = { ...product("rival-tea", "tea.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://tea.test/products/lemon-ginger-tea", extraction: "sitemap", confidence: "Medium" };

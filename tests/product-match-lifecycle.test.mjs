@@ -254,3 +254,16 @@ test("the final publication gate rejects a mixed invalid and positive price rang
   assert.equal(published.rows[0].matches[0].product, null);
   assert.equal(published.rows[0].matches[0].publication.reason, "missing-valid-primary-price");
 });
+
+test("the final publication gate requires parseable source and observation provenance", () => {
+  const candidate = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "r1")], accepted: 1 });
+  candidate.rows[0].primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+  candidate.rows[0].matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+  candidate.rows[0].primary.sourceUrl = "https://";
+  candidate.rows[0].primary.observedAt = "not-a-date";
+
+  const published = publishPricedProductComparison(candidate);
+
+  assert.equal(published.rows[0].matches[0].product, null);
+  assert.equal(published.rows[0].matches[0].publication.reason, "missing-valid-primary-price");
+});

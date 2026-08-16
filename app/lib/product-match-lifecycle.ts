@@ -123,6 +123,12 @@ export function publishPricedProductComparison(comparison: ProductComparison): P
   const observedCurrencies = (product: ProductRecord) => new Set(product.priceSignals
     .filter((signal) => typeof signal.amount === "number" && Number.isFinite(signal.amount) && signal.amount > 0 && Boolean(String(signal.raw || "").trim()) && isSupportedCurrency(signal.currency))
     .map((signal) => String(signal.currency).trim().toUpperCase()));
+  const validPublicSource = (value: string) => {
+    try {
+      const url = new URL(value);
+      return /^https?:$/.test(url.protocol) && Boolean(url.hostname);
+    } catch { return false; }
+  };
   const completeObservedPrice = (product: ProductRecord) => product.priceSignals.length > 0
     && product.priceSignals.every((signal) => typeof signal.amount === "number"
       && Number.isFinite(signal.amount)
@@ -130,8 +136,8 @@ export function publishPricedProductComparison(comparison: ProductComparison): P
       && Boolean(String(signal.raw || "").trim())
       && isSupportedCurrency(signal.currency))
     && hasValidObservedRivalPrice(product)
-    && /^https?:\/\//i.test(product.sourceUrl)
-    && Boolean(product.observedAt);
+    && validPublicSource(product.sourceUrl)
+    && Number.isFinite(Date.parse(product.observedAt));
   const suppress = (reason: string) => {
     suppressedAcceptedPairs += 1;
     reasons[reason] = (reasons[reason] || 0) + 1;

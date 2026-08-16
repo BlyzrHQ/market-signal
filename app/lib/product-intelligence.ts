@@ -1632,8 +1632,7 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
   // Schedule each pair as an atomic, globally score-ranked unit. This never
   // spends the last page on half of a two-page comparison and gives every
   // row's strongest match priority over secondary matches.
-  strongest.forEach(schedulePair);
-  secondary.forEach(schedulePair);
+  pairs.forEach(schedulePair);
   if (deferredPriceUrls.size === 0) {
     for (const pair of strongest) {
       add(pair.match.product, "rival", pair.match.score, "image");

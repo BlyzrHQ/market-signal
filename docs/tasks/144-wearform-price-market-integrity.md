@@ -13,12 +13,12 @@ The same report also accepted implausible Arklavo prices such as `USD 12000`. Th
 - A published price comparison requires finite positive observed prices on both sides, supported currencies, source URLs, observation timestamps, and exact currency equality. No silent FX conversion.
 - A company may remain a market competitor when first-party evidence shows it serves that market, while incompatible-currency product offers are excluded from the price-comparison table.
 
-Claude Fable 5 could not be started because the installed Claude client returned `unrecognized_model` / inaccessible model on 2026-08-16. Two independent Codex fallback reviewers were used under `AGENTS.md`; both identified blocking issues in the first draft. The second draft clears conflicting fresh price evidence instead of restoring stale values, globally prioritizes one strongest pair per product family, preserves excluded semantic matches with an explicit publication reason, and filters those records from the public price table.
+Claude Fable 5 could not be started because the installed Claude client returned `unrecognized_model` / inaccessible model on 2026-08-16. Two independent Codex fallback reviewers were used under `AGENTS.md`; both identified blocking issues in earlier drafts. The final draft clears conflicting fresh price evidence instead of restoring stale values, prevents storefront adapters from reviving a page-level currency conflict, globally ranks atomic pair-enrichment work under the page cap, preserves excluded semantic matches with an explicit publication reason, validates source URLs and timestamps, and filters excluded records from the public price table.
 
 ## Validation
 
-- Focused integrity and persistence suites cover 182 price/planner tests plus relational fail-closed and stale-fact regressions.
-- Full `npm test`: 771 tests passed, including type checks and production build.
+- Focused price, planner, and storefront suites: 183 tests passed.
+- Full `npm test`: 774 tests passed, including type checks and production build.
 - `npm run lint`: 0 errors and 2 pre-existing `<img>` performance warnings.
 - Exact-head fallback re-review and production deployment remain pending.
 

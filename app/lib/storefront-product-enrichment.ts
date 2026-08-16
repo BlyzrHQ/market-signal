@@ -852,8 +852,10 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
                 : parseWooCommerceProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt: new Date().toISOString() });
               if (adapterResult.product) {
                 const pageConflicts = (rawMatchedProduct?.attributes || []).filter((attribute) => attribute.startsWith("Price evidence conflict:"));
+                const positiveAdapterProduct = withPositivePrices(adapterResult.product);
                 adapterEvidenceProduct = {
-                  ...withPositivePrices(adapterResult.product),
+                  ...positiveAdapterProduct,
+                  priceSignals: pageConflicts.length ? [] : positiveAdapterProduct.priceSignals,
                   attributes: [...new Set([...adapterResult.product.attributes, ...pageConflicts])],
                 };
                 extracted.result.products.push(adapterEvidenceProduct);
