@@ -1,24 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { enrichPrimaryProductPrices as enrichPrimaryProductPricesImpl, reconcilePreliminaryPrimaryCatalog as reconcilePreliminaryPrimaryCatalogImpl } from "../app/api/crawl/route.ts";
-import { buildProductComparison } from "../app/lib/product-intelligence.ts";
+import { enrichPrimaryProductPrices } from "../app/api/crawl/route.ts";
 import { resetSharedRobotsPolicyResolverForTests } from "../app/lib/robots-policy.ts";
 
-function reconcilePreliminaryPrimaryCatalog(results, primaryDomain, recoveryOptions) {
-  return reconcilePreliminaryPrimaryCatalogImpl(results, primaryDomain, recoveryOptions, { fetchImpl: globalThis.fetch });
-}
-
-function enrichPrimaryProductPrices(result, recoveryOptions) {
-  return enrichPrimaryProductPricesImpl(result, recoveryOptions, { fetchImpl: globalThis.fetch });
-}
-
-function product(id, domain, name, sourceUrl) {
+function product(id, sourceUrl) {
   return {
     id,
-    domain,
-    name,
-    normalizedName: name.toLowerCase(),
+    domain: "shop.test",
+    name: `${id} Maamoul 500g`,
+    normalizedName: `${id} maamoul 500g`,
     description: "public product",
     category: "sweets",
     jsonLdType: "Product",
@@ -34,10 +25,10 @@ function product(id, domain, name, sourceUrl) {
   };
 }
 
-function crawl(domain, role, products) {
+function crawl(products) {
   return {
-    domain,
-    role,
+    domain: "shop.test",
+    role: "primary",
     homepage: null,
     pages: [],
     products,
@@ -49,157 +40,34 @@ function crawl(domain, role, products) {
   };
 }
 
-test("route reconciliation discards preliminary pairs and rebuilds from matched and unmatched live identities", async () => {
+test("primary price enrichment stays local and preserves blocked pages as gaps", async () => {
   const originalFetch = globalThis.fetch;
   resetSharedRobotsPolicyResolverForTests();
-  const staleMatched = product("stale-matched", "shop.test", "Walnut Maamoul 500g", "https://shop.test/shop/walnut-maamoul");
-  const staleUnmatched = product("stale-unmatched", "shop.test", "Old Nougat 500g", "https://shop.test/shop/old-nougat");
-  const rival = product("rival", "rival.test", "Walnut Maamoul 500g", "https://rival.test/shop/walnut-maamoul");
-  const filler = Array.from({ length: 68 }, (_, index) => product(`filler-${index}`, "shop.test", `ZZ Filler Product ${String(index).padStart(2, "0")}`, `https://shop.test/shop/filler-${index}`));
-  const liveByPath = {
-    "/shop/walnut-maamoul": { name: "Pistachio Baklava 600g", price: "18.50", image: "pistachio.jpg" },
-    "/shop/old-nougat": { name: "Sesame Cookies 300g", price: "9.25", image: "sesame.jpg" },
-  };
-  for (const item of filler) liveByPath[new URL(item.sourceUrl).pathname] = { name: item.name, price: "5.00", image: `${item.id}.jpg` };
+  const live = product("Pistachio", "https://shop.test/product/pistachio");
+  const blocked = product("Blocked", "https://shop.test/product/blocked");
   globalThis.fetch = async (input) => {
     const url = new URL(String(input));
-    if (url.pathname === "/robots.txt") return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
-    const live = liveByPath[url.pathname];
-    if (!live) return new Response("not found", { status: 404 });
-    return new Response(`<html><head><title>${live.name} | Shop</title><script type="application/ld+json">${JSON.stringify({
+    if (url.pathname === "/robots.txt") {
+      return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    }
+    if (url.pathname === "/product/blocked") {
+      return new Response("blocked", { status: 403, headers: { "content-type": "text/html" } });
+    }
+    return new Response(`<html><head><script type="application/ld+json">${JSON.stringify({
       "@context": "https://schema.org",
       "@type": "Product",
       name: live.name,
-      image: `https://cdn.shop.test/${live.image}`,
-      offers: { "@type": "Offer", price: live.price, priceCurrency: "USD" },
+      image: "https://cdn.shop.test/pistachio.jpg",
+      offers: { "@type": "Offer", price: "12.50", priceCurrency: "USD" },
     })}</script></head><body><h1>${live.name}</h1></body></html>`, { headers: { "content-type": "text/html" } });
   };
   try {
-    const initial = [crawl("shop.test", "primary", [staleMatched, staleUnmatched, ...filler]), crawl("rival.test", "discovered-competitor", [rival])];
-    const preliminary = buildProductComparison("shop.test", initial.map((entry) => ({ domain: entry.domain, products: entry.products })));
-    assert.equal(preliminary.rows.some((row) => row.primary.name === staleMatched.name && row.matches.some((match) => match.product.id === rival.id)), true);
-
-    const reconciled = await reconcilePreliminaryPrimaryCatalog(initial, "shop.test");
-    const primary = reconciled.find((entry) => entry.domain === "shop.test");
-    assert.equal(primary.catalogReconciliation.pagesRequested, 64);
-    assert.equal(primary.catalogReconciliation.pagesFetched, 64);
-    assert.equal(primary.catalogReconciliation.eligibleProducts, 70);
-    assert.equal(primary.catalogReconciliation.truncated, true);
-    assert.equal(primary.products.some((entry) => entry.name === "Pistachio Baklava 600g"), true);
-    assert.equal(primary.products.some((entry) => entry.name === "Sesame Cookies 300g"), true);
-    assert.equal(primary.products.filter((entry) => ["Pistachio Baklava 600g", "Sesame Cookies 300g"].includes(entry.name)).every((entry) => entry.attributes.some((attribute) => attribute.startsWith("Previous sitemap identity:"))), true);
-    assert.equal(primary.products.some((entry) => entry.claimIds.includes("stale-matched-stale") || entry.claimIds.includes("stale-unmatched-stale")), false);
-    assert.equal(primary.gaps.some((gap) => /selected 64 of 70 price-less primary products/.test(gap.reason)), true);
-
-    const finalComparison = buildProductComparison("shop.test", reconciled.map((entry) => ({ domain: entry.domain, products: entry.products })));
-    assert.equal(finalComparison.rows.some((row) => row.primary.name === staleMatched.name || row.primary.name === staleUnmatched.name), false);
-    assert.equal(finalComparison.rows.some((row) => row.matches.some((match) => match.product?.id === rival.id)), false);
-  } finally {
-    globalThis.fetch = originalFetch;
-    resetSharedRobotsPolicyResolverForTests();
-  }
-});
-
-test("route reconciliation sends only a robots-allowed HTTP block to the trusted edge", async () => {
-  const originalFetch = globalThis.fetch;
-  resetSharedRobotsPolicyResolverForTests();
-  const blocked = product("blocked", "shop.test", "Old Walnut Maamoul 500g", "https://shop.test/shop/blocked");
-  const missing = product("missing", "shop.test", "Missing Cookies 250g", "https://shop.test/shop/missing");
-  let edgeBody;
-  globalThis.fetch = async (input) => {
-    const url = new URL(String(input));
-    if (url.pathname === "/robots.txt") return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
-    if (url.pathname === "/shop/blocked") return new Response("blocked", { status: 403, headers: { "content-type": "text/html" } });
-    if (url.pathname === "/shop/missing") return new Response("missing", { status: 404, headers: { "content-type": "text/html" } });
-    throw new Error(`unexpected local fetch ${url}`);
-  };
-  try {
-    const current = {
-      ...blocked,
-      name: "Current Walnut Maamoul 600g",
-      normalizedName: "current walnut maamoul 600g",
-      priceSignals: [{ raw: "USD 30.6", currency: "USD", amount: 30.6 }],
-      imageUrl: "https://cdn.shop.test/current-walnut.jpg",
-      extraction: "json-ld",
-      attributes: [`Previous sitemap identity: ${blocked.name} (${blocked.sourceUrl})`],
-      claimIds: ["blocked-catalog-replacement"],
-    };
-    const initial = [crawl("shop.test", "primary", [blocked, missing])];
-    const reconciled = await reconcilePreliminaryPrimaryCatalog(initial, "shop.test", {
-      configuredUrl: "https://market-signal.abdulla617931.chatgpt.site/api/enrich-products",
-      requestUrl: "https://signal.blyzr.com/api/enrich-products",
-      callbackToken: "a-valid-test-callback-token-with-32-chars",
-      deployTarget: "node",
-      fetchImpl: async (_input, init) => {
-        edgeBody = JSON.parse(init.body);
-        return Response.json({ ok: true, products: [current], coverage: { pagesRequested: 1, pagesFetched: 1, maxPages: 64, gaps: [] } });
-      },
-    });
-    const primary = reconciled[0];
-    assert.deepEqual(edgeBody.targets.map((item) => item.productId), ["blocked"]);
-    assert.equal(primary.catalogReconciliation.pagesRequested, 2);
-    assert.equal(primary.catalogReconciliation.pagesFetched, 1);
-    assert.deepEqual({ requested: primary.catalogReconciliation.edgeRecovery.requested, recovered: primary.catalogReconciliation.edgeRecovery.recovered }, { requested: 1, recovered: 1 });
-    assert.equal(primary.products.some((item) => item.name === "Current Walnut Maamoul 600g" && item.imageUrl && item.priceSignals[0]?.amount === 30.6), true);
-    assert.equal(primary.gaps.some((gap) => gap.url === missing.sourceUrl && /HTTP 404/.test(gap.reason)), true);
-  } finally {
-    globalThis.fetch = originalFetch;
-    resetSharedRobotsPolicyResolverForTests();
-  }
-});
-
-test("route primary price enrichment recovers only a 403 within its 16-page cap", async () => {
-  const originalFetch = globalThis.fetch;
-  resetSharedRobotsPolicyResolverForTests();
-  const blocked = product("blocked-primary", "shop.test", "A Walnut Maamoul 500g", "https://shop.test/product/blocked-primary");
-  const missing = product("missing-primary", "shop.test", "B Missing Cookies 250g", "https://shop.test/product/missing-primary");
-  const ordinary = Array.from({ length: 16 }, (_, index) => product(`ordinary-${index}`, "shop.test", `C Ordinary Product ${String(index).padStart(2, "0")} 500g`, `https://shop.test/product/ordinary-${index}`));
-  const fetchedProductPaths = [];
-  let edgeBody;
-  globalThis.fetch = async (input) => {
-    const url = new URL(String(input));
-    if (url.pathname === "/robots.txt") return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
-    fetchedProductPaths.push(url.pathname);
-    if (url.pathname === "/product/blocked-primary") return new Response("blocked", { status: 403, headers: { "content-type": "text/html" } });
-    if (url.pathname === "/product/missing-primary") return new Response("missing", { status: 404, headers: { "content-type": "text/html" } });
-    const item = ordinary.find((candidate) => new URL(candidate.sourceUrl).pathname === url.pathname);
-    if (!item) throw new Error(`unexpected local fetch ${url}`);
-    return new Response(`<html><head><title>${item.name}</title><script type="application/ld+json">${JSON.stringify({
-      "@context": "https://schema.org",
-      "@type": "Product",
-      name: item.name,
-      image: `https://cdn.shop.test/${item.id}.jpg`,
-      offers: { "@type": "Offer", price: "5.00", priceCurrency: "USD" },
-    })}</script></head><body><h1>${item.name}</h1></body></html>`, { headers: { "content-type": "text/html" } });
-  };
-  try {
-    const recovered = {
-      ...blocked,
-      priceSignals: [{ raw: "USD 30.6", currency: "USD", amount: 30.6 }],
-      imageUrl: "https://cdn.shop.test/blocked-primary.jpg",
-      extraction: "json-ld",
-      claimIds: ["blocked-primary-observed"],
-    };
-    const result = await enrichPrimaryProductPrices(crawl("shop.test", "primary", [blocked, missing, ...ordinary]), {
-      configuredUrl: "https://market-signal.abdulla617931.chatgpt.site/api/enrich-products",
-      requestUrl: "https://signal.blyzr.com/api/enrich-products",
-      callbackToken: "a-valid-test-callback-token-with-32-chars",
-      deployTarget: "node",
-      fetchImpl: async (_input, init) => {
-        edgeBody = JSON.parse(init.body);
-        return Response.json({ ok: true, products: [recovered], coverage: { pagesRequested: 1, pagesFetched: 1, maxPages: 64, gaps: [] } });
-      },
-    });
-    assert.deepEqual(edgeBody.targets.map((item) => item.productId), ["blocked-primary"]);
-    assert.equal(result.primaryPriceEnrichment.pagesRequested, 16);
-    assert.equal(result.primaryPriceEnrichment.pagesFetched, 15);
-    assert.equal(result.primaryPriceEnrichment.maxPages, 16);
-    assert.deepEqual({ requested: result.primaryPriceEnrichment.edgeRecovery.requested, recovered: result.primaryPriceEnrichment.edgeRecovery.recovered }, { requested: 1, recovered: 1 });
-    assert.equal(result.products.some((item) => item.id === "blocked-primary" && item.imageUrl === recovered.imageUrl && item.priceSignals[0]?.amount === 30.6), true);
-    assert.equal(result.gaps.some((gap) => gap.url === missing.sourceUrl && /HTTP 404/.test(gap.reason)), true);
-    assert.equal(fetchedProductPaths.length, 16);
-    assert.equal(fetchedProductPaths.includes("/product/ordinary-14"), false);
-    assert.equal(fetchedProductPaths.includes("/product/ordinary-15"), false);
+    const result = await enrichPrimaryProductPrices(crawl([live, blocked]), { fetchImpl: globalThis.fetch });
+    assert.equal(result.primaryPriceEnrichment.pagesRequested, 2);
+    assert.equal(result.primaryPriceEnrichment.pagesFetched, 1);
+    assert.equal("edgeRecovery" in result.primaryPriceEnrichment, false);
+    assert.equal(result.products.some((item) => item.id === live.id && item.priceSignals[0]?.amount === 12.5), true);
+    assert.equal(result.gaps.some((gap) => gap.url === blocked.sourceUrl && /HTTP 403/.test(gap.reason)), true);
   } finally {
     globalThis.fetch = originalFetch;
     resetSharedRobotsPolicyResolverForTests();

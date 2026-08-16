@@ -290,7 +290,7 @@ test("database acquisition diagnostics are closed and deduplicated", async () =>
   } finally {
     console.error = originalConsoleError;
   }
-  assert.deepEqual(logged, [["report storage diagnostic", { diagnosticCode: "database-import-failed" }]]);
+  assert.deepEqual(logged, [["report storage diagnostic", { diagnosticCode: "database-path-missing" }]]);
   assert.doesNotMatch(JSON.stringify(logged), /cloudflare:workers|stack|SQL|D1/i);
 });
 

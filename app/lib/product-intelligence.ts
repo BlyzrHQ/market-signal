@@ -183,7 +183,6 @@ export type ProductComparison = {
     batchCount?: number;
     failedBatchCount?: number;
     gaps: Array<{ url: string; reason: string; productId?: string; role?: "primary" | "rival"; code?: string }>;
-    edgeRecovery?: { recovered: number; requested: number; provider: string; observedAt: string };
   };
   actionPlanning?: {
     method: "ai-grounded" | "deterministic-fallback";

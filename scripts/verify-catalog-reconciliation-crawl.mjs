@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const origin = process.env.MARKET_SIGNAL_VERIFY_ORIGIN || "https://market-signal.abdulla617931.chatgpt.site";
+const origin = process.env.MARKET_SIGNAL_VERIFY_ORIGIN || "https://signal.blyzr.com";
 const body = JSON.stringify({ primary: "babanuj.com", domains: ["babanuj.com"] });
 const startedAt = Date.now();
 const response = origin === "local-module"
