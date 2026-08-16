@@ -9,8 +9,10 @@ The same report also accepted implausible Arklavo prices such as `USD 12000`. Th
 ## Product decision
 
 - Complete accepted pairs' prices before spending final-enrichment capacity on images.
+- Rank pair enrichment lexicographically by match score and schedule each pair atomically. A higher-confidence pair keeps priority over any combination of lower-confidence pairs; the planner does not optimize the sum of scores.
 - Treat product-scoped direct price metadata and visible product price as stronger than contradictory JSON-LD. Reject the contradictory structured signal and record a machine-readable conflict attribute.
 - A published price comparison requires finite positive observed prices on both sides, supported currencies, source URLs, observation timestamps, and exact currency equality. No silent FX conversion.
+- `publishPricedProductComparison` is the server-side constructor for `publication.priceEligible`. Persistence, pagination, evaluation, and rendering consume that server-generated invariant; direct mutation of trusted database rows is outside the public-input threat boundary.
 - A company may remain a market competitor when first-party evidence shows it serves that market, while incompatible-currency product offers are excluded from the price-comparison table.
 
 Claude Fable 5 could not be started because the installed Claude client returned `unrecognized_model` / inaccessible model on 2026-08-16. Two independent Codex fallback reviewers were used under `AGENTS.md`; both identified blocking issues in earlier drafts. The final draft clears conflicting fresh price evidence instead of restoring stale values, prevents storefront adapters from reviving a page-level currency conflict, globally ranks atomic pair-enrichment work under the page cap, preserves excluded semantic matches with an explicit publication reason, validates source URLs and timestamps, and filters excluded records from the public price table.
