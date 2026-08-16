@@ -1,6 +1,14 @@
-export type ParsedPrice = { amount: number; currency: "GBP" | "USD" | "EUR" };
+export type ParsedPrice = { amount: number; currency: string };
 
 export const DEFENSIBLE_PRODUCT_MATCH_SCORE = 0.55;
+
+const PRESENTATION_CURRENCIES = new Set<string>((() => {
+  try {
+    return (Intl as typeof Intl & { supportedValuesOf(key: "currency"): string[] }).supportedValuesOf("currency");
+  } catch {
+    return ["AED", "AUD", "CAD", "CHF", "CNY", "EGP", "EUR", "GBP", "INR", "JOD", "KWD", "OMR", "QAR", "SAR", "USD"];
+  }
+})());
 
 export function isDefensibleProductMatch(score: unknown, confidence: unknown) {
   return typeof score === "number" && Number.isFinite(score) && score >= DEFENSIBLE_PRODUCT_MATCH_SCORE && confidence !== "Low";
@@ -10,7 +18,10 @@ export function parseComparablePrice(raw: string): ParsedPrice | null {
   if (!raw) return null;
   const numbers = raw.match(/\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:[.,]\d{1,2})?/g) || [];
   if (numbers.length !== 1) return null;
-  const currency = /(?:GBP|£)/i.test(raw) ? "GBP" : /(?:USD|\$)/i.test(raw) ? "USD" : /(?:EUR|€)/i.test(raw) ? "EUR" : "";
+  const isoCurrency = raw.match(/\b[A-Z]{3}\b/i)?.[0]?.toUpperCase() || "";
+  const currency = PRESENTATION_CURRENCIES.has(isoCurrency)
+    ? isoCurrency
+    : /£/.test(raw) ? "GBP" : /\$/.test(raw) ? "USD" : /€/.test(raw) ? "EUR" : "";
   const amount = Number(/^\d{1,3}(?:,\d{3})+/.test(numbers[0]) ? numbers[0].replace(/,/g, "") : numbers[0].replace(",", "."));
   return currency && Number.isFinite(amount) ? { amount, currency } : null;
 }
