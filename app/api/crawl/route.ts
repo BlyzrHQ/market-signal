@@ -7,6 +7,7 @@ import { compareVerifiedCompetitors, resolveVerificationMarket, verifyCompetitor
 import { inferBusinessProfile } from "../../lib/business-profile.ts";
 import { seededCrawlPaths } from "../../lib/crawl-planning.ts";
 import { combineRegionSignals, displayRegion, inferRegion as inferRegionEvidence, type RegionSignal } from "../../lib/region-inference.ts";
+import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../lib/internal-auth.ts";
 import { forgetRememberedCompetitors, loadRememberedCompetitors, mergeRememberedCandidates, rememberVerifiedCompetitors, type MemoryCandidate } from "../../lib/competitor-memory.ts";
 import { discoverDomainAlternatives, extractStaticClientRedirect, parkingProvider } from "../../lib/domain-recovery.ts";
 import { boundedExtractionDocument, compactCatalogSnapshots, preferredEndpointFailure, settleWithConcurrency, unavailableAfterBoundedAttempts, unavailablePrimaryMessaging, type PublicEndpointFailure } from "../../lib/crawl-runtime.ts";
@@ -993,6 +994,7 @@ function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?
 }
 
 export async function POST(request: Request) {
+  if (!await hasValidInternalAuthorization(request.headers.get("authorization"))) return unauthorizedInternalResponse();
   try {
     const payload = await request.json() as { primary?: unknown; domains?: unknown; productLimit?: unknown };
     const rawDomains = Array.isArray(payload.domains) ? payload.domains.filter((domain): domain is string => typeof domain === "string" && Boolean(domain.trim())).map((domain) => canonicalDomain(domain)) : [];

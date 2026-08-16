@@ -1,5 +1,6 @@
 import { scanOfficialAdLibraries, type CompanyAdInput } from "../../lib/ad-intelligence.ts";
 import { canonicalDomain, normalizeDomain } from "../../lib/domain.ts";
+import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../lib/internal-auth.ts";
 
 const MAX_COMPANIES = 7;
 
@@ -35,6 +36,7 @@ function company(value: unknown): CompanyAdInput | null {
 }
 
 export async function POST(request: Request) {
+  if (!await hasValidInternalAuthorization(request.headers.get("authorization"))) return unauthorizedInternalResponse();
   try {
     const payload = await request.json() as { companies?: unknown; region?: unknown };
     const companies = Array.isArray(payload.companies)

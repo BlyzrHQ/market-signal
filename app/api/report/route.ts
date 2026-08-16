@@ -1,5 +1,6 @@
 import { analyzeDomain } from "../analyze/route";
 import { canonicalDomain } from "../../lib/domain";
+import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../lib/internal-auth.ts";
 import { claimablePagePricePatterns } from "../../lib/storefront-product-enrichment";
 
 type ClaimType = "Observed" | "Inferred" | "Estimated" | "Recommended";
@@ -134,6 +135,7 @@ async function modelBrief(primary: Source, sources: Source[], claims: Claim[]) {
 }
 
 export async function POST(request: Request) {
+  if (!await hasValidInternalAuthorization(request.headers.get("authorization"))) return unauthorizedInternalResponse();
   try {
     const payload = await request.json() as { primary?: unknown; domains?: unknown };
     const requestedDomains = Array.isArray(payload.domains) ? payload.domains.filter((domain): domain is string => typeof domain === "string").map(canonicalDomain).slice(0, MAX_SOURCES) : [];

@@ -1,4 +1,5 @@
 import { enrichProductTargets, publicProductTarget, type EnrichmentDependencies } from "../../lib/storefront-product-enrichment.ts";
+import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../lib/internal-auth.ts";
 
 const MAX_TARGETS = 64;
 
@@ -18,5 +19,6 @@ export async function handleProductEnrichmentRequest(request: Request, localDepe
 }
 
 export async function POST(request: Request) {
+  if (!await hasValidInternalAuthorization(request.headers.get("authorization"))) return unauthorizedInternalResponse();
   return handleProductEnrichmentRequest(request);
 }
