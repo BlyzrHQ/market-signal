@@ -12,6 +12,8 @@ type Block = { type: string; id: string } & Record<string, unknown>;
 type ReportEvent = ReportCoverageEvent;
 type View = "overview" | "competitors" | "products" | "ads" | "evidence";
 type StoredPayload = { ok: boolean; error?: string; report?: { run: { publicId: string; primaryDomain: string; locale: "en" | "ar"; status: string; createdAt: string; updatedAt: string; errorMessage: string; productPlan: string; productLimit: number }; events: ReportEvent[]; document: { document?: { version: "1"; generatedAt: string; blocks: Block[] }; marketBrief?: Record<string, unknown> } | null; documentSchemaVersion: number; primaryProducts?: { authoritative: boolean; totalCount: number; products: Array<Record<string, unknown>>; truncated: boolean } } };
+type AccountReport = { publicId: string; primaryDomain: string; status: string; createdAt: string; updatedAt: string };
+type AccountReportsPayload = { eligible?: boolean; reports?: AccountReport[] };
 
 const VIEWS: View[] = ["competitors", "products", "overview"];
 const VIEW_LABELS: Record<View, { en: string; ar: string }> = {
@@ -68,6 +70,35 @@ function safeMetaRecord(value: unknown, id: unknown) {
   const recordId = display(id); return /^\d+$/.test(recordId) ? `https://www.facebook.com/ads/library/?id=${recordId}` : "";
 }
 function urlHost(value: unknown) { const href = safeAdDestination(value); if (!href) return ""; try { return new URL(href).hostname.replace(/^www\./, ""); } catch { return ""; } }
+
+function reportHistoryStatus(status: string, ar: boolean) {
+  if (status === "complete") return ar ? "جاهز" : "Ready";
+  if (status === "limited") return ar ? "محدود" : "Limited";
+  if (status === "failed" || status === "interrupted") return ar ? "متوقف" : "Stopped";
+  return ar ? "قيد التشغيل" : "Running";
+}
+
+function PaidReportHistory({ currentPublicId, ar }: { currentPublicId: string; ar: boolean }) {
+  const [history, setHistory] = useState<AccountReportsPayload | null>(null);
+  useEffect(() => {
+    let current = true;
+    fetch("/api/account/reports", { cache: "no-store", credentials: "same-origin", headers: { accept: "application/json" } })
+      .then(async (response) => response.ok ? readJsonResponse<AccountReportsPayload>(response, "Your reports") : null)
+      .then((payload) => { if (current && payload?.eligible) setHistory(payload); })
+      .catch(() => { /* Public and unpaid viewers simply keep the private history hidden. */ });
+    return () => { current = false; };
+  }, []);
+  if (!history?.eligible) return null;
+  const reports = Array.isArray(history.reports) ? history.reports : [];
+  return <section className="dashboard-report-history" aria-label={ar ? "تقاريرك الأخيرة" : "Your recent reports"}>
+    <header><span>{ar ? "تقاريرك" : "YOUR REPORTS"}</span><b>{reports.length}</b></header>
+    {reports.length ? <ol>{reports.map((report) => {
+      const current = report.publicId === currentPublicId;
+      const timestamp = Date.parse(report.updatedAt || report.createdAt);
+      return <li key={report.publicId}><Link href={`/reports/${report.publicId}?view=products`} aria-current={current ? "page" : undefined} className={current ? "current" : undefined}><i className={`report-history-status status-${report.status}`} aria-hidden="true" /><span><strong dir="auto">{report.primaryDomain}</strong><small>{reportHistoryStatus(report.status, ar)}{Number.isFinite(timestamp) ? ` · ${new Date(timestamp).toLocaleDateString(ar ? "ar" : "en", { month: "short", day: "numeric" })}` : ""}</small></span>{current && <em>{ar ? "الحالي" : "Current"}</em>}</Link></li>;
+    })}</ol> : <p>{ar ? "ستظهر تقاريرك هنا بعد أول تشغيل." : "Your reports will appear here after the first run."}</p>}
+  </section>;
+}
 
 function AdCreativeCard({ concept, ar }: { concept: Record<string, unknown>; ar: boolean }) {
   const [mediaFailed, setMediaFailed] = useState(false);
@@ -168,6 +199,7 @@ function ReportWorkspace({ blocks, primaryProducts, publicId, primaryDomain, obs
         <small>{coverageStatus.detail}</small>
         <time dateTime={observedAt}>{ar ? "حُدث" : "Updated"} {new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</time>
       </section>
+      <PaidReportHistory currentPublicId={publicId} ar={ar} />
       <nav className="workspace-tabs" role="tablist" aria-orientation={compactNav ? "horizontal" : "vertical"} aria-label={ar ? "أقسام التقرير" : "Report sections"}>
         {activeViews.map((item, index) => <button key={item} ref={(node) => { tabs.current[index] = node; }} id={`tab-${item}`} type="button" role="tab" aria-selected={view === item} aria-controls={`panel-${item}`} tabIndex={view === item ? 0 : -1} onClick={() => selectView(item)} onKeyDown={(event) => onTabKey(event, index)}>{VIEW_LABELS[item][ar ? "ar" : "en"]}{item === "competitors" && <b>{competitors.length}</b>}{item === "products" && <b>{productMatchTotal}</b>}</button>)}
       </nav>
