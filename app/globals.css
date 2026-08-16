@@ -403,7 +403,7 @@ body { background: #07110f; color: #eaf4ef; }
 .product-difference > span { display: block; color: #667970; font-size: 7px; font-weight: 900; letter-spacing: .09em; text-transform: uppercase; }
 .product-difference > strong { display: block; margin-top: 4px; color: #173d30; font-size: 15px; font-variant-numeric: tabular-nums; line-height: 1.15; }
 .product-difference > b { display: block; margin-top: 4px; color: #294b3e; font-size: 9px; line-height: 1.35; }
-.product-table-difference-cell .product-difference > small { margin-top: 5px; color: #718078; font-size: 7px; font-weight: 700; line-height: 1.35; }
+.product-table-difference-cell .product-difference > small { display: block; margin-top: 5px; color: #718078; font-size: 7px; font-weight: 700; line-height: 1.35; }
 .product-next-move { display: block; overflow-wrap: anywhere; color: #2d443a; font-size: 10px; line-height: 1.45; }
 .product-row-details { margin-top: 10px; border-top: 1px solid #dfe7e2; padding-top: 8px; }
 .product-row-details > summary { width: fit-content; cursor: pointer; color: #176849; font-size: 8px; font-weight: 900; }
