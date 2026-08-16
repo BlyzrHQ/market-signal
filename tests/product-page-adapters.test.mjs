@@ -5,6 +5,12 @@ import { confirmedProductCurrency, hasConflictingDirectProductCurrency, parseSho
 import { validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
 import { bilingualNormalize, parseCanonicalQuantity } from "../app/lib/product-normalization.ts";
 
+test("Shopify adapter requests preserve explicit currency selectors", () => {
+  const adapter = storefrontAdapterRequest("https://shop.test/products/work-jacket?currency=GBP&utm_source=test");
+  assert.equal(adapter?.kind, "shopify");
+  assert.equal(adapter?.endpointUrl, "https://shop.test/products/work-jacket.js?currency=GBP");
+});
+
 function expected(name, sourceUrl, identifiers) {
   return {
     id: "expected",

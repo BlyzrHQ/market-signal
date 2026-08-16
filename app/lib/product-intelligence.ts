@@ -434,6 +434,9 @@ function offerSignals(value: unknown): ProductPriceSignal[] {
       if (!Number.isFinite(validUntil) || validUntil < Date.now()) continue;
     }
     const currency = offer.priceCurrency;
+    const priceLabel = text([offer.priceType, offer.name, offer.description].filter(Boolean).join(" ")).toLowerCase();
+    const nonCurrentPrice = /(?:\blist\b|\bregular\b|\bwas\b|\bmsrp\b|strike|compare[ -]?at|\boriginal\b|\brrp\b|\bretail\b|\bmember\b)/i.test(priceLabel);
+    if (nonCurrentPrice) continue;
     const hasRangeEndpoint = offer.lowPrice !== undefined || offer.highPrice !== undefined;
     let hasDirectPriceEvidence = false;
     if (hasRangeEndpoint) {
@@ -442,16 +445,15 @@ function offerSignals(value: unknown): ProductPriceSignal[] {
       const completePositiveRange = low && high
         && typeof low.amount === "number" && Number.isFinite(low.amount) && low.amount > 0
         && typeof high.amount === "number" && Number.isFinite(high.amount) && high.amount > 0
-        && low.currency && low.currency === high.currency;
+        && low.currency && low.currency === high.currency
+        && low.amount <= high.amount;
       if (completePositiveRange) {
         found.push(low, high);
         hasDirectPriceEvidence = true;
         explicitRange = true;
       }
     } else {
-      const priceLabel = text(offer.priceType || offer.name).toLowerCase();
-      const nonCurrentPrice = /(?:list|regular|was|msrp|strike|compare[ -]?at)/i.test(priceLabel);
-      const price = nonCurrentPrice ? null : priceSignal(offer.price, currency);
+      const price = priceSignal(offer.price, currency);
       if (price) {
         found.push(price);
         hasDirectPriceEvidence = true;
@@ -515,7 +517,7 @@ function promotableMetadataSignals(signals: ProductPriceSignal[]) {
 }
 
 export function directProductMetadataOffer(document: string) {
-  for (const [amountKey, currencyKey, scope] of [["product:price:amount", "product:price:currency", "product"], ["og:price:amount", "og:price:currency", "og"], ["price", "priceCurrency", "generic"]] as const) {
+  for (const [amountKey, currencyKey, scope] of [["product:price:amount", "product:price:currency", "product"], ["og:price:amount", "og:price:currency", "og"]] as const) {
     const namespace = metadataOfferForNamespace(document, amountKey, currencyKey, scope);
     if (namespace.present) return namespace.offer;
   }
@@ -523,7 +525,7 @@ export function directProductMetadataOffer(document: string) {
 }
 
 function directProductMetadataEvidence(document: string) {
-  for (const [amountKey, currencyKey, scope] of [["product:price:amount", "product:price:currency", "product"], ["og:price:amount", "og:price:currency", "og"], ["price", "priceCurrency", "generic"]] as const) {
+  for (const [amountKey, currencyKey, scope] of [["product:price:amount", "product:price:currency", "product"], ["og:price:amount", "og:price:currency", "og"]] as const) {
     const namespace = metadataOfferForNamespace(document, amountKey, currencyKey, scope);
     if (namespace.present) return namespace;
   }
@@ -800,8 +802,15 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
     const segments = new URL(input.sourceUrl).pathname.split("/").filter(Boolean);
     pathIdentity = normalized(decodeURIComponent(segments.at(-1) || "").replace(/[-_]+/g, " "));
   } catch { pathIdentity = ""; }
+  const headingIdentities = new Set([...input.document.matchAll(/<h1\b[^>]*>([\s\S]*?)<\/h1>/gi)]
+    .map((match) => normalized(clean((match[1] || "").replace(/<[^>]+>/g, " "))))
+    .filter(Boolean));
+  const headingBoundCandidates = metadataCandidates.filter((product) => headingIdentities.has(product.normalizedName));
+  const uniqueHeadingIdentity = headingBoundCandidates.length > 0
+    && new Set(headingBoundCandidates.map((product) => product.normalizedName)).size === 1;
   const pageBoundMetadataCandidates = metadataCandidates.filter((product) => product.normalizedName === normalized(pageIdentity)
-    || (pathIdentity.length >= 4 && product.normalizedName === pathIdentity));
+    || (pathIdentity.length >= 4 && product.normalizedName === pathIdentity)
+    || (uniqueHeadingIdentity && headingIdentities.has(product.normalizedName)));
   const canBindMetadataCandidate = pageBoundMetadataCandidates.length === 1 && productDetailPathForMetadata;
   if (authoritativeMetadata.present) {
     const oneMetadataIdentity = pageBoundMetadataCandidates.length > 0
@@ -1106,9 +1115,10 @@ export function selectPreferredProducts(items: ProductRecord[]) {
     const otherEvidence = priceEvidence === item ? current : item;
     const preferredSource = canonicalProductSourceKey(preferred);
     const supplementalSource = canonicalProductSourceKey(supplemental);
-    const preferredMarket = publicSourceMarketCountryCode(preferred.sourceUrl);
-    const supplementalMarket = publicSourceMarketCountryCode(supplemental.sourceUrl);
-    const marketIdentityCompatible = preferredMarket === supplementalMarket;
+    const preferredMarket = publicSourceMarketContext(preferred.sourceUrl);
+    const supplementalMarket = publicSourceMarketContext(supplemental.sourceUrl);
+    const marketIdentityCompatible = !preferredMarket.conflict && !supplementalMarket.conflict
+      && preferredMarket.contextKey === supplementalMarket.contextKey;
     const sameSource = marketIdentityCompatible && (preferred.sourceUrl.split("#")[0].replace(/\/$/, "") === supplemental.sourceUrl.split("#")[0].replace(/\/$/, "")
       || Boolean(preferredSource && preferredSource === supplementalSource)
       || Boolean(sharedValidGtin(preferred.identifiers, supplemental.identifiers)));
@@ -1141,11 +1151,13 @@ const MARKET_QUERY_PRIORITY = [
   new Set(["market", "region"]),
   new Set(["locale"]),
 ] as const;
+const CURRENCY_QUERY_KEYS = new Set(["currency", "currency_code", "currencycode"]);
 const GENERICIZED_COUNTRY_TLDS = new Set(["AD", "AI", "AS", "BZ", "CC", "CD", "CO", "DJ", "FM", "GG", "IO", "LA", "LY", "ME", "MS", "NU", "SC", "SH", "SR", "SU", "TK", "TO", "TV", "WS"]);
 // These two-letter path tokens are overwhelmingly language selectors in
 // storefront URLs and collide with ISO country codes. Treat them as ambiguous
 // unless a query, locale pair, or country TLD supplies market evidence.
 const AMBIGUOUS_LANGUAGE_PATH_CODES = new Set(["AR", "DE", "ES", "FR", "IT", "NL", "PL", "PT", "SV"]);
+const COMMON_LANGUAGE_CODES = new Set(["AR", "DA", "DE", "EN", "ES", "FI", "FR", "HE", "HI", "ID", "IT", "JA", "KO", "NL", "NO", "PL", "PT", "SV", "TH", "TR", "VI", "ZH"]);
 const ISO_COUNTRY_CODES = new Set("AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW".split(" "));
 
 function normalizedMarketCountryCode(value: string) {
@@ -1157,45 +1169,89 @@ function normalizedMarketCountryCode(value: string) {
   return ISO_COUNTRY_CODES.has(country) ? country : "";
 }
 
-export function publicSourceMarketEvidence(value: string): { countryCode: string; explicit: boolean; conflict: boolean } {
+type PublicSourceMarketContext = { countryCode: string; currencyCode: string; explicit: boolean; conflict: boolean; contextKey: string };
+
+function sourceMarketContext(value: string): PublicSourceMarketContext {
   try {
     const url = new URL(value);
+    const countries = new Set<string>();
+    const currencies = new Set<string>();
+    let explicit = false;
+    let unresolvedCountrySelector = false;
+    let unresolvedCurrencySelector = false;
     for (const priority of MARKET_QUERY_PRIORITY) {
-      const countries = new Set<string>();
-      let explicit = false;
-      for (const [key, queryValue] of url.searchParams.entries()) {
+      const selected = [...url.searchParams.entries()].filter(([key]) => priority.has(key.toLowerCase() as never));
+      if (!selected.length) continue;
+      for (const [key, queryValue] of selected) {
         const normalizedKey = key.toLowerCase();
-        if (!priority.has(normalizedKey as never)) continue;
         if (/^(?:EU|[A-Z]{2}[-_]EU)$/i.test(queryValue.trim())) continue;
         explicit = true;
-        if (normalizedKey === "locale" && !/^[a-z]{2}[-_][a-z]{2}$/i.test(queryValue.trim())) continue;
+        if (normalizedKey === "locale" && !/^[a-z]{2}[-_][a-z]{2}$/i.test(queryValue.trim())) {
+          unresolvedCountrySelector = true;
+          continue;
+        }
         const country = normalizedMarketCountryCode(queryValue);
         if (country) countries.add(country);
+        else unresolvedCountrySelector = true;
       }
-      if (countries.size > 1) return { countryCode: "", explicit: true, conflict: true };
-      if (countries.size === 1) return { countryCode: [...countries][0], explicit: true, conflict: false };
-      if (explicit) return { countryCode: "", explicit: true, conflict: false };
+      break;
+    }
+    for (const [key, queryValue] of url.searchParams.entries()) {
+      const normalizedKey = key.toLowerCase();
+      if (CURRENCY_QUERY_KEYS.has(normalizedKey)) {
+        explicit = true;
+        const currency = clean(queryValue).toUpperCase();
+        if (isSupportedCurrency(currency)) currencies.add(currency);
+        else unresolvedCurrencySelector = true;
+      }
     }
     const pathSegments = url.pathname.split("/").filter(Boolean);
-    const locale = pathSegments.find((segment) => /^[a-z]{2}[-_][a-z]{2}$/i.test(segment));
-    if (locale) {
-      const localeCountry = normalizedMarketCountryCode(locale);
-      if (localeCountry) return { countryCode: localeCountry, explicit: true, conflict: false };
-    }
     const productRouteIndex = pathSegments.findIndex((segment) => PRODUCT_ROUTE_SEGMENTS.has(segment.toLowerCase()));
-    const adjacentPathSegment = productRouteIndex > 0 ? pathSegments[productRouteIndex - 1].toUpperCase() : "";
-    const adjacentCountry = normalizedMarketCountryCode(adjacentPathSegment);
-    if (adjacentCountry && !AMBIGUOUS_LANGUAGE_PATH_CODES.has(adjacentCountry)) return { countryCode: adjacentCountry, explicit: true, conflict: false };
-    const firstPathSegment = pathSegments[0]?.toUpperCase() || "";
-    const pathCountry = normalizedMarketCountryCode(firstPathSegment);
-    if (pathCountry && !AMBIGUOUS_LANGUAGE_PATH_CODES.has(pathCountry)) return { countryCode: pathCountry, explicit: true, conflict: false };
+    const selectorSegments = pathSegments.slice(0, productRouteIndex >= 0 ? productRouteIndex : Math.min(pathSegments.length, 1));
+    for (const segment of selectorSegments) {
+      const normalizedSegment = clean(segment).replace(/_/g, "-").toUpperCase();
+      const localeParts = normalizedSegment.match(/^([A-Z]{2})-([A-Z]{2})$/);
+      if (localeParts) {
+        if (localeParts[2] === "EU") continue;
+        explicit = true;
+        const countryToken = COMMON_LANGUAGE_CODES.has(localeParts[1]) ? localeParts[2] : localeParts[1];
+        const country = countryToken === "UK" ? "" : normalizedMarketCountryCode(countryToken);
+        if (country) countries.add(country);
+        else unresolvedCountrySelector = true;
+        continue;
+      }
+      if (!/^[A-Z]{2}$/.test(normalizedSegment)) continue;
+      if (AMBIGUOUS_LANGUAGE_PATH_CODES.has(normalizedSegment)
+        || (COMMON_LANGUAGE_CODES.has(normalizedSegment) && !normalizedMarketCountryCode(normalizedSegment))) continue;
+      explicit = true;
+      if (normalizedSegment === "UK") {
+        unresolvedCountrySelector = true;
+        continue;
+      }
+      const country = normalizedMarketCountryCode(normalizedSegment);
+      if (country) countries.add(country);
+      else unresolvedCountrySelector = true;
+    }
     const host = canonicalHost(url.hostname);
-    if (/\.(?:co\.)?uk$/i.test(host)) return { countryCode: "GB", explicit: false, conflict: false };
-    const countryTld = normalizedMarketCountryCode(host.match(/\.([a-z]{2})$/i)?.[1] || "");
-    return { countryCode: GENERICIZED_COUNTRY_TLDS.has(countryTld) ? "" : countryTld, explicit: false, conflict: false };
+    const countryTld = /\.(?:co\.)?uk$/i.test(host) ? "GB" : normalizedMarketCountryCode(host.match(/\.([a-z]{2})$/i)?.[1] || "");
+    if (countryTld && !GENERICIZED_COUNTRY_TLDS.has(countryTld)) countries.add(countryTld);
+    const conflict = countries.size > 1 || currencies.size > 1;
+    const countryCode = conflict ? "" : [...countries][0] || "";
+    const currencyCode = conflict ? "" : [...currencies][0] || "";
+    const contextParts = [countryCode ? `country:${countryCode}` : explicit && unresolvedCountrySelector ? "country:?" : "", currencyCode ? `currency:${currencyCode}` : explicit && unresolvedCurrencySelector ? "currency:?" : ""].filter(Boolean);
+    return { countryCode, currencyCode, explicit, conflict, contextKey: conflict ? "conflict" : contextParts.join("|") };
   } catch {
-    return { countryCode: "", explicit: false, conflict: false };
+    return { countryCode: "", currencyCode: "", explicit: false, conflict: false, contextKey: "" };
   }
+}
+
+export function publicSourceMarketEvidence(value: string): { countryCode: string; explicit: boolean; conflict: boolean } {
+  const { countryCode, explicit, conflict } = sourceMarketContext(value);
+  return { countryCode, explicit, conflict };
+}
+
+export function publicSourceMarketContext(value: string) {
+  return sourceMarketContext(value);
 }
 
 export function publicSourceMarketCountryCode(value: string) {
@@ -1208,7 +1264,7 @@ function canonicalProductSourceKey(product: ProductRecord) {
     const segments = url.pathname.split("/").filter(Boolean).map((segment) => {
       try { return decodeURIComponent(segment).toLowerCase(); } catch { return segment.toLowerCase(); }
     });
-    const sourceMarket = publicSourceMarketCountryCode(product.sourceUrl);
+    const sourceMarket = publicSourceMarketContext(product.sourceUrl).contextKey;
     if (segments.length > 2 && /^[a-z]{2}$/i.test(segments[0]) && PRODUCT_ROUTE_SEGMENTS.has(segments[1])) segments.shift();
     const productIndex = segments.findIndex((segment) => PRODUCT_ROUTE_SEGMENTS.has(segment));
     if (productIndex < 0 || !segments[productIndex + 1]) return "";
@@ -1241,7 +1297,7 @@ function productNameTokens(product: ProductRecord) {
 
 export function productIdentityKey(product: ProductRecord) {
   const domain = canonicalHost(product.domain);
-  const market = publicSourceMarketCountryCode(product.sourceUrl);
+  const market = publicSourceMarketContext(product.sourceUrl).contextKey;
   const gtin = [...(product.identifiers?.gtins || [])].sort()[0];
   if (gtin) return `${domain}|${market ? `market|${market}|` : ""}gtin|${gtin}`;
   const source = canonicalProductSourceKey(product);
@@ -1419,7 +1475,8 @@ function canonicalProductPageUrl(value: string) {
   try {
     const url = new URL(value);
     const path = url.pathname.replace(/\/+$/, "") || "/";
-    return `${canonicalHost(url.hostname)}${path}`;
+    const market = publicSourceMarketContext(value);
+    return `${canonicalHost(url.hostname)}${path}${market.contextKey ? `|${market.contextKey}` : ""}`;
   } catch {
     return "";
   }
@@ -1874,15 +1931,23 @@ export function selectFinalProductEnrichmentTargets(comparison: ProductCompariso
   return planFinalProductEnrichmentTargets(comparison, maxPages).targets;
 }
 
+function sameProductMarketContext(left: ProductRecord, right: ProductRecord) {
+  const leftMarket = publicSourceMarketContext(left.sourceUrl);
+  const rightMarket = publicSourceMarketContext(right.sourceUrl);
+  return !leftMarket.conflict && !rightMarket.conflict && leftMarket.contextKey === rightMarket.contextKey;
+}
+
 function sameLiveCatalogIdentity(left: ProductRecord, right: ProductRecord) {
+  if (!sameProductMarketContext(left, right)) return false;
   return Boolean(sharedValidGtin(left.identifiers, right.identifiers))
     || (left.normalizedName === right.normalizedName
       && (quantitiesEqual(left.quantity, right.quantity) || (!left.quantity && !right.quantity)));
 }
 
 export function applyPreMatchCatalogEnrichment(catalog: ProductRecord[], enriched: ProductRecord[]) {
-  const freshById = new Map(enriched.map((product) => [product.id, product]));
-  const catalogIds = new Set(catalog.map((product) => product.id));
+  const enrichmentKey = (product: ProductRecord) => `${product.id}|${publicSourceMarketContext(product.sourceUrl).contextKey}`;
+  const freshById = new Map(enriched.map((product) => [enrichmentKey(product), product]));
+  const catalogIds = new Set(catalog.map(enrichmentKey));
   const auditsById = new Map<string, string[]>();
   const merged: ProductRecord[] = [];
   const mergeIdentifiers = (fresh: ProductIdentifiers | undefined, base: ProductIdentifiers | undefined) => {
@@ -1896,8 +1961,12 @@ export function applyPreMatchCatalogEnrichment(catalog: ProductRecord[], enriche
   };
 
   for (const base of catalog) {
-    const fresh = freshById.get(base.id);
+    const fresh = freshById.get(enrichmentKey(base));
     if (!fresh) {
+      merged.push(base);
+      continue;
+    }
+    if (!sameProductMarketContext(base, fresh)) {
       merged.push(base);
       continue;
     }
@@ -1928,7 +1997,7 @@ export function applyPreMatchCatalogEnrichment(catalog: ProductRecord[], enriche
   }
 
   for (const fresh of enriched) {
-    if (!catalogIds.has(fresh.id)) merged.push(fresh);
+    if (!catalogIds.has(enrichmentKey(fresh))) merged.push(fresh);
   }
   return selectPreferredProducts(merged.map((product) => {
     const audits = auditsById.get(product.id) || [];
@@ -1951,7 +2020,7 @@ export function applyFinalProductEnrichment(
     } satisfies ProductIdentifiers;
   };
   const merge = (base: ProductRecord) => {
-    const fresh = products.find((product) => product.id === base.id
+    const fresh = products.find((product) => (product.id === base.id && sameProductMarketContext(product, base))
       || (canonicalHost(product.domain) === canonicalHost(base.domain)
         && canonicalProductPageUrl(product.sourceUrl) === canonicalProductPageUrl(base.sourceUrl)
         && sameLiveCatalogIdentity(product, base)));

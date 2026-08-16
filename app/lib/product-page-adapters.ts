@@ -89,7 +89,10 @@ export function storefrontAdapterRequest(sourceUrl: string): StorefrontAdapterRe
   const routeName = route.segments[route.routeIndex].toLowerCase();
   if (routeName === "products") {
     const endpoint = new URL(route.url.toString());
+    const currencySelectors = [...route.url.searchParams.entries()]
+      .filter(([key]) => /^(?:currency|currency_code|currencycode)$/i.test(key));
     endpoint.search = "";
+    currencySelectors.forEach(([key, currency]) => endpoint.searchParams.append(key, currency));
     endpoint.hash = "";
     endpoint.pathname = `/${route.segments.slice(0, route.routeIndex + 2).join("/")}.js`;
     return { kind: "shopify", endpointUrl: endpoint.toString(), requestedKey: route.key };

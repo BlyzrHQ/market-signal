@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyFinalProductEnrichment, applyPreMatchCatalogEnrichment, buildProductComparison, buildProductPairCandidateIndex, catalogReplacementAuditAttribute, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, planFinalProductEnrichmentTargets, planPreliminaryCatalogReconciliation, publicSourceMarketCountryCode, retrieveProductPairCandidates, scoreProductPair, selectFinalProductEnrichmentTargets, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
+import { applyFinalProductEnrichment, applyPreMatchCatalogEnrichment, buildProductComparison, buildProductPairCandidateIndex, catalogReplacementAuditAttribute, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, planFinalProductEnrichmentTargets, planPreliminaryCatalogReconciliation, publicSourceMarketContext, publicSourceMarketCountryCode, retrieveProductPairCandidates, scoreProductPair, selectFinalProductEnrichmentTargets, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
 import { publishPricedProductComparison } from "../app/lib/product-match-lifecycle.ts";
 
 const TEST_NOW = new Date().toISOString();
@@ -810,6 +810,66 @@ test("market parsing prioritizes country selectors and recognizes all ISO countr
   assert.equal(publicSourceMarketCountryCode("https://shop.example/tr/products/item"), "TR");
   assert.equal(publicSourceMarketCountryCode("https://shop.example/store/gb/products/item"), "GB");
   assert.equal(publicSourceMarketCountryCode("https://shop.gr/products/item"), "GR");
+});
+
+test("market parsing rejects contradictory locale and country path selectors", () => {
+  for (const url of [
+    "https://shop.example/us/gb/products/item",
+    "https://shop.example/en-US/gb/products/item",
+    "https://shop.example/en-US/fr-FR/products/item",
+  ]) {
+    assert.equal(publicSourceMarketContext(url).conflict, true, url);
+    assert.equal(publicSourceMarketCountryCode(url), "", url);
+  }
+  assert.equal(publicSourceMarketContext("https://shop.example/uk/products/item").contextKey, "country:?");
+  assert.equal(publicSourceMarketCountryCode("https://shop.example/gb-en/product/item"), "GB");
+});
+
+test("catalog deduplication keeps currency-selected GTIN observations separate", () => {
+  const usd = { ...product("usd", "shop.example", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.example/products/custom-jacket?currency=USD", identifiers: { gtins: ["4006381333931"] } };
+  const cad = { ...usd, id: "cad", sourceUrl: "https://shop.example/products/custom-jacket?currency=CAD", claimIds: ["cad-observed"] };
+  assert.equal(selectPreferredProducts([usd, cad]).length, 2);
+});
+
+test("non-current labels and reversed structured ranges never publish as current prices", () => {
+  for (const label of ["Original price", "RRP", "Retail price", "Member price"]) {
+    const result = extraction({
+      document: `<h1>Work Jacket</h1><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Work Jacket", offers: { lowPrice: 80, highPrice: 120, priceCurrency: "USD", priceType: label } })}</script>`,
+      sourceUrl: "https://acme.com/products/work-jacket",
+      pageTitle: "Work Jacket",
+      headings: ["Work Jacket"],
+    });
+    assert.deepEqual(result.products[0].priceSignals, [], label);
+  }
+  const reversed = extraction({
+    document: `<h1>Work Jacket</h1><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Work Jacket", offers: { lowPrice: 120, highPrice: 80, priceCurrency: "USD" } })}</script>`,
+    sourceUrl: "https://acme.com/products/work-jacket",
+    pageTitle: "Work Jacket",
+    headings: ["Work Jacket"],
+  });
+  assert.deepEqual(reversed.products[0].priceSignals, []);
+});
+
+test("an exact product H1 binds direct metadata conflicts even when title and slug differ", () => {
+  const result = extraction({
+    document: `<head><title>Custom Embroidered Columbia Jackets No Minimum | Arklavo</title><meta property="og:price:amount" content="100"><meta property="og:price:currency" content="GBP"></head><body><h1>Custom Women's Columbia Embroidered Soft Shell Jacket</h1><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Custom Women's Columbia Embroidered Soft Shell Jacket", offers: { price: 100, priceCurrency: "USD" } })}</script></body>`,
+    sourceUrl: "https://arklavo.com/products/custom-embroidered-columbia-jackets-no-minimum",
+    domain: "arklavo.com",
+    pageTitle: "Custom Embroidered Columbia Jackets No Minimum | Arklavo",
+    headings: ["Custom Women's Columbia Embroidered Soft Shell Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals, []);
+  assert.match(result.products[0].attributes.join(" "), /Price evidence conflict/);
+});
+
+test("generic related-card itemprop metadata cannot price the main product", () => {
+  const result = extraction({
+    document: `<h1>Primary Jacket</h1><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Primary Jacket" })}</script><h2>Pairs well with</h2><article><span itemprop="name">Leather Belt</span><meta itemprop="price" content="45"><meta itemprop="priceCurrency" content="USD"></article>`,
+    sourceUrl: "https://acme.com/products/primary-jacket",
+    pageTitle: "Primary Jacket",
+    headings: ["Primary Jacket", "Pairs well with"],
+  });
+  assert.deepEqual(result.products[0].priceSignals, []);
 });
 
 test("catalog deduplication collapses locale variants of the same product URL", () => {
@@ -1679,15 +1739,15 @@ test("final enrichment cannot revive or re-date a stale price after a fresh unpr
   assert.equal(enriched.rows[0].primary.observedAt, "2026-08-16T00:00:00.000Z");
 });
 
-test("final enrichment keeps localized price provenance on the fresh source URL", () => {
+test("final enrichment cannot replace a selected market with a different localized market", () => {
   const primary = { ...product("jacket", "shop.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.test/en-us/products/custom-jacket", priceSignals: [{ raw: "USD 90", currency: "USD", amount: 90 }] };
   const rival = { ...product("rival-jacket", "rival.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://rival.test/en-us/products/custom-jacket", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }] };
   const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "rival.test", products: [rival] }]);
   const fresh = { ...rival, sourceUrl: "https://rival.test/en-ca/products/custom-jacket", priceSignals: [{ raw: "CAD 130", currency: "CAD", amount: 130 }], observedAt: TEST_NOW };
   const enriched = applyFinalProductEnrichment(comparison, [fresh], { pagesRequested: 1, pagesFetched: 1, maxPages: 24, gaps: [] });
-  assert.equal(enriched.rows[0].matches[0].product.sourceUrl, fresh.sourceUrl);
-  assert.deepEqual(enriched.rows[0].matches[0].product.priceSignals, fresh.priceSignals);
-  assert.equal(enriched.rows[0].matches[0].product.observedAt, fresh.observedAt);
+  assert.equal(enriched.rows[0].matches[0].product.sourceUrl, rival.sourceUrl);
+  assert.deepEqual(enriched.rows[0].matches[0].product.priceSignals, rival.priceSignals);
+  assert.equal(enriched.rows[0].matches[0].product.observedAt, rival.observedAt);
 });
 
 test("pre-match reconciliation cannot restore a stale range after fresh currency-conflict evidence", () => {

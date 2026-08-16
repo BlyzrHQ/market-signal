@@ -1,6 +1,6 @@
 import { canonicalDomain } from "./domain.ts";
 import { bilingualNormalize, bilingualTokens, parseCanonicalQuantity, quantitiesConflict } from "./product-normalization.ts";
-import { CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX, catalogReplacementAuditAttribute, directProductMetadataOffer, directProductScopedMetadataOffer, extractProductsFromHtml, isSupportedCurrency, publicSourceMarketEvidence, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "./product-intelligence.ts";
+import { CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX, catalogReplacementAuditAttribute, directProductMetadataOffer, directProductScopedMetadataOffer, extractProductsFromHtml, isSupportedCurrency, publicSourceMarketContext, publicSourceMarketEvidence, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "./product-intelligence.ts";
 import { confirmedProductCurrency, hasConflictingDirectProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "./product-page-adapters.ts";
 import { fetchPublicText } from "./public-fetch.ts";
 import { sharedRobotsPolicyResolver } from "./robots-policy.ts";
@@ -196,7 +196,7 @@ function productScope(document: string) {
   const summaryIndex = activeDocument.search(/class\s*=\s*["'][^"']*(?:summary|product-summary)[^"']*["']/i);
   const start = Math.max(0, title?.index ?? summaryIndex);
   const bounded = activeDocument.slice(start, Math.min(activeDocument.length, start + 160_000));
-  const marker = /(?:^|[\s_-])(?:related(?:[\s_-]+products?)?|upsells?|cross[\s_-]*sells?|recommend(?:ed|ations?)|product[\s_-]*recommendations?|you[\s_-]*(?:may|might)[\s_-]*also[\s_-]*like|similar[\s_-]*products?|frequently[\s_-]*bought[\s_-]*together|customers?[\s_-]*also[\s_-]*bought|complete[\s_-]*the[\s_-]*look)(?:$|[\s_-])/i;
+  const marker = /(?:^|[\s_-])(?:related(?:[\s_-]+products?)?|upsells?|cross[\s_-]*sells?|recommend(?:ed|ations?)|product[\s_-]*recommendations?|you[\s_-]*(?:may|might)[\s_-]*also[\s_-]*(?:like|love)|similar[\s_-]*products?|frequently[\s_-]*bought[\s_-]*together|customers?[\s_-]*also[\s_-]*bought|people[\s_-]*also[\s_-]*bought|recently[\s_-]*viewed|pairs?[\s_-]*well[\s_-]*with|more[\s_-]*from[\s_-]*(?:our[\s_-]*)?collection|complete[\s_-]*the[\s_-]*look)(?:$|[\s_-])/i;
   let relatedAt = -1;
   for (const tag of bounded.matchAll(/<([a-z][\w:-]*)\b[^>]*>/gi)) {
     const markup = tag[0];
@@ -220,9 +220,17 @@ function productScope(document: string) {
 function hasUrlMarketSelector(value: string) {
   try {
     const url = new URL(value);
-    const querySelected = [...url.searchParams.keys()].some((key) => /^(?:country|country_code|countrycode|market|region|locale)$/i.test(key));
+    const querySelected = [...url.searchParams.keys()].some((key) => /^(?:country|country_code|countrycode|market|region|locale|currency|currency_code|currencycode)$/i.test(key));
     const market = publicSourceMarketEvidence(value);
     return querySelected || market.explicit || market.conflict;
+  } catch { return false; }
+}
+
+function hasRegionalOrLanguagePathSelector(value: string) {
+  try {
+    const segments = new URL(value).pathname.split("/").filter(Boolean);
+    const routeIndex = segments.findIndex((segment) => /^(?:products?|shop)$/.test(segment.toLowerCase()));
+    return segments.slice(0, routeIndex >= 0 ? routeIndex : 0).some((segment) => /^[a-z]{2}(?:[-_][a-z]{2})?$/i.test(segment));
   } catch { return false; }
 }
 
@@ -917,10 +925,13 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       if (!/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed", fetched.status, "content") };
       const requestedMarket = publicSourceMarketEvidence(item.sourceUrl);
       const fetchedMarket = publicSourceMarketEvidence(fetched.url);
+      const requestedContext = publicSourceMarketContext(item.sourceUrl);
+      const fetchedContext = publicSourceMarketContext(fetched.url);
       if (requestedMarket.conflict || fetchedMarket.conflict
-        || (requestedMarket.explicit && !requestedMarket.countryCode)
-        || (fetchedMarket.explicit && !fetchedMarket.countryCode)
-        || (requestedMarket.explicit && requestedMarket.countryCode !== fetchedMarket.countryCode)) {
+        || requestedContext.contextKey.includes("country:?")
+        || fetchedContext.contextKey.includes("country:?")
+        || (requestedMarket.countryCode && requestedMarket.countryCode !== fetchedMarket.countryCode)
+        || (requestedContext.currencyCode && requestedContext.currencyCode !== fetchedContext.currencyCode)) {
         return { product: null, gap: gap("Selected product redirect lost, changed, or conflicted with the requested market.", "identity_mismatch", undefined, "redirect") };
       }
       const extracted = pageExtraction(fetched.text, fetched.url, item.domain);
@@ -963,7 +974,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
               const adapterCurrencyConflict = directPageCurrency && [...adapterCurrencies].some((currency) => currency !== directPageCurrency.toUpperCase())
                 ? [`Price evidence conflict: direct page currency ${directPageCurrency.toUpperCase()} contradicts ${adapterLabel} currency ${[...adapterCurrencies].join(", ")}.`]
                 : [];
-              const regionalWooCommerce = adapter.kind === "woocommerce" && selectedMarket;
+              const regionalWooCommerce = adapter.kind === "woocommerce" && (selectedMarket || hasRegionalOrLanguagePathSelector(fetched.url));
               const positiveAdapterProduct = adapterResult.product ? withPositivePrices(adapterResult.product) : null;
               const adapterPriceSignals = positiveAdapterProduct?.priceSignals || [];
               const directPageSignals = directMetadataPriceSignals(fetched.text);

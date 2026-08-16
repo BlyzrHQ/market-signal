@@ -759,6 +759,35 @@ test("a nested regional WooCommerce page cannot inherit the unscoped Store API p
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test("a language-prefixed WooCommerce page cannot inherit the unscoped Store API price", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.includes("/wp-json/wc/store/v1/products")) return Response.json([{ id: 10, name: "Work Jacket", slug: "work-jacket", prices: { price: "10000", currency_code: "USD", currency_minor_unit: 2 } }]);
+    return new Response(`<html><head><title>Work Jacket</title></head><body><h1>Work Jacket</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Work Jacket", sourceUrl: "https://shop.test/fr/product/work-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("a country-TLD redirect cannot switch to a conflicting query-selected market", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (!url.includes("country=US")) return new Response(null, { status: 302, headers: { location: "https://shop.co.uk/products/work-jacket?country=US" } });
+    return new Response(`<html><head><title>Work Jacket</title></head><body><h1>Work Jacket</h1><p class="price">USD 100</p></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ domain: "shop.co.uk", expectedName: "Work Jacket", sourceUrl: "https://shop.co.uk/products/work-jacket" })], 1);
+    assert.equal(result.products.length, 0);
+    assert.equal(result.coverage.gaps[0].failureKind, "redirect");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test("visible product currency contradicting structured currency fails closed without direct metadata", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
@@ -1574,6 +1603,13 @@ test("catalog drift stays rejected unless the pre-match caller explicitly permit
     assert.equal(replaced.coverage.gaps.length, 0);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test("cuts off additional common related-product heading variants", () => {
+  for (const heading of ["You may also love", "Pairs well with", "More from our collection", "Recently viewed", "People also bought"]) {
+    const evidence = extractScopedProductPageEvidence(`<h1>Primary Jacket</h1><div class="summary"><p class="price">USD 100</p></div><h2>${heading}</h2><p class="price">USD 45</p>`);
+    assert.deepEqual(evidence.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }], heading);
   }
 });
 
