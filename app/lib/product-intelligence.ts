@@ -428,6 +428,7 @@ function offerSignals(value: unknown): ProductPriceSignal[] {
   for (const offer of records(value)) {
     const currency = offer.priceCurrency;
     const hasRangeEndpoint = offer.lowPrice !== undefined || offer.highPrice !== undefined;
+    let hasDirectPriceEvidence = false;
     if (hasRangeEndpoint) {
       const low = priceSignal(offer.lowPrice, currency);
       const high = priceSignal(offer.highPrice, currency);
@@ -435,13 +436,27 @@ function offerSignals(value: unknown): ProductPriceSignal[] {
         && typeof low.amount === "number" && Number.isFinite(low.amount) && low.amount > 0
         && typeof high.amount === "number" && Number.isFinite(high.amount) && high.amount > 0
         && low.currency && low.currency === high.currency;
-      if (completePositiveRange) found.push(low, high);
+      if (completePositiveRange) {
+        found.push(low, high);
+        hasDirectPriceEvidence = true;
+      }
     } else {
       const price = priceSignal(offer.price, currency);
-      if (price) found.push(price);
+      if (price) {
+        found.push(price);
+        hasDirectPriceEvidence = true;
+      }
     }
-    found.push(...offerSignals(offer.offers));
-    found.push(...offerSignals(offer.priceSpecification));
+    if (!hasDirectPriceEvidence) {
+      const nestedOffers = offerSignals(offer.offers);
+      if (nestedOffers.length) found.push(...nestedOffers);
+      else {
+        const specifications = offerSignals(offer.priceSpecification);
+        // Multiple unlabeled specifications commonly mean list/current sale
+        // prices; only one unambiguous fallback can act as the current offer.
+        if (specifications.length === 1) found.push(specifications[0]);
+      }
+    }
   }
   return [...new Map(found.map((signal) => [signal.raw, signal])).values()].slice(0, 12);
 }
@@ -1110,13 +1125,16 @@ export function selectPreferredProducts(items: ProductRecord[]) {
 }
 
 const MARKET_QUERY_KEYS = new Set(["country", "country_code", "countrycode", "market", "region", "locale"]);
-const GENERICIZED_COUNTRY_TLDS = new Set(["AI", "CC", "CO", "FM", "GG", "IO", "LY", "ME", "SH", "TO", "TV"]);
+const GENERICIZED_COUNTRY_TLDS = new Set(["AD", "AI", "AS", "BZ", "CC", "CD", "CO", "DJ", "FM", "GG", "IO", "LA", "LY", "ME", "MS", "NU", "SC", "SH", "SR", "SU", "TK", "TO", "TV", "WS"]);
+const COUNTRY_PATH_MARKETS = new Set(["AE", "AT", "AU", "BE", "BH", "BR", "CA", "CH", "CN", "DE", "DK", "EG", "ES", "FI", "FR", "GB", "IE", "IN", "IT", "JO", "JP", "KR", "KW", "MX", "NL", "NO", "NZ", "OM", "PL", "PT", "QA", "SA", "SE", "SG", "UK", "US", "ZA"]);
 
 function normalizedMarketCountryCode(value: string) {
   const normalized = clean(value).replace(/_/g, "-").toUpperCase();
-  if (/^[A-Z]{2}$/.test(normalized)) return normalized === "UK" ? "GB" : normalized;
-  const localeCountry = normalized.match(/^[A-Z]{2}-([A-Z]{2})$/)?.[1] || "";
-  return localeCountry === "UK" ? "GB" : localeCountry;
+  const candidate = /^[A-Z]{2}$/.test(normalized)
+    ? normalized
+    : normalized.match(/^[A-Z]{2}-([A-Z]{2})$/)?.[1] || "";
+  const country = candidate === "UK" ? "GB" : candidate;
+  return COUNTRY_PATH_MARKETS.has(country) ? country : "";
 }
 
 export function publicSourceMarketCountryCode(value: string) {
@@ -1131,6 +1149,8 @@ export function publicSourceMarketCountryCode(value: string) {
     }
     const locale = url.pathname.split("/").filter(Boolean).find((segment) => /^[a-z]{2}[-_][a-z]{2}$/i.test(segment));
     if (locale) return normalizedMarketCountryCode(locale);
+    const firstPathSegment = url.pathname.split("/").filter(Boolean)[0]?.toUpperCase() || "";
+    if (COUNTRY_PATH_MARKETS.has(firstPathSegment)) return firstPathSegment === "UK" ? "GB" : firstPathSegment;
     const host = canonicalHost(url.hostname);
     if (/\.(?:co\.)?uk$/i.test(host)) return "GB";
     const countryTld = normalizedMarketCountryCode(host.match(/\.([a-z]{2})$/i)?.[1] || "");

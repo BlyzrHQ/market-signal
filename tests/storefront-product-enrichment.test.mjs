@@ -670,6 +670,22 @@ test("rejects contradictory structured currency and keeps product-scoped direct 
   }
 });
 
+test("does not combine a query-selected page currency with an unscoped Shopify amount", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.includes(".js")) return Response.json({ title: "Market Jacket", handle: "market-jacket", variants: [{ title: "Default Title", price: 10000 }] }, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<html><head><title>Market Jacket</title><meta property="product:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Market Jacket" })}</script></head><body><h1>Market Jacket</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Market Jacket", sourceUrl: "https://shop.test/products/market-jacket?country=GB" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("visible product currency contradicting structured currency fails closed without direct metadata", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
@@ -1502,6 +1518,25 @@ test("collection-level product metadata cannot erase valid sibling JSON-LD price
     const result = await enrichProductTargets([target({ expectedName: "Jacket A", sourceUrl: "https://shop.test/shop/collections/workwear" })], 1);
     assert.equal(result.products.length, 1);
     assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 10 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("collection-level visible price cannot attach a sibling price to an unpriced requested product", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response(`<html><head><title>Workwear</title><script type="application/ld+json">${JSON.stringify([
+      { "@type": "Product", name: "Jacket A" },
+      { "@type": "Product", name: "Jacket B", offers: { price: "20", priceCurrency: "USD" } },
+    ])}</script></head><body><h1>Workwear</h1><h2>Jacket A</h2><article><h2>Jacket B</h2><p class="price">USD 20</p></article></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Jacket A", sourceUrl: "https://shop.test/shop/collections/workwear" })], 1);
+    assert.equal(result.products.length, 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
   } finally {
     globalThis.fetch = originalFetch;
   }

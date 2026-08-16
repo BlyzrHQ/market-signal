@@ -376,6 +376,16 @@ test("repeated metadata amounts without explicit range semantics are not publish
   assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 100 }]);
 });
 
+test("nested list and sale price specifications do not become a fabricated range", () => {
+  const result = extraction({
+    document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Sale Jacket", offers: { price: 100, priceCurrency: "USD", priceSpecification: [{ price: 120, priceCurrency: "USD", name: "List price" }] } })}</script>`,
+    sourceUrl: "https://acme.com/products/sale-jacket",
+    pageTitle: "Sale Jacket",
+    headings: ["Sale Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 100 }]);
+});
+
 test("product-page metadata cannot bind to a related-product heading", () => {
   const result = extraction({
     document: `<meta property="product:price:amount" content="999"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Related Jacket" })}</script>`,
@@ -724,6 +734,12 @@ test("catalog deduplication keeps query-selected regional markets separate", () 
   const selected = selectPreferredProducts([us, gb]);
   assert.equal(selected.length, 2);
   assert.deepEqual(selected.map((item) => item.sourceUrl).sort(), [gb.sourceUrl, us.sourceUrl].sort());
+});
+
+test("catalog deduplication keeps country-path regional markets separate", () => {
+  const us = { ...product("jacket-us", "shop.example", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.example/us/products/custom-jacket", priceSignals: [{ raw: "USD 100", currency: "USD", amount: 100 }], observedAt: "2026-08-15T00:00:00.000Z" };
+  const gb = { ...us, id: "jacket-gb", sourceUrl: "https://shop.example/gb/products/custom-jacket", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }], observedAt: "2026-08-16T00:00:00.000Z", claimIds: ["jacket-gb-observed"] };
+  assert.equal(selectPreferredProducts([us, gb]).length, 2);
 });
 
 test("catalog deduplication collapses locale variants of the same product URL", () => {

@@ -580,6 +580,15 @@ function addScopedProductPageEvidence(document: string, sourceUrl: string, expec
   const evidence = extractScopedProductPageEvidence(document, sourceUrl);
   const directOffer = directProductMetadataOffer(document);
   if (!evidence.priceSignals.length && !evidence.imageUrl && !directOffer) return;
+  let detailProductPage = false;
+  try {
+    const path = new URL(sourceUrl).pathname;
+    detailProductPage = /\/(?:products?|shop|store)\//i.test(path)
+      && !/\/(?:collections?|catalog)(?:\/|$)/i.test(path);
+  } catch { detailProductPage = false; }
+  // Visible summary markup is only page-scoped. On collections it can belong
+  // to any sibling card, so only product-bound structured evidence may survive.
+  if (!detailProductPage) return;
   const identity = validateProductPageIdentity([expected], products, pageTitle, { allowScopedPageSignal: true });
   if (!identity.accepted) return;
   const selected = identity.products[0];
@@ -919,7 +928,15 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
             } else {
               const payload = JSON.parse(adapterResponse.text);
               const observedAt = new Date().toISOString();
-              const directPageCurrency = confirmedAdapterCurrency(fetched.text, rawMatchedProduct);
+              let querySelectedMarket = false;
+              try {
+                querySelectedMarket = [...new URL(item.sourceUrl).searchParams.keys()]
+                  .some((key) => /^(?:country|country_code|countrycode|market|region|locale)$/i.test(key));
+              } catch { querySelectedMarket = false; }
+              // Shopify's legacy .js payload has no currency field. A page
+              // currency cannot qualify its amount when the selected market is
+              // carried only by URL query state that the endpoint may ignore.
+              const directPageCurrency = querySelectedMarket ? "" : confirmedAdapterCurrency(fetched.text, rawMatchedProduct);
               const adapterResult = adapter.kind === "shopify"
                 ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: directPageCurrency, expectedQuantity: expected.quantity })
                 : parseWooCommerceProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt: new Date().toISOString() });
