@@ -85,6 +85,10 @@ separately and is never represented as a credential-free capability.
   Apache-2.0 in package metadata, scrubs the historical hosted Trigger project
   identifier, and prevents the CLI from sending its bearer token over remote
   plain HTTP. A new exact-head pass is required after these improvements.
+- The next exact-head review correctly returned `STRICT FAIL` because a
+  historical note claimed its hosted run identifier was omitted while retaining
+  that value on the preceding line. Both the run and deployment identifiers
+  were then removed; another exact-head review is required.
 
 ## Review note
 
