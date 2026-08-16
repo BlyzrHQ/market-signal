@@ -49,6 +49,14 @@ export type StoredReportRun = {
   productLimit: number;
 };
 
+export type WorkspaceReportSummary = {
+  publicId: string;
+  primaryDomain: string;
+  status: ReportRunStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type StoredReportEvent = {
   sequence: number;
   idempotencyKey: string;
@@ -676,6 +684,7 @@ async function initializeSchema(database: D1DatabaseLike) {
     if (runNames.has(name)) continue;
     await database.prepare(statement).run();
   }
+  await database.prepare(`CREATE INDEX IF NOT EXISTS report_runs_workspace_recent_idx ON report_runs (workspace_id, created_at)`).run();
   const auditColumns = await database.prepare("PRAGMA table_info(report_purge_audits)").all<Record<string, unknown>>();
   const auditNames = new Set((auditColumns.results || []).map((column) => String(column.name || "")));
   for (const [name, statement] of REPORT_PURGE_AUDIT_COLUMN_MIGRATIONS) {
@@ -1044,6 +1053,26 @@ export async function createReportRunResult(input: { primaryDomain: string; loca
     }
     return { ok: false as const, diagnosticCode };
   }
+}
+
+export async function listWorkspaceReports(workspaceId: string, options: { limit?: number; now?: Date } = {}, databaseOverride?: D1DatabaseLike | null): Promise<WorkspaceReportSummary[]> {
+  const normalizedWorkspaceId = cleanText(workspaceId, 200);
+  if (!normalizedWorkspaceId) return [];
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error(STORAGE_UNAVAILABLE_MESSAGE);
+  const limit = Math.min(10, Math.max(1, Math.trunc(options.limit || 5)));
+  const now = options.now || new Date();
+  await ensureSchema(database);
+  const rows = await database.prepare(`SELECT public_id, primary_domain, status, created_at, updated_at FROM report_runs WHERE workspace_id = ? AND expires_at > ? ORDER BY created_at DESC, public_id DESC LIMIT ?`)
+    .bind(normalizedWorkspaceId, now.toISOString(), limit)
+    .all<Record<string, unknown>>();
+  return (rows.results || []).map((row) => ({
+    publicId: String(row.public_id || ""),
+    primaryDomain: String(row.primary_domain || ""),
+    status: STATUSES.has(row.status as ReportRunStatus) ? row.status as ReportRunStatus : "failed",
+    createdAt: String(row.created_at || ""),
+    updatedAt: String(row.updated_at || ""),
+  })).filter((report) => PUBLIC_ID_PATTERN.test(report.publicId) && Boolean(report.primaryDomain));
 }
 
 export async function appendReportEvent(publicReportId: string, input: { attemptNumber?: number; idempotencyKey: string; phase: ReportPhase; status: ReportRunStatus; message: string; metadata?: unknown; errorCode?: string }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {

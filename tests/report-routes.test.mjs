@@ -86,6 +86,15 @@ test("saved reports use a persistent dashboard shell without the old report hero
   assert.match(css, /\.report-coverage-notice/);
 });
 
+test("paid report history is privately fetched and stays out of public report payloads", () => {
+  assert.match(report, /fetch\("\/api\/account\/reports", \{ cache: "no-store", credentials: "same-origin"/);
+  assert.match(report, /if \(!history\?\.eligible\) return null/);
+  assert.match(report, /<PaidReportHistory currentPublicId=\{publicId\} ar=\{ar\} \/>/);
+  assert.match(report, /aria-current=\{current \? "page" : undefined\}/);
+  assert.doesNotMatch(report, /localStorage|sessionStorage/);
+  assert.match(css, /\.dashboard-brand,\.dashboard-report-identity,\.dashboard-report-history \{ display: none; \}/);
+});
+
 test("saved product and ad views preserve truth boundaries and source links", () => {
   assert.match(report, /<ProductDesignLab key=\{publicId\} comparison=\{comparison\} battles=\{battles\}/);
   assert.match(report, /object\(candidate\.publication\)\.priceEligible === true/);

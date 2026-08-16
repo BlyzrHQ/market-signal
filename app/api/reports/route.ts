@@ -27,7 +27,7 @@ type CreationBoundaryResult =
   | { kind: "boundary-failed"; diagnosticCode: CreationBoundaryDiagnostic };
 
 const PUBLIC_REPORT_ID = /^[a-f0-9]{32}$/;
-const REPORT_CREATE_DIAGNOSTIC = /^(?:invalid-domain|storage-unavailable|database-(?:import-failed|binding-missing)|schema-statement-(?:[1-9]|[12]\d|3[0-4])-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api)|run-create-unclassified)$/;
+const REPORT_CREATE_DIAGNOSTIC = /^(?:invalid-domain|storage-unavailable|database-(?:import-failed|binding-missing)|schema-statement-[1-9]\d?-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api)|run-create-unclassified)$/;
 
 async function consumeReportCreation(create: unknown, input: { primaryDomain: string; locale: "en" | "ar"; entitlement?: { plan: ProductPlan; productLimit: number }; workspaceId?: string; billingReservationId?: string }): Promise<CreationBoundaryResult> {
   if (typeof create !== "function") return { kind: "boundary-failed", diagnosticCode: "create-not-callable" };

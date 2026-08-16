@@ -99,6 +99,14 @@ export function getWorkspaceSubscription(database: Database.Database, workspaceI
   return rowToSubscription(database.prepare("SELECT * FROM workspace_subscriptions WHERE workspace_id = ?").get(workspaceId) as Record<string, unknown> | undefined);
 }
 
+export function activeWorkspacePlan(database: Database.Database, workspaceId: string, now = new Date()): BillingPlan | null {
+  const subscription = getWorkspaceSubscription(database, workspaceId);
+  const plan = subscription?.planTier ? BILLING_PLANS[subscription.planTier] : null;
+  if (!subscription || !plan || !ACTIVE_STATUSES.has(subscription.status) || !subscription.currentPeriodStart || !subscription.currentPeriodEnd) return null;
+  const nowIso = now.toISOString();
+  return nowIso >= subscription.currentPeriodStart && nowIso < subscription.currentPeriodEnd ? plan : null;
+}
+
 export function getSubscriptionByCustomer(database: Database.Database, customerId: string): WorkspaceSubscription | null {
   return rowToSubscription(database.prepare("SELECT * FROM workspace_subscriptions WHERE stripe_customer_id = ?").get(customerId) as Record<string, unknown> | undefined);
 }
@@ -161,10 +169,9 @@ export type ReportReservation = { id: string; plan: BillingPlan; used: number; l
 export function reserveReport(database: Database.Database, workspaceId: string, now = new Date()): ReportReservation | null {
   return database.transaction(() => {
     const subscription = getWorkspaceSubscription(database, workspaceId);
-    const plan = subscription?.planTier ? BILLING_PLANS[subscription.planTier] : null;
-    if (!subscription || !plan || !ACTIVE_STATUSES.has(subscription.status) || !subscription.currentPeriodStart || !subscription.currentPeriodEnd) return null;
+    const plan = activeWorkspacePlan(database, workspaceId, now);
+    if (!subscription || !plan) return null;
     const nowIso = now.toISOString();
-    if (nowIso < subscription.currentPeriodStart || nowIso >= subscription.currentPeriodEnd) return null;
     const staleBefore = new Date(now.getTime() - RESERVATION_TTL_MS).toISOString();
     database.prepare(`UPDATE billing_report_reservations SET status = 'released', updated_at = ? WHERE workspace_id = ? AND status = 'reserved' AND created_at < ?`)
       .run(nowIso, workspaceId, staleBefore);

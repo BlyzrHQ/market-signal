@@ -8,7 +8,7 @@ import Database from "better-sqlite3";
 import Stripe from "stripe";
 
 import { BILLING_PLANS, billingPlan, configuredPriceId, hostedBillingEnabled, planForConfiguredPrice } from "../app/lib/billing-plans.ts";
-import { applySubscriptionUpdate, ensureBillingSchema, finishReportReservation, getWorkspaceSubscription, reserveReport, saveWorkspaceCustomer } from "../app/lib/billing-store.ts";
+import { activeWorkspacePlan, applySubscriptionUpdate, ensureBillingSchema, finishReportReservation, getWorkspaceSubscription, reserveReport, saveWorkspaceCustomer } from "../app/lib/billing-store.ts";
 import { createPersistentReport, reportCreationDependencies } from "../app/api/reports/route.ts";
 import { createCheckout } from "../app/api/billing/checkout/route.ts";
 import { createPortal } from "../app/api/billing/portal/route.ts";
@@ -77,6 +77,17 @@ test("subscription events are idempotent, stale-safe, and quota reservations are
     assert.equal(finishReportReservation(database, reservations[0].id, "released", "run-1", now), false);
     assert.deepEqual(database.prepare("SELECT status, run_id FROM billing_report_reservations WHERE id = ?").get(reservations[0].id), { status: "committed", run_id: "run-1" });
     assert.equal(reserveReport(database, "workspace-1", now)?.id, "");
+  } finally { database.close(); }
+});
+
+test("report history eligibility uses the same active billing-period boundary as reservations", () => {
+  const database = billingDatabase();
+  try {
+    applySubscriptionUpdate(database, subscription());
+    assert.equal(activeWorkspacePlan(database, "workspace-1", new Date("2026-08-16T12:00:00.000Z"))?.id, "starter");
+    assert.equal(activeWorkspacePlan(database, "workspace-1", new Date("2026-09-01T00:00:00.000Z")), null);
+    applySubscriptionUpdate(database, subscription({ eventId: "evt_2", eventCreated: 101, status: "past_due" }));
+    assert.equal(activeWorkspacePlan(database, "workspace-1", new Date("2026-08-16T12:00:00.000Z")), null);
   } finally { database.close(); }
 });
 
