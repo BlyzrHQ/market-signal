@@ -832,7 +832,19 @@ test("catalog deduplication keeps currency-selected GTIN observations separate",
 });
 
 test("non-current labels and reversed structured ranges never publish as current prices", () => {
-  for (const label of ["Original price", "RRP", "Retail price", "Member price"]) {
+  for (const label of [
+    "Original price",
+    "RRP",
+    "Retail price",
+    "Member price",
+    "ListPrice",
+    "https://schema.org/ListPrice",
+    "RegularPrice",
+    "MemberPrice",
+    "SRP",
+    "InvoicePrice",
+    "MinimumAdvertisedPrice",
+  ]) {
     const result = extraction({
       document: `<h1>Work Jacket</h1><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Work Jacket", offers: { lowPrice: 80, highPrice: 120, priceCurrency: "USD", priceType: label } })}</script>`,
       sourceUrl: "https://acme.com/products/work-jacket",
@@ -848,6 +860,23 @@ test("non-current labels and reversed structured ranges never publish as current
     headings: ["Work Jacket"],
   });
   assert.deepEqual(reversed.products[0].priceSignals, []);
+});
+
+test("a collapsed structured range cannot legitimize an unrelated point as range evidence", () => {
+  const result = extraction({
+    document: `<h1>Work Jacket</h1><script type="application/ld+json">${JSON.stringify({
+      "@type": "Product",
+      name: "Work Jacket",
+      offers: [
+        { "@type": "AggregateOffer", lowPrice: 20, highPrice: 20, priceCurrency: "USD" },
+        { "@type": "Offer", price: 30, priceCurrency: "USD" },
+      ],
+    })}</script>`,
+    sourceUrl: "https://acme.com/products/work-jacket",
+    pageTitle: "Work Jacket",
+    headings: ["Work Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals, []);
 });
 
 test("an exact product H1 binds direct metadata conflicts even when title and slug differ", () => {

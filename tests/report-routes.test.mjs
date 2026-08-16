@@ -89,6 +89,10 @@ test("saved reports use a persistent dashboard shell without the old report hero
 test("saved product and ad views preserve truth boundaries and source links", () => {
   assert.match(report, /<ProductDesignLab key=\{publicId\} comparison=\{comparison\} battles=\{battles\}/);
   assert.match(report, /object\(candidate\.publication\)\.priceEligible === true/);
+  assert.match(report, /legacyUngatedMatchCount/);
+  assert.match(report, /typeof object\(object\(match\)\.publication\)\.priceEligible !== "boolean"/);
+  assert.match(report, /Saved price comparisons need revalidation/);
+  assert.match(report, /This report predates the current market-and-currency validation gate/);
   assert.match(report, /item === "products" && <b>\{productMatchTotal\}<\/b>/);
   assert.match(report, /authoritativeMatchTotal=\{productMatchTotal \|\| undefined\}/);
   assert.match(report, /currentMatchSummary\?\.domainCounts\?\.\[domain\] \?\? rivalBattles\.length/);

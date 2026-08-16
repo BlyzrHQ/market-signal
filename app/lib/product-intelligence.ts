@@ -427,15 +427,20 @@ function priceSignal(rawValue: unknown, currencyValue?: unknown, options: { allo
 
 function offerSignals(value: unknown): ProductPriceSignal[] {
   const found: ProductPriceSignal[] = [];
-  let explicitRange = false;
+  const explicitRangePairs = new Set<string>();
+  const signalKey = (signal: ProductPriceSignal) => `${signal.currency}|${signal.amount}`;
+  const rangeKey = (low: ProductPriceSignal, high: ProductPriceSignal) => `${signalKey(low)}::${signalKey(high)}`;
   for (const offer of records(value)) {
     if (offer.priceValidUntil !== undefined) {
       const validUntil = Date.parse(text(offer.priceValidUntil));
       if (!Number.isFinite(validUntil) || validUntil < Date.now()) continue;
     }
     const currency = offer.priceCurrency;
-    const priceLabel = text([offer.priceType, offer.name, offer.description].filter(Boolean).join(" ")).toLowerCase();
-    const nonCurrentPrice = /(?:\blist\b|\bregular\b|\bwas\b|\bmsrp\b|strike|compare[ -]?at|\boriginal\b|\brrp\b|\bretail\b|\bmember\b)/i.test(priceLabel);
+    const priceLabel = text([offer.priceType, offer.name, offer.description].filter(Boolean).join(" "))
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .replace(/[^a-zA-Z0-9]+/g, " ")
+      .toLowerCase();
+    const nonCurrentPrice = /(?:\blist\b|\bregular\b|\bwas\b|\bmsrp\b|\bsrp\b|strike|compare[ -]?at|\boriginal\b|\brrp\b|\bretail\b|\bmember\b|\binvoice(?: price)?\b|\bminimum advertised(?: price)?\b)/i.test(priceLabel);
     if (nonCurrentPrice) continue;
     const hasRangeEndpoint = offer.lowPrice !== undefined || offer.highPrice !== undefined;
     let hasDirectPriceEvidence = false;
@@ -450,7 +455,7 @@ function offerSignals(value: unknown): ProductPriceSignal[] {
       if (completePositiveRange) {
         found.push(low, high);
         hasDirectPriceEvidence = true;
-        explicitRange = true;
+        if (low.amount < high.amount) explicitRangePairs.add(rangeKey(low, high));
       }
     } else {
       const price = priceSignal(offer.price, currency);
@@ -461,14 +466,17 @@ function offerSignals(value: unknown): ProductPriceSignal[] {
     }
     if (!hasDirectPriceEvidence) {
       const nestedOffers = offerSignals(offer.offers);
-      if (nestedOffers.length) found.push(...nestedOffers);
+      if (nestedOffers.length) {
+        found.push(...nestedOffers);
+        if (nestedOffers.length === 2) explicitRangePairs.add(rangeKey(nestedOffers[0], nestedOffers[1]));
+      }
       // priceSpecification can describe list, member, unit, or strikeout
       // prices. It is never promoted as a standalone current offer.
     }
   }
-  const unique = [...new Map(found.map((signal) => [`${signal.currency}|${signal.amount}`, signal])).values()].slice(0, 12);
+  const unique = [...new Map(found.map((signal) => [signalKey(signal), signal])).values()].slice(0, 12);
   if (unique.length <= 1) return unique;
-  return explicitRange && unique.length === 2 ? unique : [];
+  return unique.length === 2 && explicitRangePairs.has(rangeKey(unique[0], unique[1])) ? unique : [];
 }
 
 function metaContents(document: string, key: string) {

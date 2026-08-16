@@ -121,6 +121,7 @@ function ReportWorkspace({ blocks, primaryProducts, publicId, primaryDomain, obs
 
   const competitors = useMemo(() => blocks.filter((block) => block.type === "competitor").sort((a, b) => numeric(b.verificationScore) - numeric(a.verificationScore)), [blocks]);
   const comparison = blocks.find((block) => block.type === "product-comparison");
+  const legacyUngatedMatchCount = useMemo(() => list(comparison?.rows).reduce((total, row) => total + list(object(row).matches).filter((match) => typeof object(object(match).publication).priceEligible !== "boolean").length, 0), [comparison]);
   const battles = useMemo(() => list(comparison?.rows).flatMap((row, rowIndex) => {
     const item = object(row); const primary = object(item.primary);
     return list(item.matches).flatMap((match, matchIndex) => { const candidate = object(match); const rival = object(candidate.product); return object(candidate.publication).priceEligible === true && rival.name ? [{ primary, rival, match: candidate, key: `${rowIndex}-${matchIndex}` }] : []; });
@@ -187,7 +188,10 @@ function ReportWorkspace({ blocks, primaryProducts, publicId, primaryDomain, obs
         {!competitors.length && <div className="truth-state limited"><strong>{ar ? "لم يتم التحقق من منافس" : "No competitor was verified"}</strong><p>{ar ? "هذا نقص في التغطية، وليس دليلاً على عدم وجود منافسين." : "This is a coverage gap, not proof that no competitors exist."}</p></div>}
       </>}
 
-      {view === "products" && <ProductDesignLab key={publicId} comparison={comparison} battles={battles} primaryProducts={primaryProducts} publicId={publicId} authoritativeMatchTotal={productMatchTotal || undefined} onAuthoritativeSummary={receiveAuthoritativeMatchSummary} primaryDomain={primaryDomain} observedAt={observedAt} ar={ar} />}
+      {view === "products" && <>
+        {legacyUngatedMatchCount > 0 && <aside className="report-coverage-notice" role="status"><div><span>{ar ? "تقرير قديم" : "LEGACY REPORT"}</span><strong>{ar ? "تحتاج مقارنات الأسعار المحفوظة إلى إعادة التحقق" : "Saved price comparisons need revalidation"}</strong></div><p>{ar ? "أُنشئ هذا التقرير قبل بوابة التحقق الحالية للسوق والعملة. أخفينا صفوفه القديمة بدلاً من عرض أسعار قد تكون من سوق مختلف. شغّل تقريراً جديداً للحصول على مقارنات متحققة." : "This report predates the current market-and-currency validation gate. Its older rows are hidden rather than showing prices that may belong to another market. Run a new report for verified comparisons."}</p><Link href="/">{ar ? "شغّل تقريراً جديداً" : "Run a new report"}</Link></aside>}
+        <ProductDesignLab key={publicId} comparison={comparison} battles={battles} primaryProducts={primaryProducts} publicId={publicId} authoritativeMatchTotal={productMatchTotal || undefined} onAuthoritativeSummary={receiveAuthoritativeMatchSummary} primaryDomain={primaryDomain} observedAt={observedAt} ar={ar} />
+      </>}
 
       {view === "ads" && <>
         <header className="panel-intro compact"><div><span>{ar ? "مراقبة الإعلانات" : "AD WATCH"}</span><h2>{ar ? "من يعلن فعلاً، وماذا تقول إعلاناته؟" : "Who is verifiably advertising, and what are their ads saying?"}</h2><p>{display(adBlock?.limitation, ar ? "تختلف تغطية مكتبات الإعلانات حسب السوق والمنصة." : "Ad-library coverage varies by market and platform.")}</p></div></header>
