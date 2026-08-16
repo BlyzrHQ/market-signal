@@ -76,6 +76,38 @@ test("accepts a bounded identity-matched live edge result and records provenance
   assert.equal(recovered.document.blocks.at(-1).id, "edge-crawl-recovery-shop.test");
 });
 
+test("accepts explicitly declared third-party discovery evidence without opening product-source validation", async () => {
+  const recovered = await recoverCrawlThroughEdge(
+    { primary: "shop.test", domains: ["shop.test"] },
+    {
+      configuredUrl: edgeUrl,
+      requestUrl: "https://signal.blyzr.com/api/crawl",
+      callbackToken: token,
+      deployTarget: "node",
+      fetchImpl: async () => Response.json({
+        ok: true,
+        live: true,
+        primaryDomain: "shop.test",
+        discovery: { candidates: [{ domain: "rival.test", sourceUrl: "https://directory.test/shops", evidence: [{ url: "https://directory.test/shops" }] }] },
+        results: [{ domain: "shop.test", homepage: { sourceUrl: "https://shop.test/" }, products: [], gaps: [] }],
+        document: { blocks: [{ type: "candidate", url: "https://directory.test/shops" }] },
+      }),
+    },
+  );
+  assert.equal(recovered.ok, true);
+  const rejected = await recoverCrawlThroughEdge(
+    { primary: "shop.test", domains: ["shop.test"] },
+    {
+      configuredUrl: edgeUrl,
+      requestUrl: "https://signal.blyzr.com/api/crawl",
+      callbackToken: token,
+      deployTarget: "node",
+      fetchImpl: async () => Response.json({ ok: true, live: true, primaryDomain: "shop.test", results: [{ domain: "shop.test", homepage: { sourceUrl: "https://shop.test/" }, products: [{ sourceUrl: "https://attacker.test/product" }] }] }),
+    },
+  );
+  assert.equal(rejected, null);
+});
+
 test("rejects oversized, non-JSON, failed, or identity-mismatched edge responses", async (t) => {
   const options = { configuredUrl: edgeUrl, requestUrl: "https://signal.blyzr.com/api/crawl", callbackToken: token, deployTarget: "node", maxResponseBytes: 128 };
   await t.test("declared oversize", async () => {

@@ -19,6 +19,7 @@ import {
 import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../../../lib/internal-auth.ts";
 import { dispatchReportJob } from "../../../../lib/report-dispatch.ts";
 import { dispatchReportEvaluation, reportEvaluationPilotEnabled } from "../../../../lib/report-evaluation-dispatch.ts";
+import { settleTerminalReportReservation } from "../../../../lib/report-terminal-billing.ts";
 
 type RouteContext = { params: Promise<{ publicId: string }> | { publicId: string } };
 const MAX_INTERNAL_CALLBACK_BODY_BYTES = 1_500_000;
@@ -38,6 +39,9 @@ type InternalRecoveryServices = {
   markDispatched: typeof markReportDispatched;
   markDispatchFailed: typeof markReportDispatchFailed;
 };
+type InternalTerminalServices = {
+  settle(run: StoredReport["run"], status?: ReportRunStatus): Promise<unknown>;
+};
 
 const liveStore: InternalReportStore = {
   get: (id) => getStoredReport(id),
@@ -54,6 +58,7 @@ const liveRecovery: InternalRecoveryServices = {
   markDispatched: markReportDispatched,
   markDispatchFailed: markReportDispatchFailed,
 };
+const liveTerminal: InternalTerminalServices = { settle: (run, status) => settleTerminalReportReservation(run, status) };
 
 async function publicId(context: RouteContext) {
   return (await context.params).publicId;
@@ -126,13 +131,14 @@ function routeError(error: unknown, fallback: string) {
   return Response.json({ ok: false, error: message }, { status, headers: { "Cache-Control": "no-store" } });
 }
 
-export function createInternalReportHandlers(store: InternalReportStore, expectedToken?: string, recovery: InternalRecoveryServices = liveRecovery) {
+export function createInternalReportHandlers(store: InternalReportStore, expectedToken?: string, recovery: InternalRecoveryServices = liveRecovery, terminal: InternalTerminalServices = liveTerminal) {
   return {
     async get(request: Request, context: RouteContext) {
       if (!await hasValidInternalAuthorization(request.headers.get("authorization"), expectedToken)) return unauthorizedInternalResponse();
       try {
         const report = await store.get(await publicId(context));
         if (!report) return Response.json({ ok: false, error: "Report not found." }, { status: 404 });
+        await terminal.settle(report.run);
         return Response.json({ ok: true, report }, { headers: { "Cache-Control": "no-store" } });
       } catch (error) {
         return routeError(error, "The persistent report could not be read.");
@@ -187,6 +193,7 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
           const existing = report.events.find((item) => item.idempotencyKey === key);
           if (existing) {
             if (!eventReplayMatches(existing, body)) return Response.json({ ok: false, error: "The callback idempotency key conflicts with a different event." }, { status: 409 });
+            await terminal.settle(report.run, existing.status);
             return Response.json({ ok: true, event: existing, replayed: true });
           }
           if (["complete", "limited", "failed", "interrupted"].includes(report.run.status)) {
@@ -201,6 +208,7 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
             metadata: body.metadata,
             errorCode: clean(body.errorCode, 80),
           });
+          await terminal.settle(report.run, body.status as ReportRunStatus);
           return Response.json({ ok: true, event, replayed: false });
         }
         if (body.action === "fact-chunk") {
@@ -227,6 +235,7 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
         if (body.action === "document") {
           if (["complete", "limited"].includes(report.run.status)) {
             if (!documentReplayMatches(report, body)) return Response.json({ ok: false, error: "The completed report callback conflicts with the saved document." }, { status: 409 });
+            await terminal.settle(report.run);
             return Response.json({ ok: true, saved: { publicId: id, status: report.run.status }, replayed: true });
           }
           if (["failed", "interrupted"].includes(report.run.status)) {
@@ -237,6 +246,7 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
             status: body.status === "limited" ? "limited" : "complete",
             observedAt: typeof body.observedAt === "string" ? body.observedAt : undefined,
           });
+          await terminal.settle(report.run, body.status === "limited" ? "limited" : "complete");
           if (saved.evaluation?.status === "deterministic" && await reportEvaluationPilotEnabled({ primaryDomain: report.run.primaryDomain, publicReportId: id })) {
             let payload: Awaited<ReturnType<typeof beginReportEvaluationDispatch>> | null = null;
             try {

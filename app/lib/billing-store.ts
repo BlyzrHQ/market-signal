@@ -177,8 +177,13 @@ export function reserveReport(database: Database.Database, workspaceId: string, 
 }
 
 export function finishReportReservation(database: Database.Database, reservationId: string, outcome: "committed" | "released", runId = "", now = new Date()): void {
-  database.prepare(`UPDATE billing_report_reservations SET status = ?, run_id = ?, updated_at = ? WHERE id = ? AND status = 'reserved'`)
-    .run(outcome, outcome === "committed" ? runId : "", now.toISOString(), reservationId);
+  if (outcome === "committed") {
+    database.prepare(`UPDATE billing_report_reservations SET status = 'committed', run_id = ?, updated_at = ? WHERE id = ? AND status = 'reserved'`)
+      .run(runId, now.toISOString(), reservationId);
+    return;
+  }
+  database.prepare(`UPDATE billing_report_reservations SET status = 'released', run_id = '', updated_at = ? WHERE id = ? AND (status = 'reserved' OR (status = 'committed' AND run_id = ?))`)
+    .run(now.toISOString(), reservationId, runId);
 }
 
 export function workspaceUsage(database: Database.Database, workspaceId: string): { used: number; limit: number } {

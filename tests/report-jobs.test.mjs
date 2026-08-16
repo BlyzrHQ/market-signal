@@ -277,6 +277,19 @@ test("authenticated callbacks are replay-safe and conflicting idempotency keys f
   assert.equal(denied.status, 401);
 });
 
+test("terminal callbacks settle the exact report reservation after persistence", async () => {
+  const stored = report({ billingReservationId: "reservation-1", workspaceId: "workspace-1" });
+  const settlements = [];
+  const handlers = createInternalReportHandlers({
+    get: async () => stored,
+    append: async (_id, input) => input,
+    save: async () => ({ status: "complete" }),
+  }, TOKEN, undefined, { settle: async (run, status) => settlements.push([run.id, run.billingReservationId, status]) });
+  const failed = await handlers.post(request({ action: "event", idempotencyKey: "crawl-failed", phase: "failed", status: "failed", message: "Blocked-page recovery failed.", errorCode: "edge-response-invalid" }), { params: { publicId: PUBLIC_ID } });
+  assert.equal(failed.status, 200);
+  assert.deepEqual(settlements, [["internal", "reservation-1", "failed"]]);
+});
+
 test("authenticated fact callbacks preserve chunk and manifest contracts", async () => {
   const stored = report();
   const writes = [];

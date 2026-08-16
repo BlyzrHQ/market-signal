@@ -185,7 +185,6 @@ export async function createPersistentReport(request: Request, services: ReportC
     }
     stage = "dispatch-telemetry";
     try { await services.markDispatched(report.publicId, job.runId); } catch { /* accepted work remains live even if dispatch telemetry races or is temporarily unavailable */ }
-    if (reservationId && services.finishReservation) await services.finishReservation(reservationId, "committed", report.id);
     return Response.json({ ok: true, report, job: { dispatched: true, runId: job.runId } }, { status: 202, headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     if (reservationId && services.finishReservation) {

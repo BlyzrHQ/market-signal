@@ -518,6 +518,27 @@ test("the HTTP crawl adapter accepts only a bounded same-domain unavailable-doma
   }
 });
 
+test("the HTTP crawl adapter preserves a validated blocked-page recovery diagnostic", async () => {
+  const port = createReportOrchestrationHttpPort({
+    appOrigin: "https://market.example",
+    callbackToken: "callback_secret_with_enough_entropy_123456",
+    async fetchImpl(input) {
+      if (String(input).endsWith("/api/crawl")) return Response.json({
+        ok: false,
+        live: false,
+        code: "blocked-page-recovery-failed",
+        errorCode: "edge-response-invalid",
+        error: "The blocked-page recovery result failed source and identity validation.",
+        primaryDomain: "shop.example",
+        results: [],
+        document: { blocks: [] },
+      }, { status: 422 });
+      return Response.json({ ok: true });
+    },
+  });
+  await assert.rejects(port.crawl({ primary: "shop.example", domains: ["shop.example"] }), /blocked-page recovery result failed source and identity validation/i);
+});
+
 test("a replayed parked report preserves the live canonical phase summary", async () => {
   const port = mockPort({
     async loadReport() {

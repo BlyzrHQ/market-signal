@@ -224,7 +224,7 @@ export function isCatalogReplacementProduct(product: ProductRecord) {
 type JsonRecord = Record<string, unknown>;
 
 const PRODUCT_TYPES = new Set(["Product", "SoftwareApplication", "Service"]);
-const PRODUCT_PATH = /\/(?:billing|checkout|invoices?|payments?|subscriptions?|products?|shop|store|collections?|catalog|pricing|plans?|solutions?|services?|platform|features?)(?:\/|$)/i;
+const PRODUCT_PATH = /\/(?:billing|checkout|invoices?|payments?|subscriptions?|products?|shop|store|collections?|catalog|pricing|plans?|solutions?|services?|platform|features?)(?:\/|$)|\/(?:-\/)?p\d+(?:\/|$)/i;
 const EXCLUDED_PATH = /\/(?:about|articles?|blog|careers?|case-studies|company|contact|customers?|docs?|events?|guides?|help|jobs?|legal|news|partners?|press|privacy|resources?|security|stories|support|terms)(?:\/|$)/i;
 const PRODUCT_HEADING = /\b(?:billing|checkout|invoices?|payments?|plan|pricing|subscriptions?|tier|package|product|service|solution|feature|includes?|built for)\b/i;
 const PRICING_PATH = /\/(?:pricing|plans?)(?:\/|$)/i;

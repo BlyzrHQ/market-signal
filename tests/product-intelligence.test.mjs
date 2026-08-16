@@ -41,6 +41,21 @@ function product(id, domain, name, category = "inventory", description = "invent
   };
 }
 
+test("Salla numeric product routes are treated as first-party product pages", () => {
+  const result = extraction({
+    sourceUrl: "https://asalbarri.sa/ar/-/p168289680",
+    domain: "asalbarri.sa",
+    pageTitle: "عسل سدر التميز 500 جرام",
+    pageDescription: "عسل سدر طبيعي",
+    headings: ["عسل سدر التميز 500 جرام"],
+    pagePriceSignals: [{ raw: "SAR 199", currency: "SAR", amount: 199 }],
+    document: '<meta property="product:price:amount" content="199"><meta property="product:price:currency" content="SAR"><h1>عسل سدر التميز 500 جرام</h1>',
+  });
+  assert.equal(result.products.length, 1);
+  assert.equal(result.products[0].sourceUrl, "https://asalbarri.sa/ar/-/p168289680");
+  assert.equal(result.products[0].priceSignals[0].currency, "SAR");
+});
+
 test("extracts owned JSON-LD products, @graph nodes, arrays, and offers", () => {
   const document = `<script type="application/ld+json">${JSON.stringify({
     "@graph": [

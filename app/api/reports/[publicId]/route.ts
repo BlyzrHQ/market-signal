@@ -1,5 +1,6 @@
 import { getStoredReport } from "../../../lib/report-store.ts";
 import { recoverLegacyReport } from "../../../lib/legacy-report-recovery.ts";
+import { settleTerminalReportReservation } from "../../../lib/report-terminal-billing.ts";
 
 type RouteContext = { params: Promise<{ publicId: string }> | { publicId: string } };
 
@@ -12,6 +13,7 @@ export async function GET(request: Request, context: RouteContext) {
     const id = await publicId(context);
     const report = await getStoredReport(id) || await recoverLegacyReport(id, { requestUrl: request.url });
     if (!report) return Response.json({ ok: false, error: "Report not found." }, { status: 404 });
+    await settleTerminalReportReservation(report.run);
     return Response.json({ ok: true, report });
   } catch (error) {
     const message = error instanceof Error ? error.message : "The persistent report could not be read.";

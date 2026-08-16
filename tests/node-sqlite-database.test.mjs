@@ -304,6 +304,32 @@ test("terminal report evaluation fails closed without facts and cannot break cus
   }
 });
 
+test("failed reports create a deterministic zero-cost run-failure evaluation", async () => {
+  const value = await fixture();
+  const database = await NodeSqliteDatabase.open(value.databasePath);
+  try {
+    const now = new Date("2026-08-16T14:00:00.000Z");
+    const created = await createReportRun({ primaryDomain: "blocked.example" }, now, database);
+    await appendReportEvent(created.publicId, { attemptNumber: 1, idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Collecting public pages." }, now, database);
+    await appendReportEvent(created.publicId, { attemptNumber: 1, idempotencyKey: "crawl-failed", phase: "failed", status: "failed", message: "The blocked-page recovery result failed source and identity validation.", errorCode: "edge-response-invalid" }, now, database);
+    const evaluation = await getReportEvaluation(created.publicId, database);
+    assert.equal(evaluation.evaluationType, "run_failure");
+    assert.equal(evaluation.status, "complete");
+    assert.equal(evaluation.ratingBasis, "deterministic_only");
+    assert.equal(evaluation.overallScore, 0);
+    assert.equal(evaluation.grade, "F");
+    assert.equal(evaluation.usageStatus, "known");
+    assert.equal(evaluation.costMicrousd, 0);
+    assert.equal(evaluation.errorCode, "edge-response-invalid");
+    assert.equal(evaluation.agent.weaknesses[0].issueCode, "edge-response-invalid");
+    const outbox = (await database.prepare("SELECT COUNT(*) AS count FROM report_evaluation_feedback_outbox WHERE evaluation_id = ?").bind(evaluation.id).all()).results[0];
+    assert.equal(outbox.count, 1);
+  } finally {
+    database.close();
+    await rm(value.directory, { recursive: true, force: true });
+  }
+});
+
 test("partial manifests can be atomically superseded while invalid domains and references fail closed", async () => {
   const { directory, databasePath } = await fixture();
   const database = await NodeSqliteDatabase.open(databasePath);

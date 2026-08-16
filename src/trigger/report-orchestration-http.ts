@@ -68,8 +68,9 @@ export class OrchestrationHttpError extends Error {
   readonly status: number;
   readonly retryable: boolean;
 
-  constructor(operation: string, status = 0, retryable = false) {
-    super(status ? `${operation} request failed with HTTP ${status}.` : `${operation} request could not be completed.`);
+  constructor(operation: string, status = 0, retryable = false, detail = "") {
+    const cleanDetail = detail.replace(/\s+/g, " ").trim().slice(0, 280);
+    super(cleanDetail || (status ? `${operation} request failed with HTTP ${status}.` : `${operation} request could not be completed.`));
     this.name = "OrchestrationHttpError";
     this.status = status;
     this.retryable = retryable;
@@ -188,6 +189,26 @@ async function acceptedUnavailableDomainResponse(response: Response, expectedPri
   return value;
 }
 
+async function acceptedCrawlFailureError(response: Response, expectedPrimaryDomain: string) {
+  if (response.status !== 422 || !/application\/json/i.test(response.headers.get("content-type") || "")) return undefined;
+  const text = await readBoundedText(response, 250_000);
+  if (text === null) return undefined;
+  let value: unknown;
+  try { value = JSON.parse(text); } catch { return undefined; }
+  const payload = record(value);
+  const code = typeof payload?.code === "string" ? payload.code : "";
+  const errorCode = typeof payload?.errorCode === "string" ? payload.errorCode : "";
+  const detail = typeof payload?.error === "string" ? payload.error.replace(/\s+/g, " ").trim() : "";
+  if (payload?.ok !== false
+    || payload.live !== false
+    || payload.primaryDomain !== expectedPrimaryDomain
+    || !["blocked-page-recovery-failed", "primary-page-unavailable"].includes(code)
+    || !/^(?:edge-(?:request-failed|http-rejected|content-type-invalid|response-too-large|response-invalid)|primary-page-unavailable)$/.test(errorCode)
+    || !detail
+    || detail.length > 280) return undefined;
+  return new OrchestrationHttpError("Public crawl", response.status, false, detail);
+}
+
 async function requestJson(fetchImpl: FetchLike, url: string, token: string, operation: string, timeoutMs: number, body?: unknown, acceptError?: (response: Response) => Promise<unknown | undefined>) {
   const deadline = Date.now() + timeoutMs;
   for (let requestAttempt = 1; requestAttempt <= 2; requestAttempt += 1) {
@@ -260,7 +281,12 @@ export function createReportOrchestrationHttpPort(configuration: { appOrigin: st
     async crawl(input) {
       const payload = requiredObject<Awaited<ReturnType<ReportOrchestrationPort["crawl"]>>>(await requestJson(fetchImpl, new URL(PATHS.crawl, appOrigin).toString(), token, "Public crawl", OPERATION_BUDGETS_MS.crawl, input, async (response) => {
         const parked = await acceptedParkedDomainResponse(response.clone(), input.primary);
-        return parked === undefined ? acceptedUnavailableDomainResponse(response, input.primary) : parked;
+        if (parked !== undefined) return parked;
+        const unavailable = await acceptedUnavailableDomainResponse(response.clone(), input.primary);
+        if (unavailable !== undefined) return unavailable;
+        const failure = await acceptedCrawlFailureError(response, input.primary);
+        if (failure) throw failure;
+        return undefined;
       }), "Public crawl");
       if (payload.ok !== true && payload.code !== "parked-domain" && payload.code !== "unavailable-domain") throw new OrchestrationHttpError("Public crawl", 422, false);
       return payload;

@@ -43,6 +43,8 @@ export type StoredReportRun = {
   expiresAt: string;
   errorCode: string;
   errorMessage: string;
+  workspaceId: string;
+  billingReservationId: string;
   productPlan: ProductPlan;
   productLimit: number;
 };
@@ -531,9 +533,88 @@ function rowRun(row: Record<string, unknown>): StoredReportRun {
     expiresAt: String(row.expires_at || ""),
     errorCode: String(row.error_code || ""),
     errorMessage: String(row.error_message || ""),
+    workspaceId: String(row.workspace_id || ""),
+    billingReservationId: String(row.billing_reservation_id || ""),
     productPlan,
     productLimit: PRODUCT_PLAN_LIMITS[productPlan],
   };
+}
+
+const RUN_FAILURE_EVALUATOR_VERSION = "run-failure-v1";
+
+function runFailureSignal(run: StoredReportRun) {
+  const code = cleanText(run.errorCode || "report-run-failed", 80) || "report-run-failed";
+  const stage = code.includes("dispatch") ? "dispatch"
+    : code.includes("crawl") || run.currentPhase === "crawl" ? "crawl"
+      : code.includes("worker") || run.status === "interrupted" ? "worker"
+        : run.currentPhase === "persistence" ? "persistence"
+          : "orchestration";
+  const explanation = cleanText(run.errorMessage, 240) || `The report ended in ${run.status} during ${stage}.`;
+  return {
+    code,
+    stage,
+    explanation,
+    proposal: stage === "crawl"
+      ? "Inspect the failed public-source request and recovery diagnostics before retrying this domain."
+      : stage === "dispatch"
+        ? "Verify the worker dispatch path and retry the report after service health is restored."
+        : stage === "worker"
+          ? "Inspect the last worker heartbeat and resume only from a verified idempotent attempt."
+          : "Inspect the terminal event and preserve its evidence before retrying the report.",
+  };
+}
+
+async function ensureRunFailureEvaluation(database: D1DatabaseLike, run: StoredReportRun, now = new Date()) {
+  if (run.status !== "failed" && run.status !== "interrupted") return null;
+  const existing = await database.prepare(`SELECT * FROM report_evaluations WHERE run_id = ? AND evaluation_type = 'run_failure' ORDER BY created_at DESC LIMIT 1`).bind(run.id).all<Record<string, unknown>>();
+  if (existing.results?.[0]) return rowEvaluation(existing.results[0]);
+  const eventRows = await database.prepare(`SELECT sequence, idempotency_key, phase, status, message, observed_at FROM report_events WHERE run_id = ? ORDER BY sequence`).bind(run.id).all<Record<string, unknown>>();
+  const terminalInput = {
+    runId: run.id,
+    publicId: run.publicId,
+    primaryDomain: run.primaryDomain,
+    status: run.status,
+    currentPhase: run.currentPhase,
+    attemptCount: run.attemptCount,
+    errorCode: run.errorCode,
+    errorMessage: run.errorMessage,
+    events: (eventRows.results || []).map((row) => ({
+      sequence: Number(row.sequence || 0),
+      idempotencyKey: String(row.idempotency_key || ""),
+      phase: String(row.phase || ""),
+      status: String(row.status || ""),
+      message: String(row.message || ""),
+      observedAt: String(row.observed_at || ""),
+    })),
+  };
+  const inputHash = await sha256Text(JSON.stringify(stableJsonValue(terminalInput)));
+  const signal = runFailureSignal(run);
+  const observedAt = now.toISOString();
+  const evaluationId = internalId();
+  const weakness = { issueCode: signal.code, subjectKind: "run", subjectId: run.publicId, explanation: signal.explanation, evidenceIds: terminalInput.events.slice(-3).map((event) => event.idempotencyKey) };
+  const proposal = { issueCode: `${signal.stage}-recovery`, subjectKind: "run", subjectId: run.publicId, explanation: signal.proposal, evidenceIds: weakness.evidenceIds };
+  await database.batch([
+    database.prepare(`INSERT INTO report_evaluations (id, run_id, evaluation_type, input_hash, fact_manifest_hash, evaluator_version, rubric_version, status, rating_basis, overall_score, user_value_score, evidence_integrity_score, evidence_yield_score, presentation_score, deterministic_score, grade, deterministic_json, agent_json, findings_json, proposals_json, model, prompt_version, pricing_version, cost_microusd, input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, usage_status, reserved_cost_microusd, error_code, dispatch_attempts, deterministic_at, created_at, started_at, completed_at) SELECT ?, ?, 'run_failure', ?, '', ?, ?, 'complete', 'deterministic_only', 0, 0, NULL, 0, 0, 0, 'F', ?, ?, ?, ?, '', '', '', 0, 0, 0, 0, 0, 'known', 0, ?, 0, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND status IN ('failed','interrupted')) ON CONFLICT(run_id, input_hash, evaluator_version, evaluation_type) DO NOTHING`).bind(
+      evaluationId,
+      run.id,
+      inputHash,
+      RUN_FAILURE_EVALUATOR_VERSION,
+      DETERMINISTIC_RUBRIC_VERSION,
+      JSON.stringify({ evaluatorVersion: RUN_FAILURE_EVALUATOR_VERSION, failureStage: signal.stage, terminalInput }),
+      JSON.stringify({ strengths: [], weaknesses: [weakness], proposals: [proposal] }),
+      JSON.stringify([weakness]),
+      JSON.stringify([proposal]),
+      signal.code,
+      observedAt,
+      observedAt,
+      observedAt,
+      observedAt,
+      run.id,
+    ),
+    database.prepare(`INSERT INTO report_quality_signals (id, evaluation_id, run_id, primary_domain, stage, issue_key, severity, evidence_json, observed_at) SELECT ?, evaluations.id, ?, ?, ?, ?, 'critical', ?, ? FROM report_evaluations evaluations WHERE evaluations.run_id = ? AND evaluations.evaluation_type = 'run_failure' ON CONFLICT(evaluation_id, issue_key) DO NOTHING`).bind(internalId(), run.id, run.primaryDomain, signal.stage, signal.code, JSON.stringify({ status: run.status, currentPhase: run.currentPhase, attemptCount: run.attemptCount, errorMessage: run.errorMessage }), observedAt, run.id),
+  ]);
+  const persisted = await database.prepare(`SELECT * FROM report_evaluations WHERE run_id = ? AND evaluation_type = 'run_failure' ORDER BY created_at DESC LIMIT 1`).bind(run.id).all<Record<string, unknown>>();
+  return persisted.results?.[0] ? rowEvaluation(persisted.results[0]) : null;
 }
 
 export class ReportStorageError extends Error {
@@ -988,6 +1069,7 @@ export async function appendReportEvent(publicReportId: string, input: { attempt
   ]);
   const persistedRun = await findRun(database, publicReportId);
   if (!persistedRun || persistedRun.attemptCount !== attemptNumber) throw new Error("Report callback attempt is stale or invalid.");
+  if (persistedRun.status === "failed" || persistedRun.status === "interrupted") await ensureRunFailureEvaluation(database, persistedRun, now);
   return { publicId: run.publicId, phase: input.phase, status: input.status, observedAt };
 }
 
@@ -1053,7 +1135,7 @@ export async function getReportEvaluation(publicReportId: string, databaseOverri
   await ensureSchema(database);
   const run = await findRun(database, publicReportId);
   if (!run) return null;
-  const rows = await database.prepare(`SELECT * FROM report_evaluations WHERE run_id = ? AND evaluation_type = 'report' ORDER BY created_at DESC LIMIT 1`).bind(run.id).all<Record<string, unknown>>();
+  const rows = await database.prepare(`SELECT * FROM report_evaluations WHERE run_id = ? ORDER BY created_at DESC LIMIT 1`).bind(run.id).all<Record<string, unknown>>();
   return rows.results?.[0] ? rowEvaluation(rows.results[0]) : null;
 }
 
@@ -1732,6 +1814,7 @@ export async function getStoredReport(publicReportId: string, now = new Date(), 
       run = await findRun(database, publicReportId) || run;
     }
   }
+  if (run.status === "failed" || run.status === "interrupted") await ensureRunFailureEvaluation(database, run, now);
   const [eventsResult, documentResult, manifestResult] = await Promise.all([
     database.prepare(`SELECT sequence, idempotency_key, phase, status, message, metadata_json, observed_at FROM report_events WHERE run_id = ? ORDER BY sequence ASC LIMIT 100`).bind(run.id).all<Record<string, unknown>>(),
     database.prepare(`SELECT schema_version, document_json, observed_at, updated_at FROM report_documents WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>(),

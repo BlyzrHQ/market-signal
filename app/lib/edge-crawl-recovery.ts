@@ -15,6 +15,18 @@ type EdgeResult = Record<string, unknown> & {
   document?: Record<string, unknown> & { blocks?: unknown[] };
 };
 
+export type EdgeRecoveryFailureCode =
+  | "edge-request-failed"
+  | "edge-http-rejected"
+  | "edge-content-type-invalid"
+  | "edge-response-too-large"
+  | "edge-response-invalid";
+
+export type EdgeRecoveryAttempt =
+  | { status: "not-configured" }
+  | { status: "failed"; code: EdgeRecoveryFailureCode; message: string }
+  | { status: "recovered"; result: EdgeResult };
+
 export function validatedEdgeCrawlUrl(value: string | undefined, requestUrl: string) {
   if (!value?.trim()) return null;
   try {
@@ -57,6 +69,35 @@ function validateNestedEvidence(value: unknown, allowedDomains: Set<string>, dep
     && Object.entries(value as Record<string, unknown>).every(([key, item]) => validateNestedEvidence(item, allowedDomains, depth + 1, key));
 }
 
+function declaredDiscoveryEvidenceDomains(parsed: EdgeResult) {
+  const discovery = parsed.discovery && typeof parsed.discovery === "object" && !Array.isArray(parsed.discovery)
+    ? parsed.discovery as Record<string, unknown>
+    : null;
+  const candidates = Array.isArray(discovery?.candidates) ? discovery.candidates.slice(0, 100) : [];
+  const domains = new Set<string>();
+  const accept = (value: unknown) => {
+    if (typeof value !== "string" || !value || value.length > 2_000) return false;
+    try {
+      const url = normalizeDomain(value);
+      if (url.protocol !== "https:" || url.username || url.password) return false;
+      domains.add(canonicalDomain(url.hostname));
+      return true;
+    } catch { return false; }
+  };
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+    const row = candidate as Record<string, unknown>;
+    if (row.sourceUrl !== undefined && !accept(row.sourceUrl)) return null;
+    const evidence = Array.isArray(row.evidence) ? row.evidence.slice(0, 20) : [];
+    for (const item of evidence) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+      const url = (item as Record<string, unknown>).url;
+      if (url !== undefined && !accept(url)) return null;
+    }
+  }
+  return domains;
+}
+
 function validateEdgeResult(parsed: EdgeResult, payload: EdgePayload) {
   const primaryDomain = canonicalDomain(payload.primary);
   if (!parsed || parsed.ok !== true || parsed.live !== true || canonicalDomain(parsed.primaryDomain) !== primaryDomain || !Array.isArray(parsed.results) || parsed.results.length > 20) return null;
@@ -69,6 +110,9 @@ function validateEdgeResult(parsed: EdgeResult, payload: EdgePayload) {
       allowedDomains.add(domain);
     } catch { return null; }
   }
+  const discoveryDomains = declaredDiscoveryEvidenceDomains(parsed);
+  if (!discoveryDomains) return null;
+  for (const domain of discoveryDomains) allowedDomains.add(domain);
   const primary = parsed.results.find((item) => canonicalDomain(String(item.domain || "")) === primaryDomain);
   if (!primary?.homepage || !Array.isArray(primary.products)) return null;
   if (parsed.document && (!Array.isArray(parsed.document.blocks) || parsed.document.blocks.length > 5_000)) return null;
@@ -109,8 +153,17 @@ export async function recoverCrawlThroughEdge(
   payload: EdgePayload,
   options: { configuredUrl?: string; requestUrl: string; callbackToken: string; deployTarget?: string; fetchImpl?: typeof fetch; timeoutMs?: number; maxResponseBytes?: number },
 ) {
+  const attempt = await recoverCrawlThroughEdgeAttempt(payload, options);
+  if (attempt.status === "not-configured") return undefined;
+  return attempt.status === "recovered" ? attempt.result : null;
+}
+
+export async function recoverCrawlThroughEdgeAttempt(
+  payload: EdgePayload,
+  options: { configuredUrl?: string; requestUrl: string; callbackToken: string; deployTarget?: string; fetchImpl?: typeof fetch; timeoutMs?: number; maxResponseBytes?: number },
+): Promise<EdgeRecoveryAttempt> {
   const edgeUrl = validatedEdgeCrawlUrl(options.configuredUrl, options.requestUrl);
-  if (!edgeUrl || options.deployTarget !== "node" || options.callbackToken.length < 32 || /\s/.test(options.callbackToken)) return undefined;
+  if (!edgeUrl || options.deployTarget !== "node" || options.callbackToken.length < 32 || /\s/.test(options.callbackToken)) return { status: "not-configured" };
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? EDGE_TIMEOUT_MS);
   try {
@@ -121,18 +174,21 @@ export async function recoverCrawlThroughEdge(
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify(payload),
     });
-    if (!response.ok || !/^application\/json\b/i.test(response.headers.get("content-type") || "")) return null;
+    if (!response.ok) return { status: "failed", code: "edge-http-rejected", message: `The blocked-page recovery service returned HTTP ${response.status}.` };
+    if (!/^application\/json\b/i.test(response.headers.get("content-type") || "")) return { status: "failed", code: "edge-content-type-invalid", message: "The blocked-page recovery service returned an unsupported response type." };
     const maxBytes = options.maxResponseBytes ?? EDGE_MAX_RESPONSE_BYTES;
     const declaredBytes = Number(response.headers.get("content-length") || 0);
-    if (declaredBytes > maxBytes) return null;
+    if (declaredBytes > maxBytes) return { status: "failed", code: "edge-response-too-large", message: "The blocked-page recovery response exceeded its safety limit." };
     const buffer = await response.arrayBuffer();
-    if (buffer.byteLength > maxBytes) return null;
-    const parsed = JSON.parse(new TextDecoder().decode(buffer)) as EdgeResult;
+    if (buffer.byteLength > maxBytes) return { status: "failed", code: "edge-response-too-large", message: "The blocked-page recovery response exceeded its safety limit." };
+    let parsed: EdgeResult;
+    try { parsed = JSON.parse(new TextDecoder().decode(buffer)) as EdgeResult; }
+    catch { return { status: "failed", code: "edge-response-invalid", message: "The blocked-page recovery service returned invalid JSON." }; }
     const primaryDomain = validateEdgeResult(parsed, payload);
-    if (!primaryDomain) return null;
-    return withRecoveryProvenance(parsed, primaryDomain, edgeUrl.hostname);
+    if (!primaryDomain) return { status: "failed", code: "edge-response-invalid", message: "The blocked-page recovery result failed source and identity validation." };
+    return { status: "recovered", result: withRecoveryProvenance(parsed, primaryDomain, edgeUrl.hostname) };
   } catch {
-    return null;
+    return { status: "failed", code: "edge-request-failed", message: "The blocked-page recovery service could not be reached within its bounded request." };
   } finally {
     clearTimeout(timeout);
   }

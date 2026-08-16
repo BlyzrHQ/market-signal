@@ -15,7 +15,7 @@ import { claimablePagePricePatterns, selectPrimaryProductPriceTargets, type Enri
 import { enrichProductTargetsWithRecovery, type ProductEnrichmentRecoveryOptions } from "../../lib/product-enrichment-recovery.ts";
 import { buildExperienceBenchmark } from "../../lib/experience-benchmark.ts";
 import { hasObservedAddToCartControl } from "../../lib/experience-signals.ts";
-import { EDGE_CRAWL_MARKER, isEdgeRecoveryEligible, recoverCrawlThroughEdge } from "../../lib/edge-crawl-recovery.ts";
+import { EDGE_CRAWL_MARKER, isEdgeRecoveryEligible, recoverCrawlThroughEdgeAttempt, type EdgeRecoveryFailureCode } from "../../lib/edge-crawl-recovery.ts";
 import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../lib/internal-auth.ts";
 import { runtimeEnvironmentValue } from "../../lib/runtime-env.ts";
 import { buildAIProductComparison } from "../../lib/ai-product-matching.ts";
@@ -115,6 +115,7 @@ const COMPETITOR_CRAWL_CONCURRENCY = 3;
 const REQUEST_TIMEOUT_MS = 6_000;
 const USER_AGENT = "MarketSignalPublicScanner/0.1";
 const PRIORITY_PATHS = ["/pricing", "/plans", "/products", "/features", "/compare", "/integrations", "/about", "/customers", "/blog"];
+const PRODUCT_ROUTE_PATH = /\/(?:products?|shop|store|collections?|catalog|pricing|plans?)(?:\/|$)|\/(?:-\/)?p\d+(?:\/|$)/i;
 const SOCIAL_HOSTS = ["facebook.com", "instagram.com", "linkedin.com", "tiktok.com", "youtube.com", "x.com", "twitter.com"];
 
 function firstPartyRegionSource(page: CrawlPage): FirstPartyRegionSource {
@@ -362,7 +363,7 @@ export function verifiedExactMatchHints(confirmed: DomainCrawl[]) {
 
 function productPathPriority(path: string) {
   if (/\/(?:pricing|plans?)(?:\/|$)/i.test(path)) return -10;
-  if (/\/(?:products?)\/[^/]+/i.test(path)) return -5;
+  if (/\/(?:products?)\/[^/]+/i.test(path) || /\/(?:-\/)?p\d+(?:\/|$)/i.test(path)) return -5;
   if (/\/(?:boxes?|bundles?|subscriptions?|products?|shop|store|collections?|catalog|solutions?|services?|capabilities|expertise|platform|features?)(?:\/|$)/i.test(path)) return 0;
   if (/^\/[^/]+\/?$/.test(path) && !/\/(?:about|blog|careers?|contact|customers?|docs?|help|login|news|press|privacy|resources?|support|terms)(?:\/|$)/i.test(path)) return 30;
   const exact = PRIORITY_PATHS.indexOf(path);
@@ -506,8 +507,8 @@ async function parsePage(document: string, sourceUrl: string, fetchedAt: string,
   const imagesWithAlt = imageTags.filter((tag) => /\balt\s*=\s*["'][^"']+[^\s"'][^"']*["']/i.test(tag)).length;
   const responsiveImageCount = imageTags.filter((tag) => /\bsrcset\s*=|\bsizes\s*=/i.test(tag)).length;
   const hasViewport = /<meta[^>]+name\s*=\s*["']viewport["']/i.test(extractionDocument);
-  const productLinkCount = internalLinks.filter((path) => /\/(?:products?|shop|store|collections?|catalog|pricing|plans?)(?:\/|$)/i.test(path)).length;
-  const hasProductPath = /\/(?:products?|shop|store|collections?|catalog|pricing|plans?)(?:\/|$)/i.test(url.pathname);
+  const productLinkCount = internalLinks.filter((path) => PRODUCT_ROUTE_PATH.test(path)).length;
+  const hasProductPath = PRODUCT_ROUTE_PATH.test(url.pathname);
   const hasAddToCart = hasObservedAddToCartControl(extractionDocument);
   const hasCartLink = /href\s*=\s*["'][^"']*\/cart(?:[/?#"'])/i.test(extractionDocument);
   const hasCheckoutLink = /href\s*=\s*["'][^"']*\/(?:checkout|checkouts)(?:[/?#"'])/i.test(extractionDocument);
@@ -522,8 +523,8 @@ async function parsePage(document: string, sourceUrl: string, fetchedAt: string,
   const textContent = `${title} ${description} ${readable}`;
   const observedPrices = prices(readable);
   const claimablePrices = claimablePagePricePatterns(observedPrices);
-  const priceSignals = /\/(?:products?|shop|store|catalog|pricing|plans?)(?:\/|$)/i.test(url.pathname) ? observedPrices : [];
-  const claimablePriceSignals = /\/(?:products?|shop|store|catalog|pricing|plans?)(?:\/|$)/i.test(url.pathname) ? claimablePrices : [];
+  const priceSignals = PRODUCT_ROUTE_PATH.test(url.pathname) ? observedPrices : [];
+  const claimablePriceSignals = PRODUCT_ROUTE_PATH.test(url.pathname) ? claimablePrices : [];
   const regionInference = inferRegionEvidence({ domain, language, document: extractionDocument, text: textContent, priceSignals: observedPrices, sourceUrl });
   const productExtraction = extractProductsFromHtml({ document: extractionDocument, sourceUrl, domain, observedAt, pageTitle: title, pageDescription: description, headings, pagePriceSignals: priceSignals });
   const claims: Claim[] = [
@@ -908,15 +909,17 @@ export async function POST(request: Request) {
     const primaryDomain = canonicalDomain(typeof payload.primary === "string" ? payload.primary : domains[0]);
     let submittedResults = await Promise.all(domains.map((domain) => domain === primaryDomain ? crawlPrimaryDomain(domain) : crawlDomain(domain, "submitted-comparison")));
     let primary = submittedResults.find((result) => result.domain === primaryDomain);
+    let edgeRecoveryFailure: { code: EdgeRecoveryFailureCode; message: string } | null = null;
     if (isEdgeRecoveryEligible(primary) && !edgeRequest) {
       const callbackToken = await runtimeEnvironmentValue("MARKET_SIGNAL_CALLBACK_TOKEN");
-      const recovered = await recoverCrawlThroughEdge(
+      const recovery = await recoverCrawlThroughEdgeAttempt(
         { primary: primaryDomain, domains },
         { configuredUrl: process.env.MARKET_SIGNAL_EDGE_CRAWL_URL, requestUrl: request.url, callbackToken, deployTarget: process.env.MARKET_SIGNAL_DEPLOY_TARGET },
       );
-      if (recovered) return Response.json(recovered);
-      if (recovered === null && primary) {
-        primary.gaps.push({ url: `https://${primaryDomain}/`, reason: "The configured edge crawl could not return a validated public result.", observedAt: new Date().toISOString() });
+      if (recovery.status === "recovered") return Response.json(recovery.result);
+      if (recovery.status === "failed" && primary) {
+        edgeRecoveryFailure = { code: recovery.code, message: recovery.message };
+        primary.gaps.push({ url: `https://${primaryDomain}/`, reason: recovery.message, observedAt: new Date().toISOString() });
       }
     }
     if (primary?.siteState?.status === "parked") {
@@ -968,8 +971,17 @@ export async function POST(request: Request) {
     }
     if (!primary?.homepage) {
       const reason = primary?.gaps[0]?.reason;
-      const error = reason ? `The primary domain could not be crawled: ${reason}` : "The primary domain could not be crawled.";
-      return Response.json({ ok: false, live: false, error, results: submittedResults, document: buildDocument(submittedResults, primaryDomain) }, { status: 400 });
+      const error = edgeRecoveryFailure?.message || (reason ? `The primary domain could not be crawled: ${reason}` : "The primary domain could not be crawled.");
+      return Response.json({
+        ok: false,
+        live: false,
+        code: edgeRecoveryFailure ? "blocked-page-recovery-failed" : "primary-page-unavailable",
+        errorCode: edgeRecoveryFailure?.code || "primary-page-unavailable",
+        error,
+        primaryDomain,
+        results: submittedResults,
+        document: buildDocument(submittedResults, primaryDomain),
+      }, { status: 422 });
     }
     const productRecoveryOptions: ProductEnrichmentRecoveryOptions = {
       configuredUrl: process.env.MARKET_SIGNAL_EDGE_ENRICH_URL,

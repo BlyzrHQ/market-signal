@@ -73,7 +73,9 @@ test("subscription events are idempotent, stale-safe, and quota reservations are
     const limited = reserveReport(database, "workspace-1", now);
     assert.equal(limited?.id, "");
     assert.deepEqual({ used: limited?.used, limit: limited?.limit }, { used: 5, limit: 5 });
-    finishReportReservation(database, reservations[0].id, "released", "", now);
+    finishReportReservation(database, reservations[0].id, "committed", "run-1", now);
+    finishReportReservation(database, reservations[0].id, "released", "run-1", now);
+    assert.equal(database.prepare("SELECT status, run_id FROM billing_report_reservations WHERE id = ?").get(reservations[0].id).status, "released");
     assert.ok(reserveReport(database, "workspace-1", now)?.id);
   } finally { database.close(); }
 });
@@ -215,7 +217,7 @@ test("hosted report creation requires auth, subscription, and available quota", 
   assert.equal(limited.status, 429);
 });
 
-test("paid report creation forwards only server-resolved workspace entitlement and commits usage", async () => {
+test("paid report creation forwards only server-resolved workspace entitlement and leaves usage reserved until terminal", async () => {
   let input;
   const outcomes = [];
   const response = await createPersistentReport(new Request("https://signal.example/api/reports?plan=agency", { method: "POST", body: JSON.stringify({ primaryDomain: "myjam.co.uk", plan: "agency", productLimit: 1000 }) }), {
@@ -229,7 +231,7 @@ test("paid report creation forwards only server-resolved workspace entitlement a
   });
   assert.equal(response.status, 202);
   assert.deepEqual(input, { primaryDomain: "myjam.co.uk", locale: "en", workspaceId: "workspace-1", billingReservationId: "reservation-1", entitlement: { plan: "solo", productLimit: 50 } });
-  assert.deepEqual(outcomes, [["reservation-1", "committed", "run-1"]]);
+  assert.deepEqual(outcomes, []);
 });
 
 test("account and pricing sources expose real account billing without committed secrets", async () => {
