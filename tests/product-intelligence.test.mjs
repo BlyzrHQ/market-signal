@@ -293,6 +293,37 @@ test("currency-only product metadata suppresses contradictory structured market 
   assert.ok(result.products[0].attributes.includes("Price evidence conflict: incomplete direct metadata contradicts structured evidence"));
 });
 
+test("amount-only product metadata suppresses a contradictory structured amount", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="100"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Amount Half Pair Jacket", image: "https://acme.com/jacket.jpg", offers: { price: 12000, priceCurrency: "USD" } })}</script>`,
+    sourceUrl: "https://acme.com/products/amount-half-pair-jacket",
+    pageTitle: "Amount Half Pair Jacket",
+    headings: ["Amount Half Pair Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals, []);
+  assert.ok(result.products[0].attributes.includes("Price evidence conflict: incomplete direct metadata contradicts structured evidence"));
+});
+
+test("matching product metadata range endpoints preserve the structured range", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="10"><meta property="product:price:amount" content="20"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Range Jacket", offers: { lowPrice: 10, highPrice: 20, priceCurrency: "USD" } })}</script>`,
+    sourceUrl: "https://acme.com/products/range-jacket",
+    pageTitle: "Range Jacket",
+    headings: ["Range Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 10 }, { currency: "USD", amount: 20 }]);
+});
+
+test("generic multi-product card metadata cannot erase scoped JSON-LD prices", () => {
+  const result = extraction({
+    document: `<meta itemprop="price" content="10"><meta itemprop="price" content="20"><meta itemprop="priceCurrency" content="USD"><script type="application/ld+json">${JSON.stringify([{ "@type": "Product", name: "Catalog Jacket A", offers: { price: 10, priceCurrency: "USD" } }, { "@type": "Product", name: "Catalog Jacket B", offers: { price: 20, priceCurrency: "USD" } }])}</script>`,
+    sourceUrl: "https://acme.com/collections/jackets",
+    pageTitle: "Jackets",
+    headings: ["Catalog Jacket A", "Catalog Jacket B"],
+  });
+  assert.deepEqual(result.products.map((product) => product.priceSignals[0]?.amount), [10, 20]);
+});
+
 test("product-scoped direct metadata conflict suppresses price until visible evidence corroborates it", () => {
   const result = extraction({
     document: `<head><title>Custom Embroidered Columbia Jackets No Minimum – Arklavo</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="GBP"></head><script type="application/ld+json">${JSON.stringify({

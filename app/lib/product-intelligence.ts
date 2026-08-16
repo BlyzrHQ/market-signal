@@ -463,39 +463,52 @@ function metaContent(document: string, key: string) {
   return metaContents(document, key)[0] || "";
 }
 
-function metadataOfferForNamespace(document: string, amountKey: string, currencyKey: string) {
+function metadataOfferForNamespace(document: string, amountKey: string, currencyKey: string, scope: "product" | "og" | "generic") {
   const amountValues = metaContents(document, amountKey);
   const currencyValues = metaContents(document, currencyKey);
   const present = amountValues.length > 0 || currencyValues.length > 0;
-  const parsedAmounts = amountValues.map((value) => priceSignal(value, "USD"))
-    .filter((signal): signal is ProductPriceSignal => Boolean(signal && typeof signal.amount === "number" && Number.isFinite(signal.amount) && signal.amount > 0));
-  const amounts = [...new Set(parsedAmounts.map((signal) => Number(signal.amount).toFixed(6)))];
+  const parsedAmountEntries = amountValues.map((value) => ({ value, signal: priceSignal(value, "USD") }))
+    .filter((entry): entry is { value: string; signal: ProductPriceSignal } => Boolean(entry.signal && typeof entry.signal.amount === "number" && Number.isFinite(entry.signal.amount) && entry.signal.amount > 0));
+  const normalizedAmountValues = new Map<string, string>();
+  parsedAmountEntries.forEach(({ value, signal }) => normalizedAmountValues.set(Number(signal.amount).toFixed(6), value));
+  const amounts = [...normalizedAmountValues.keys()];
   const rawCurrencies = [...new Set(currencyValues.map((value) => value.trim().toUpperCase()).filter(Boolean))];
   const currencies = rawCurrencies.filter(isSupportedCurrency);
   const complete = amountValues.length > 0 && currencyValues.length > 0;
-  const conflict = complete && (parsedAmounts.length !== amountValues.length || amounts.length !== 1
+  const conflict = complete && (parsedAmountEntries.length !== amountValues.length || amounts.length < 1 || amounts.length > 2
     || currencies.length !== rawCurrencies.length || currencies.length !== 1);
-  return { present, conflict, amounts, currencies, offer: !conflict ? priceSignal(amountValues[0], currencies[0]) : null };
+  const signals = complete && !conflict
+    ? amounts.map((amount) => priceSignal(normalizedAmountValues.get(amount), currencies[0])).filter((signal): signal is ProductPriceSignal => Boolean(signal))
+    : [];
+  return { present, conflict, scope, amounts, currencies, signals, offer: signals.length === 1 ? signals[0] : null };
 }
 
 export function directProductMetadataOffer(document: string) {
-  for (const [amountKey, currencyKey] of [["product:price:amount", "product:price:currency"], ["og:price:amount", "og:price:currency"], ["price", "priceCurrency"]]) {
-    const namespace = metadataOfferForNamespace(document, amountKey, currencyKey);
+  for (const [amountKey, currencyKey, scope] of [["product:price:amount", "product:price:currency", "product"], ["og:price:amount", "og:price:currency", "og"], ["price", "priceCurrency", "generic"]] as const) {
+    const namespace = metadataOfferForNamespace(document, amountKey, currencyKey, scope);
     if (namespace.present) return namespace.offer;
   }
   return null;
 }
 
 function directProductMetadataEvidence(document: string) {
-  for (const [amountKey, currencyKey] of [["product:price:amount", "product:price:currency"], ["og:price:amount", "og:price:currency"], ["price", "priceCurrency"]]) {
-    const namespace = metadataOfferForNamespace(document, amountKey, currencyKey);
+  for (const [amountKey, currencyKey, scope] of [["product:price:amount", "product:price:currency", "product"], ["og:price:amount", "og:price:currency", "og"], ["price", "priceCurrency", "generic"]] as const) {
+    const namespace = metadataOfferForNamespace(document, amountKey, currencyKey, scope);
     if (namespace.present) return namespace;
   }
-  return { present: false, conflict: false, amounts: [] as string[], currencies: [] as string[], offer: null };
+  return { present: false, conflict: false, scope: "generic" as const, amounts: [] as string[], currencies: [] as string[], signals: [] as ProductPriceSignal[], offer: null };
 }
 
 export function directProductScopedMetadataOffer(document: string) {
-  return metadataOfferForNamespace(document, "product:price:amount", "product:price:currency").offer;
+  return metadataOfferForNamespace(document, "product:price:amount", "product:price:currency", "product").offer;
+}
+
+function compatibleObservedAmounts(left: string[], right: string[]) {
+  if (!left.length || !right.length) return true;
+  if (left.length === right.length && left.every((amount, index) => amount === right[index])) return true;
+  if (left.length === 1) return right.includes(left[0]);
+  if (right.length === 1) return left.includes(right[0]);
+  return false;
 }
 
 function publicImageUrl(value: string, sourceUrl: string) {
@@ -721,7 +734,6 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
   const thirdPartyReferenced: ProductRecord[] = [];
   const gaps: string[] = [];
   const authoritativeMetadata = directProductMetadataEvidence(input.document);
-  const authoritativeOffer = authoritativeMetadata.offer;
   const scripts = [...input.document.matchAll(/<script[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
   for (const script of scripts) {
     try {
@@ -751,7 +763,14 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
       ? samePageProducts
       : [];
   if (authoritativeMetadata.present) {
-    const samePageProductIds = new Set(samePageProducts.map((product) => product.id));
+    const scopedTargets = authoritativeMetadata.scope === "product"
+      ? metadataCandidates.length === 1
+        ? metadataCandidates
+        : samePageProducts
+      : metadataCandidates.length === 1
+        ? metadataCandidates
+        : [];
+    const samePageProductIds = new Set(scopedTargets.map((product) => product.id));
     products = products.map((product) => {
       if (!samePageProductIds.has(product.id)) return product;
       const structuredCurrencies = [...new Set(product.priceSignals
@@ -760,51 +779,53 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
       const structuredAmounts = [...new Set(product.priceSignals
         .filter((signal) => typeof signal.amount === "number" && Number.isFinite(signal.amount) && signal.amount > 0)
         .map((signal) => Number(signal.amount).toFixed(6)))];
-      const incompleteCurrencyConflict = !authoritativeMetadata.offer && authoritativeMetadata.currencies.length === 1
+      const incompleteCurrencyConflict = authoritativeMetadata.currencies.length === 1
         && structuredCurrencies.some((currency) => currency !== authoritativeMetadata.currencies[0]);
-      const incompleteAmountConflict = !authoritativeMetadata.offer && authoritativeMetadata.amounts.length === 1
-        && structuredAmounts.length > 0 && !structuredAmounts.includes(authoritativeMetadata.amounts[0]);
+      const incompleteAmountConflict = authoritativeMetadata.amounts.length > 0
+        && structuredAmounts.length > 0 && !compatibleObservedAmounts(authoritativeMetadata.amounts, structuredAmounts);
       if (!authoritativeMetadata.conflict && !incompleteCurrencyConflict && !incompleteAmountConflict) return product;
       return {
         ...product,
         priceSignals: [],
         attributes: [...new Set([...product.attributes, authoritativeMetadata.conflict
           ? "Price evidence conflict: contradictory direct metadata namespace"
-          : "Price evidence conflict: incomplete direct metadata contradicts structured evidence"])],
+          : authoritativeMetadata.signals.length === 0
+            ? "Price evidence conflict: incomplete direct metadata contradicts structured evidence"
+            : incompleteCurrencyConflict
+              ? "Price evidence conflict: direct metadata contradicts structured currency"
+              : "Price evidence conflict: direct metadata contradicts structured amount"])],
       };
     });
   }
   if (metadataCandidates.length === 1) {
     const selectedId = metadataCandidates[0].id;
-    const metadataOffer = authoritativeOffer;
-    const validMetadataOffer = Boolean(metadataOffer
-      && typeof metadataOffer.amount === "number"
-      && Number.isFinite(metadataOffer.amount)
-      && metadataOffer.amount > 0
-      && isSupportedCurrency(metadataOffer.currency));
+    const validMetadataSignals = authoritativeMetadata.signals.filter((signal) => typeof signal.amount === "number"
+      && Number.isFinite(signal.amount) && signal.amount > 0 && isSupportedCurrency(signal.currency));
     const metadataImage = openGraphImage(input.document, input.sourceUrl);
     products = products.map((product) => {
       if (product.id !== selectedId) return product;
       const structuredCurrencies = new Set(product.priceSignals
         .map((signal) => String(signal.currency || "").trim().toUpperCase())
         .filter(isSupportedCurrency));
-      const metadataCurrency = String(metadataOffer?.currency || "").trim().toUpperCase();
-      const metadataContradictsStructured = Boolean(validMetadataOffer && metadataOffer && metadataCurrency
+      const metadataCurrency = String(authoritativeMetadata.currencies[0] || "").trim().toUpperCase();
+      const metadataContradictsStructured = Boolean(validMetadataSignals.length && metadataCurrency
         && structuredCurrencies.size > 0
         && [...structuredCurrencies].some((currency) => currency !== metadataCurrency));
       const structuredAmounts = product.priceSignals
         .filter((signal) => typeof signal.amount === "number" && Number.isFinite(signal.amount) && signal.amount > 0 && String(signal.currency || "").trim().toUpperCase() === metadataCurrency)
         .map((signal) => Number(signal.amount).toFixed(6));
-      const metadataContradictsStructuredAmount = Boolean(validMetadataOffer && metadataOffer
+      const metadataContradictsStructuredAmount = Boolean(validMetadataSignals.length
         && structuredAmounts.length > 0
-        && !structuredAmounts.includes(Number(metadataOffer.amount).toFixed(6)));
-      const metadataConflict = authoritativeMetadata.conflict || metadataContradictsStructured || metadataContradictsStructuredAmount;
+        && !compatibleObservedAmounts(authoritativeMetadata.amounts, structuredAmounts));
+      const existingMetadataConflict = product.attributes.some((attribute) => attribute.startsWith("Price evidence conflict: direct metadata contradicts structured")
+        || attribute === "Price evidence conflict: incomplete direct metadata contradicts structured evidence");
+      const metadataConflict = authoritativeMetadata.conflict || existingMetadataConflict || metadataContradictsStructured || metadataContradictsStructuredAmount;
       return {
         ...product,
         priceSignals: metadataConflict
           ? []
-          : !hasComparablePublicPrice(product) && validMetadataOffer && metadataOffer
-            ? [metadataOffer]
+          : !hasComparablePublicPrice(product) && validMetadataSignals.length
+            ? validMetadataSignals
             : product.priceSignals,
         attributes: metadataConflict
           ? [...new Set([...product.attributes, authoritativeMetadata.conflict
@@ -820,7 +841,7 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
   let productPath = false;
   let pagePath = "";
   try { pagePath = new URL(input.sourceUrl).pathname; productPath = PRODUCT_PATH.test(pagePath); } catch { productPath = false; }
-  if (!products.length && (isProductLikePage(input) || (productPath && Boolean(authoritativeOffer)))) {
+  if (!products.length && (isProductLikePage(input) || (productPath && authoritativeMetadata.signals.length > 0))) {
     const titleName = clean(input.pageTitle.split(/\s+(?:\||—|–|-)\s+/)[0] || input.pageTitle);
     const observedHeading = input.headings.find((heading) => !/\b(?:logo|menu|skip navigation|home)\b/i.test(heading));
     const headingName = clean(observedHeading || "");
@@ -836,8 +857,8 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
         description: clean(input.pageDescription).slice(0, 400),
         category: new URL(input.sourceUrl).pathname.split("/").filter(Boolean)[0] || "product page",
         jsonLdType: "PageSignal",
-        priceSignals: authoritativeOffer
-          ? [authoritativeOffer]
+        priceSignals: authoritativeMetadata.signals.length
+          ? authoritativeMetadata.signals
           : PRICING_PATH.test(pagePath)
             ? input.pagePriceSignals.map((value) => priceSignal(value)).filter((value): value is ProductPriceSignal => Boolean(value)).slice(0, 12)
             : [],
