@@ -583,13 +583,30 @@ function addScopedProductPageEvidence(document: string, sourceUrl: string, expec
   if (!identity.accepted) return;
   const selected = identity.products[0];
   const selectedPositive = withPositivePrices(selected);
-  products.push({
+  const selectedCurrencies = new Set(selectedPositive.priceSignals.map((signal) => String(signal.currency || "").trim().toUpperCase()).filter(Boolean));
+  const evidenceCurrencies = new Set(evidence.priceSignals.map((signal) => String(signal.currency || "").trim().toUpperCase()).filter(Boolean));
+  const currencyMismatch = selectedCurrencies.size > 0 && evidenceCurrencies.size > 0
+    && [...selectedCurrencies].some((currency) => !evidenceCurrencies.has(currency));
+  const directCurrency = confirmedProductCurrency(document, { allowStructured: false });
+  const directSupportsVisible = directCurrency && evidenceCurrencies.size === 1 && evidenceCurrencies.has(directCurrency);
+  const directSupportsSelected = directCurrency && selectedCurrencies.size === 1 && selectedCurrencies.has(directCurrency);
+  const priceSignals = currencyMismatch
+    ? directSupportsVisible
+      ? evidence.priceSignals
+      : directSupportsSelected
+        ? selectedPositive.priceSignals
+        : []
+    : selectedPositive.priceSignals.length ? selectedPositive.priceSignals : evidence.priceSignals;
+  const merged: ProductRecord = {
     ...selected,
-    priceSignals: selectedPositive.priceSignals.length ? selectedPositive.priceSignals : evidence.priceSignals,
+    priceSignals,
     imageUrl: selected.imageUrl || evidence.imageUrl,
-    attributes: [...new Set([...selected.attributes, ...(evidence.priceSignals.length ? [`Price evidence: ${evidence.basis}`] : [])])],
+    attributes: [...new Set([...selected.attributes, ...(evidence.priceSignals.length ? [`Price evidence: ${evidence.basis}`] : []), ...(currencyMismatch && !directSupportsVisible && !directSupportsSelected ? ["Price evidence conflict: visible product currency contradicts structured currency"] : [])])],
     extraction: selected.extraction === "json-ld" ? selected.extraction : "page-signal",
-  });
+  };
+  const selectedIndex = products.indexOf(selected);
+  if (selectedIndex >= 0) products[selectedIndex] = merged;
+  else products.push(merged);
 }
 
 function pageExtraction(document: string, sourceUrl: string, domain: string) {

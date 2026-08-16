@@ -670,6 +670,22 @@ test("rejects contradictory structured currency and keeps product-scoped direct 
   }
 });
 
+test("visible product currency contradicting structured currency fails closed without direct metadata", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response(`<html><head><title>Custom Embroidered Jacket</title><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Custom Embroidered Jacket", offers: { price: "12000", priceCurrency: "USD" } })}</script></head><body><h1>Custom Embroidered Jacket</h1><div class="summary"><p class="price">GBP 100.00</p></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Custom Embroidered Jacket", sourceUrl: "https://shop.test/products/custom-embroidered-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+    assert.ok(result.products[0].attributes.some((attribute) => attribute.startsWith("Price evidence conflict:")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("publishes no price when direct metadata contradicts visible and structured product evidence", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
