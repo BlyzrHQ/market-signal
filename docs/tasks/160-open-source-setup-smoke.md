@@ -74,6 +74,9 @@ separately and is never represented as a credential-free capability.
 - Real public-domain CLI check against `books.toscrape.com`: authenticated,
   validated contract v1, fetched 4 of 5 planned pages, and returned an honest
   limited-data status with five declared gaps instead of the former HTTP 401.
+- Fresh clone of pushed commit `e8e8c3c60e9ddf929d4be92126350f2c866d66a6`:
+  `npm ci`, credential-free startup, Trigger CLI help, and all Go tests passed
+  without relying on untracked workspace files or private credentials.
 - Dependency audit remains a separate follow-up: the current locked dependency
   tree reports no critical advisories but includes upstream low, moderate, and
   high advisories that require coordinated framework/Trigger upgrades.
