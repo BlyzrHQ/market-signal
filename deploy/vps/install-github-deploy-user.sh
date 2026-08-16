@@ -24,6 +24,8 @@ fail() {
 [[ -x "${script_dir}/preflight.sh" ]] || fail "preflight.sh is missing or not executable"
 [[ -x "${script_dir}/update-openai-key.sh" ]] \
   || fail "update-openai-key.sh is missing or not executable"
+[[ -x "${script_dir}/update-billing-secrets.sh" ]] \
+  || fail "update-billing-secrets.sh is missing or not executable"
 
 IFS= read -r public_key || fail "deploy public key was not provided on standard input"
 [[ "${public_key}" =~ ^ssh-ed25519[[:space:]][A-Za-z0-9+/=]+([[:space:]].*)?$ ]] \
@@ -57,6 +59,8 @@ install -o root -g root -m 0755 \
   "${script_dir}/preflight.sh" /usr/local/sbin/market-signal-preflight
 install -o root -g root -m 0755 \
   "${script_dir}/update-openai-key.sh" /usr/local/sbin/market-signal-update-openai-key
+install -o root -g root -m 0755 \
+  "${script_dir}/update-billing-secrets.sh" /usr/local/sbin/market-signal-update-billing-secrets
 
 cat >/etc/market-signal/deploy.conf <<EOF
 MARKET_SIGNAL_DOMAIN=${domain}
@@ -69,6 +73,7 @@ sudoers_temporary="$(mktemp)"
 cat >"${sudoers_temporary}" <<'EOF'
 market-deploy ALL=(root) NOPASSWD: /usr/local/sbin/market-signal-preflight
 market-deploy ALL=(root) NOPASSWD: /usr/local/sbin/market-signal-update-openai-key
+market-deploy ALL=(root) NOPASSWD: /usr/local/sbin/market-signal-update-billing-secrets
 EOF
 chmod 0440 "${sudoers_temporary}"
 visudo -cf "${sudoers_temporary}" >/dev/null

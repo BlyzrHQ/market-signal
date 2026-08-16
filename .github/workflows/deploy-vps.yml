@@ -138,6 +138,8 @@ jobs:
           VPS_USER: ${{ vars.VPS_USER }}
           DOMAIN: ${{ vars.MARKET_SIGNAL_DOMAIN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          STRIPE_RESTRICTED_KEY: ${{ secrets.STRIPE_RESTRICTED_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
         run: |
           set -Eeuo pipefail
           [[ "${VPS_HOST}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
@@ -145,6 +147,8 @@ jobs:
           [[ "${VPS_USER}" == "market-deploy" ]]
           [[ "${DOMAIN}" =~ ^[A-Za-z0-9.-]+$ ]]
           [[ "${OPENAI_API_KEY}" =~ ^sk-[A-Za-z0-9_-]{20,}$ ]]
+          [[ "${STRIPE_RESTRICTED_KEY}" =~ ^rk_(test|live)_[A-Za-z0-9_]{20,}$ ]]
+          [[ "${STRIPE_WEBHOOK_SECRET}" =~ ^whsec_[A-Za-z0-9]{20,}$ ]]
 
       - name: Run trusted host preflight
         env:
@@ -212,6 +216,26 @@ jobs:
               -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
               "${VPS_USER}@${VPS_HOST}" \
               "sudo /usr/local/sbin/market-signal-update-openai-key"
+
+      - name: Update Stripe runtime secrets and enable hosted billing
+        env:
+          STRIPE_RESTRICTED_KEY: ${{ secrets.STRIPE_RESTRICTED_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          VPS_USER: ${{ vars.VPS_USER }}
+        run: |
+          set -Eeuo pipefail
+          printf '%s\n%s\n' "${STRIPE_RESTRICTED_KEY}" "${STRIPE_WEBHOOK_SECRET}" |
+            ssh \
+              -i "${HOME}/.ssh/market-signal-deploy" \
+              -o BatchMode=yes \
+              -o ConnectTimeout=10 \
+              -o ServerAliveInterval=15 \
+              -o ServerAliveCountMax=3 \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
+              "${VPS_USER}@${VPS_HOST}" \
+              "sudo /usr/local/sbin/market-signal-update-billing-secrets"
 
       - name: Authenticate VPS to GHCR for this run
         env:
