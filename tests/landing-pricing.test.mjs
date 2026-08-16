@@ -43,8 +43,9 @@ test("landing proves the product and moves supporting pages to dedicated routes"
   assert.match(pricing, /price: "\$79"/);
   assert.match(pricing, /price: "\$199"/);
   assert.match(pricing, /Self-hosted edition/);
-  assert.match(pricing, /billing is not active yet/i);
-  assert.doesNotMatch(pricing, /products matched \/ report|Buy now|Checkout/);
+  assert.match(pricing, /CheckoutButton/);
+  assert.match(pricing, /No automatic overage charges/);
+  assert.doesNotMatch(pricing, /billing is not active yet|products matched \/ report|COMING SOON/i);
 
   assert.match(method, /Products lead the search/);
   assert.match(method, /finite positive public price/);

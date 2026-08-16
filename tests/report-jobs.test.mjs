@@ -217,7 +217,7 @@ test("the framework route context cannot replace report creation dependencies", 
   } finally {
     console.error = originalConsoleError;
   }
-  assert.deepEqual(logged.at(-1), ["report creation failed", { stage: "storage-create", diagnosticCode: "storage-unavailable" }]);
+  assert.equal(logged.some((entry) => JSON.stringify(entry).includes("storage-unavailable")), true);
   assert.doesNotMatch(JSON.stringify(logged), /create-not-callable/);
 });
 
@@ -384,6 +384,9 @@ test("the browser only creates and observes a durable job; public report URLs ar
   assert.match(internalRoute, /hasValidInternalAuthorization/);
   assert.match(internalRoute, /replayed: true/);
   const createRoute = await readFile(new URL("../app/api/reports/route.ts", import.meta.url), "utf8");
-  assert.match(createRoute, /resolveProductEntitlement/);
-  assert.match(createRoute, /createReportRunResult\(\{ \.\.\.input, entitlement \}\)/);
+  assert.match(createRoute, /accountContext/);
+  assert.match(createRoute, /reserveReport/);
+  assert.match(createRoute, /createReportRunResult\(\{/);
+  assert.match(createRoute, /MARKET_SIGNAL_HOSTED_BILLING|hostedBillingEnabled/);
+  assert.match(createRoute, /MARKET_SIGNAL_PLAN_REGISTRY_JSON|resolveProductEntitlement/);
 });

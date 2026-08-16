@@ -95,13 +95,13 @@ export default function Home() {
     setIsAnalyzing(true); setAnalysisError("");
     try {
       const created = await postJson<CreateReportResponse>("/api/reports", { primaryDomain, locale }, "Persistent report creation");
-      if (!created.ok) { const failed = created as Extract<CreateReportResponse, { ok: false }>; if (failed.publicId) window.location.assign(`/reports/${failed.publicId}/loading`); else throw new Error(failed.error || "The background report job could not be started."); return; }
+      if (!created.ok) { const failed = created as Extract<CreateReportResponse, { ok: false }>; if (failed.publicId) window.location.assign(`/reports/${failed.publicId}/loading`); else if (/sign in/i.test(failed.error || "")) window.location.assign("/account"); else throw new Error(failed.error || "The background report job could not be started."); return; }
       window.location.assign(`/reports/${created.report.publicId}/loading`);
     } catch (error) { setAnalysisError(error instanceof Error ? error.message : "The report could not be started."); setIsAnalyzing(false); }
   }
 
   return <main className="app-root landing-v2" lang={locale} dir={ar ? "rtl" : "ltr"}>
-    <header className="site-header shell"><a className="brand" href="#top"><span className="brand-mark"><i /><i /><i /></span><span>Market Signal</span><span className="beta-pill">BETA</span></a><nav className="header-nav"><a href="#proof">{ar ? "شاهد المنتج" : "Product proof"}</a><Link href={ar ? "/how-it-works?lang=ar" : "/how-it-works"}>{ar ? "كيف يعمل" : "How it works"}</Link><Link className="header-pricing-link" href={ar ? "/pricing?lang=ar" : "/pricing"}>{ar ? "الأسعار" : "Pricing"}</Link><a className="github-button" href="https://github.com/BlyzrHQ/market-signal" target="_blank" rel="noreferrer">GitHub ↗</a><button className="language-switch" type="button" onClick={() => setLocale(ar ? "en" : "ar")}>{ar ? "EN" : "ع"}<span>{ar ? " English" : " العربية"}</span></button></nav></header>
+    <header className="site-header shell"><a className="brand" href="#top"><span className="brand-mark"><i /><i /><i /></span><span>Market Signal</span></a><nav className="header-nav"><a href="#proof">{ar ? "شاهد المنتج" : "Product proof"}</a><Link href={ar ? "/how-it-works?lang=ar" : "/how-it-works"}>{ar ? "كيف يعمل" : "How it works"}</Link><Link className="header-pricing-link" href={ar ? "/pricing?lang=ar" : "/pricing"}>{ar ? "الأسعار" : "Pricing"}</Link><Link href="/account">{ar ? "الحساب" : "Account"}</Link><a className="github-button" href="https://github.com/BlyzrHQ/market-signal" target="_blank" rel="noreferrer">GitHub ↗</a><button className="language-switch" type="button" onClick={() => setLocale(ar ? "en" : "ar")}>{ar ? "EN" : "ع"}<span>{ar ? " English" : " العربية"}</span></button></nav></header>
 
     <section className="hero shell hero-v2" id="top">
       <div className="hero-orbit" aria-hidden="true"><i /><i /><i /><span>282</span></div>
