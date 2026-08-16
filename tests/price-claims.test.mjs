@@ -18,6 +18,34 @@ test("keeps direct percentage claims behind the approved comparison", () => {
   assert.equal(formatPriceClaim(claim, "en").headline, "Rival is 20% cheaper");
 });
 
+test("calculates approved Saudi-riyal differences from persisted report prices", () => {
+  const claim = resolvePriceClaim({
+    comparisonValue: { primaryRaw: "SAR 56.52", rivalRaw: "SAR 159.00" },
+    primaryRaw: "SAR 56.52",
+    rivalRaw: "SAR 159.00",
+  });
+
+  assert.equal(claim.kind, "direct");
+  assert.equal(claim.currency, "SAR");
+  assert.equal(claim.gap, 102.48);
+  assert.deepEqual(formatPriceDifference(claim, "en"), {
+    label: "Verified price gap",
+    value: "SAR 102.48",
+    direction: "Your price is 64% lower",
+    note: "Verified direct comparison",
+  });
+});
+
+test("supports validated ISO currencies without accepting arbitrary three-letter tokens", () => {
+  const aed = resolvePriceClaim({ comparisonValue: null, primaryRaw: "AED 20.00", rivalRaw: "AED 15.00" });
+  const unsupported = resolvePriceClaim({ comparisonValue: null, primaryRaw: "ZZZ 20.00", rivalRaw: "ZZZ 15.00" });
+
+  assert.equal(aed.kind, "listed-gap");
+  assert.equal(aed.currency, "AED");
+  assert.equal(unsupported.kind, "both-observed");
+  assert.equal(unsupported.reason, "format");
+});
+
 test("turns two unaligned same-currency observations into a listed-price gap", () => {
   const claim = resolvePriceClaim({
     comparisonValue: null,
