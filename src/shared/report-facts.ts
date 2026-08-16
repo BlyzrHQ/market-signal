@@ -133,7 +133,7 @@ function matchEvidence(value: unknown) {
     normalizedCategory: text(source.normalizedCategory, 240),
     normalizedVariant: text(source.normalizedVariant, 240),
     normalizedSize: text(source.normalizedSize, 120),
-    publication: { priceEligible: publication.priceEligible !== false, reason: text(publication.reason, 80) },
+    publication: { priceEligible: publication.priceEligible === true, reason: text(publication.reason, 80) },
     decision: {
       priceVerdict: text(decision.priceVerdict, 1_000),
       whyTheyMayWin: text(decision.whyTheyMayWin, 1_000),
@@ -257,17 +257,21 @@ function productFact(product: ProductRecord, fallbackObservedAt: string) {
 }
 
 function productFacts(results: CrawlFactResult[], comparison: ProductComparison | null, fallbackObservedAt: string) {
-  const products = results.flatMap((result) => result.products.map((product) => ({ ...product, domain: product.domain || result.domain })));
+  const key = (product: ProductRecord) => `${canonicalDomain(product.domain)}\n${product.id}`;
+  const comparisonProducts = new Map<string, ProductRecord>();
   if (comparison) {
     for (const row of comparison.rows) {
-      products.push(row.primary);
+      comparisonProducts.set(key(row.primary), row.primary);
       for (const match of row.matches) {
         const product = match.product || match.excludedProduct;
-        if (product) products.push(product);
+        if (product) comparisonProducts.set(key(product), product);
       }
     }
   }
-  return products.map((product) => productFact(product, fallbackObservedAt));
+  const crawlProducts = results.flatMap((result) => result.products
+    .map((product) => ({ ...product, domain: product.domain || result.domain }))
+    .filter((product) => !comparisonProducts.has(key(product))));
+  return [...crawlProducts, ...comparisonProducts.values()].map((product) => productFact(product, fallbackObservedAt));
 }
 
 async function matchFacts(publicId: string, comparison: ProductComparison | null, fallbackObservedAt: string) {

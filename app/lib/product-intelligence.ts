@@ -1612,36 +1612,39 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
       || left.match.product.id.localeCompare(right.match.product.id));
   const strongest = pairs.filter((pair) => pair.matchIndex === 0);
   const secondary = pairs.filter((pair) => pair.matchIndex > 0);
-  const addSingleMissing = (pair: (typeof pairs)[number]) => {
-    const primaryMissing = !hasComparablePublicPrice(pair.row.primary);
-    const rivalMissing = !hasComparablePublicPrice(pair.match.product);
-    if (primaryMissing !== rivalMissing) add(primaryMissing ? pair.row.primary : pair.match.product, primaryMissing ? "primary" : "rival", pair.match.score, "price");
+  const deferredPriceUrls = new Set<string>();
+  const schedulePair = (pair: (typeof pairs)[number]) => {
+    const missing = [
+      { product: pair.match.product, role: "rival" as const },
+      { product: pair.row.primary, role: "primary" as const },
+    ].flatMap((candidate) => {
+      if (hasComparablePublicPrice(candidate.product)) return [];
+      const sourceUrl = safeProductSource(candidate.product);
+      return sourceUrl && !seenUrls.has(sourceUrl) ? [{ ...candidate, sourceUrl }] : [];
+    });
+    const uniqueMissing = missing.filter((candidate, index) => missing.findIndex((other) => other.sourceUrl === candidate.sourceUrl) === index);
+    if (eligible.length + uniqueMissing.length > boundedMax) {
+      uniqueMissing.forEach((candidate) => deferredPriceUrls.add(candidate.sourceUrl));
+      return;
+    }
+    uniqueMissing.forEach((candidate) => add(candidate.product, candidate.role, pair.match.score, "price"));
   };
-  const addBothMissing = (pair: (typeof pairs)[number]) => {
-    if (hasComparablePublicPrice(pair.row.primary) || hasComparablePublicPrice(pair.match.product)) return;
-    add(pair.match.product, "rival", pair.match.score, "price");
-    add(pair.row.primary, "primary", pair.match.score, "price");
-  };
-  // Give every row's strongest match a globally score-ranked chance to become
-  // publishable before secondary matches can consume the bounded page budget.
-  strongest.forEach(addSingleMissing);
-  secondary.forEach(addSingleMissing);
-  strongest.forEach(addBothMissing);
-  secondary.forEach(addBothMissing);
-  // Defensive residual price passes cover deduplicated shared products without
-  // allowing image gaps to move ahead of any remaining price gap.
-  for (const pair of [...strongest, ...secondary]) {
-    add(pair.match.product, "rival", pair.match.score, "price");
-    add(pair.row.primary, "primary", pair.match.score, "price");
+  // Schedule each pair as an atomic, globally score-ranked unit. This never
+  // spends the last page on half of a two-page comparison and gives every
+  // row's strongest match priority over secondary matches.
+  strongest.forEach(schedulePair);
+  secondary.forEach(schedulePair);
+  if (deferredPriceUrls.size === 0) {
+    for (const pair of strongest) {
+      add(pair.match.product, "rival", pair.match.score, "image");
+      add(pair.row.primary, "primary", pair.match.score, "image");
+    }
+    for (const pair of secondary) add(pair.match.product, "rival", pair.match.score, "image");
   }
-  for (const pair of strongest) {
-    add(pair.match.product, "rival", pair.match.score, "image");
-    add(pair.row.primary, "primary", pair.match.score, "image");
-  }
-  for (const pair of secondary) add(pair.match.product, "rival", pair.match.score, "image");
 
   const targets = eligible.slice(0, boundedMax);
-  return { targets, totalEligible: eligible.length, truncated: eligible.length > targets.length };
+  const totalEligible = eligible.length + deferredPriceUrls.size;
+  return { targets, totalEligible, truncated: totalEligible > targets.length };
 }
 
 export function selectFinalProductEnrichmentTargets(comparison: ProductComparison, maxPages = 24): ProductEnrichmentTarget[] {

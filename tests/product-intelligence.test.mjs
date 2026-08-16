@@ -1255,6 +1255,18 @@ test("final enrichment prioritizes missing primary prices over already-priced ri
   assert.equal(targets.every((target) => target.productId.startsWith("primary-")), true);
 });
 
+test("a strongest both-missing pair is scheduled before a weaker secondary single-missing pair", () => {
+  const primary = { ...product("primary-strong", "shop.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/custom-jacket" };
+  const strongest = { ...product("rival-strong", "strong.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://strong.test/products/custom-jacket" };
+  const secondary = { ...product("rival-weak", "weak.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://weak.test/products/custom-jacket", priceSignals: [{ raw: "USD 70", currency: "USD", amount: 70 }] };
+  const match = (rival, score) => ({ domain: rival.domain, product: rival, score, confidence: "Medium", sharedTerms: ["custom", "jacket"], claimIds: [], decision: null });
+  const comparison = { primaryDomain: "shop.test", comparisonDomains: ["strong.test", "weak.test"], rows: [{ primary, matches: [match(secondary, 0.7), match(strongest, 0.99)] }], unmatched: [], coverage: { primaryProductsAvailable: 1, primaryProductsScanned: 1, primaryProductFamiliesCompared: 1, competitorProductsAvailable: 2, competitorProductsScanned: 2, assignedPairCount: 2, verifiedPairCount: 2, rowsReturned: 1, rowLimit: 1, truncated: false } };
+
+  const targets = selectFinalProductEnrichmentTargets(comparison, 2);
+
+  assert.deepEqual(targets.map((target) => target.productId), ["rival-strong", "primary-strong"]);
+});
+
 test("final enrichment updates the selected pair and recomputes its price decision", () => {
   const primary = { ...product("tea", "shop.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/lemon-ginger-tea", extraction: "sitemap", confidence: "Medium" };
   const rival = { ...product("rival-tea", "tea.test", "Lemon Ginger Tea"), jsonLdType: "Product", sourceUrl: "https://tea.test/products/lemon-ginger-tea", extraction: "sitemap", confidence: "Medium" };

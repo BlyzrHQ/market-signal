@@ -243,3 +243,14 @@ test("the final publication gate keeps complete same-currency observations", () 
   assert.equal(published.matching.publication.suppressedAcceptedPairs, 0);
   assert.deepEqual(published.matching.publication.reasons, {});
 });
+
+test("the final publication gate rejects a mixed invalid and positive price range", () => {
+  const candidate = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "r1")], accepted: 1 });
+  candidate.rows[0].primary.priceSignals = [{ raw: "USD 0", currency: "USD", amount: 0 }, { raw: "USD 10", currency: "USD", amount: 10 }];
+  candidate.rows[0].matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+
+  const published = publishPricedProductComparison(candidate);
+
+  assert.equal(published.rows[0].matches[0].product, null);
+  assert.equal(published.rows[0].matches[0].publication.reason, "missing-valid-primary-price");
+});

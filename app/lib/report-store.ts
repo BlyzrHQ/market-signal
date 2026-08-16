@@ -810,12 +810,12 @@ export async function loadStoredReportMatchPage(publicReportId: string, input: {
     FROM report_matches AS matches
     JOIN report_products AS primary_products ON primary_products.run_id = matches.run_id AND primary_products.domain = ? AND primary_products.product_id = matches.primary_product_id
     JOIN report_products AS rival_products ON rival_products.run_id = matches.run_id AND rival_products.domain = matches.rival_domain AND rival_products.product_id = matches.rival_product_id
-    WHERE matches.run_id = ? AND COALESCE(json_extract(matches.evidence_json, '$.publication.priceEligible'), 1) <> 0${cursorCondition}
+    WHERE matches.run_id = ? AND json_extract(matches.evidence_json, '$.publication.priceEligible') = 1${cursorCondition}
     ORDER BY matches.rival_domain ASC, matches.id ASC
     LIMIT ?`).bind(...bindings).all<Record<string, unknown>>();
   const selected = (rows.results || []).slice(0, limit);
-  const totals = await database.prepare(`SELECT COUNT(*) AS count FROM report_matches WHERE run_id = ? AND COALESCE(json_extract(evidence_json, '$.publication.priceEligible'), 1) <> 0`).bind(run.id).all<Record<string, unknown>>();
-  const direct = await database.prepare(`SELECT COUNT(*) AS count FROM report_matches WHERE run_id = ? AND COALESCE(json_extract(evidence_json, '$.publication.priceEligible'), 1) <> 0 AND COALESCE(json_extract(evidence_json, '$.decision.priceComparison.primaryRaw'), '') <> '' AND COALESCE(json_extract(evidence_json, '$.decision.priceComparison.rivalRaw'), '') <> ''`).bind(run.id).all<Record<string, unknown>>();
+  const totals = await database.prepare(`SELECT COUNT(*) AS count FROM report_matches WHERE run_id = ? AND json_extract(evidence_json, '$.publication.priceEligible') = 1`).bind(run.id).all<Record<string, unknown>>();
+  const direct = await database.prepare(`SELECT COUNT(*) AS count FROM report_matches WHERE run_id = ? AND json_extract(evidence_json, '$.publication.priceEligible') = 1 AND COALESCE(json_extract(evidence_json, '$.decision.priceComparison.primaryRaw'), '') <> '' AND COALESCE(json_extract(evidence_json, '$.decision.priceComparison.rivalRaw'), '') <> ''`).bind(run.id).all<Record<string, unknown>>();
   const last = selected.at(-1);
   return {
     authoritative: true,

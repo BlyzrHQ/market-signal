@@ -123,7 +123,13 @@ export function publishPricedProductComparison(comparison: ProductComparison): P
   const observedCurrencies = (product: ProductRecord) => new Set(product.priceSignals
     .filter((signal) => typeof signal.amount === "number" && Number.isFinite(signal.amount) && signal.amount > 0 && Boolean(String(signal.raw || "").trim()) && isSupportedCurrency(signal.currency))
     .map((signal) => String(signal.currency).trim().toUpperCase()));
-  const completeObservedPrice = (product: ProductRecord) => hasValidObservedRivalPrice(product)
+  const completeObservedPrice = (product: ProductRecord) => product.priceSignals.length > 0
+    && product.priceSignals.every((signal) => typeof signal.amount === "number"
+      && Number.isFinite(signal.amount)
+      && signal.amount > 0
+      && Boolean(String(signal.raw || "").trim())
+      && isSupportedCurrency(signal.currency))
+    && hasValidObservedRivalPrice(product)
     && /^https?:\/\//i.test(product.sourceUrl)
     && Boolean(product.observedAt);
   const suppress = (reason: string) => {

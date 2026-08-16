@@ -17,8 +17,8 @@ Claude Fable 5 could not be started because the installed Claude client returned
 
 ## Validation
 
-- Focused integrity and persistence suite: 181 tests passed.
-- Full `npm test`: 766 tests passed, including type checks and production build.
+- Focused integrity and persistence suites cover 182 price/planner tests plus relational fail-closed and stale-fact regressions.
+- Full `npm test`: 771 tests passed, including type checks and production build.
 - `npm run lint`: 0 errors and 2 pre-existing `<img>` performance warnings.
 - Exact-head fallback re-review and production deployment remain pending.
 

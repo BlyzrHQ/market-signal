@@ -718,6 +718,7 @@ function hasConfirmedPrice(products: ProductRecord[]) {
 
 function confirmedAdapterCurrency(document: string, matchedProduct?: ProductRecord) {
   if (hasConflictingDirectProductCurrency(document)) return "";
+  if (matchedProduct?.attributes.some((attribute) => attribute.startsWith("Price evidence conflict:"))) return "";
   const storefrontCurrency = confirmedProductCurrency(document, { allowStructured: false });
   const matchedCurrencies = [...new Set((matchedProduct?.priceSignals || [])
     .map((signal) => {
@@ -850,7 +851,11 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
                 ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: confirmedAdapterCurrency(fetched.text, rawMatchedProduct), expectedQuantity: expected.quantity })
                 : parseWooCommerceProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt: new Date().toISOString() });
               if (adapterResult.product) {
-                adapterEvidenceProduct = withPositivePrices(adapterResult.product);
+                const pageConflicts = (rawMatchedProduct?.attributes || []).filter((attribute) => attribute.startsWith("Price evidence conflict:"));
+                adapterEvidenceProduct = {
+                  ...withPositivePrices(adapterResult.product),
+                  attributes: [...new Set([...adapterResult.product.attributes, ...pageConflicts])],
+                };
                 extracted.result.products.push(adapterEvidenceProduct);
               }
               if (item.allowCatalogReplacement === true && !initialIdentity.accepted) {
