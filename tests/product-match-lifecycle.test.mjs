@@ -244,6 +244,20 @@ test("the final publication gate keeps complete same-currency observations", () 
   assert.deepEqual(published.matching.publication.reasons, {});
 });
 
+test("the final publication gate keeps low-confidence pairs as excluded semantic evidence", () => {
+  const candidate = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "r1")], accepted: 1 });
+  candidate.rows[0].primary.priceSignals = [{ raw: "USD 90", currency: "USD", amount: 90 }];
+  candidate.rows[0].matches[0].product.priceSignals = [{ raw: "USD 80", currency: "USD", amount: 80 }];
+  candidate.rows[0].matches[0].confidence = "Low";
+
+  const published = publishPricedProductComparison(candidate);
+
+  assert.equal(published.rows[0].matches[0].product, null);
+  assert.equal(published.rows[0].matches[0].excludedProduct.id, "r1");
+  assert.deepEqual(published.rows[0].matches[0].publication, { priceEligible: false, reason: "insufficient-match-confidence" });
+  assert.equal(published.matching.publication.reasons["insufficient-match-confidence"], 1);
+});
+
 test("the final publication gate rejects a mixed invalid and positive price range", () => {
   const candidate = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "r1")], accepted: 1 });
   candidate.rows[0].primary.priceSignals = [{ raw: "USD 0", currency: "USD", amount: 0 }, { raw: "USD 10", currency: "USD", amount: 10 }];

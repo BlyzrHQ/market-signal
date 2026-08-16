@@ -19,6 +19,7 @@ type ProductDesignLabProps = {
   primaryProducts?: { authoritative: boolean; totalCount: number; products: Array<Record<string, unknown>>; truncated: boolean };
   publicId: string;
   authoritativeMatchTotal?: number;
+  onAuthoritativeSummary?: (summary: { totalCount: number; domainCounts: Record<string, number> }) => void;
   primaryDomain: string;
   observedAt: string;
   ar: boolean;
@@ -146,9 +147,9 @@ function ProductTableDetails({ row, observedAt, ar }: { row: ProductRow; observe
   </details>;
 }
 
-type MatchPagePayload = { ok: boolean; error?: string; errorCode?: string; page?: { authoritative: true; manifestHash: string; totalCount: number; directPriceCount: number; items: ProductBattle[]; nextCursor: string | null } };
+type MatchPagePayload = { ok: boolean; error?: string; errorCode?: string; page?: { authoritative: true; manifestHash: string; totalCount: number; directPriceCount: number; domainCounts: Record<string, number>; items: ProductBattle[]; nextCursor: string | null } };
 
-export function ProductDesignLab({ comparison, battles, primaryProducts, publicId, authoritativeMatchTotal, primaryDomain, observedAt, ar }: ProductDesignLabProps) {
+export function ProductDesignLab({ comparison, battles, primaryProducts, publicId, authoritativeMatchTotal, onAuthoritativeSummary, primaryDomain, observedAt, ar }: ProductDesignLabProps) {
   const [layout, setLayout] = useState<ProductLayout>("table");
   const [shareStatus, setShareStatus] = useState("");
   const [shareFallback, setShareFallback] = useState("");
@@ -178,7 +179,7 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
     let current = true;
     fetchMatchPage().then((page) => {
       if (!current) return;
-      setAuthoritativeBattles(page.items); setMatchTotal(page.totalCount); setDirectPriceTotal(page.directPriceCount); setNextCursor(page.nextCursor); setMatchLoadState("ready");
+      setAuthoritativeBattles(page.items); setMatchTotal(page.totalCount); setDirectPriceTotal(page.directPriceCount); setNextCursor(page.nextCursor); setMatchLoadState("ready"); onAuthoritativeSummary?.({ totalCount: page.totalCount, domainCounts: page.domainCounts || {} });
     }).catch((cause) => {
       if (!current) return;
       setMatchLoadState("fallback"); setMatchLoadMessage(jsonResponseErrorMessage(cause, "The compact saved comparison remains available."));
@@ -186,7 +187,7 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
     return () => { current = false; };
   // The public report id identifies an immutable completed fact manifest.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [publicId]);
+  }, [publicId, onAuthoritativeSummary]);
 
   useEffect(() => {
     const sync = () => {

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { KeyboardEvent, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
+import { KeyboardEvent, MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProductDesignLab } from "../../components/product-design-lab";
 import { ExperienceBenchmark } from "../../components/experience-benchmark";
 import { reportCoverage, type ReportCoverageEvent } from "../../lib/report-coverage";
@@ -125,6 +125,17 @@ function ReportWorkspace({ blocks, primaryProducts, publicId, primaryDomain, obs
     const item = object(row); const primary = object(item.primary);
     return list(item.matches).flatMap((match, matchIndex) => { const candidate = object(match); const rival = object(candidate.product); return object(candidate.publication).priceEligible === true && rival.name ? [{ primary, rival, match: candidate, key: `${rowIndex}-${matchIndex}` }] : []; });
   }), [comparison]);
+  const [authoritativeMatchSummary, setAuthoritativeMatchSummary] = useState<{ totalCount: number; domainCounts: Record<string, number> } | null>(null);
+  const receiveAuthoritativeMatchSummary = useCallback((summary: { totalCount: number; domainCounts: Record<string, number> }) => setAuthoritativeMatchSummary(summary), []);
+  useEffect(() => {
+    let current = true;
+    fetch(`/api/reports/${publicId}/matches?limit=1`, { headers: { accept: "application/json" } })
+      .then((response) => readJsonResponse<{ ok: boolean; page?: { authoritative: true; totalCount: number; domainCounts: Record<string, number> } }>(response, "Saved report match totals"))
+      .then((body) => { if (current && body.ok && body.page?.authoritative) setAuthoritativeMatchSummary({ totalCount: body.page.totalCount, domainCounts: body.page.domainCounts || {} }); })
+      .catch(() => { /* The compact report counts remain the explicit fallback. */ });
+    return () => { current = false; };
+  }, [publicId]);
+  const productMatchTotal = authoritativeMatchSummary?.totalCount ?? battles.length;
   const adBlock = blocks.find((block) => block.type === "ad-intelligence");
   const adCompanies = list(adBlock?.companies).map(object);
   const evidence = blocks.filter((block) => block.type === "evidence");
@@ -155,7 +166,7 @@ function ReportWorkspace({ blocks, primaryProducts, publicId, primaryDomain, obs
         <time dateTime={observedAt}>{ar ? "حُدث" : "Updated"} {new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</time>
       </section>
       <nav className="workspace-tabs" role="tablist" aria-orientation={compactNav ? "horizontal" : "vertical"} aria-label={ar ? "أقسام التقرير" : "Report sections"}>
-        {activeViews.map((item, index) => <button key={item} ref={(node) => { tabs.current[index] = node; }} id={`tab-${item}`} type="button" role="tab" aria-selected={view === item} aria-controls={`panel-${item}`} tabIndex={view === item ? 0 : -1} onClick={() => selectView(item)} onKeyDown={(event) => onTabKey(event, index)}>{VIEW_LABELS[item][ar ? "ar" : "en"]}{item === "competitors" && <b>{competitors.length}</b>}{item === "products" && <b>{battles.length}</b>}</button>)}
+        {activeViews.map((item, index) => <button key={item} ref={(node) => { tabs.current[index] = node; }} id={`tab-${item}`} type="button" role="tab" aria-selected={view === item} aria-controls={`panel-${item}`} tabIndex={view === item ? 0 : -1} onClick={() => selectView(item)} onKeyDown={(event) => onTabKey(event, index)}>{VIEW_LABELS[item][ar ? "ar" : "en"]}{item === "competitors" && <b>{competitors.length}</b>}{item === "products" && <b>{productMatchTotal}</b>}</button>)}
       </nav>
     </aside>
     <div className="report-dashboard-main">
@@ -171,11 +182,11 @@ function ReportWorkspace({ blocks, primaryProducts, publicId, primaryDomain, obs
       {view === "competitors" && <>
         <header className="panel-intro compact"><div><span>{ar ? "خريطة المنافسين" : "RIVAL MAP"}</span><h2>{ar ? "من ينافسك على نفس العميل؟" : "Who competes for the same customer?"}</h2><p>{ar ? "تم تضمين الشركات التي اجتازت التحقق من الفئة والسوق. تشابه المنتجات يقوي العلاقة." : "Included companies passed category and market verification. Product overlap strengthens the relationship."}</p></div></header>
         <div className="panel-metrics"><div><strong>{competitors.length}</strong><span>{ar ? "منافسون متحققون" : "verified competitors"}</span></div><div><strong>{competitors.filter((item) => item.hasProductOverlap).length}</strong><span>{ar ? "بتداخل منتجات" : "with product overlap"}</span></div><div><strong>{competitors.filter((item) => display(item.confidence).toLowerCase() === "high").length}</strong><span>{ar ? "ثقة عالية" : "high confidence"}</span></div></div>
-        <div className="competitor-workspace-list">{competitors.map((competitor, index) => { const domain = display(competitor.domain); const rivalBattles = battles.filter((battle) => display(battle.match.domain || battle.rival.domain) === domain); return <article id={competitorAnchor(domain)} key={competitor.id}><header><span>{String(index + 1).padStart(2, "0")}</span><div><h3>{display(competitor.companyName || domain, domain)}</h3><p>{domain}</p></div><b>{numeric(competitor.verificationScore)}/100</b></header><p className="rival-reason">{display(competitor.reason || competitor.description, ar ? "تم التحقق من تداخل السوق من المصادر العامة." : "Public sources verify market overlap.")}</p><div className="rival-facts"><span>{display(competitor.relationship, "direct")}</span><span>{display(competitor.confidence, "Limited")} {ar ? "الثقة" : "confidence"}</span><span>{numeric(competitor.productCount)} {ar ? "منتجاً مرصوداً" : "products observed"}</span></div><div className="entity-links"><a href={viewHref("products", productAnchor(domain))}>{ar ? `${rivalBattles.length} مقارنة منتجات` : `${rivalBattles.length} product battles`}</a>{safeUrl(competitor.websiteSourceUrl || competitor.discoverySourceUrl) && <a href={safeUrl(competitor.websiteSourceUrl || competitor.discoverySourceUrl)} target="_blank" rel="noreferrer">{ar ? "موقع المنافس ↗" : "Competitor site ↗"}</a>}</div></article>; })}</div>
+        <div className="competitor-workspace-list">{competitors.map((competitor, index) => { const domain = display(competitor.domain); const rivalBattles = battles.filter((battle) => display(battle.match.domain || battle.rival.domain) === domain); const rivalBattleCount = authoritativeMatchSummary?.domainCounts?.[domain] ?? rivalBattles.length; return <article id={competitorAnchor(domain)} key={competitor.id}><header><span>{String(index + 1).padStart(2, "0")}</span><div><h3>{display(competitor.companyName || domain, domain)}</h3><p>{domain}</p></div><b>{numeric(competitor.verificationScore)}/100</b></header><p className="rival-reason">{display(competitor.reason || competitor.description, ar ? "تم التحقق من تداخل السوق من المصادر العامة." : "Public sources verify market overlap.")}</p><div className="rival-facts"><span>{display(competitor.relationship, "direct")}</span><span>{display(competitor.confidence, "Limited")} {ar ? "الثقة" : "confidence"}</span><span>{numeric(competitor.productCount)} {ar ? "منتجاً مرصوداً" : "products observed"}</span></div><div className="entity-links"><a href={viewHref("products", productAnchor(domain))}>{ar ? `${rivalBattleCount} مقارنة منتجات` : `${rivalBattleCount} product battles`}</a>{safeUrl(competitor.websiteSourceUrl || competitor.discoverySourceUrl) && <a href={safeUrl(competitor.websiteSourceUrl || competitor.discoverySourceUrl)} target="_blank" rel="noreferrer">{ar ? "موقع المنافس ↗" : "Competitor site ↗"}</a>}</div></article>; })}</div>
         {!competitors.length && <div className="truth-state limited"><strong>{ar ? "لم يتم التحقق من منافس" : "No competitor was verified"}</strong><p>{ar ? "هذا نقص في التغطية، وليس دليلاً على عدم وجود منافسين." : "This is a coverage gap, not proof that no competitors exist."}</p></div>}
       </>}
 
-      {view === "products" && <ProductDesignLab comparison={comparison} battles={battles} primaryProducts={primaryProducts} publicId={publicId} authoritativeMatchTotal={battles.length || undefined} primaryDomain={primaryDomain} observedAt={observedAt} ar={ar} />}
+      {view === "products" && <ProductDesignLab comparison={comparison} battles={battles} primaryProducts={primaryProducts} publicId={publicId} authoritativeMatchTotal={productMatchTotal || undefined} onAuthoritativeSummary={receiveAuthoritativeMatchSummary} primaryDomain={primaryDomain} observedAt={observedAt} ar={ar} />}
 
       {view === "ads" && <>
         <header className="panel-intro compact"><div><span>{ar ? "مراقبة الإعلانات" : "AD WATCH"}</span><h2>{ar ? "من يعلن فعلاً، وماذا تقول إعلاناته؟" : "Who is verifiably advertising, and what are their ads saying?"}</h2><p>{display(adBlock?.limitation, ar ? "تختلف تغطية مكتبات الإعلانات حسب السوق والمنصة." : "Ad-library coverage varies by market and platform.")}</p></div></header>

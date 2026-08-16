@@ -78,6 +78,7 @@ export type StoredReportMatchPage = {
   manifestHash: string;
   totalCount: number;
   directPriceCount: number;
+  domainCounts: Record<string, number>;
   items: Array<{
     primary: Record<string, unknown>;
     rival: Record<string, unknown>;
@@ -823,12 +824,14 @@ export async function loadStoredReportMatchPage(publicReportId: string, input: {
   const selected = (rows.results || []).slice(0, limit);
   const totals = await database.prepare(`SELECT COUNT(*) AS count FROM report_matches WHERE run_id = ? AND json_extract(evidence_json, '$.publication.priceEligible') = 1`).bind(run.id).all<Record<string, unknown>>();
   const direct = await database.prepare(`SELECT COUNT(*) AS count FROM report_matches WHERE run_id = ? AND json_extract(evidence_json, '$.publication.priceEligible') = 1 AND COALESCE(json_extract(evidence_json, '$.decision.priceComparison.primaryRaw'), '') <> '' AND COALESCE(json_extract(evidence_json, '$.decision.priceComparison.rivalRaw'), '') <> ''`).bind(run.id).all<Record<string, unknown>>();
+  const domains = await database.prepare(`SELECT rival_domain, COUNT(*) AS count FROM report_matches WHERE run_id = ? AND json_extract(evidence_json, '$.publication.priceEligible') = 1 GROUP BY rival_domain ORDER BY rival_domain ASC`).bind(run.id).all<Record<string, unknown>>();
   const last = selected.at(-1);
   return {
     authoritative: true,
     manifestHash: String(manifest.manifest_hash || ""),
     totalCount: Number(totals.results?.[0]?.count || 0),
     directPriceCount: Number(direct.results?.[0]?.count || 0),
+    domainCounts: Object.fromEntries((domains.results || []).map((row) => [String(row.rival_domain || ""), Number(row.count || 0)]).filter(([domain]) => domain)),
     items: selected.map(matchPageItem),
     nextCursor: (rows.results || []).length > limit && last ? `${String(last.rival_domain)}~${String(last.match_id)}` : null,
   };

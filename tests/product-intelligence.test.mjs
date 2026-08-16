@@ -245,6 +245,24 @@ test("product-scoped direct metadata conflict suppresses price until visible evi
   assert.ok(result.products[0].attributes.includes("Price evidence conflict: direct metadata contradicts structured currency"));
 });
 
+test("same-currency metadata conflict cannot bypass enrichment planning or publication", () => {
+  const result = extraction({
+    document: `<head><meta property="product:price:amount" content="100"><meta property="product:price:currency" content="USD"></head><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Custom Embroidered Jacket", offers: { price: "120", priceCurrency: "USD" }, image: "https://shop.test/jacket.jpg" })}</script>`,
+    sourceUrl: "https://shop.test/products/custom-embroidered-jacket",
+    domain: "shop.test",
+    pageTitle: "Custom Embroidered Jacket",
+    headings: ["Custom Embroidered Jacket"],
+  });
+  const primary = result.products[0];
+  const rival = { ...product("rival-jacket", "rival.test", "Custom Embroidered Jacket"), jsonLdType: "Product", sourceUrl: "https://rival.test/products/custom-embroidered-jacket", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }], imageUrl: "https://rival.test/jacket.jpg" };
+  const comparison = { primaryDomain: "shop.test", comparisonDomains: ["rival.test"], rows: [{ primary, matches: [{ domain: "rival.test", product: rival, score: 0.95, confidence: "Medium", sharedTerms: ["jacket"], claimIds: [], decision: null }] }], unmatched: [], coverage: { primaryProductsAvailable: 1, primaryProductsScanned: 1, primaryProductFamiliesCompared: 1, competitorProductsAvailable: 1, competitorProductsScanned: 1, assignedPairCount: 1, verifiedPairCount: 1, rowsReturned: 1, rowLimit: 1, truncated: false } };
+
+  assert.deepEqual(primary.priceSignals, []);
+  assert.ok(primary.attributes.includes("Price evidence conflict: direct metadata contradicts structured amount"));
+  assert.deepEqual(selectFinalProductEnrichmentTargets(comparison, 1).map((target) => target.productId), [primary.id]);
+  assert.equal(publishPricedProductComparison(comparison).rows[0].matches[0].publication.reason, "missing-valid-primary-price");
+});
+
 test("does not infer ISO currencies from lowercase ordinary prose", () => {
   const result = extraction({
     document: `<script type="application/ld+json">${JSON.stringify([

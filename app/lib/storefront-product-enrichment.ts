@@ -1,6 +1,6 @@
 import { canonicalDomain } from "./domain.ts";
 import { bilingualNormalize, bilingualTokens, parseCanonicalQuantity, quantitiesConflict } from "./product-normalization.ts";
-import { CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX, catalogReplacementAuditAttribute, directProductMetadataOffer, extractProductsFromHtml, isSupportedCurrency, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "./product-intelligence.ts";
+import { CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX, catalogReplacementAuditAttribute, directProductMetadataOffer, directProductScopedMetadataOffer, extractProductsFromHtml, isSupportedCurrency, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "./product-intelligence.ts";
 import { confirmedProductCurrency, hasConflictingDirectProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "./product-page-adapters.ts";
 import { fetchPublicText } from "./public-fetch.ts";
 import { sharedRobotsPolicyResolver } from "./robots-policy.ts";
@@ -594,19 +594,10 @@ function addScopedProductPageEvidence(document: string, sourceUrl: string, expec
   const directCurrency = confirmedProductCurrency(document, { allowStructured: false });
   const directSupportsVisible = directCurrency && evidenceCurrencies.size === 1 && evidenceCurrencies.has(directCurrency);
   const directSupportsSelected = directCurrency && selectedCurrencies.size === 1 && selectedCurrencies.has(directCurrency);
-  const comparableAmounts = (signals: ProductRecord["priceSignals"]) => [...new Set(signals
-    .filter(isPositivePriceSignal)
-    .map((signal) => `${String(signal.currency).trim().toUpperCase()}:${Number(signal.amount).toFixed(6)}`))].sort();
-  const agrees = (left: ProductRecord["priceSignals"], right: ProductRecord["priceSignals"]) => {
-    const leftAmounts = comparableAmounts(left);
-    const rightAmounts = comparableAmounts(right);
-    return leftAmounts.length > 0 && leftAmounts.length === rightAmounts.length
-      && leftAmounts.every((amount, index) => amount === rightAmounts[index]);
-  };
-  const directVisibleConflict = directSignals.length > 0 && evidence.priceSignals.length > 0 && !agrees(directSignals, evidence.priceSignals);
-  const selectedVisibleConflict = selectedPositive.priceSignals.length > 0 && evidence.priceSignals.length > 0 && !agrees(selectedPositive.priceSignals, evidence.priceSignals);
-  const directSelectedConflict = directSignals.length > 0 && selectedPositive.priceSignals.length > 0 && !agrees(directSignals, selectedPositive.priceSignals);
-  const corroboratedDirectVisible = agrees(directSignals, evidence.priceSignals);
+  const directVisibleConflict = directSignals.length > 0 && evidence.priceSignals.length > 0 && !priceSignalsAgree(directSignals, evidence.priceSignals);
+  const selectedVisibleConflict = selectedPositive.priceSignals.length > 0 && evidence.priceSignals.length > 0 && !priceSignalsAgree(selectedPositive.priceSignals, evidence.priceSignals);
+  const directSelectedConflict = directSignals.length > 0 && selectedPositive.priceSignals.length > 0 && !priceSignalsAgree(directSignals, selectedPositive.priceSignals);
+  const corroboratedDirectVisible = priceSignalsAgree(directSignals, evidence.priceSignals);
   const amountConflict = directVisibleConflict || (!corroboratedDirectVisible && (selectedVisibleConflict || directSelectedConflict));
   const priceSignals = amountConflict
     ? []
@@ -743,6 +734,24 @@ function observedCatalogReplacement(item: ProductEnrichmentTarget, products: Pro
 
 function isPositivePriceSignal(signal: ProductRecord["priceSignals"][number]) {
   return typeof signal.amount === "number" && Number.isFinite(signal.amount) && signal.amount > 0 && isSupportedCurrency(signal.currency);
+}
+
+function comparablePriceAmounts(signals: ProductRecord["priceSignals"]) {
+  return [...new Set(signals
+    .filter(isPositivePriceSignal)
+    .map((signal) => `${String(signal.currency).trim().toUpperCase()}:${Number(signal.amount).toFixed(6)}`))].sort();
+}
+
+function priceSignalsAgree(left: ProductRecord["priceSignals"], right: ProductRecord["priceSignals"]) {
+  const leftAmounts = comparablePriceAmounts(left);
+  const rightAmounts = comparablePriceAmounts(right);
+  return leftAmounts.length > 0 && leftAmounts.length === rightAmounts.length
+    && leftAmounts.every((amount, index) => amount === rightAmounts[index]);
+}
+
+function directMetadataPriceSignals(document: string) {
+  const offer = directProductScopedMetadataOffer(document);
+  return offer && isPositivePriceSignal(offer) ? [offer] : [];
 }
 
 function withPositivePrices(product: ProductRecord) {
@@ -895,12 +904,25 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
               const adapterCurrencyConflict = directPageCurrency && [...adapterCurrencies].some((currency) => currency !== directPageCurrency.toUpperCase())
                 ? [`Price evidence conflict: direct page currency ${directPageCurrency.toUpperCase()} contradicts ${adapterLabel} currency ${[...adapterCurrencies].join(", ")}.`]
                 : [];
-              const adapterConflicts = [...new Set([...pagePriceConflicts, ...adapterCurrencyConflict])];
+              const positiveAdapterProduct = adapterResult.product ? withPositivePrices(adapterResult.product) : null;
+              const adapterPriceSignals = positiveAdapterProduct?.priceSignals || [];
+              const directPageSignals = directMetadataPriceSignals(fetched.text);
+              const visiblePageSignals = extractScopedProductPageEvidence(fetched.text, fetched.url).priceSignals;
+              const selectedPageSignals = rawMatchedProduct?.extraction === "json-ld"
+                ? withPositivePrices(rawMatchedProduct).priceSignals
+                : [];
+              const adapterAmountConflict = Boolean(adapterPriceSignals.length
+                && [directPageSignals, visiblePageSignals, selectedPageSignals]
+                  .filter((signals) => signals.length > 0)
+                  .some((signals) => !priceSignalsAgree(adapterPriceSignals, signals)));
+              const adapterAmountConflictMessage = adapterAmountConflict
+                ? [`Price evidence conflict: page amounts contradict ${adapterLabel} amounts.`]
+                : [];
+              const adapterConflicts = [...new Set([...pagePriceConflicts, ...adapterCurrencyConflict, ...adapterAmountConflictMessage])];
               if (adapterResult.product) {
-                const positiveAdapterProduct = withPositivePrices(adapterResult.product);
                 adapterEvidenceProduct = {
-                  ...positiveAdapterProduct,
-                  priceSignals: adapterConflicts.length ? [] : positiveAdapterProduct.priceSignals,
+                  ...positiveAdapterProduct!,
+                  priceSignals: adapterConflicts.length ? [] : positiveAdapterProduct!.priceSignals,
                   attributes: [...new Set([...adapterResult.product.attributes, ...adapterConflicts])],
                 };
                 extracted.result.products.push(adapterEvidenceProduct);
@@ -931,8 +953,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
         return replacement ? { product: replacement, gap: null } : { product: null, gap: gap(identity.reason, "identity_mismatch", undefined, "identity") };
       }
       const originalIdentityProduct = strongestInitialProduct
-        && identity.products.includes(strongestInitialProduct)
-        ? strongestInitialProduct
+        ? identity.products.find((product) => product.id === strongestInitialProduct.id) || null
         : null;
       const adapterIdentityProduct = adapterEvidenceProduct
         && identity.products.includes(adapterEvidenceProduct)

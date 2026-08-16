@@ -148,7 +148,8 @@ export function publishPricedProductComparison(comparison: ProductComparison): P
     ...row,
     matches: row.matches.map((match) => {
       if (!match.product) return match;
-      if (!completeObservedPrice(row.primary)) suppress("missing-valid-primary-price");
+      if (match.confidence !== "Medium") suppress("insufficient-match-confidence");
+      else if (!completeObservedPrice(row.primary)) suppress("missing-valid-primary-price");
       else if (!completeObservedPrice(match.product)) suppress("missing-valid-rival-price");
       else {
         const primaryCurrencies = observedCurrencies(row.primary);
@@ -158,11 +159,13 @@ export function publishPricedProductComparison(comparison: ProductComparison): P
         }
         suppress("incompatible-price-currency");
       }
-      const reason: NonNullable<ProductMatch["publication"]>["reason"] = !completeObservedPrice(row.primary)
-        ? "missing-valid-primary-price"
-        : !completeObservedPrice(match.product)
-          ? "missing-valid-rival-price"
-          : "incompatible-price-currency";
+      const reason: NonNullable<ProductMatch["publication"]>["reason"] = match.confidence !== "Medium"
+        ? "insufficient-match-confidence"
+        : !completeObservedPrice(row.primary)
+          ? "missing-valid-primary-price"
+          : !completeObservedPrice(match.product)
+            ? "missing-valid-rival-price"
+            : "incompatible-price-currency";
       return {
         ...match,
         excludedProduct: match.product,

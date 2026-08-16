@@ -15,12 +15,12 @@ The same report also accepted implausible Arklavo prices such as `USD 12000`. Th
 - `publishPricedProductComparison` is the server-side constructor for `publication.priceEligible`. Persistence, pagination, evaluation, and rendering consume that server-generated invariant; direct mutation of trusted database rows is outside the public-input threat boundary.
 - A company may remain a market competitor when first-party evidence shows it serves that market, while incompatible-currency product offers are excluded from the price-comparison table.
 
-Claude Fable 5 could not be started because the installed Claude client returned `unrecognized_model` / inaccessible model on 2026-08-16. Two independent Codex fallback reviewers were used under `AGENTS.md`; both identified blocking issues in earlier drafts. The final draft clears conflicting fresh price evidence instead of restoring stale values, reconciles same-currency amounts across direct, visible, and structured evidence, prevents storefront adapters from reviving a page-level conflict, retains distinct product identities that share one catalog URL, globally ranks atomic pair-enrichment work under the page cap, preserves excluded semantic matches with an explicit publication reason, prevents excluded pairs from receiving accepted evaluation priority, validates source URLs and timestamps, and filters excluded records from the public price table.
+Claude Fable 5 could not be started because the installed Claude client returned `unrecognized_model` / inaccessible model on 2026-08-16. Two independent Codex fallback reviewers were used under `AGENTS.md`; both identified blocking issues in earlier drafts. The final draft clears conflicting fresh price evidence instead of restoring stale values, reconciles same-currency amounts across product-scoped direct, visible, structured, and storefront-adapter evidence, prevents a fallback adapter from overwriting coherent canonical-page evidence, retains distinct product identities that share one catalog URL, globally ranks atomic pair-enrichment work under the page cap, preserves excluded semantic matches with an explicit publication reason, requires Medium match confidence for publication, prevents excluded pairs from receiving accepted evaluation priority, validates source URLs and timestamps, filters excluded records from the public price table, and reports authoritative persisted match totals instead of compact-snapshot counts.
 
 ## Validation
 
 - Focused price, planner, storefront, provenance, and compaction regressions passed.
-- Full `npm test`: 789 tests passed, including type checks and production build.
+- Full `npm test`: 793 tests passed, including type checks and production build.
 - `npm run lint`: 0 errors and 2 pre-existing `<img>` performance warnings.
 - Exact-head fallback re-review and production deployment remain pending.
 

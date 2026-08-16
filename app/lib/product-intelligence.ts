@@ -124,7 +124,7 @@ export type ProductMatch = {
   };
   publication?: {
     priceEligible: boolean;
-    reason?: "missing-valid-primary-price" | "missing-valid-rival-price" | "incompatible-price-currency";
+    reason?: "insufficient-match-confidence" | "missing-valid-primary-price" | "missing-valid-rival-price" | "incompatible-price-currency";
   };
   excludedProduct?: ProductRecord;
 };
@@ -472,6 +472,14 @@ export function directProductMetadataOffer(document: string) {
   return amounts.length === 1 && currencies.length === 1 ? priceSignal(amounts[0], currencies[0]) : null;
 }
 
+export function directProductScopedMetadataOffer(document: string) {
+  const amounts = [...new Set(metaContents(document, "product:price:amount"))];
+  const currencies = [...new Set(metaContents(document, "product:price:currency")
+    .map((value) => value.toUpperCase())
+    .filter(isSupportedCurrency))];
+  return amounts.length === 1 && currencies.length === 1 ? priceSignal(amounts[0], currencies[0]) : null;
+}
+
 function publicImageUrl(value: string, sourceUrl: string) {
   try {
     const candidate = clean(value);
@@ -741,15 +749,24 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
       const metadataContradictsStructured = Boolean(validMetadataOffer && metadataOffer && metadataCurrency
         && structuredCurrencies.size > 0
         && [...structuredCurrencies].some((currency) => currency !== metadataCurrency));
+      const structuredAmounts = product.priceSignals
+        .filter((signal) => typeof signal.amount === "number" && Number.isFinite(signal.amount) && signal.amount > 0 && String(signal.currency || "").trim().toUpperCase() === metadataCurrency)
+        .map((signal) => Number(signal.amount).toFixed(6));
+      const metadataContradictsStructuredAmount = Boolean(validMetadataOffer && metadataOffer
+        && structuredAmounts.length > 0
+        && !structuredAmounts.includes(Number(metadataOffer.amount).toFixed(6)));
+      const metadataConflict = metadataContradictsStructured || metadataContradictsStructuredAmount;
       return {
         ...product,
-        priceSignals: metadataContradictsStructured
+        priceSignals: metadataConflict
           ? []
           : !hasComparablePublicPrice(product) && validMetadataOffer && metadataOffer
             ? [metadataOffer]
             : product.priceSignals,
-        attributes: metadataContradictsStructured
-          ? [...new Set([...product.attributes, "Price evidence conflict: direct metadata contradicts structured currency"])]
+        attributes: metadataConflict
+          ? [...new Set([...product.attributes, metadataContradictsStructured
+            ? "Price evidence conflict: direct metadata contradicts structured currency"
+            : "Price evidence conflict: direct metadata contradicts structured amount"])]
           : product.attributes,
         imageUrl: product.imageUrl || metadataImage,
       };

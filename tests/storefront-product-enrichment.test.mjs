@@ -743,7 +743,7 @@ test("fails closed when same-currency direct and structured amounts disagree wit
   try {
     const result = await enrichProductTargets([target({ expectedName: "Custom Embroidered Jacket", sourceUrl: "https://shop.test/products/custom-embroidered-jacket" })], 1);
     assert.deepEqual(result.products[0].priceSignals, []);
-    assert.ok(result.products[0].attributes.includes("Price evidence conflict: product-scoped price amounts disagree"));
+    assert.ok(result.products[0].attributes.includes("Price evidence conflict: direct metadata contradicts structured amount"));
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -794,6 +794,38 @@ test("a WooCommerce adapter cannot revive a direct-versus-structured currency co
     const result = await enrichProductTargets([target({ expectedName: "Custom Embroidered Jacket", sourceUrl: "https://shop.test/product/custom-embroidered-jacket" })], 1);
     assert.deepEqual(result.products[0].priceSignals, []);
     assert.ok(result.products[0].attributes.some((attribute) => attribute.startsWith("Price evidence conflict:")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("keeps corroborated page evidence while rejecting a contradictory Shopify amount", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({ title: "Custom Embroidered Jacket", handle: "custom-embroidered-jacket", variants: [{ title: "Default Title", price: 12000 }] }, { headers: { "content-type": "application/json" } });
+    return new Response(`<html><head><title>Custom Embroidered Jacket</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Custom Embroidered Jacket", offers: { price: "100", priceCurrency: "USD" } })}</script></head><body><h1>Custom Embroidered Jacket</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Custom Embroidered Jacket", sourceUrl: "https://shop.test/products/custom-embroidered-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 100 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("keeps corroborated direct and visible price when Shopify amount disagrees", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({ title: "Custom Embroidered Jacket", handle: "custom-embroidered-jacket", variants: [{ title: "Default Title", price: 12000 }] }, { headers: { "content-type": "application/json" } });
+    return new Response(`<html><head><title>Custom Embroidered Jacket</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Custom Embroidered Jacket", offers: { price: "100", priceCurrency: "USD" } })}</script></head><body><h1>Custom Embroidered Jacket</h1><div class="summary"><p class="price">USD 100.00</p></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Custom Embroidered Jacket", sourceUrl: "https://shop.test/products/custom-embroidered-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 100 }]);
   } finally {
     globalThis.fetch = originalFetch;
   }

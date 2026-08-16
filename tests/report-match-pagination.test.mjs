@@ -78,6 +78,7 @@ test("completed relational matches paginate without duplicates and preserve prod
     assert.equal(first.authoritative, true);
     assert.equal(first.totalCount, 105);
     assert.equal(first.directPriceCount, 60);
+    assert.deepEqual(first.domainCounts, { "rival.example": 105 });
     assert.equal(first.items.length, 100);
     assert.match(first.nextCursor, /^rival\.example~[a-f0-9]{64}$/);
     assert.ok(first.items.every((item) => item.primary.domain === "shop.example" && item.rival.domain === "rival.example"));
