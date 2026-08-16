@@ -16,6 +16,7 @@ import { buildExperienceBenchmark } from "../../lib/experience-benchmark.ts";
 import { hasObservedAddToCartControl } from "../../lib/experience-signals.ts";
 import { buildAIProductComparison } from "../../lib/ai-product-matching.ts";
 import { isSallaCatalogRecoveryEligible, recoverSallaStorefrontCatalog, type SallaStorefrontRecovery } from "../../lib/salla-mcp-catalog-recovery.ts";
+import { redirectedMarketRetryUrl } from "../../lib/market-localization.ts";
 
 type ClaimType = "Observed" | "Inferred";
 type Confidence = "High" | "Medium" | "Low";
@@ -733,6 +734,7 @@ export async function reconcilePreliminaryPrimaryCatalog(results: DomainCrawl[],
 
 async function enrichMatchedProductPages(inputResults: DomainCrawl[], primaryDomain: string) {
   const results = await reconcilePreliminaryPrimaryCatalog(inputResults, primaryDomain);
+  const primaryMarketCountryCode = results.find((result) => result.domain === primaryDomain)?.homepage?.regionCountryCode || "";
   const comparison = buildProductComparison(primaryDomain, results.map((result) => ({ domain: result.domain, products: result.products })), comparisonSourceUrls(results, primaryDomain));
   const targets = selectProductEnrichmentTargets(comparison, MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES);
   if (!targets.length) return results;
@@ -760,8 +762,13 @@ async function enrichMatchedProductPages(inputResults: DomainCrawl[], primaryDom
     const entries = await Promise.all(sourceUrls.map(async (sourceUrl) => {
       const path = new URL(sourceUrl).pathname;
       if (!robots.allows(path)) return { page: null, gap: { url: sourceUrl, reason: "robots.txt disallows this matched product price-enrichment page.", observedAt } as Gap };
-      const fetched = await fetchText(sourceUrl, "text/html,application/xhtml+xml", domain);
+      let fetched = await fetchText(sourceUrl, "text/html,application/xhtml+xml", domain);
       if (!fetched.ok || !/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { page: null, gap: { url: sourceUrl, reason: fetched.error || `Matched product price-enrichment page returned HTTP ${fetched.status} or non-HTML content.`, observedAt } as Gap };
+      const marketRetryUrl = redirectedMarketRetryUrl(sourceUrl, fetched.url, primaryMarketCountryCode);
+      if (marketRetryUrl && robots.allows(new URL(marketRetryUrl).pathname)) {
+        const marketFetch = await fetchText(marketRetryUrl, "text/html,application/xhtml+xml", domain);
+        if (marketFetch.ok && /text\/html|application\/xhtml\+xml/i.test(marketFetch.contentType)) fetched = marketFetch;
+      }
       try {
         const page = await parsePage(fetched.text, fetched.url, new Date().toISOString(), domain, fetched.truncated, fetched);
         const sourceKey = (value: string) => value.split("#")[0].replace(/\/$/, "");

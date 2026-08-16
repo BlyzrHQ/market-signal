@@ -524,7 +524,7 @@ function promotableMetadataSignals(signals: ProductPriceSignal[]) {
 }
 
 export function directProductMetadataOffer(document: string) {
-  for (const [amountKey, currencyKey, scope] of [["product:price:amount", "product:price:currency", "product"], ["og:price:amount", "og:price:currency", "og"]] as const) {
+  for (const [amountKey, currencyKey, scope] of [["product:sale_price:amount", "product:sale_price:currency", "product"], ["product:price:amount", "product:price:currency", "product"], ["og:price:amount", "og:price:currency", "og"]] as const) {
     const namespace = metadataOfferForNamespace(document, amountKey, currencyKey, scope);
     if (namespace.present) return namespace.offer;
   }
@@ -532,7 +532,7 @@ export function directProductMetadataOffer(document: string) {
 }
 
 function directProductMetadataEvidence(document: string) {
-  for (const [amountKey, currencyKey, scope] of [["product:price:amount", "product:price:currency", "product"], ["og:price:amount", "og:price:currency", "og"]] as const) {
+  for (const [amountKey, currencyKey, scope] of [["product:sale_price:amount", "product:sale_price:currency", "product"], ["product:price:amount", "product:price:currency", "product"], ["og:price:amount", "og:price:currency", "og"]] as const) {
     const namespace = metadataOfferForNamespace(document, amountKey, currencyKey, scope);
     if (namespace.present) return namespace;
   }
@@ -540,7 +540,8 @@ function directProductMetadataEvidence(document: string) {
 }
 
 export function directProductScopedMetadataOffer(document: string) {
-  return metadataOfferForNamespace(document, "product:price:amount", "product:price:currency", "product").offer;
+  const sale = metadataOfferForNamespace(document, "product:sale_price:amount", "product:sale_price:currency", "product");
+  return sale.present ? sale.offer : metadataOfferForNamespace(document, "product:price:amount", "product:price:currency", "product").offer;
 }
 
 function compatibleObservedAmounts(left: string[], right: string[]) {

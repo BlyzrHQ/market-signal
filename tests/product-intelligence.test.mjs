@@ -401,6 +401,17 @@ test("nested list and sale price specifications do not become a fabricated range
   assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "USD", amount: 100 }]);
 });
 
+test("explicit sale metadata corroborates the structured current offer over list metadata", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="349"><meta property="product:price:currency" content="SAR"><meta property="product:sale_price:amount" content="279"><meta property="product:sale_price:currency" content="SAR"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Saudi Sidr Honey", offers: { price: 279, priceCurrency: "SAR" } })}</script>`,
+    sourceUrl: "https://hana.com.sa/ar-sa/products/saudi-sidr-honey",
+    pageTitle: "Saudi Sidr Honey",
+    headings: ["Saudi Sidr Honey"],
+  });
+  assert.deepEqual(result.products[0].priceSignals.map(({ currency, amount }) => ({ currency, amount })), [{ currency: "SAR", amount: 279 }]);
+  assert.equal(result.products[0].attributes.some((attribute) => attribute.startsWith("Price evidence conflict:")), false);
+});
+
 test("a list-only price specification is not promoted to a current price", () => {
   const result = extraction({
     document: `<script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "List Only Jacket", offers: { priceSpecification: { price: 120, priceCurrency: "USD", name: "List price" } } })}</script>`,
