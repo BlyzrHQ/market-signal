@@ -51,3 +51,35 @@ func TestClientRetriesTransientFailureOnce(t *testing.T) {
 		t.Fatalf("expected two attempts, got %d", attempts)
 	}
 }
+
+func TestClientSendsConfiguredAPITokenWithoutLoggingIt(t *testing.T) {
+	const token = "local-api-token-12345678901234567890"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer "+token {
+			t.Fatalf("expected bearer API token, got %q", request.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, time.Second, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Post(context.Background(), "/api/crawl", nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClientRefusesToSendAPITokenOverRemotePlainHTTP(t *testing.T) {
+	const token = "local-api-token-12345678901234567890"
+	_, err := NewClient("http://example.com", time.Second, token)
+	if err == nil || !strings.Contains(err.Error(), "require HTTPS") {
+		t.Fatalf("expected HTTPS safety error, got %v", err)
+	}
+
+	if _, err := NewClient("https://example.com", time.Second, token); err != nil {
+		t.Fatalf("expected remote HTTPS to be accepted, got %v", err)
+	}
+}

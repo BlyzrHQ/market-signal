@@ -13,12 +13,13 @@ import (
 )
 
 type options struct {
-	baseURL string
-	timeout time.Duration
-	output  string
-	quiet   bool
-	stdout  io.Writer
-	stderr  io.Writer
+	baseURL  string
+	apiToken string
+	timeout  time.Duration
+	output   string
+	quiet    bool
+	stdout   io.Writer
+	stderr   io.Writer
 }
 
 func NewRoot(version string) *cobra.Command {
@@ -26,7 +27,7 @@ func NewRoot(version string) *cobra.Command {
 	if defaultBaseURL == "" {
 		defaultBaseURL = "http://localhost:3000"
 	}
-	opts := &options{baseURL: defaultBaseURL, timeout: 90 * time.Second, output: "table"}
+	opts := &options{baseURL: defaultBaseURL, apiToken: strings.TrimSpace(os.Getenv("MARKET_SIGNAL_API_TOKEN")), timeout: 90 * time.Second, output: "table"}
 
 	root := &cobra.Command{
 		Use:           "marketsignal",
@@ -61,7 +62,7 @@ func NewRoot(version string) *cobra.Command {
 }
 
 func dependencies(opts *options) (*api.Client, *contract.Validator, error) {
-	client, err := api.NewClient(opts.baseURL, opts.timeout)
+	client, err := api.NewClient(opts.baseURL, opts.timeout, opts.apiToken)
 	if err != nil {
 		return nil, nil, err
 	}

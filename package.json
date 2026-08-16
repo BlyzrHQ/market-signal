@@ -1,6 +1,7 @@
 {
   "name": "market-signal",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -11,6 +12,7 @@
     "build:vps": "cross-env MARKET_SIGNAL_DEPLOY_TARGET=node npm run build && node scripts/assert-vps-build.mjs",
     "start": "vinext start",
     "start:vps": "vinext start",
+    "test:open-source": "node scripts/verify-open-source-setup.mjs",
     "backup:vps": "node scripts/backup-sqlite.mjs",
     "verify-backup:vps": "node scripts/verify-sqlite-backup.mjs",
     "test": "npm run typecheck && npm run typecheck:node && npm run build && node --test tests/*.test.mjs",

@@ -55,8 +55,17 @@ npm run dev
 Terminal 2 — run a report against that local API:
 
 ```bash
+export MARKET_SIGNAL_API_TOKEN="replace-with-a-random-value-at-least-32-characters"
 go -C cli run ./cmd/marketsignal report example.com
 ```
+
+Set the same `MARKET_SIGNAL_API_TOKEN` value in the API server's `.env.local`
+before starting it. Use a random value of at least 32 characters and keep it
+separate from `MARKET_SIGNAL_CALLBACK_TOKEN`. In PowerShell, set it with
+`$env:MARKET_SIGNAL_API_TOKEN = "..."` for the CLI process. The CLI reads the
+token only from the environment so it does not appear in command history or the
+process list. When a token is configured, remote API URLs must use HTTPS;
+plain HTTP is accepted only for loopback development.
 
 The default service URL is `http://localhost:3000`. Replace `example.com` with
 any valid public company domain. The command rejects localhost, private IP
