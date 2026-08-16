@@ -191,6 +191,7 @@ test("the composed attempt count records a failed transport request before a suc
 
 test("the final publication gate removes a rival whose enrichment replaces its price with an invalid signal", () => {
   const candidate = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "r1")], accepted: 1 });
+  candidate.rows[0].primary.priceSignals = [{ raw: "GBP 10", currency: "GBP", amount: 10 }];
   candidate.rows[0].matches[0].product.priceSignals = [{ raw: "GBP 8", currency: "GBP", amount: 8 }];
   const invalidFresh = { ...candidate.rows[0].matches[0].product, priceSignals: [{ raw: "GBP 0", currency: "GBP", amount: 0 }], observedAt: "2026-08-07T00:00:00.000Z" };
   const enriched = applyFinalProductEnrichment(candidate, [invalidFresh], { pagesRequested: 1, pagesFetched: 1, maxPages: 64, gaps: [] });
@@ -200,4 +201,38 @@ test("the final publication gate removes a rival whose enrichment replaces its p
   assert.equal(published.rows[0].matches[0].product, null);
   assert.equal(published.coverage.assignedPairCount, 0);
   assert.equal(published.matching.publication.suppressedAcceptedPairs, 1);
+  assert.equal(published.matching.publication.reasons["missing-valid-rival-price"], 1);
+});
+
+test("the final publication gate requires a valid observed primary price", () => {
+  const candidate = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "r1")], accepted: 1 });
+  candidate.rows[0].matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+
+  const published = publishPricedProductComparison(candidate);
+
+  assert.equal(published.rows[0].matches[0].product, null);
+  assert.equal(published.matching.publication.reasons["missing-valid-primary-price"], 1);
+});
+
+test("the final publication gate excludes cross-currency product prices without FX conversion", () => {
+  const candidate = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "r1")], accepted: 1 });
+  candidate.rows[0].primary.priceSignals = [{ raw: "USD 90", currency: "USD", amount: 90 }];
+  candidate.rows[0].matches[0].product.priceSignals = [{ raw: "GBP 100", currency: "GBP", amount: 100 }];
+
+  const published = publishPricedProductComparison(candidate);
+
+  assert.equal(published.rows[0].matches[0].product, null);
+  assert.equal(published.matching.publication.reasons["incompatible-price-currency"], 1);
+});
+
+test("the final publication gate keeps complete same-currency observations", () => {
+  const candidate = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "r1")], accepted: 1 });
+  candidate.rows[0].primary.priceSignals = [{ raw: "USD 90", currency: "USD", amount: 90 }];
+  candidate.rows[0].matches[0].product.priceSignals = [{ raw: "USD 80", currency: "USD", amount: 80 }];
+
+  const published = publishPricedProductComparison(candidate);
+
+  assert.equal(published.rows[0].matches[0].product.id, "r1");
+  assert.equal(published.matching.publication.suppressedAcceptedPairs, 0);
+  assert.deepEqual(published.matching.publication.reasons, {});
 });

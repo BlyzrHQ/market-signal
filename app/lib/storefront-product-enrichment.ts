@@ -601,6 +601,28 @@ function pageExtraction(document: string, sourceUrl: string, domain: string) {
   return { pageTitle, result: extractProductsFromHtml({ document, sourceUrl, domain, observedAt: new Date().toISOString(), pageTitle, pageDescription, headings, pagePriceSignals }) };
 }
 
+function rejectContradictoryPageCurrencies(document: string, products: ProductRecord[]) {
+  const directConflict = hasConflictingDirectProductCurrency(document);
+  const directCurrency = confirmedProductCurrency(document, { allowStructured: false });
+  if (!directConflict && !directCurrency) return products;
+  return products.map((product) => {
+    const supported = product.priceSignals.filter((signal) => isSupportedCurrency(signal.currency));
+    const contradiction = directConflict
+      ? supported.length > 0
+      : supported.some((signal) => String(signal.currency).trim().toUpperCase() !== directCurrency);
+    if (!contradiction) return product;
+    return {
+      ...product,
+      priceSignals: directConflict
+        ? []
+        : product.priceSignals.filter((signal) => String(signal.currency || "").trim().toUpperCase() === directCurrency),
+      attributes: [...new Set([...product.attributes, directConflict
+        ? "Price evidence conflict: multiple direct metadata currencies"
+        : "Price evidence conflict: contradictory structured currency rejected"])],
+    };
+  });
+}
+
 function expectedProduct(item: ProductEnrichmentTarget): ProductRecord {
   return {
     id: item.productId,
@@ -798,6 +820,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       if (!fetched.ok) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed", fetched.status, "http") };
       if (!/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed", fetched.status, "content") };
       const extracted = pageExtraction(fetched.text, fetched.url, item.domain);
+      extracted.result.products = rejectContradictoryPageCurrencies(fetched.text, extracted.result.products);
       const expected = expectedProduct(item);
       addScopedProductPageEvidence(fetched.text, fetched.url, expected, extracted.result.products, extracted.pageTitle);
       const canonicalCrossLanguageOptions = { allowCanonicalCrossLanguageIdentity: canonicalSelectedPage(item.sourceUrl) === canonicalSelectedPage(fetched.url) };

@@ -1,4 +1,4 @@
-import { hasValidObservedRivalPrice, type ProductComparison } from "./product-intelligence.ts";
+import { hasValidObservedRivalPrice, isSupportedCurrency, type ProductComparison, type ProductRecord } from "./product-intelligence.ts";
 
 export type ProductMatchLifecycle = "idle" | "matching" | "retrying" | "complete" | "limited";
 
@@ -119,11 +119,29 @@ export function upsertProductComparisonBlock<T extends ReportDocument>(document:
 
 export function publishPricedProductComparison(comparison: ProductComparison): ProductComparison {
   let suppressedAcceptedPairs = 0;
+  const reasons: Record<string, number> = {};
+  const observedCurrencies = (product: ProductRecord) => new Set(product.priceSignals
+    .filter((signal) => typeof signal.amount === "number" && Number.isFinite(signal.amount) && signal.amount > 0 && Boolean(String(signal.raw || "").trim()) && isSupportedCurrency(signal.currency))
+    .map((signal) => String(signal.currency).trim().toUpperCase()));
+  const completeObservedPrice = (product: ProductRecord) => hasValidObservedRivalPrice(product)
+    && /^https?:\/\//i.test(product.sourceUrl)
+    && Boolean(product.observedAt);
+  const suppress = (reason: string) => {
+    suppressedAcceptedPairs += 1;
+    reasons[reason] = (reasons[reason] || 0) + 1;
+  };
   const rows = comparison.rows.map((row) => ({
     ...row,
     matches: row.matches.map((match) => {
-      if (!match.product || hasValidObservedRivalPrice(match.product)) return match;
-      suppressedAcceptedPairs += 1;
+      if (!match.product) return match;
+      if (!completeObservedPrice(row.primary)) suppress("missing-valid-primary-price");
+      else if (!completeObservedPrice(match.product)) suppress("missing-valid-rival-price");
+      else {
+        const primaryCurrencies = observedCurrencies(row.primary);
+        const rivalCurrencies = observedCurrencies(match.product);
+        if (primaryCurrencies.size === 1 && rivalCurrencies.size === 1 && [...primaryCurrencies][0] === [...rivalCurrencies][0]) return match;
+        suppress("incompatible-price-currency");
+      }
       return { ...match, product: null, score: 0, confidence: null, sharedTerms: [], claimIds: row.primary.claimIds, decision: null, assessment: undefined };
     }),
   }));
@@ -135,7 +153,7 @@ export function publishPricedProductComparison(comparison: ProductComparison): P
     coverage: { ...comparison.coverage, assignedPairCount, verifiedPairCount },
     matching: comparison.matching ? {
       ...comparison.matching,
-      publication: { suppressedAcceptedPairs, reasons: { "missing-valid-rival-price": suppressedAcceptedPairs } },
+      publication: { suppressedAcceptedPairs, reasons },
     } : comparison.matching,
   };
 }

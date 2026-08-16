@@ -165,7 +165,7 @@ export type ProductComparison = {
     candidateSlotsByDomain?: Record<string, number>;
     publication?: {
       suppressedAcceptedPairs: number;
-      reasons: Record<"missing-valid-rival-price", number>;
+      reasons: Record<string, number>;
     };
   };
   enrichment?: {
@@ -705,19 +705,47 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
     }
   }
   const pageIdentity = clean(input.pageTitle.split(/\s+(?:\||—|–|-)\s+/)[0] || input.pageTitle);
-  const metadataCandidates = products.filter((product) => {
+  const exactMetadataCandidates = products.filter((product) => {
     if (product.jsonLdType !== "Product") return false;
     return normalized(product.name) === normalized(pageIdentity);
   });
+  let productPathForMetadata = false;
+  try { productPathForMetadata = PRODUCT_PATH.test(new URL(input.sourceUrl).pathname); } catch { productPathForMetadata = false; }
+  const samePageProducts = products.filter((product) => product.jsonLdType === "Product" && product.sourceUrl === input.sourceUrl);
+  const metadataCandidates = exactMetadataCandidates.length
+    ? exactMetadataCandidates
+    : productPathForMetadata && samePageProducts.length === 1
+      ? samePageProducts
+      : [];
   if (metadataCandidates.length === 1) {
     const selectedId = metadataCandidates[0].id;
     const metadataOffer = authoritativeOffer;
+    const validMetadataOffer = Boolean(metadataOffer
+      && typeof metadataOffer.amount === "number"
+      && Number.isFinite(metadataOffer.amount)
+      && metadataOffer.amount > 0
+      && isSupportedCurrency(metadataOffer.currency));
     const metadataImage = openGraphImage(input.document, input.sourceUrl);
-    products = products.map((product) => product.id === selectedId ? {
-      ...product,
-      priceSignals: hasComparablePublicPrice(product) || !metadataOffer ? product.priceSignals : [metadataOffer],
-      imageUrl: product.imageUrl || metadataImage,
-    } : product);
+    products = products.map((product) => {
+      if (product.id !== selectedId) return product;
+      const structuredCurrencies = new Set(product.priceSignals
+        .map((signal) => String(signal.currency || "").trim().toUpperCase())
+        .filter(isSupportedCurrency));
+      const metadataCurrency = String(metadataOffer?.currency || "").trim().toUpperCase();
+      const metadataContradictsStructured = Boolean(validMetadataOffer && metadataOffer && metadataCurrency
+        && structuredCurrencies.size > 0
+        && [...structuredCurrencies].some((currency) => currency !== metadataCurrency));
+      return {
+        ...product,
+        priceSignals: metadataContradictsStructured || (!hasComparablePublicPrice(product) && validMetadataOffer && metadataOffer)
+          ? [metadataOffer!]
+          : product.priceSignals,
+        attributes: metadataContradictsStructured
+          ? [...new Set([...product.attributes, "Price evidence conflict: direct metadata overrode contradictory structured currency"])]
+          : product.attributes,
+        imageUrl: product.imageUrl || metadataImage,
+      };
+    });
   }
   let productPath = false;
   let pagePath = "";
@@ -1548,34 +1576,52 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
   const boundedMax = Math.max(0, Math.min(1_000, Math.floor(maxPages)));
   const eligible: ProductEnrichmentTarget[] = [];
   const seenUrls = new Set<string>();
-  const add = (product: ProductRecord, role: ProductEnrichmentTarget["role"], pairScore: number) => {
+  const add = (product: ProductRecord, role: ProductEnrichmentTarget["role"], pairScore: number, need: "price" | "image") => {
     if (product.jsonLdType !== "Product") return;
     const sourceUrl = safeProductSource(product);
     const needsPrice = !hasComparablePublicPrice(product);
     const needsSecureImage = !/^https:\/\//i.test(product.imageUrl);
-    if (!sourceUrl || (!needsPrice && !needsSecureImage) || seenUrls.has(sourceUrl)) return;
+    if (!sourceUrl || (need === "price" ? !needsPrice : !needsSecureImage) || seenUrls.has(sourceUrl)) return;
     seenUrls.add(sourceUrl);
     eligible.push({ domain: product.domain, sourceUrl, productId: product.id, expectedName: product.name, expectedType: product.jsonLdType, pairScore, role });
   };
 
-  // A valid rival price is the publication gate. Give every primary family its
-  // strongest rival lookup before spending the remaining budget on secondary
-  // rivals or primary-side presentation details.
+  // Complete the most viable accepted pairs before spending any capacity on
+  // presentation-only image gaps. A single missing side is cheapest to finish,
+  // while pairs missing both sides are kept adjacent so a tight budget creates
+  // complete comparisons instead of many half-enriched rows.
   const acceptedByRow = comparison.rows.map((row) => ({
     row,
     accepted: row.matches.filter((match) => match.product && match.confidence === "Medium").sort((left, right) => right.score - left.score
       || left.domain.localeCompare(right.domain)
       || (left.product?.id || "").localeCompare(right.product?.id || "")),
   }));
-  for (const { accepted } of acceptedByRow) {
-    const strongest = accepted[0];
-    if (strongest?.product) add(strongest.product, "rival", strongest.score);
-  }
-  for (const { accepted } of acceptedByRow) {
-    for (const match of accepted.slice(1)) if (match.product) add(match.product, "rival", match.score);
+  for (const { row, accepted } of acceptedByRow) {
+    for (const match of accepted) {
+      if (!match.product) continue;
+      const primaryMissing = !hasComparablePublicPrice(row.primary);
+      const rivalMissing = !hasComparablePublicPrice(match.product);
+      if (primaryMissing !== rivalMissing) add(primaryMissing ? row.primary : match.product, primaryMissing ? "primary" : "rival", match.score, "price");
+    }
   }
   for (const { row, accepted } of acceptedByRow) {
-    if (accepted[0]) add(row.primary, "primary", accepted[0].score);
+    for (const match of accepted) {
+      if (!match.product || hasComparablePublicPrice(row.primary) || hasComparablePublicPrice(match.product)) continue;
+      add(match.product, "rival", match.score, "price");
+      add(row.primary, "primary", match.score, "price");
+    }
+  }
+  // Defensive residual price passes cover deduplicated shared products without
+  // allowing image gaps to move ahead of any remaining price gap.
+  for (const { row, accepted } of acceptedByRow) {
+    for (const match of accepted) if (match.product) add(match.product, "rival", match.score, "price");
+    if (accepted[0]) add(row.primary, "primary", accepted[0].score, "price");
+  }
+  for (const { row, accepted } of acceptedByRow) {
+    const strongest = accepted[0];
+    if (strongest?.product) add(strongest.product, "rival", strongest.score, "image");
+    if (strongest) add(row.primary, "primary", strongest.score, "image");
+    for (const match of accepted.slice(1)) if (match.product) add(match.product, "rival", match.score, "image");
   }
 
   const targets = eligible.slice(0, boundedMax);

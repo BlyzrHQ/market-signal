@@ -43,7 +43,7 @@ test("publishes only rival products with a finite positive observed ISO price", 
 });
 
 test("the final publication gate suppresses an AI-accepted pair without a rival price", async () => {
-  const primary = product("p-unpriced", "shop.test", "Sidr Honey 500g");
+  const primary = product("p-priced", "shop.test", "Sidr Honey 500g", { price: { raw: "GBP 10", currency: "GBP", amount: 10 } });
   const rival = product("r-unpriced", "rival.test", "Sidr Honey 500g");
   const fetch = async (url, init) => {
     const body = JSON.parse(init.body);

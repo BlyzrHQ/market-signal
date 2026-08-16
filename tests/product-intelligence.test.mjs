@@ -228,6 +228,22 @@ test("rejects conflicting or inactive Open Graph price metadata", () => {
   }
 });
 
+test("product-scoped direct metadata overrides a contradictory JSON-LD currency", () => {
+  const result = extraction({
+    document: `<head><title>Custom Embroidered Columbia Jackets No Minimum – Arklavo</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="GBP"></head><script type="application/ld+json">${JSON.stringify({
+      "@type": "Product",
+      name: "Custom Embroidered Columbia Jackets No Minimum",
+      offers: { price: "12000", priceCurrency: "USD" },
+    })}</script>`,
+    sourceUrl: "https://arklavo.test/products/custom-embroidered-columbia-jackets-no-minimum",
+    pageTitle: "Custom Embroidered Columbia Jackets No Minimum – Arklavo",
+    headings: ["Custom Embroidered Columbia Jackets No Minimum"],
+  });
+
+  assert.deepEqual(result.products[0].priceSignals, [{ raw: "GBP 100.00", currency: "GBP", amount: 100, period: undefined }]);
+  assert.ok(result.products[0].attributes.includes("Price evidence conflict: direct metadata overrode contradictory structured currency"));
+});
+
 test("does not infer ISO currencies from lowercase ordinary prose", () => {
   const result = extraction({
     document: `<script type="application/ld+json">${JSON.stringify([
@@ -1208,7 +1224,7 @@ test("final match enrichment can cover both sides of twenty-nine selected rows",
   assert.equal(targets.filter((target) => target.role === "rival").length, 29);
 });
 
-test("final enrichment gives every product family its strongest rival before primary presentation gaps", () => {
+test("final enrichment completes accepted pairs before spending capacity on secondary or image-only gaps", () => {
   const rows = Array.from({ length: 70 }, (_, index) => {
     const primary = { ...product(`primary-${index}`, "shop.test", `Product ${index} 500g`), jsonLdType: "Product", sourceUrl: `https://shop.test/products/product-${index}` };
     const weaker = { ...product(`weaker-${index}`, "a-rival.test", `Product ${index} 500g`), jsonLdType: "Product", sourceUrl: `https://a-rival.test/products/product-${index}` };
@@ -1219,9 +1235,23 @@ test("final enrichment gives every product family its strongest rival before pri
   const comparison = { primaryDomain: "shop.test", comparisonDomains: ["a-rival.test", "z-rival.test"], rows, unmatched: [], coverage: { primaryProductsAvailable: 70, primaryProductsScanned: 70, primaryProductFamiliesCompared: 70, competitorProductsAvailable: 140, competitorProductsScanned: 140, assignedPairCount: 140, verifiedPairCount: 140, rowsReturned: 70, rowLimit: 70, truncated: false } };
   const targets = selectFinalProductEnrichmentTargets(comparison, 80);
   assert.equal(targets.length, 80);
-  assert.equal(targets.slice(0, 70).every((target) => target.role === "rival"), true);
-  assert.equal(targets.slice(0, 70).every((target) => target.productId.startsWith("strongest-")), true);
-  assert.equal(targets.slice(70).every((target) => target.productId.startsWith("weaker-")), true);
+  assert.deepEqual(targets.slice(0, 3).map((target) => target.productId), ["strongest-0", "primary-0", "weaker-0"]);
+  assert.equal(targets.filter((target) => target.role === "primary").length > 0, true);
+});
+
+test("final enrichment prioritizes missing primary prices over already-priced rival image gaps", () => {
+  const rows = Array.from({ length: 30 }, (_, index) => {
+    const primary = { ...product(`primary-${index}`, "wearform.test", `Uniform ${index}`), jsonLdType: "Product", sourceUrl: `https://wearform.test/products/uniform-${index}`, imageUrl: "https://cdn.wearform.test/uniform.jpg" };
+    const rival = { ...product(`rival-${index}`, "rival.test", `Uniform ${index}`), jsonLdType: "Product", sourceUrl: `https://rival.test/products/uniform-${index}`, priceSignals: [{ raw: "USD 25", currency: "USD", amount: 25 }], imageUrl: "" };
+    return { primary, matches: [{ domain: rival.domain, product: rival, score: 0.95, confidence: "Medium", sharedTerms: ["uniform"], claimIds: [], decision: null }] };
+  });
+  const comparison = { primaryDomain: "wearform.test", comparisonDomains: ["rival.test"], rows, unmatched: [], coverage: { primaryProductsAvailable: 30, primaryProductsScanned: 30, primaryProductFamiliesCompared: 30, competitorProductsAvailable: 30, competitorProductsScanned: 30, assignedPairCount: 30, verifiedPairCount: 30, rowsReturned: 30, rowLimit: 30, truncated: false } };
+
+  const targets = selectFinalProductEnrichmentTargets(comparison, 20);
+
+  assert.equal(targets.length, 20);
+  assert.equal(targets.every((target) => target.role === "primary"), true);
+  assert.equal(targets.every((target) => target.productId.startsWith("primary-")), true);
 });
 
 test("final enrichment updates the selected pair and recomputes its price decision", () => {
