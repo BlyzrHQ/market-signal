@@ -2,7 +2,7 @@
 
 import { KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { PricePosition } from "./price-position";
-import { formatPriceClaim, resolvePriceClaim } from "../lib/price-claims";
+import { formatPriceClaim, formatPriceDifference, resolvePriceClaim, type PriceClaim } from "../lib/price-claims";
 import { jsonResponseErrorMessage, readJsonResponse } from "../lib/json-response";
 
 export type ProductBattle = {
@@ -148,6 +148,16 @@ function MatchDetails({ row, ar }: { row: ProductRow; ar: boolean }) {
 
 function ProductTablePrice({ value, ar }: { value: string; ar: boolean }) {
   return <strong className={`product-table-price ${value ? "observed" : "unavailable"}`} dir="auto">{value || (ar ? "غير مرصود" : "Not observed")}</strong>;
+}
+
+function ProductTableDifference({ claim, lane, ar }: { claim: PriceClaim; lane: string; ar: boolean }) {
+  const difference = formatPriceDifference(claim, ar ? "ar" : "en");
+  return <div className={`product-difference ${lane}`}>
+    <span>{difference.label}</span>
+    <strong dir="auto">{difference.value}</strong>
+    <b>{difference.direction}</b>
+    <small>{difference.note}</small>
+  </div>;
 }
 
 function ProductTableDetails({ row, ar }: { row: ProductRow; ar: boolean }) {
@@ -315,7 +325,7 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
               <td role="cell" className="product-table-price-cell product-table-your-price"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "سعرك" : "Your price"}</span><ProductTablePrice value={row.primaryDisplay} ar={ar} /></td>
               <td role="cell" className="product-table-product-cell product-table-rival-product"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "أقرب منافس" : "Closest rival"}</span><ProductIdentity role="rival" product={row.battle.rival} price={row.rivalDisplay} source={row.rivalSource} domain={row.domain} ar={ar} compact showPrice={false} /></td>
               <td role="cell" className="product-table-price-cell product-table-rival-price"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "سعر المنافس" : "Rival price"}</span><ProductTablePrice value={row.rivalDisplay} ar={ar} /></td>
-              <td role="cell" className="product-table-difference-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "الفرق" : "Difference"}</span><strong className={`product-signal ${row.lane}`}>{row.priceSignal}</strong>{row.priceDetail && <small dir="auto">{row.priceDetail}</small>}</td>
+              <td role="cell" className="product-table-difference-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "الفرق" : "Difference"}</span><ProductTableDifference claim={row.priceClaim} lane={row.lane} ar={ar} /></td>
               <td role="cell" className="product-table-action-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "الخطوة التالية" : "Next move"}</span><strong className="product-next-move">{row.shortAction}</strong><ProductTableDetails row={row} ar={ar} /></td>
             </tr>;
           })}</tbody>

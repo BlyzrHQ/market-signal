@@ -113,7 +113,8 @@ test("saved product and ad views preserve truth boundaries and source links", ()
   assert.doesNotMatch(productLab, /<tbody key=|product-table-detail|colSpan=\{4\}/);
   assert.match(productLab, /resolvePriceClaim\(\{/);
   assert.match(productLab, /const priceDetail = priceCopy\.supporting \|\| priceCopy\.detail/);
-  assert.match(productLab, /row\.priceDetail && <small/);
+  assert.match(productLab, /<ProductTableDifference claim=\{row\.priceClaim\} lane=\{row\.lane\} ar=\{ar\} \/>/);
+  assert.match(productLab, /formatPriceDifference\(claim, ar \? "ar" : "en"\)/);
   assert.match(priceClaims, /kind: "listed-gap"/);
   assert.match(priceClaims, /Rival listed price is/);
   assert.doesNotMatch(productLab, /Prices found — comparison basis unverified/);
