@@ -1241,6 +1241,23 @@ test("final enrichment completes accepted pairs before spending capacity on seco
   assert.equal(targets.filter((target) => target.role === "primary").length, 40);
 });
 
+test("a unique product heading reconciles direct metadata on a multi-product page", () => {
+  const main = { "@type": "Product", name: "Custom Embroidered Jacket", offers: { price: "12000", priceCurrency: "USD" }, image: "https://cdn.acme.com/main.jpg" };
+  const related = { "@type": "Product", name: "Related Work Vest", offers: { price: "80", priceCurrency: "USD" } };
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="100"><meta property="product:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify([main, related])}</script>`,
+    sourceUrl: "https://acme.com/products/custom-embroidered-jacket",
+    pageTitle: "Workwear Store | Acme",
+    headings: ["Custom Embroidered Jacket"],
+  });
+  const selected = result.products.find((item) => item.name === "Custom Embroidered Jacket");
+  const untouched = result.products.find((item) => item.name === "Related Work Vest");
+
+  assert.deepEqual(selected.priceSignals, []);
+  assert.ok(selected.attributes.some((attribute) => attribute.startsWith("Price evidence conflict:")));
+  assert.deepEqual(untouched.priceSignals.map((signal) => signal.amount), [80]);
+});
+
 test("final enrichment prioritizes missing primary prices over already-priced rival image gaps", () => {
   const rows = Array.from({ length: 30 }, (_, index) => {
     const primary = { ...product(`primary-${index}`, "wearform.test", `Uniform ${index}`), jsonLdType: "Product", sourceUrl: `https://wearform.test/products/uniform-${index}`, imageUrl: "https://cdn.wearform.test/uniform.jpg" };

@@ -710,9 +710,10 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
     }
   }
   const pageIdentity = clean(input.pageTitle.split(/\s+(?:\||—|–|-)\s+/)[0] || input.pageTitle);
+  const metadataIdentities = new Set([pageIdentity, ...input.headings].map(normalized).filter(Boolean));
   const exactMetadataCandidates = products.filter((product) => {
     if (product.jsonLdType !== "Product") return false;
-    return normalized(product.name) === normalized(pageIdentity);
+    return metadataIdentities.has(normalized(product.name));
   });
   let productPathForMetadata = false;
   try { productPathForMetadata = PRODUCT_PATH.test(new URL(input.sourceUrl).pathname); } catch { productPathForMetadata = false; }
