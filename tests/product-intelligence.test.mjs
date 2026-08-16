@@ -378,6 +378,16 @@ test("product-page metadata cannot bind to a related-product heading", () => {
   assert.deepEqual(result.products[0].priceSignals, []);
 });
 
+test("product-page metadata cannot bind through a slug substring", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="100"><meta property="product:price:currency" content="USD"><script type="application/ld+json">${JSON.stringify([{ "@type": "Product", name: "Custom Jacket Cover" }, { "@type": "Product", name: "Custom Embroidered Jacket" }])}</script>`,
+    sourceUrl: "https://acme.com/products/custom-jacket",
+    pageTitle: "Workwear Collection",
+    headings: ["Custom Jacket Cover", "Custom Embroidered Jacket"],
+  });
+  assert.deepEqual(result.products.map((product) => product.priceSignals), [[], []]);
+});
+
 test("product-scoped direct metadata conflict suppresses price until visible evidence corroborates it", () => {
   const result = extraction({
     document: `<head><title>Custom Embroidered Columbia Jackets No Minimum – Arklavo</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="GBP"></head><script type="application/ld+json">${JSON.stringify({
@@ -688,6 +698,16 @@ test("catalog deduplication preserves a fresh price conflict instead of reviving
   assert.deepEqual(selected[0].priceSignals, []);
   assert.ok(selected[0].attributes.includes(conflict));
   assert.equal(selected[0].observedAt, fresh.observedAt);
+});
+
+test("catalog deduplication keeps localized price, timestamp, and source URL atomic", () => {
+  const us = { ...product("jacket-us", "shop.example", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.example/en-us/products/custom-jacket", priceSignals: [{ raw: "USD 100", currency: "USD", amount: 100 }], observedAt: "2026-08-15T00:00:00.000Z" };
+  const canada = { ...us, id: "jacket-ca", sourceUrl: "https://shop.example/en-ca/products/custom-jacket", priceSignals: [{ raw: "CAD 120", currency: "CAD", amount: 120 }], observedAt: "2026-08-16T00:00:00.000Z", claimIds: ["jacket-ca-observed"] };
+  const selected = selectPreferredProducts([us, canada]);
+  assert.equal(selected.length, 1);
+  assert.equal(selected[0].sourceUrl, canada.sourceUrl);
+  assert.equal(selected[0].observedAt, canada.observedAt);
+  assert.deepEqual(selected[0].priceSignals, canada.priceSignals);
 });
 
 test("catalog deduplication collapses locale variants of the same product URL", () => {

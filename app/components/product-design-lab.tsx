@@ -71,6 +71,16 @@ function observedDate(value: string, ar: boolean) {
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? new Date(parsed).toLocaleDateString(ar ? "ar" : "en") : (ar ? "غير معروف" : "Unknown");
 }
+function suppressionReasonLabel(reason: string, count: number, ar: boolean) {
+  const labels: Record<string, { en: string; ar: string }> = {
+    "insufficient-match-confidence": { en: "low-confidence matches", ar: "مطابقات منخفضة الثقة" },
+    "missing-valid-primary-price": { en: "matches missing your valid public price", ar: "مطابقات ينقصها سعرك العام الصالح" },
+    "missing-valid-rival-price": { en: "matches missing a valid rival public price", ar: "مطابقات ينقصها سعر منافس عام صالح" },
+    "incompatible-price-currency": { en: "matches with incompatible currencies", ar: "مطابقات بعملات غير متوافقة" },
+  };
+  const label = labels[reason]?.[ar ? "ar" : "en"] || (ar ? "مطابقات مستبعدة أخرى" : "other excluded matches");
+  return `${count} ${label}`;
+}
 
 type ProductRow = ReturnType<typeof prepareRow>;
 
@@ -171,7 +181,12 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
   const rows = useMemo(() => displayedBattles.map((battle) => prepareRow(battle, ar)), [displayedBattles, ar]);
   const catalogProducts = primaryProducts?.authoritative ? primaryProducts.products : [];
   const assessedProducts = numeric(object(comparison?.matching).primaryProductsAssessed) || list(comparison?.rows).length;
-  const excludedPriceMatches = numeric(object(object(comparison?.matching).publication).suppressedAcceptedPairs);
+  const publication = object(object(comparison?.matching).publication);
+  const excludedPriceMatches = numeric(publication.suppressedAcceptedPairs);
+  const suppressionReasons = Object.entries(object(publication.reasons))
+    .map(([reason, count]) => [reason, numeric(count)] as const)
+    .filter(([, count]) => count > 0);
+  const suppressionSummary = suppressionReasons.map(([reason, count]) => suppressionReasonLabel(reason, count, ar)).join(ar ? "، " : "; ");
 
   const fetchMatchPage = async (cursor?: string) => {
     const query = new URLSearchParams({ limit: "100" });
@@ -272,7 +287,9 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
     <header className="panel-intro compact product-lab-intro"><div><span>{ar ? "مقارنة منتج بمنتج" : "PRODUCT VS PRODUCT"}</span><h2>{ar ? "اختر الطريقة الأسهل لرؤية المنافسة" : "Choose the clearest way to see the competition"}</h2><p>{ar ? "ثلاث طرق عرض، ونفس البيانات العامة المحفوظة." : "Three views, one saved set of public evidence."}</p></div></header>
     <div className="panel-metrics"><div><strong>{authoritativeBattles ? matchTotal : rows.length}</strong><span>{ar ? "مطابقات مقبولة محفوظة" : "accepted matches saved"}</span></div><div><strong>{directPriceTotal ?? rows.filter((row) => row.priceClaim.kind === "direct").length}</strong><span>{ar ? "فروق سعر مباشرة" : "direct price deltas"}</span></div><div><strong>{assessedProducts}</strong><span>{ar ? "منتجاتك التي تم تقييمها فعلياً" : "your products actually assessed"}</span></div></div>
     <div className={`product-result-coverage ${matchLoadState === "fallback" ? "limited" : "ready"}`} role="status" aria-live="polite"><span>{matchLoadState === "loading" ? (ar ? "جارٍ تحميل النتائج الكاملة…" : "Loading complete saved results…") : authoritativeBattles ? (ar ? `نعرض ${rows.length} من ${matchTotal} مطابقة محفوظة عبر ${assessedProducts} منتجاً تم تقييمه.` : `Showing ${rows.length} of ${matchTotal} saved matches across ${assessedProducts} products actually assessed.`) : (ar ? `نعرض لقطة مضغوطة من ${rows.length} مطابقة.` : `Showing a compact snapshot of ${rows.length} matches.`)}</span>{matchLoadMessage && <small>{matchLoadMessage}</small>}</div>
-    {excludedPriceMatches > 0 && <div className="product-result-coverage limited" role="note"><span>{ar ? `تم الاحتفاظ بأدلة ${excludedPriceMatches} مطابقة أخرى، لكنها مستبعدة من جدول الأسعار لعدم توفر سعرين عامين صالحين بالعملة نفسها.` : `${excludedPriceMatches} additional semantic matches were preserved as evidence but excluded from the price table because two valid public prices in the same currency were unavailable.`}</span></div>}
+    {excludedPriceMatches > 0 && <div className="product-result-coverage limited" role="note"><span>{suppressionSummary
+      ? (ar ? `تم الاحتفاظ بأدلة ${excludedPriceMatches} مطابقة أخرى واستبعادها من جدول الأسعار: ${suppressionSummary}.` : `${excludedPriceMatches} additional semantic matches were preserved as evidence and excluded from the price table: ${suppressionSummary}.`)
+      : (ar ? `تم الاحتفاظ بأدلة ${excludedPriceMatches} مطابقة أخرى واستبعادها من جدول الأسعار وفق قواعد سلامة النشر.` : `${excludedPriceMatches} additional semantic matches were preserved as evidence and excluded under the publication integrity rules.`)}</span></div>}
     <div className="product-layout-toolbar">
       <div className="product-layout-tabs" role="tablist" aria-label={ar ? "طرق عرض مقارنة المنتجات" : "Product comparison layouts"}>{LAYOUTS.map((item, index) => <button id={`product-layout-tab-${item}`} key={item} ref={(node) => { layoutTabs.current[index] = node; }} type="button" role="tab" aria-selected={layout === item} aria-controls={`product-layout-${item}`} tabIndex={layout === item ? 0 : -1} onClick={() => selectLayout(item)} onKeyDown={(event) => onLayoutKey(event, index)}><span>{String(index + 1).padStart(2, "0")}</span>{LAYOUT_LABELS[item][ar ? "ar" : "en"]}</button>)}</div>
       <div className="product-lab-actions"><button type="button" onClick={exportCsv} disabled={matchLoadState === "loading" || matchLoadState === "more" || matchLoadState === "exporting"}>{matchLoadState === "exporting" ? (ar ? "جارٍ تجهيز كل النتائج…" : "Preparing all results…") : (ar ? "تصدير CSV" : "Export CSV")}</button><button type="button" onClick={shareReport}>{ar ? "مشاركة" : "Share"}</button></div>

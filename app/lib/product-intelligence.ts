@@ -770,7 +770,7 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
     pathIdentity = normalized(decodeURIComponent(segments.at(-1) || "").replace(/[-_]+/g, " "));
   } catch { pathIdentity = ""; }
   const pageBoundMetadataCandidates = metadataCandidates.filter((product) => product.normalizedName === normalized(pageIdentity)
-    || (pathIdentity.length >= 4 && (product.normalizedName.includes(pathIdentity) || pathIdentity.includes(product.normalizedName))));
+    || (pathIdentity.length >= 4 && product.normalizedName === pathIdentity));
   const canBindMetadataCandidate = pageBoundMetadataCandidates.length === 1 && productDetailPathForMetadata;
   if (authoritativeMetadata.present) {
     const oneMetadataIdentity = pageBoundMetadataCandidates.length > 0
@@ -1074,6 +1074,7 @@ export function selectPreferredProducts(items: ProductRecord[]) {
     const preferred = quality(item) > quality(current) ? item : current;
     const supplemental = preferred === item ? current : item;
     const priceEvidence = (Date.parse(item.observedAt) || 0) >= (Date.parse(current.observedAt) || 0) ? item : current;
+    const otherEvidence = priceEvidence === item ? current : item;
     const preferredSource = canonicalProductSourceKey(preferred);
     const supplementalSource = canonicalProductSourceKey(supplemental);
     const sameSource = preferred.sourceUrl.split("#")[0].replace(/\/$/, "") === supplemental.sourceUrl.split("#")[0].replace(/\/$/, "")
@@ -1085,17 +1086,17 @@ export function selectPreferredProducts(items: ProductRecord[]) {
     }
     const secureImage = [preferred.imageUrl, supplemental.imageUrl].find((value) => /^https:\/\//i.test(value));
     selected.set(key, {
-      ...preferred,
-      description: preferred.description || supplemental.description,
+      ...priceEvidence,
+      description: priceEvidence.description || otherEvidence.description,
       priceSignals: priceEvidence.priceSignals,
       attributes: [...new Set([
         ...priceEvidence.attributes,
-        ...supplemental.attributes.filter((attribute) => attribute.startsWith(CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX)),
+        ...otherEvidence.attributes.filter((attribute) => attribute.startsWith(CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX)),
       ])],
       aliases: mergeAliases(preferred, supplemental),
       identifiers: mergeIdentifiers(preferred.identifiers, supplemental.identifiers),
-      quantity: preferred.quantity || supplemental.quantity,
-      imageUrl: secureImage || preferred.imageUrl || supplemental.imageUrl,
+      quantity: priceEvidence.quantity || otherEvidence.quantity,
+      imageUrl: secureImage || priceEvidence.imageUrl || otherEvidence.imageUrl,
       observedAt: priceEvidence.observedAt,
       claimIds: [...new Set([...preferred.claimIds, ...supplemental.claimIds])],
     });
