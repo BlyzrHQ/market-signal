@@ -20,7 +20,7 @@ Claude Fable 5 could not be started because the installed Claude client returned
 ## Validation
 
 - Focused price, planner, storefront, provenance, and compaction regressions passed.
-- Full `npm test`: 781 tests passed, including type checks and production build.
+- Full `npm test`: 782 tests passed, including type checks and production build.
 - `npm run lint`: 0 errors and 2 pre-existing `<img>` performance warnings.
 - Exact-head fallback re-review and production deployment remain pending.
 
