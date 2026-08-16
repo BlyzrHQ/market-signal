@@ -1784,6 +1784,29 @@ function hasComparablePublicPrice(product: ProductRecord) {
   return currencies.size === 1;
 }
 
+function localeNeutralProductPageUrl(value: string) {
+  try {
+    const url = new URL(value);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const productRouteIndex = segments.findIndex((segment) => PRODUCT_ROUTE_SEGMENTS.has(segment.toLowerCase()));
+    if (productRouteIndex < 0) return "";
+    const route = segments.slice(productRouteIndex).join("/");
+    return `${canonicalHost(url.hostname)}/${route}`;
+  } catch {
+    return "";
+  }
+}
+
+function compatibleFinalEnrichmentSource(left: ProductRecord, right: ProductRecord) {
+  const leftMarket = publicSourceMarketContext(left.sourceUrl);
+  const rightMarket = publicSourceMarketContext(right.sourceUrl);
+  if (leftMarket.conflict || rightMarket.conflict) return false;
+  if (canonicalProductPageUrl(left.sourceUrl) === canonicalProductPageUrl(right.sourceUrl)) return true;
+  if (leftMarket.contextKey && rightMarket.contextKey) return false;
+  const leftRoute = localeNeutralProductPageUrl(left.sourceUrl);
+  return Boolean(leftRoute && leftRoute === localeNeutralProductPageUrl(right.sourceUrl));
+}
+
 function safeProductSource(product: ProductRecord) {
   try {
     const url = new URL(product.sourceUrl);
@@ -1945,11 +1968,15 @@ function sameProductMarketContext(left: ProductRecord, right: ProductRecord) {
   return !leftMarket.conflict && !rightMarket.conflict && leftMarket.contextKey === rightMarket.contextKey;
 }
 
-function sameLiveCatalogIdentity(left: ProductRecord, right: ProductRecord) {
-  if (!sameProductMarketContext(left, right)) return false;
+function sameProductIdentity(left: ProductRecord, right: ProductRecord) {
   return Boolean(sharedValidGtin(left.identifiers, right.identifiers))
     || (left.normalizedName === right.normalizedName
       && (quantitiesEqual(left.quantity, right.quantity) || (!left.quantity && !right.quantity)));
+}
+
+function sameLiveCatalogIdentity(left: ProductRecord, right: ProductRecord) {
+  if (!sameProductMarketContext(left, right)) return false;
+  return sameProductIdentity(left, right);
 }
 
 export function applyPreMatchCatalogEnrichment(catalog: ProductRecord[], enriched: ProductRecord[]) {
@@ -2030,8 +2057,8 @@ export function applyFinalProductEnrichment(
   const merge = (base: ProductRecord) => {
     const fresh = products.find((product) => (product.id === base.id && sameProductMarketContext(product, base))
       || (canonicalHost(product.domain) === canonicalHost(base.domain)
-        && canonicalProductPageUrl(product.sourceUrl) === canonicalProductPageUrl(base.sourceUrl)
-        && sameLiveCatalogIdentity(product, base)));
+        && compatibleFinalEnrichmentSource(product, base)
+        && sameProductIdentity(product, base)));
     if (!fresh || isCatalogReplacementProduct(fresh)) return base;
     const secureImage = [fresh.imageUrl, base.imageUrl].find((value) => /^https:\/\//i.test(value));
     return {
