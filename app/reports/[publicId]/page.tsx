@@ -7,11 +7,12 @@ import { ExperienceBenchmark } from "../../components/experience-benchmark";
 import { reportCoverage, type ReportCoverageEvent } from "../../lib/report-coverage";
 import { jsonResponseErrorMessage, readJsonResponse } from "../../lib/json-response";
 import { countLegacyUngatedProductMatches } from "../../lib/report-price-publication";
+import { stoppedReportPresentation } from "../../lib/stopped-report-presentation";
 
 type Block = { type: string; id: string } & Record<string, unknown>;
 type ReportEvent = ReportCoverageEvent;
 type View = "overview" | "competitors" | "products" | "ads" | "evidence";
-type StoredPayload = { ok: boolean; error?: string; report?: { run: { publicId: string; primaryDomain: string; locale: "en" | "ar"; status: string; createdAt: string; updatedAt: string; errorMessage: string; productPlan: string; productLimit: number }; events: ReportEvent[]; document: { document?: { version: "1"; generatedAt: string; blocks: Block[] }; marketBrief?: Record<string, unknown> } | null; documentSchemaVersion: number; primaryProducts?: { authoritative: boolean; totalCount: number; products: Array<Record<string, unknown>>; truncated: boolean } } };
+type StoredPayload = { ok: boolean; error?: string; report?: { run: { publicId: string; primaryDomain: string; locale: "en" | "ar"; status: string; createdAt: string; updatedAt: string; errorCode: string; errorMessage: string; productPlan: string; productLimit: number }; events: ReportEvent[]; document: { document?: { version: "1"; generatedAt: string; blocks: Block[] }; marketBrief?: Record<string, unknown> } | null; documentSchemaVersion: number; primaryProducts?: { authoritative: boolean; totalCount: number; products: Array<Record<string, unknown>>; truncated: boolean } } };
 type AccountReport = { publicId: string; primaryDomain: string; status: string; createdAt: string; updatedAt: string };
 type AccountReportsPayload = { eligible?: boolean; reports?: AccountReport[] };
 
@@ -98,6 +99,48 @@ function PaidReportHistory({ currentPublicId, ar }: { currentPublicId: string; a
       return <li key={report.publicId}><Link href={`/reports/${report.publicId}?view=products`} aria-current={current ? "page" : undefined} className={current ? "current" : undefined}><i className={`report-history-status status-${report.status}`} aria-hidden="true" /><span><strong dir="auto">{report.primaryDomain}</strong><small>{reportHistoryStatus(report.status, ar)}{Number.isFinite(timestamp) ? ` · ${new Date(timestamp).toLocaleDateString(ar ? "ar" : "en", { month: "short", day: "numeric" })}` : ""}</small></span>{current && <em>{ar ? "الحالي" : "Current"}</em>}</Link></li>;
     })}</ol> : <p>{ar ? "ستظهر تقاريرك هنا بعد أول تشغيل." : "Your reports will appear here after the first run."}</p>}
   </section>;
+}
+
+function StoppedReportWorkspace({ run, ar, onToggleLocale }: { run: NonNullable<StoredPayload["report"]>["run"]; ar: boolean; onToggleLocale: () => void }) {
+  const presentation = stoppedReportPresentation(run.errorMessage, run.errorCode, ar);
+  const observedAt = run.updatedAt || run.createdAt;
+  const websiteUrl = safeUrl(`https://${run.primaryDomain}`);
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const before = url.toString();
+    url.searchParams.delete("view"); url.searchParams.delete("layout"); url.hash = "";
+    if (url.toString() !== before) window.history.replaceState({}, "", url);
+  }, []);
+  return <div className="intelligence-workspace report-dashboard-shell stopped-report-shell">
+    <aside className="report-dashboard-sidebar">
+      <Link className="dashboard-brand" href="/">Market Signal</Link>
+      <section className="dashboard-report-identity stopped" aria-label={ar ? "حالة التقرير" : "Report status"}>
+        <div><span>{ar ? "نطاق التقرير" : "REPORT SCOPE"}</span><b>{ar ? "متوقف" : "Stopped"}</b></div>
+        <strong dir="auto"><i aria-hidden="true" />{run.primaryDomain}</strong>
+        <p>{ar ? "لم تُنشأ مقارنة" : "No comparison was created"}</p>
+        <small>{ar ? "توقف هذا التشغيل قبل اكتمال الفحوص العامة." : "This run stopped before its public checks completed."}</small>
+        <time dateTime={observedAt}>{ar ? "حُدث" : "Updated"} {new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</time>
+      </section>
+      <PaidReportHistory currentPublicId={run.publicId} ar={ar} />
+    </aside>
+    <div className="report-dashboard-main">
+      <header className="report-route-header">
+        <div className="dashboard-view-title"><span>{ar ? "حالة التقرير" : "REPORT STATUS"}</span><b dir="auto">{run.primaryDomain}</b></div>
+        <div className="report-route-meta stopped"><span>{ar ? "متوقف" : "Stopped"}</span><time>{ar ? "لوحظ" : "Observed"} {new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</time></div>
+        <div className="report-route-actions"><button type="button" onClick={onToggleLocale} aria-label={ar ? "Switch to English" : "التبديل إلى العربية"}>{ar ? "EN" : "ع"}</button><Link href="/">{ar ? "تقرير جديد" : "New report"}</Link></div>
+      </header>
+      <section className="workspace-panel stopped-report-panel" aria-labelledby="stopped-report-title">
+        <section className="stopped-report-card">
+          <span>{ar ? "تقرير متوقف" : "STOPPED REPORT"}</span>
+          <h1 id="stopped-report-title">{presentation.title}</h1>
+          <p>{presentation.summary}</p>
+          <div className="stopped-report-actions"><Link href="/">{ar ? "ابدأ تقريراً جديداً" : "Start a new report"}</Link>{websiteUrl && <a href={websiteUrl} target="_blank" rel="noreferrer">{ar ? "افتح الموقع ↗" : "Open website ↗"}</a>}</div>
+          {run.errorMessage && <details><summary>{ar ? "التفاصيل التقنية" : "Technical detail"}</summary><p>{run.errorMessage}</p></details>}
+        </section>
+        <p className="stopped-report-navigation-hint">{ar ? "يمكنك فتح تقرير محفوظ آخر من قائمة تقاريرك." : "Choose another saved report from Your reports, or start a new one."}</p>
+      </section>
+    </div>
+  </div>;
 }
 
 function AdCreativeCard({ concept, ar }: { concept: Record<string, unknown>; ar: boolean }) {
@@ -253,7 +296,7 @@ export default function StoredReportPage({ params }: { params: Promise<{ publicI
   useEffect(() => { let current = true; Promise.resolve(params).then(({ publicId }) => fetch(`/api/reports/${publicId}`, { cache: "no-store" })).then(async (response) => ({ response, body: await readJsonResponse<StoredPayload>(response, "Saved report") })).then(({ response, body }) => { if (!current) return; if (!response.ok || !body.ok) setError(body.error || "The saved report could not be opened."); else { setPayload(body); if (!body.report?.document && ["queued", "running"].includes(body.report?.run.status || "")) Promise.resolve(params).then(({ publicId }) => window.location.replace(`/reports/${publicId}/loading`)); } }).catch((cause) => current && setError(jsonResponseErrorMessage(cause, "Saved report"))); return () => { current = false; }; }, [params]);
   const report = payload?.report; const stored = report?.document; const document = stored?.document; const ar = localeOverride ? localeOverride === "ar" : report?.run.locale === "ar"; const dir = ar ? "rtl" : "ltr";
   if (error) return <main className="stored-report-state" lang={ar ? "ar" : "en"} dir={dir}><Link href="/">Market Signal</Link><h1>{ar ? "التقرير غير متاح" : "Report unavailable"}</h1><p>{error}</p></main>;
-  if (report && !document && ["failed", "interrupted"].includes(report.run.status)) return <main className="stored-report-state" lang={ar ? "ar" : "en"} dir={dir}><Link href="/">Market Signal</Link><h1>{ar ? "توقف هذا التقرير" : "This report stopped"}</h1><p>{report.run.errorMessage || (ar ? "ابدأ تقريراً جديداً للمحاولة مرة أخرى." : "Start a fresh report to try again.")}</p></main>;
+  if (report && !document && ["failed", "interrupted"].includes(report.run.status)) return <main className="stored-report-page" lang={ar ? "ar" : "en"} dir={dir}><StoppedReportWorkspace run={report.run} ar={ar} onToggleLocale={() => setLocaleOverride(ar ? "en" : "ar")} /></main>;
   if (!report || !document) return <main className="stored-report-state"><div className="route-spinner" /><p>Opening the saved market report…</p></main>;
   if (report.documentSchemaVersion !== 1) return <main className="stored-report-state" lang={ar ? "ar" : "en"} dir={dir}><Link href="/">Market Signal</Link><h1>{ar ? "نسخة التقرير غير مدعومة" : "Unsupported report version"}</h1></main>;
   return <main className="stored-report-page" lang={ar ? "ar" : "en"} dir={dir}><ReportWorkspace blocks={document.blocks} primaryProducts={report.primaryProducts} publicId={report.run.publicId} primaryDomain={report.run.primaryDomain} observedAt={report.run.updatedAt} reportStatus={report.run.status} reportEvents={report.events || []} ar={ar} onToggleLocale={() => setLocaleOverride(ar ? "en" : "ar")} /></main>;
