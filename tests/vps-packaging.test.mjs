@@ -101,8 +101,8 @@ test("GitHub VPS deployment is manual, pinned, immutable, and non-destructive", 
   assert.match(updateBilling, /IFS= read -r restricted_key/);
   assert.match(updateBilling, /IFS= read -r webhook_secret/);
   assert.match(updateBilling, /MARKET_SIGNAL_HOSTED_BILLING=true/);
-  assert.match(updateBilling, /expected exactly one STRIPE_RESTRICTED_KEY entry/);
-  assert.match(updateBilling, /expected exactly one STRIPE_WEBHOOK_SECRET entry/);
+  assert.match(updateBilling, /expected at most one STRIPE_RESTRICTED_KEY entry/);
+  assert.match(updateBilling, /expected at most one STRIPE_WEBHOOK_SECRET entry/);
   assert.match(updateBilling, /expected exactly one STRIPE_PRICE_STARTER entry/);
   assert.match(updateBilling, /expected exactly one STRIPE_PRICE_SOLO entry/);
   assert.match(updateBilling, /expected exactly one STRIPE_PRICE_GROWTH entry/);
@@ -173,6 +173,40 @@ test("GitHub VPS deployment is manual, pinned, immutable, and non-destructive", 
   assert.match(handoff, /labels\[\]=market-signal-production/);
   assert.match(handoff, /Do not launch the runner before the build passes/);
   assert.match(originalDecision, /rejection of a self-hosted runner is superseded/);
+});
+
+test("Stripe billing secret updater bootstraps absent entries and rejects duplicates", () => {
+  const bash = process.platform === "win32" ? "C:\\Program Files\\Git\\bin\\bash.exe" : "/bin/bash";
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "market-signal-billing-update-"));
+  const scriptPath = path.join(temp, "update-billing-secrets.sh");
+  const envPath = path.join(temp, "market-signal.env");
+  const script = read("deploy/vps/update-billing-secrets.sh")
+    .replace('env_file="/etc/market-signal/market-signal.env"', `env_file=${JSON.stringify(envPath.replaceAll("\\\\", "/"))}`)
+    .replace('[[ "${EUID}" -eq 0 ]] || fail "billing secret update must run as root"', ":")
+    .replace('chown root:"${deploy_group}" "${temporary}"', ":");
+  fs.writeFileSync(scriptPath, script);
+
+  const required = [
+    "MARKET_SIGNAL_HOSTED_BILLING=false",
+    "STRIPE_PRICE_STARTER=price_starter123",
+    "STRIPE_PRICE_SOLO=price_solo1234",
+    "STRIPE_PRICE_GROWTH=price_growth123",
+    "STRIPE_PRICE_AGENCY=price_agency123",
+  ];
+  fs.writeFileSync(envPath, `${required.join("\n")}\n`);
+  const input = "rk_test_abcdefghijklmnopqrstuvwxyz\nwhsec_abcdefghijklmnopqrstuvwxyz\n";
+  const first = spawnSync(bash, [scriptPath], { input, encoding: "utf8" });
+  assert.equal(first.status, 0, first.stderr);
+  assert.doesNotMatch(first.stdout + first.stderr, /rk_test_|whsec_/);
+  const bootstrapped = fs.readFileSync(envPath, "utf8");
+  assert.equal((bootstrapped.match(/^STRIPE_RESTRICTED_KEY=/gm) || []).length, 1);
+  assert.equal((bootstrapped.match(/^STRIPE_WEBHOOK_SECRET=/gm) || []).length, 1);
+  assert.match(bootstrapped, /^MARKET_SIGNAL_HOSTED_BILLING=true$/m);
+
+  fs.appendFileSync(envPath, "STRIPE_RESTRICTED_KEY=duplicate\n");
+  const duplicate = spawnSync(bash, [scriptPath], { input, encoding: "utf8" });
+  assert.notEqual(duplicate.status, 0);
+  assert.match(duplicate.stderr, /expected at most one STRIPE_RESTRICTED_KEY entry/);
 });
 
 test("repeatable VPS preflight permits only SSH, Caddy, and DHCP listeners", () => {

@@ -82,13 +82,19 @@ while IFS= read -r line || [[ -n "${line}" ]]; do
   esac
 done <"${env_file}"
 
-[[ "${restricted_found}" -eq 1 ]] || fail "expected exactly one STRIPE_RESTRICTED_KEY entry"
-[[ "${webhook_found}" -eq 1 ]] || fail "expected exactly one STRIPE_WEBHOOK_SECRET entry"
+[[ "${restricted_found}" -le 1 ]] || fail "expected at most one STRIPE_RESTRICTED_KEY entry"
+[[ "${webhook_found}" -le 1 ]] || fail "expected at most one STRIPE_WEBHOOK_SECRET entry"
 [[ "${hosted_found}" -eq 1 ]] || fail "expected exactly one MARKET_SIGNAL_HOSTED_BILLING entry"
 [[ "${price_starter_found}" -eq 1 ]] || fail "expected exactly one STRIPE_PRICE_STARTER entry"
 [[ "${price_solo_found}" -eq 1 ]] || fail "expected exactly one STRIPE_PRICE_SOLO entry"
 [[ "${price_growth_found}" -eq 1 ]] || fail "expected exactly one STRIPE_PRICE_GROWTH entry"
 [[ "${price_agency_found}" -eq 1 ]] || fail "expected exactly one STRIPE_PRICE_AGENCY entry"
+if [[ "${restricted_found}" -eq 0 ]]; then
+  printf 'STRIPE_RESTRICTED_KEY=%s\n' "${restricted_key}" >>"${temporary}"
+fi
+if [[ "${webhook_found}" -eq 0 ]]; then
+  printf 'STRIPE_WEBHOOK_SECRET=%s\n' "${webhook_secret}" >>"${temporary}"
+fi
 chown root:"${deploy_group}" "${temporary}"
 chmod 0640 "${temporary}"
 mv -f -- "${temporary}" "${env_file}"
