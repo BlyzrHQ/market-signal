@@ -207,10 +207,14 @@ test("the final publication gate removes a rival whose enrichment replaces its p
 test("the final publication gate requires a valid observed primary price", () => {
   const candidate = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "r1")], accepted: 1 });
   candidate.rows[0].matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+  candidate.rows[0].matches[0].assessment = { method: "ai-hybrid", claimType: "Inferred", verdict: "same_product", confidence: 0.9, model: "test", promptVersion: "test", reasons: ["same product"], contradictions: [], normalizedCategory: "grocery", normalizedVariant: "", normalizedSize: "", primarySourceUrl: candidate.rows[0].primary.sourceUrl, rivalSourceUrl: candidate.rows[0].matches[0].product.sourceUrl };
 
   const published = publishPricedProductComparison(candidate);
 
   assert.equal(published.rows[0].matches[0].product, null);
+  assert.equal(published.rows[0].matches[0].excludedProduct.id, "r1");
+  assert.equal(published.rows[0].matches[0].assessment.verdict, "same_product");
+  assert.deepEqual(published.rows[0].matches[0].publication, { priceEligible: false, reason: "missing-valid-primary-price" });
   assert.equal(published.matching.publication.reasons["missing-valid-primary-price"], 1);
 });
 
@@ -222,6 +226,8 @@ test("the final publication gate excludes cross-currency product prices without 
   const published = publishPricedProductComparison(candidate);
 
   assert.equal(published.rows[0].matches[0].product, null);
+  assert.equal(published.rows[0].matches[0].excludedProduct.id, "r1");
+  assert.deepEqual(published.rows[0].matches[0].publication, { priceEligible: false, reason: "incompatible-price-currency" });
   assert.equal(published.matching.publication.reasons["incompatible-price-currency"], 1);
 });
 
@@ -233,6 +239,7 @@ test("the final publication gate keeps complete same-currency observations", () 
   const published = publishPricedProductComparison(candidate);
 
   assert.equal(published.rows[0].matches[0].product.id, "r1");
+  assert.deepEqual(published.rows[0].matches[0].publication, { priceEligible: true });
   assert.equal(published.matching.publication.suppressedAcceptedPairs, 0);
   assert.deepEqual(published.matching.publication.reasons, {});
 });

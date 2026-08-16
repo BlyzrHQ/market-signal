@@ -122,6 +122,11 @@ export type ProductMatch = {
     primarySourceUrl: string;
     rivalSourceUrl: string;
   };
+  publication?: {
+    priceEligible: boolean;
+    reason?: "missing-valid-primary-price" | "missing-valid-rival-price" | "incompatible-price-currency";
+  };
+  excludedProduct?: ProductRecord;
 };
 
 export type ProductComparison = {
@@ -737,11 +742,13 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
         && [...structuredCurrencies].some((currency) => currency !== metadataCurrency));
       return {
         ...product,
-        priceSignals: metadataContradictsStructured || (!hasComparablePublicPrice(product) && validMetadataOffer && metadataOffer)
-          ? [metadataOffer!]
-          : product.priceSignals,
+        priceSignals: metadataContradictsStructured
+          ? []
+          : !hasComparablePublicPrice(product) && validMetadataOffer && metadataOffer
+            ? [metadataOffer]
+            : product.priceSignals,
         attributes: metadataContradictsStructured
-          ? [...new Set([...product.attributes, "Price evidence conflict: direct metadata overrode contradictory structured currency"])]
+          ? [...new Set([...product.attributes, "Price evidence conflict: direct metadata contradicts structured currency"])]
           : product.attributes,
         imageUrl: product.imageUrl || metadataImage,
       };
@@ -1590,39 +1597,48 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
   // presentation-only image gaps. A single missing side is cheapest to finish,
   // while pairs missing both sides are kept adjacent so a tight budget creates
   // complete comparisons instead of many half-enriched rows.
-  const acceptedByRow = comparison.rows.map((row) => ({
+  const acceptedByRow = comparison.rows.map((row, rowIndex) => ({
+    rowIndex,
     row,
     accepted: row.matches.filter((match) => match.product && match.confidence === "Medium").sort((left, right) => right.score - left.score
       || left.domain.localeCompare(right.domain)
       || (left.product?.id || "").localeCompare(right.product?.id || "")),
   }));
-  for (const { row, accepted } of acceptedByRow) {
-    for (const match of accepted) {
-      if (!match.product) continue;
-      const primaryMissing = !hasComparablePublicPrice(row.primary);
-      const rivalMissing = !hasComparablePublicPrice(match.product);
-      if (primaryMissing !== rivalMissing) add(primaryMissing ? row.primary : match.product, primaryMissing ? "primary" : "rival", match.score, "price");
-    }
-  }
-  for (const { row, accepted } of acceptedByRow) {
-    for (const match of accepted) {
-      if (!match.product || hasComparablePublicPrice(row.primary) || hasComparablePublicPrice(match.product)) continue;
-      add(match.product, "rival", match.score, "price");
-      add(row.primary, "primary", match.score, "price");
-    }
-  }
+  const pairs = acceptedByRow.flatMap(({ row, rowIndex, accepted }) => accepted.map((match, matchIndex) => ({ row, rowIndex, match, matchIndex })))
+    .filter((pair): pair is typeof pair & { match: ProductMatch & { product: ProductRecord } } => Boolean(pair.match.product))
+    .sort((left, right) => right.match.score - left.match.score
+      || left.rowIndex - right.rowIndex
+      || left.match.domain.localeCompare(right.match.domain)
+      || left.match.product.id.localeCompare(right.match.product.id));
+  const strongest = pairs.filter((pair) => pair.matchIndex === 0);
+  const secondary = pairs.filter((pair) => pair.matchIndex > 0);
+  const addSingleMissing = (pair: (typeof pairs)[number]) => {
+    const primaryMissing = !hasComparablePublicPrice(pair.row.primary);
+    const rivalMissing = !hasComparablePublicPrice(pair.match.product);
+    if (primaryMissing !== rivalMissing) add(primaryMissing ? pair.row.primary : pair.match.product, primaryMissing ? "primary" : "rival", pair.match.score, "price");
+  };
+  const addBothMissing = (pair: (typeof pairs)[number]) => {
+    if (hasComparablePublicPrice(pair.row.primary) || hasComparablePublicPrice(pair.match.product)) return;
+    add(pair.match.product, "rival", pair.match.score, "price");
+    add(pair.row.primary, "primary", pair.match.score, "price");
+  };
+  // Give every row's strongest match a globally score-ranked chance to become
+  // publishable before secondary matches can consume the bounded page budget.
+  strongest.forEach(addSingleMissing);
+  secondary.forEach(addSingleMissing);
+  strongest.forEach(addBothMissing);
+  secondary.forEach(addBothMissing);
   // Defensive residual price passes cover deduplicated shared products without
   // allowing image gaps to move ahead of any remaining price gap.
-  for (const { row, accepted } of acceptedByRow) {
-    for (const match of accepted) if (match.product) add(match.product, "rival", match.score, "price");
-    if (accepted[0]) add(row.primary, "primary", accepted[0].score, "price");
+  for (const pair of [...strongest, ...secondary]) {
+    add(pair.match.product, "rival", pair.match.score, "price");
+    add(pair.row.primary, "primary", pair.match.score, "price");
   }
-  for (const { row, accepted } of acceptedByRow) {
-    const strongest = accepted[0];
-    if (strongest?.product) add(strongest.product, "rival", strongest.score, "image");
-    if (strongest) add(row.primary, "primary", strongest.score, "image");
-    for (const match of accepted.slice(1)) if (match.product) add(match.product, "rival", match.score, "image");
+  for (const pair of strongest) {
+    add(pair.match.product, "rival", pair.match.score, "image");
+    add(pair.row.primary, "primary", pair.match.score, "image");
   }
+  for (const pair of secondary) add(pair.match.product, "rival", pair.match.score, "image");
 
   const targets = eligible.slice(0, boundedMax);
   return { targets, totalEligible: eligible.length, truncated: eligible.length > targets.length };
@@ -1713,13 +1729,14 @@ export function applyFinalProductEnrichment(
       || (canonicalHost(product.domain) === canonicalHost(base.domain) && canonicalProductPageUrl(product.sourceUrl) === canonicalProductPageUrl(base.sourceUrl)));
     if (!fresh || isCatalogReplacementProduct(fresh)) return base;
     const secureImage = [fresh.imageUrl, base.imageUrl].find((value) => /^https:\/\//i.test(value));
+    const priceConflict = fresh.attributes.some((attribute) => attribute.startsWith("Price evidence conflict:"));
     return {
       ...base,
       name: fresh.name,
       normalizedName: fresh.normalizedName,
       description: fresh.description || base.description,
       category: fresh.category || base.category,
-      priceSignals: fresh.priceSignals.length ? fresh.priceSignals : base.priceSignals,
+      priceSignals: priceConflict ? fresh.priceSignals : fresh.priceSignals.length ? fresh.priceSignals : base.priceSignals,
       attributes: fresh.attributes.length ? fresh.attributes : base.attributes,
       identifiers: mergeIdentifiers(fresh.identifiers, base.identifiers),
       quantity: fresh.quantity || base.quantity,

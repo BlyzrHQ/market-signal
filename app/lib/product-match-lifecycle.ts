@@ -1,4 +1,4 @@
-import { hasValidObservedRivalPrice, isSupportedCurrency, type ProductComparison, type ProductRecord } from "./product-intelligence.ts";
+import { hasValidObservedRivalPrice, isSupportedCurrency, type ProductComparison, type ProductMatch, type ProductRecord } from "./product-intelligence.ts";
 
 export type ProductMatchLifecycle = "idle" | "matching" | "retrying" | "complete" | "limited";
 
@@ -139,10 +139,23 @@ export function publishPricedProductComparison(comparison: ProductComparison): P
       else {
         const primaryCurrencies = observedCurrencies(row.primary);
         const rivalCurrencies = observedCurrencies(match.product);
-        if (primaryCurrencies.size === 1 && rivalCurrencies.size === 1 && [...primaryCurrencies][0] === [...rivalCurrencies][0]) return match;
+        if (primaryCurrencies.size === 1 && rivalCurrencies.size === 1 && [...primaryCurrencies][0] === [...rivalCurrencies][0]) {
+          return { ...match, publication: { priceEligible: true } };
+        }
         suppress("incompatible-price-currency");
       }
-      return { ...match, product: null, score: 0, confidence: null, sharedTerms: [], claimIds: row.primary.claimIds, decision: null, assessment: undefined };
+      const reason: NonNullable<ProductMatch["publication"]>["reason"] = !completeObservedPrice(row.primary)
+        ? "missing-valid-primary-price"
+        : !completeObservedPrice(match.product)
+          ? "missing-valid-rival-price"
+          : "incompatible-price-currency";
+      return {
+        ...match,
+        excludedProduct: match.product,
+        product: null,
+        decision: null,
+        publication: { priceEligible: false, reason },
+      };
     }),
   }));
   const assignedPairCount = rows.reduce((sum, row) => sum + row.matches.filter((match) => match.product).length, 0);

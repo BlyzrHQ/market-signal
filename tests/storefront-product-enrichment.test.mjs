@@ -670,6 +670,22 @@ test("rejects contradictory structured currency and keeps product-scoped direct 
   }
 });
 
+test("publishes no price when direct metadata contradicts visible and structured product evidence", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    return new Response(`<html><head><title>Custom Embroidered Jacket</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Custom Embroidered Jacket", offers: { price: "80", priceCurrency: "USD" } })}</script></head><body><h1>Custom Embroidered Jacket</h1><div class="summary"><p class="price">USD 80.00</p></div></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ expectedName: "Custom Embroidered Jacket", sourceUrl: "https://shop.test/products/custom-embroidered-jacket" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+    assert.ok(result.products[0].attributes.some((attribute) => attribute.startsWith("Price evidence conflict:")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("does not infer Shopify adapter currency from a symbol-only zero placeholder", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {

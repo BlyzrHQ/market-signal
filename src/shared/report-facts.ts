@@ -119,6 +119,7 @@ function productMetadata(value: unknown, productDomain: string) {
 function matchEvidence(value: unknown) {
   const source = record(value);
   const decision = record(source.decision);
+  const publication = record(source.publication);
   const priceComparison = record(decision.priceComparison);
   const actionPlan = record(decision.actionPlan);
   return bounded({
@@ -132,6 +133,7 @@ function matchEvidence(value: unknown) {
     normalizedCategory: text(source.normalizedCategory, 240),
     normalizedVariant: text(source.normalizedVariant, 240),
     normalizedSize: text(source.normalizedSize, 120),
+    publication: { priceEligible: publication.priceEligible !== false, reason: text(publication.reason, 80) },
     decision: {
       priceVerdict: text(decision.priceVerdict, 1_000),
       whyTheyMayWin: text(decision.whyTheyMayWin, 1_000),
@@ -259,7 +261,10 @@ function productFacts(results: CrawlFactResult[], comparison: ProductComparison 
   if (comparison) {
     for (const row of comparison.rows) {
       products.push(row.primary);
-      for (const match of row.matches) if (match.product) products.push(match.product);
+      for (const match of row.matches) {
+        const product = match.product || match.excludedProduct;
+        if (product) products.push(product);
+      }
     }
   }
   return products.map((product) => productFact(product, fallbackObservedAt));
@@ -267,8 +272,8 @@ function productFacts(results: CrawlFactResult[], comparison: ProductComparison 
 
 async function matchFacts(publicId: string, comparison: ProductComparison | null, fallbackObservedAt: string) {
   if (!comparison) return [];
-  return await Promise.all(comparison.rows.flatMap((row) => row.matches.filter((match) => match.product && match.assessment && ["same_product", "close_substitute"].includes(match.assessment.verdict)).map(async (match) => {
-    const product = match.product!;
+  return await Promise.all(comparison.rows.flatMap((row) => row.matches.filter((match) => (match.product || match.excludedProduct) && match.assessment && ["same_product", "close_substitute"].includes(match.assessment.verdict)).map(async (match) => {
+    const product = (match.product || match.excludedProduct)!;
     const assessment = match.assessment!;
     return {
       id: await reportFactHash([publicId, row.primary.id, product.domain, product.id]),
@@ -292,6 +297,7 @@ async function matchFacts(publicId: string, comparison: ProductComparison | null
         normalizedVariant: assessment.normalizedVariant,
         normalizedSize: assessment.normalizedSize,
         decision: match.decision,
+        publication: match.publication,
       },
       observedAt: observedAt(product.observedAt, fallbackObservedAt),
     };

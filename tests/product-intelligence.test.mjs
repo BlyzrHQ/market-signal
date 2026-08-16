@@ -228,7 +228,7 @@ test("rejects conflicting or inactive Open Graph price metadata", () => {
   }
 });
 
-test("product-scoped direct metadata overrides a contradictory JSON-LD currency", () => {
+test("product-scoped direct metadata conflict suppresses price until visible evidence corroborates it", () => {
   const result = extraction({
     document: `<head><title>Custom Embroidered Columbia Jackets No Minimum – Arklavo</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="GBP"></head><script type="application/ld+json">${JSON.stringify({
       "@type": "Product",
@@ -240,8 +240,8 @@ test("product-scoped direct metadata overrides a contradictory JSON-LD currency"
     headings: ["Custom Embroidered Columbia Jackets No Minimum"],
   });
 
-  assert.deepEqual(result.products[0].priceSignals, [{ raw: "GBP 100.00", currency: "GBP", amount: 100, period: undefined }]);
-  assert.ok(result.products[0].attributes.includes("Price evidence conflict: direct metadata overrode contradictory structured currency"));
+  assert.deepEqual(result.products[0].priceSignals, []);
+  assert.ok(result.products[0].attributes.includes("Price evidence conflict: direct metadata contradicts structured currency"));
 });
 
 test("does not infer ISO currencies from lowercase ordinary prose", () => {
@@ -1235,8 +1235,9 @@ test("final enrichment completes accepted pairs before spending capacity on seco
   const comparison = { primaryDomain: "shop.test", comparisonDomains: ["a-rival.test", "z-rival.test"], rows, unmatched: [], coverage: { primaryProductsAvailable: 70, primaryProductsScanned: 70, primaryProductFamiliesCompared: 70, competitorProductsAvailable: 140, competitorProductsScanned: 140, assignedPairCount: 140, verifiedPairCount: 140, rowsReturned: 70, rowLimit: 70, truncated: false } };
   const targets = selectFinalProductEnrichmentTargets(comparison, 80);
   assert.equal(targets.length, 80);
-  assert.deepEqual(targets.slice(0, 3).map((target) => target.productId), ["strongest-0", "primary-0", "weaker-0"]);
-  assert.equal(targets.filter((target) => target.role === "primary").length > 0, true);
+  assert.deepEqual(targets.slice(0, 4).map((target) => target.productId), ["strongest-0", "primary-0", "strongest-1", "primary-1"]);
+  assert.equal(targets.every((target) => target.productId.startsWith("strongest-") || target.productId.startsWith("primary-")), true);
+  assert.equal(targets.filter((target) => target.role === "primary").length, 40);
 });
 
 test("final enrichment prioritizes missing primary prices over already-priced rival image gaps", () => {
@@ -1267,6 +1268,18 @@ test("final enrichment updates the selected pair and recomputes its price decisi
   assert.equal(enriched.rows[0].matches[0].product.imageUrl, "https://cdn.tea.test/tea.jpg");
   assert.match(enriched.rows[0].matches[0].decision.priceVerdict, /GBP 2\.00 cheaper/);
   assert.deepEqual(enriched.enrichment, { pagesRequested: 2, pagesFetched: 2, maxPages: 24, gaps: [] });
+});
+
+test("final enrichment clears a stale price when fresh page evidence records a currency conflict", () => {
+  const primary = { ...product("jacket", "wearform.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://wearform.test/products/custom-jacket", priceSignals: [{ raw: "USD 90", currency: "USD", amount: 90 }] };
+  const rival = { ...product("rival-jacket", "rival.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://rival.test/products/custom-jacket", priceSignals: [{ raw: "USD 12000", currency: "USD", amount: 12000 }] };
+  const comparison = buildProductComparison("wearform.test", [{ domain: "wearform.test", products: [primary] }, { domain: "rival.test", products: [rival] }]);
+  const fresh = { ...rival, priceSignals: [], attributes: ["Price evidence conflict: direct metadata contradicts structured currency"] };
+
+  const enriched = applyFinalProductEnrichment(comparison, [fresh], { pagesRequested: 1, pagesFetched: 1, maxPages: 24, gaps: [] });
+
+  assert.deepEqual(enriched.rows[0].matches[0].product.priceSignals, []);
+  assert.ok(enriched.rows[0].matches[0].product.attributes.some((attribute) => attribute.startsWith("Price evidence conflict:")));
 });
 
 test("pre-match catalog reconciliation replaces stale identity without inheriting stale fields", () => {
