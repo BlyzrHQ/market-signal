@@ -270,6 +270,29 @@ test("same-namespace metadata currency conflicts suppress structured prices imme
   assert.ok(result.products[0].attributes.includes("Price evidence conflict: contradictory direct metadata namespace"));
 });
 
+test("same-namespace conflicts suppress every duplicate same-page JSON-LD product", () => {
+  const result = extraction({
+    document: `<meta property="product:price:amount" content="100"><meta property="product:price:currency" content="USD"><meta property="product:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify([{ "@type": "Product", name: "Duplicate Jacket", offers: { price: 100, priceCurrency: "USD" } }, { "@type": "Product", name: "Duplicate Jacket", offers: { price: 100, priceCurrency: "USD" } }])}</script>`,
+    sourceUrl: "https://acme.com/products/duplicate-jacket",
+    pageTitle: "Duplicate Jacket",
+    headings: ["Duplicate Jacket"],
+  });
+  assert.ok(result.products.length > 0);
+  assert.ok(result.products.every((product) => product.priceSignals.length === 0));
+  assert.ok(result.products.every((product) => product.attributes.includes("Price evidence conflict: contradictory direct metadata namespace")));
+});
+
+test("currency-only product metadata suppresses contradictory structured market currency", () => {
+  const result = extraction({
+    document: `<meta property="product:price:currency" content="GBP"><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Currency Half Pair Jacket", image: "https://acme.com/jacket.jpg", offers: { price: 100, priceCurrency: "USD" } })}</script>`,
+    sourceUrl: "https://acme.com/products/currency-half-pair-jacket",
+    pageTitle: "Currency Half Pair Jacket",
+    headings: ["Currency Half Pair Jacket"],
+  });
+  assert.deepEqual(result.products[0].priceSignals, []);
+  assert.ok(result.products[0].attributes.includes("Price evidence conflict: incomplete direct metadata contradicts structured evidence"));
+});
+
 test("product-scoped direct metadata conflict suppresses price until visible evidence corroborates it", () => {
   const result = extraction({
     document: `<head><title>Custom Embroidered Columbia Jackets No Minimum – Arklavo</title><meta property="product:price:amount" content="100.00"><meta property="product:price:currency" content="GBP"></head><script type="application/ld+json">${JSON.stringify({

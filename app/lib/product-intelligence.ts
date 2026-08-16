@@ -475,7 +475,7 @@ function metadataOfferForNamespace(document: string, amountKey: string, currency
   const complete = amountValues.length > 0 && currencyValues.length > 0;
   const conflict = complete && (parsedAmounts.length !== amountValues.length || amounts.length !== 1
     || currencies.length !== rawCurrencies.length || currencies.length !== 1);
-  return { present, conflict, offer: !conflict ? priceSignal(amountValues[0], currencies[0]) : null };
+  return { present, conflict, amounts, currencies, offer: !conflict ? priceSignal(amountValues[0], currencies[0]) : null };
 }
 
 export function directProductMetadataOffer(document: string) {
@@ -491,7 +491,7 @@ function directProductMetadataEvidence(document: string) {
     const namespace = metadataOfferForNamespace(document, amountKey, currencyKey);
     if (namespace.present) return namespace;
   }
-  return { present: false, conflict: false, offer: null };
+  return { present: false, conflict: false, amounts: [] as string[], currencies: [] as string[], offer: null };
 }
 
 export function directProductScopedMetadataOffer(document: string) {
@@ -750,6 +750,30 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
     : productPathForMetadata && samePageProducts.length === 1
       ? samePageProducts
       : [];
+  if (authoritativeMetadata.present) {
+    const samePageProductIds = new Set(samePageProducts.map((product) => product.id));
+    products = products.map((product) => {
+      if (!samePageProductIds.has(product.id)) return product;
+      const structuredCurrencies = [...new Set(product.priceSignals
+        .map((signal) => String(signal.currency || "").trim().toUpperCase())
+        .filter(isSupportedCurrency))];
+      const structuredAmounts = [...new Set(product.priceSignals
+        .filter((signal) => typeof signal.amount === "number" && Number.isFinite(signal.amount) && signal.amount > 0)
+        .map((signal) => Number(signal.amount).toFixed(6)))];
+      const incompleteCurrencyConflict = !authoritativeMetadata.offer && authoritativeMetadata.currencies.length === 1
+        && structuredCurrencies.some((currency) => currency !== authoritativeMetadata.currencies[0]);
+      const incompleteAmountConflict = !authoritativeMetadata.offer && authoritativeMetadata.amounts.length === 1
+        && structuredAmounts.length > 0 && !structuredAmounts.includes(authoritativeMetadata.amounts[0]);
+      if (!authoritativeMetadata.conflict && !incompleteCurrencyConflict && !incompleteAmountConflict) return product;
+      return {
+        ...product,
+        priceSignals: [],
+        attributes: [...new Set([...product.attributes, authoritativeMetadata.conflict
+          ? "Price evidence conflict: contradictory direct metadata namespace"
+          : "Price evidence conflict: incomplete direct metadata contradicts structured evidence"])],
+      };
+    });
+  }
   if (metadataCandidates.length === 1) {
     const selectedId = metadataCandidates[0].id;
     const metadataOffer = authoritativeOffer;
