@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -45,6 +46,9 @@ func NewClient(baseURL string, timeout time.Duration, tokens ...string) (*Client
 	if len(tokens) > 0 {
 		token = strings.TrimSpace(tokens[0])
 	}
+	if token != "" && parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
+		return nil, fmt.Errorf("API tokens require HTTPS unless the base URL is localhost")
+	}
 	return &Client{
 		baseURL: parsed,
 		timeout: timeout,
@@ -53,6 +57,15 @@ func NewClient(baseURL string, timeout time.Duration, tokens ...string) (*Client
 			Timeout: timeout,
 		},
 	}, nil
+}
+
+func isLoopbackHost(host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (c *Client) Post(ctx context.Context, path string, payload any) ([]byte, error) {

@@ -17,6 +17,7 @@ test("open-source onboarding files and commands stay connected", () => {
   assert.match(contributing, /without private credentials/i);
   assert.match(license, /Apache License/);
   assert.match(license, /Version 2\.0/);
+  assert.equal(packageJson.license, "Apache-2.0");
 });
 
 test("contributor CI is read-only, secret-free, and runs the documented checks", () => {

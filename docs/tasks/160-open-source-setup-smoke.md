@@ -80,6 +80,11 @@ separately and is never represented as a credential-free capability.
 - Dependency audit remains a separate follow-up: the current locked dependency
   tree reports no critical advisories but includes upstream low, moderate, and
   high advisories that require coordinated framework/Trigger upgrades.
+- Fable 5's first exact-head review returned `STRICT PASS — no blockers` and
+  suggested three low-risk hardening items. This branch additionally declares
+  Apache-2.0 in package metadata, scrubs the historical hosted Trigger project
+  identifier, and prevents the CLI from sending its bearer token over remote
+  plain HTTP. A new exact-head pass is required after these improvements.
 
 ## Review note
 

@@ -71,3 +71,15 @@ func TestClientSendsConfiguredAPITokenWithoutLoggingIt(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestClientRefusesToSendAPITokenOverRemotePlainHTTP(t *testing.T) {
+	const token = "local-api-token-12345678901234567890"
+	_, err := NewClient("http://example.com", time.Second, token)
+	if err == nil || !strings.Contains(err.Error(), "require HTTPS") {
+		t.Fatalf("expected HTTPS safety error, got %v", err)
+	}
+
+	if _, err := NewClient("https://example.com", time.Second, token); err != nil {
+		t.Fatalf("expected remote HTTPS to be accepted, got %v", err)
+	}
+}

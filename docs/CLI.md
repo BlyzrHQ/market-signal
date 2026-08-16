@@ -64,7 +64,8 @@ before starting it. Use a random value of at least 32 characters and keep it
 separate from `MARKET_SIGNAL_CALLBACK_TOKEN`. In PowerShell, set it with
 `$env:MARKET_SIGNAL_API_TOKEN = "..."` for the CLI process. The CLI reads the
 token only from the environment so it does not appear in command history or the
-process list.
+process list. When a token is configured, remote API URLs must use HTTPS;
+plain HTTP is accepted only for loopback development.
 
 The default service URL is `http://localhost:3000`. Replace `example.com` with
 any valid public company domain. The command rejects localhost, private IP
