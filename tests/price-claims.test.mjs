@@ -128,6 +128,28 @@ test("does not invent gaps for ranges or different currencies", () => {
   assert.equal(currency.kind, "both-observed");
   assert.match(formatPriceClaim(range, "en").detail, /range or unsupported price format/i);
   assert.match(formatPriceClaim(currency, "en").detail, /currencies differ/i);
+  assert.equal(formatPriceDifference(range, "en").value, "—");
+  assert.equal(formatPriceDifference(range, "en").direction, "Range or unsupported format");
+  assert.equal(formatPriceDifference(currency, "en").value, "—");
+  assert.equal(formatPriceDifference(currency, "en").direction, "Different currencies");
+});
+
+test("keeps equal and approved-but-unparsed table differences informative", () => {
+  const equal = resolvePriceClaim({ comparisonValue: null, primaryRaw: "USD 10.00", rivalRaw: "USD 10.00" });
+  const approvedUnparsed = resolvePriceClaim({ comparisonValue: { primaryRaw: "USD 10–12", rivalRaw: "USD 9.00" }, primaryRaw: "USD 10–12", rivalRaw: "USD 9.00" });
+
+  assert.deepEqual(formatPriceDifference(equal, "en"), {
+    label: "Listed-price gap",
+    value: "USD 0.00",
+    direction: "Same listed price",
+    note: "Does not establish equivalent value",
+  });
+  assert.deepEqual(formatPriceDifference(approvedUnparsed, "en"), {
+    label: "Gap unavailable",
+    value: "—",
+    direction: "Comparable pair confirmed",
+    note: "Gap unavailable for this price or currency format",
+  });
 });
 
 test("renders sub-one-percent direct differences as near parity", () => {
@@ -158,5 +180,12 @@ test("keeps one-price and no-price states distinct in both languages", () => {
     value: "—",
     direction: "Only one price is available",
     note: "Two public prices are required",
+  });
+  assert.equal(formatPriceDifference(none, "en").direction, "No public prices found");
+  assert.deepEqual(formatPriceDifference(one, "ar"), {
+    label: "الفرق غير متاح",
+    value: "—",
+    direction: "سعر واحد فقط متاح",
+    note: "يلزم سعر من الطرفين",
   });
 });

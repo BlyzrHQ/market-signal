@@ -264,10 +264,10 @@ export function formatPriceDifference(claim: PriceClaim, locale: "en" | "ar"): P
     label: ar ? "الفرق غير متاح" : "Gap unavailable",
     value: "—",
     direction: claim.kind === "approved-unparsed"
-      ? (ar ? "تعذر حساب السعر المعتمد" : "Approved price could not be calculated")
+      ? (ar ? "تم تأكيد الزوج القابل للمقارنة" : "Comparable pair confirmed")
       : (ar ? "لم يتم العثور على أسعار عامة" : "No public prices found"),
     note: claim.kind === "approved-unparsed"
-      ? (ar ? "صيغة السعر أو العملة غير مدعومة" : "Unsupported price or currency format")
+      ? (ar ? "تعذر حساب الفرق بسبب صيغة السعر أو العملة" : "Gap unavailable for this price or currency format")
       : (ar ? "يلزم سعر من الطرفين" : "Two public prices are required"),
   };
 }

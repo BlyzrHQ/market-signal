@@ -117,7 +117,6 @@ function prepareRow(battle: ProductBattle, ar: boolean) {
   const actionEvidenceKeys = list(actionPlan.evidenceKeys).map((value) => display(value)).filter(Boolean);
   const priceStatus = priceClaim.kind;
   const priceSignal = priceCopy.headline;
-  const priceDetail = priceCopy.supporting || priceCopy.detail;
   const lane = priceCopy.lane;
   const claimType = display(assessment.claimType, "inferred").toLowerCase();
   const confidence = display(battle.match.confidence, ar ? "ثقة محدودة" : "Limited confidence");
@@ -125,7 +124,7 @@ function prepareRow(battle: ProductBattle, ar: boolean) {
   const matchStatus = matchConfidence && matchConfidence !== "Low" ? "accepted" : "limited";
   const primaryObservedAt = display(battle.primary.observedAt);
   const rivalObservedAt = display(battle.rival.observedAt);
-  return { battle, domain, assessment, decision, primaryDisplay, rivalDisplay, primarySource, rivalSource, primaryObservedAt, rivalObservedAt, reasons, verdict, fullAction, shortAction, actionRationale, actionSource, actionModel, actionPromptVersion, actionEvidenceKeys, priceClaim, priceStatus, priceSignal, priceDetail, lane, claimType, confidence, matchStatus };
+  return { battle, domain, assessment, decision, primaryDisplay, rivalDisplay, primarySource, rivalSource, primaryObservedAt, rivalObservedAt, reasons, verdict, fullAction, shortAction, actionRationale, actionSource, actionModel, actionPromptVersion, actionEvidenceKeys, priceClaim, priceStatus, priceSignal, lane, claimType, confidence, matchStatus };
 }
 
 function ProductIdentity({ role, product, price, source, domain, ar, compact = false, showPrice = true }: { role: "you" | "rival"; product: Record<string, unknown>; price: string; source: string; domain?: string; ar: boolean; compact?: boolean; showPrice?: boolean }) {
@@ -150,7 +149,7 @@ function ProductTablePrice({ value, ar }: { value: string; ar: boolean }) {
   return <strong className={`product-table-price ${value ? "observed" : "unavailable"}`} dir="auto">{value || (ar ? "غير مرصود" : "Not observed")}</strong>;
 }
 
-function ProductTableDifference({ claim, lane, ar }: { claim: PriceClaim; lane: string; ar: boolean }) {
+function ProductTableDifference({ claim, lane, ar }: { claim: PriceClaim; lane: ReturnType<typeof formatPriceClaim>["lane"]; ar: boolean }) {
   const difference = formatPriceDifference(claim, ar ? "ar" : "en");
   return <div className={`product-difference ${lane}`}>
     <span>{difference.label}</span>
