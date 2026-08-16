@@ -2,7 +2,7 @@
 
 import { KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { PricePosition } from "./price-position";
-import { formatPriceClaim, resolvePriceClaim } from "../lib/price-claims";
+import { formatPriceClaim, formatPriceDifference, resolvePriceClaim, type PriceClaim } from "../lib/price-claims";
 import { jsonResponseErrorMessage, readJsonResponse } from "../lib/json-response";
 
 export type ProductBattle = {
@@ -117,7 +117,6 @@ function prepareRow(battle: ProductBattle, ar: boolean) {
   const actionEvidenceKeys = list(actionPlan.evidenceKeys).map((value) => display(value)).filter(Boolean);
   const priceStatus = priceClaim.kind;
   const priceSignal = priceCopy.headline;
-  const priceDetail = priceCopy.supporting || priceCopy.detail;
   const lane = priceCopy.lane;
   const claimType = display(assessment.claimType, "inferred").toLowerCase();
   const confidence = display(battle.match.confidence, ar ? "ثقة محدودة" : "Limited confidence");
@@ -125,7 +124,7 @@ function prepareRow(battle: ProductBattle, ar: boolean) {
   const matchStatus = matchConfidence && matchConfidence !== "Low" ? "accepted" : "limited";
   const primaryObservedAt = display(battle.primary.observedAt);
   const rivalObservedAt = display(battle.rival.observedAt);
-  return { battle, domain, assessment, decision, primaryDisplay, rivalDisplay, primarySource, rivalSource, primaryObservedAt, rivalObservedAt, reasons, verdict, fullAction, shortAction, actionRationale, actionSource, actionModel, actionPromptVersion, actionEvidenceKeys, priceClaim, priceStatus, priceSignal, priceDetail, lane, claimType, confidence, matchStatus };
+  return { battle, domain, assessment, decision, primaryDisplay, rivalDisplay, primarySource, rivalSource, primaryObservedAt, rivalObservedAt, reasons, verdict, fullAction, shortAction, actionRationale, actionSource, actionModel, actionPromptVersion, actionEvidenceKeys, priceClaim, priceStatus, priceSignal, lane, claimType, confidence, matchStatus };
 }
 
 function ProductIdentity({ role, product, price, source, domain, ar, compact = false, showPrice = true }: { role: "you" | "rival"; product: Record<string, unknown>; price: string; source: string; domain?: string; ar: boolean; compact?: boolean; showPrice?: boolean }) {
@@ -148,6 +147,16 @@ function MatchDetails({ row, ar }: { row: ProductRow; ar: boolean }) {
 
 function ProductTablePrice({ value, ar }: { value: string; ar: boolean }) {
   return <strong className={`product-table-price ${value ? "observed" : "unavailable"}`} dir="auto">{value || (ar ? "غير مرصود" : "Not observed")}</strong>;
+}
+
+function ProductTableDifference({ claim, lane, ar }: { claim: PriceClaim; lane: ReturnType<typeof formatPriceClaim>["lane"]; ar: boolean }) {
+  const difference = formatPriceDifference(claim, ar ? "ar" : "en");
+  return <div className={`product-difference ${lane}`}>
+    <span>{difference.label}</span>
+    <strong dir="auto">{difference.value}</strong>
+    <b>{difference.direction}</b>
+    <small>{difference.note}</small>
+  </div>;
 }
 
 function ProductTableDetails({ row, ar }: { row: ProductRow; ar: boolean }) {
@@ -315,7 +324,7 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
               <td role="cell" className="product-table-price-cell product-table-your-price"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "سعرك" : "Your price"}</span><ProductTablePrice value={row.primaryDisplay} ar={ar} /></td>
               <td role="cell" className="product-table-product-cell product-table-rival-product"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "أقرب منافس" : "Closest rival"}</span><ProductIdentity role="rival" product={row.battle.rival} price={row.rivalDisplay} source={row.rivalSource} domain={row.domain} ar={ar} compact showPrice={false} /></td>
               <td role="cell" className="product-table-price-cell product-table-rival-price"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "سعر المنافس" : "Rival price"}</span><ProductTablePrice value={row.rivalDisplay} ar={ar} /></td>
-              <td role="cell" className="product-table-difference-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "الفرق" : "Difference"}</span><strong className={`product-signal ${row.lane}`}>{row.priceSignal}</strong>{row.priceDetail && <small dir="auto">{row.priceDetail}</small>}</td>
+              <td role="cell" className="product-table-difference-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "الفرق" : "Difference"}</span><ProductTableDifference claim={row.priceClaim} lane={row.lane} ar={ar} /></td>
               <td role="cell" className="product-table-action-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "الخطوة التالية" : "Next move"}</span><strong className="product-next-move">{row.shortAction}</strong><ProductTableDetails row={row} ar={ar} /></td>
             </tr>;
           })}</tbody>
