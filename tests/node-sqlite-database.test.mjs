@@ -45,6 +45,21 @@ test("product fact canonicalization drops cross-domain locale aliases", () => {
   assert.deepEqual(fact.metadata.aliases, [{ extraction: "sitemap", locale: "en", name: "Observed product", normalizedName: "observed product", sourceUrl: "https://catalog.example/en/products/one" }]);
 });
 
+test("match fact canonicalization preserves absent price comparisons as null", () => {
+  const base = {
+    id: "match-one", primaryProductId: "primary-one", rivalProductId: "rival-one", rivalDomain: "rival.example",
+    verdict: "close_substitute", confidence: "High", claimType: "inferred", model: "", promptVersion: "",
+    observedAt: "2026-08-16T00:00:00.000Z",
+  };
+  const absent = canonicalReportFact("matches", { ...base, evidence: { decision: { priceComparison: null } } });
+  const partial = canonicalReportFact("matches", { ...base, id: "match-two", evidence: { decision: { priceComparison: { primaryRaw: "SAR 10", rivalRaw: "" } } } });
+  const complete = canonicalReportFact("matches", { ...base, id: "match-three", evidence: { decision: { priceComparison: { primaryRaw: "SAR 10", rivalRaw: "SAR 12" } } } });
+
+  assert.equal(absent.evidence.decision.priceComparison, null);
+  assert.equal(partial.evidence.decision.priceComparison, null);
+  assert.deepEqual(complete.evidence.decision.priceComparison, { primaryRaw: "SAR 10", rivalRaw: "SAR 12" });
+});
+
 test("report facts do not persist stale product prices", async () => {
   const staleObservedAt = new Date(Date.now() - 367 * 24 * 60 * 60 * 1000).toISOString();
   const staleProduct = {

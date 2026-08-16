@@ -121,6 +121,8 @@ function matchEvidence(value: unknown) {
   const decision = record(source.decision);
   const publication = record(source.publication);
   const priceComparison = record(decision.priceComparison);
+  const primaryRaw = text(priceComparison.primaryRaw, 500);
+  const rivalRaw = text(priceComparison.rivalRaw, 500);
   const actionPlan = record(decision.actionPlan);
   return bounded({
     score: finite(source.score),
@@ -138,7 +140,7 @@ function matchEvidence(value: unknown) {
       priceVerdict: text(decision.priceVerdict, 1_000),
       whyTheyMayWin: text(decision.whyTheyMayWin, 1_000),
       recommendedMove: text(decision.recommendedMove, 1_000),
-      priceComparison: { primaryRaw: text(priceComparison.primaryRaw, 500), rivalRaw: text(priceComparison.rivalRaw, 500) },
+      priceComparison: primaryRaw && rivalRaw ? { primaryRaw, rivalRaw } : null,
       actionPlan: {
         source: text(actionPlan.source, 40), claimType: text(actionPlan.claimType, 40), actionEn: text(actionPlan.actionEn, 1_000), actionAr: text(actionPlan.actionAr, 1_000),
         rationaleEn: text(actionPlan.rationaleEn, 1_000), rationaleAr: text(actionPlan.rationaleAr, 1_000), leverType: text(actionPlan.leverType, 80),

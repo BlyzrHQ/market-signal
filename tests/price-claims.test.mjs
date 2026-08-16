@@ -180,6 +180,20 @@ test("keeps equal and approved-but-unparsed table differences informative", () =
   });
 });
 
+test("treats legacy empty approved pairs as absent listed-price evidence", () => {
+  const emptyObject = resolvePriceClaim({ comparisonValue: {}, primaryRaw: "SAR 78.26", rivalRaw: "SAR 279.00" });
+  const emptyRaws = resolvePriceClaim({ comparisonValue: { primaryRaw: "", rivalRaw: "" }, primaryRaw: "SAR 78.26", rivalRaw: "SAR 279.00" });
+
+  assert.equal(emptyObject.kind, "listed-gap");
+  assert.equal(emptyRaws.kind, "listed-gap");
+  assert.deepEqual(formatPriceDifference(emptyRaws, "en"), {
+    label: "Listed-price gap",
+    value: "SAR 200.74",
+    direction: "Your listed price is lower",
+    note: "Not like-for-like; pack and variant unverified",
+  });
+});
+
 test("renders sub-one-percent direct differences as near parity", () => {
   const claim = resolvePriceClaim({
     comparisonValue: { primaryRaw: "GBP 100.00", rivalRaw: "GBP 99.60" },

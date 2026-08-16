@@ -102,6 +102,15 @@ function unitBasis(value: CanonicalProductQuantity) {
   return value.unit === "g" || value.unit === "ml" ? 100 : 1;
 }
 
+function hasApprovedComparisonValue(value: unknown) {
+  if (value === null || value === undefined) return false;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return true;
+  const comparison = value as Record<string, unknown>;
+  const hasRawFields = Object.hasOwn(comparison, "primaryRaw") || Object.hasOwn(comparison, "rivalRaw");
+  if (!hasRawFields) return Object.keys(comparison).length > 0;
+  return Boolean(String(comparison.primaryRaw || "").trim() || String(comparison.rivalRaw || "").trim());
+}
+
 export function resolvePriceClaim({
   comparisonValue,
   primaryRaw,
@@ -132,7 +141,7 @@ export function resolvePriceClaim({
   const rival = parseComparablePrice(rivalRaw);
   const base = { primaryRaw, rivalRaw, primary, rival };
 
-  if (comparisonValue !== null && comparisonValue !== undefined) return { ...base, kind: "approved-unparsed" };
+  if (hasApprovedComparisonValue(comparisonValue)) return { ...base, kind: "approved-unparsed" };
   if (!primaryObserved && !rivalObserved) return { ...base, kind: "none-observed" };
   if (!primaryObserved || !rivalObserved) {
     return { ...base, kind: "one-observed", observedSide: primaryObserved ? "primary" : "rival" };
