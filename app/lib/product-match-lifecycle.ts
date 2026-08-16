@@ -1,4 +1,6 @@
 import { hasValidObservedRivalPrice, isSupportedCurrency, type ProductComparison, type ProductMatch, type ProductRecord } from "./product-intelligence.ts";
+import { canonicalDomain } from "./domain.ts";
+import { publicHttpUrl } from "./public-url.ts";
 
 export type ProductMatchLifecycle = "idle" | "matching" | "retrying" | "complete" | "limited";
 
@@ -123,10 +125,10 @@ export function publishPricedProductComparison(comparison: ProductComparison): P
   const observedCurrencies = (product: ProductRecord) => new Set(product.priceSignals
     .filter((signal) => typeof signal.amount === "number" && Number.isFinite(signal.amount) && signal.amount > 0 && Boolean(String(signal.raw || "").trim()) && isSupportedCurrency(signal.currency))
     .map((signal) => String(signal.currency).trim().toUpperCase()));
-  const validPublicSource = (value: string) => {
+  const validPublicSource = (product: ProductRecord) => {
     try {
-      const url = new URL(value);
-      return /^https?:$/.test(url.protocol) && Boolean(url.hostname);
+      const url = new URL(publicHttpUrl(product.sourceUrl, false));
+      return canonicalDomain(url.hostname) === canonicalDomain(product.domain);
     } catch { return false; }
   };
   const completeObservedPrice = (product: ProductRecord) => product.priceSignals.length > 0
@@ -136,7 +138,7 @@ export function publishPricedProductComparison(comparison: ProductComparison): P
       && Boolean(String(signal.raw || "").trim())
       && isSupportedCurrency(signal.currency))
     && hasValidObservedRivalPrice(product)
-    && validPublicSource(product.sourceUrl)
+    && validPublicSource(product)
     && Number.isFinite(Date.parse(product.observedAt));
   const suppress = (reason: string) => {
     suppressedAcceptedPairs += 1;
