@@ -1688,13 +1688,14 @@ export function applyPreMatchCatalogEnrichment(catalog: ProductRecord[], enriche
       continue;
     }
     const secureImage = [fresh.imageUrl, base.imageUrl].find((value) => /^https:\/\//i.test(value));
+    const priceConflict = fresh.attributes.some((attribute) => attribute.startsWith("Price evidence conflict:"));
     merged.push({
       ...base,
       ...fresh,
       id: base.id,
       description: fresh.description || base.description,
       category: fresh.category || base.category,
-      priceSignals: fresh.priceSignals.length ? fresh.priceSignals : base.priceSignals,
+      priceSignals: priceConflict ? fresh.priceSignals : fresh.priceSignals.length ? fresh.priceSignals : base.priceSignals,
       attributes: fresh.attributes.length ? fresh.attributes : base.attributes,
       identifiers: mergeIdentifiers(fresh.identifiers, base.identifiers),
       quantity: fresh.quantity || base.quantity,

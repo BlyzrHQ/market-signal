@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { applyFinalProductEnrichment, applyPreMatchCatalogEnrichment, buildProductComparison, buildProductPairCandidateIndex, catalogReplacementAuditAttribute, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, planPreliminaryCatalogReconciliation, retrieveProductPairCandidates, scoreProductPair, selectFinalProductEnrichmentTargets, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
+import { publishPricedProductComparison } from "../app/lib/product-match-lifecycle.ts";
 
 function extraction(overrides = {}) {
   return extractProductsFromHtml({
@@ -1307,6 +1308,20 @@ test("final enrichment clears a stale price when fresh page evidence records a c
 
   assert.deepEqual(enriched.rows[0].matches[0].product.priceSignals, []);
   assert.ok(enriched.rows[0].matches[0].product.attributes.some((attribute) => attribute.startsWith("Price evidence conflict:")));
+});
+
+test("pre-match reconciliation cannot restore a stale range after fresh currency-conflict evidence", () => {
+  const primary = { ...product("jacket", "wearform.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://wearform.test/products/custom-jacket", priceSignals: [{ raw: "USD 100", currency: "USD", amount: 100 }, { raw: "USD 120", currency: "USD", amount: 120 }] };
+  const rival = { ...product("rival-jacket", "rival.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://rival.test/products/custom-jacket", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }] };
+  const fresh = { ...primary, priceSignals: [], attributes: ["Price evidence conflict: fresh page currencies disagree"] };
+
+  const reconciled = applyPreMatchCatalogEnrichment([primary], [fresh]);
+  const comparison = buildProductComparison("wearform.test", [{ domain: "wearform.test", products: reconciled }, { domain: "rival.test", products: [rival] }]);
+  const published = publishPricedProductComparison(comparison);
+
+  assert.deepEqual(reconciled[0].priceSignals, []);
+  assert.equal(published.rows[0].matches[0].product, null);
+  assert.equal(published.rows[0].matches[0].publication.reason, "missing-valid-primary-price");
 });
 
 test("pre-match catalog reconciliation replaces stale identity without inheriting stale fields", () => {
