@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyFinalProductEnrichment, applyPreMatchCatalogEnrichment, buildProductComparison, buildProductPairCandidateIndex, catalogReplacementAuditAttribute, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, planPreliminaryCatalogReconciliation, retrieveProductPairCandidates, scoreProductPair, selectFinalProductEnrichmentTargets, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
+import { applyFinalProductEnrichment, applyPreMatchCatalogEnrichment, buildProductComparison, buildProductPairCandidateIndex, catalogReplacementAuditAttribute, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, planFinalProductEnrichmentTargets, planPreliminaryCatalogReconciliation, retrieveProductPairCandidates, scoreProductPair, selectFinalProductEnrichmentTargets, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
 import { publishPricedProductComparison } from "../app/lib/product-match-lifecycle.ts";
 
 function extraction(overrides = {}) {
@@ -1460,6 +1460,32 @@ test("final enrichment joins equivalent canonical product URLs after host and sc
 
   assert.equal(enriched.rows[0].primary.priceSignals[0].amount, 8);
   assert.equal(enriched.rows[0].primary.imageUrl, "https://cdn.shop.test/tea.jpg");
+});
+
+test("catalog planners retain distinct sibling identities that share one page URL", () => {
+  const sharedUrl = "https://shop.test/products/workwear-collection";
+  const first = { ...product("jacket-a", "shop.test", "Jacket A"), jsonLdType: "Product", sourceUrl: sharedUrl };
+  const second = { ...product("jacket-b", "shop.test", "Jacket B"), jsonLdType: "Product", sourceUrl: sharedUrl };
+  const firstRival = { ...product("rival-a", "rival.test", "Jacket A"), jsonLdType: "Product", sourceUrl: "https://rival.test/products/jacket-a", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }], imageUrl: "https://rival.test/images/jacket-a.jpg" };
+  const secondRival = { ...product("rival-b", "rival.test", "Jacket B"), jsonLdType: "Product", sourceUrl: "https://rival.test/products/jacket-b", priceSignals: [{ raw: "USD 70", currency: "USD", amount: 70 }], imageUrl: "https://rival.test/images/jacket-b.jpg" };
+  const match = (rival) => ({ domain: rival.domain, product: rival, score: 0.95, confidence: "Medium", sharedTerms: ["jacket"], claimIds: [], decision: null });
+  const comparison = {
+    primaryDomain: "shop.test",
+    comparisonDomains: ["rival.test"],
+    rows: [{ primary: first, matches: [match(firstRival)] }, { primary: second, matches: [match(secondRival)] }],
+    unmatched: [],
+    coverage: { primaryProductsAvailable: 2, primaryProductsScanned: 2, primaryProductFamiliesCompared: 2, competitorProductsAvailable: 2, competitorProductsScanned: 2, assignedPairCount: 2, verifiedPairCount: 2, rowsReturned: 2, rowLimit: 2, truncated: false },
+  };
+
+  const preliminary = planPreliminaryCatalogReconciliation(comparison, [first, second], 64);
+  assert.deepEqual(preliminary.targets.map((target) => target.productId).sort(), ["jacket-a", "jacket-b"]);
+  assert.equal(preliminary.totalEligible, 2);
+  assert.equal(preliminary.truncated, false);
+
+  const final = planFinalProductEnrichmentTargets(comparison, 2);
+  assert.deepEqual(final.targets.map((target) => target.productId).sort(), ["jacket-a", "jacket-b"]);
+  assert.equal(final.totalEligible, 2);
+  assert.equal(final.truncated, false);
 });
 
 test("final enrichment never copies same-page sibling evidence across product identities", () => {

@@ -1,6 +1,6 @@
 import { canonicalDomain } from "./domain.ts";
 import { bilingualNormalize, bilingualTokens, parseCanonicalQuantity, quantitiesConflict } from "./product-normalization.ts";
-import { CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX, catalogReplacementAuditAttribute, extractProductsFromHtml, isSupportedCurrency, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "./product-intelligence.ts";
+import { CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX, catalogReplacementAuditAttribute, directProductMetadataOffer, extractProductsFromHtml, isSupportedCurrency, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "./product-intelligence.ts";
 import { confirmedProductCurrency, hasConflictingDirectProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "./product-page-adapters.ts";
 import { fetchPublicText } from "./public-fetch.ts";
 import { sharedRobotsPolicyResolver } from "./robots-policy.ts";
@@ -578,11 +578,15 @@ export function extractScopedProductPageEvidence(document: string, sourceUrl = "
 
 function addScopedProductPageEvidence(document: string, sourceUrl: string, expected: ProductRecord, products: ProductRecord[], pageTitle: string) {
   const evidence = extractScopedProductPageEvidence(document, sourceUrl);
-  if (!evidence.priceSignals.length && !evidence.imageUrl) return;
+  const directOffer = directProductMetadataOffer(document);
+  if (!evidence.priceSignals.length && !evidence.imageUrl && !directOffer) return;
   const identity = validateProductPageIdentity([expected], products, pageTitle, { allowScopedPageSignal: true });
   if (!identity.accepted) return;
   const selected = identity.products[0];
   const selectedPositive = withPositivePrices(selected);
+  const directSignals = directOffer && typeof directOffer.amount === "number" && Number.isFinite(directOffer.amount) && directOffer.amount > 0
+    ? [directOffer]
+    : [];
   const selectedCurrencies = new Set(selectedPositive.priceSignals.map((signal) => String(signal.currency || "").trim().toUpperCase()).filter(Boolean));
   const evidenceCurrencies = new Set(evidence.priceSignals.map((signal) => String(signal.currency || "").trim().toUpperCase()).filter(Boolean));
   const currencyMismatch = selectedCurrencies.size > 0 && evidenceCurrencies.size > 0
@@ -590,18 +594,36 @@ function addScopedProductPageEvidence(document: string, sourceUrl: string, expec
   const directCurrency = confirmedProductCurrency(document, { allowStructured: false });
   const directSupportsVisible = directCurrency && evidenceCurrencies.size === 1 && evidenceCurrencies.has(directCurrency);
   const directSupportsSelected = directCurrency && selectedCurrencies.size === 1 && selectedCurrencies.has(directCurrency);
-  const priceSignals = currencyMismatch
-    ? directSupportsVisible
+  const comparableAmounts = (signals: ProductRecord["priceSignals"]) => [...new Set(signals
+    .filter(isPositivePriceSignal)
+    .map((signal) => `${String(signal.currency).trim().toUpperCase()}:${Number(signal.amount).toFixed(6)}`))].sort();
+  const agrees = (left: ProductRecord["priceSignals"], right: ProductRecord["priceSignals"]) => {
+    const leftAmounts = comparableAmounts(left);
+    const rightAmounts = comparableAmounts(right);
+    return leftAmounts.length > 0 && leftAmounts.length === rightAmounts.length
+      && leftAmounts.every((amount, index) => amount === rightAmounts[index]);
+  };
+  const directVisibleConflict = directSignals.length > 0 && evidence.priceSignals.length > 0 && !agrees(directSignals, evidence.priceSignals);
+  const selectedVisibleConflict = selectedPositive.priceSignals.length > 0 && evidence.priceSignals.length > 0 && !agrees(selectedPositive.priceSignals, evidence.priceSignals);
+  const directSelectedConflict = directSignals.length > 0 && selectedPositive.priceSignals.length > 0 && !agrees(directSignals, selectedPositive.priceSignals);
+  const corroboratedDirectVisible = agrees(directSignals, evidence.priceSignals);
+  const amountConflict = directVisibleConflict || (!corroboratedDirectVisible && (selectedVisibleConflict || directSelectedConflict));
+  const priceSignals = amountConflict
+    ? []
+    : corroboratedDirectVisible
       ? evidence.priceSignals
-      : directSupportsSelected
-        ? selectedPositive.priceSignals
-        : []
-    : selectedPositive.priceSignals.length ? selectedPositive.priceSignals : evidence.priceSignals;
+      : currencyMismatch
+        ? directSupportsVisible
+          ? evidence.priceSignals
+          : directSupportsSelected
+            ? selectedPositive.priceSignals
+            : []
+        : selectedPositive.priceSignals.length ? selectedPositive.priceSignals : evidence.priceSignals;
   const merged: ProductRecord = {
     ...selected,
     priceSignals,
     imageUrl: selected.imageUrl || evidence.imageUrl,
-    attributes: [...new Set([...selected.attributes, ...(evidence.priceSignals.length ? [`Price evidence: ${evidence.basis}`] : []), ...(currencyMismatch && !directSupportsVisible && !directSupportsSelected ? ["Price evidence conflict: visible product currency contradicts structured currency"] : [])])],
+    attributes: [...new Set([...selected.attributes, ...(evidence.priceSignals.length ? [`Price evidence: ${evidence.basis}`] : []), ...(amountConflict ? ["Price evidence conflict: product-scoped price amounts disagree"] : []), ...(currencyMismatch && !directSupportsVisible && !directSupportsSelected ? ["Price evidence conflict: visible product currency contradicts structured currency"] : [])])],
     extraction: selected.extraction === "json-ld" ? selected.extraction : "page-signal",
   };
   const selectedIndex = products.indexOf(selected);

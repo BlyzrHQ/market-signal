@@ -463,7 +463,7 @@ function metaContent(document: string, key: string) {
   return metaContents(document, key)[0] || "";
 }
 
-function openGraphOffer(document: string) {
+export function directProductMetadataOffer(document: string) {
   const amounts = [...new Set(["product:price:amount", "og:price:amount", "price"].flatMap((key) => metaContents(document, key)))];
   const currencies = [...new Set(["product:price:currency", "og:price:currency", "priceCurrency"]
     .flatMap((key) => metaContents(document, key))
@@ -694,7 +694,7 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
   let products: ProductRecord[] = extractSaasPlans(input);
   const thirdPartyReferenced: ProductRecord[] = [];
   const gaps: string[] = [];
-  const authoritativeOffer = openGraphOffer(input.document);
+  const authoritativeOffer = directProductMetadataOffer(input.document);
   const scripts = [...input.document.matchAll(/<script[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
   for (const script of scripts) {
     try {
@@ -1556,12 +1556,13 @@ export function planPreliminaryCatalogReconciliation(comparison: ProductComparis
     const realMatches = row.matches.filter((match) => Boolean(match.product));
     if (realMatches.length) matchedScoreById.set(row.primary.id, Math.max(...realMatches.map((match) => match.score)));
   }
-  const seenUrls = new Set<string>();
+  const seenTargets = new Set<string>();
   const eligible = primaryProducts.flatMap((product) => {
     if (product.jsonLdType !== "Product" || hasComparablePublicPrice(product)) return [];
     const sourceUrl = safeProductSource(product);
-    if (!sourceUrl || seenUrls.has(sourceUrl)) return [];
-    seenUrls.add(sourceUrl);
+    const targetKey = `${canonicalHost(product.domain)}\n${product.id}\n${sourceUrl}`;
+    if (!sourceUrl || seenTargets.has(targetKey)) return [];
+    seenTargets.add(targetKey);
     return [{ product, sourceUrl, pairScore: matchedScoreById.get(product.id) || 0 }];
   }).sort((left, right) => Number(right.pairScore > 0) - Number(left.pairScore > 0)
     || right.pairScore - left.pairScore
@@ -1583,14 +1584,18 @@ export function planPreliminaryCatalogReconciliation(comparison: ProductComparis
 export function planFinalProductEnrichmentTargets(comparison: ProductComparison, maxPages = 24) {
   const boundedMax = Math.max(0, Math.min(1_000, Math.floor(maxPages)));
   const eligible: ProductEnrichmentTarget[] = [];
-  const seenUrls = new Set<string>();
+  const seenTargets = new Set<string>();
+  const deferredPriceTargets = new Set<string>();
+  const targetKey = (product: ProductRecord, sourceUrl: string) => `${canonicalHost(product.domain)}\n${product.id}\n${sourceUrl}`;
   const add = (product: ProductRecord, role: ProductEnrichmentTarget["role"], pairScore: number, need: "price" | "image") => {
     if (product.jsonLdType !== "Product") return;
     const sourceUrl = safeProductSource(product);
     const needsPrice = !hasComparablePublicPrice(product);
     const needsSecureImage = !/^https:\/\//i.test(product.imageUrl);
-    if (!sourceUrl || (need === "price" ? !needsPrice : !needsSecureImage) || seenUrls.has(sourceUrl)) return;
-    seenUrls.add(sourceUrl);
+    const key = targetKey(product, sourceUrl);
+    if (!sourceUrl || (need === "price" ? !needsPrice : !needsSecureImage) || seenTargets.has(key)) return;
+    seenTargets.add(key);
+    deferredPriceTargets.delete(key);
     eligible.push({ domain: product.domain, sourceUrl, productId: product.id, expectedName: product.name, expectedType: product.jsonLdType, pairScore, role });
   };
 
@@ -1613,7 +1618,6 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
       || left.match.product.id.localeCompare(right.match.product.id));
   const strongest = pairs.filter((pair) => pair.matchIndex === 0);
   const secondary = pairs.filter((pair) => pair.matchIndex > 0);
-  const deferredPriceUrls = new Set<string>();
   const schedulePair = (pair: (typeof pairs)[number]) => {
     const missing = [
       { product: pair.match.product, role: "rival" as const },
@@ -1621,11 +1625,11 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
     ].flatMap((candidate) => {
       if (hasComparablePublicPrice(candidate.product)) return [];
       const sourceUrl = safeProductSource(candidate.product);
-      return sourceUrl && !seenUrls.has(sourceUrl) ? [{ ...candidate, sourceUrl }] : [];
+      return sourceUrl && !seenTargets.has(targetKey(candidate.product, sourceUrl)) ? [{ ...candidate, sourceUrl }] : [];
     });
-    const uniqueMissing = missing.filter((candidate, index) => missing.findIndex((other) => other.sourceUrl === candidate.sourceUrl) === index);
+    const uniqueMissing = missing.filter((candidate, index) => missing.findIndex((other) => targetKey(other.product, other.sourceUrl) === targetKey(candidate.product, candidate.sourceUrl)) === index);
     if (eligible.length + uniqueMissing.length > boundedMax) {
-      uniqueMissing.forEach((candidate) => deferredPriceUrls.add(candidate.sourceUrl));
+      uniqueMissing.forEach((candidate) => deferredPriceTargets.add(targetKey(candidate.product, candidate.sourceUrl)));
       return;
     }
     uniqueMissing.forEach((candidate) => add(candidate.product, candidate.role, pair.match.score, "price"));
@@ -1634,7 +1638,7 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
   // spends the last page on half of a two-page comparison and gives every
   // row's strongest match priority over secondary matches.
   pairs.forEach(schedulePair);
-  if (deferredPriceUrls.size === 0) {
+  if (deferredPriceTargets.size === 0) {
     for (const pair of strongest) {
       add(pair.match.product, "rival", pair.match.score, "image");
       add(pair.row.primary, "primary", pair.match.score, "image");
@@ -1643,7 +1647,7 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
   }
 
   const targets = eligible.slice(0, boundedMax);
-  const totalEligible = eligible.length + deferredPriceUrls.size;
+  const totalEligible = eligible.length + deferredPriceTargets.size;
   return { targets, totalEligible, truncated: totalEligible > targets.length };
 }
 

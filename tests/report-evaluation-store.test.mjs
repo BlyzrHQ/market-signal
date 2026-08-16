@@ -106,6 +106,7 @@ async function preparedEvaluation(database, suffix, now = new Date("2026-08-09T1
             contradictions: [], normalizedCategory: "test", normalizedVariant: "", normalizedSize: "",
             primarySourceUrl: primary.sourceUrl, rivalSourceUrl: rival.sourceUrl,
           },
+          publication: { priceEligible: true },
         }],
       }],
       unmatched: [],
@@ -130,6 +131,26 @@ async function preparedEvaluation(database, suffix, now = new Date("2026-08-09T1
   assert.equal(evaluation.status, "deterministic");
   return { created, evaluation };
 }
+
+test("agent evaluation labels excluded matches without promoting their recommendations", async () => {
+  const value = await fixture();
+  try {
+    const now = new Date("2026-08-09T10:00:00.000Z");
+    const { evaluation } = await preparedEvaluation(value.database, "excluded", now);
+    const stored = (await value.database.prepare("SELECT id, evidence_json FROM report_matches WHERE run_id = ?").bind(evaluation.runId).all()).results[0];
+    const evidence = JSON.parse(String(stored.evidence_json));
+    evidence.publication = { priceEligible: false, reason: "currency-mismatch" };
+    await value.database.prepare("UPDATE report_matches SET evidence_json = ? WHERE id = ?").bind(JSON.stringify(evidence), stored.id).run();
+
+    const { reservation } = await dispatchAndReserve(value.database, evaluation, now);
+    const envelope = JSON.parse(reservation.canonicalInput);
+    const match = envelope.evidence.find((item) => item.type === "match");
+    assert.match(match.text, /excluded from public price comparison: currency-mismatch/);
+    assert.equal(envelope.evidence.some((item) => item.type === "recommendation"), false);
+  } finally {
+    await closeFixture(value);
+  }
+});
 
 function evidenceOf(envelope, ...types) {
   const record = envelope.evidence.find((item) => types.includes(item.type));

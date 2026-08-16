@@ -637,18 +637,25 @@ function agentEvaluationInput(publicReportId: string, run: StoredReportRun, eval
   const matchedProductKeys = new Set<string>();
   matches.forEach((match, index) => {
     const evidence = parsedRecord(match.evidence_json);
+    const publication = evidence.publication && typeof evidence.publication === "object" && !Array.isArray(evidence.publication)
+      ? evidence.publication as Record<string, unknown>
+      : {};
+    const priceEligible = publication.priceEligible === true;
+    const suppressionReason = cleanText(publication.reason, 120) || "not-price-eligible";
     const rivalDomain = String(match.rival_domain || "");
     const primaryKey = `${run.primaryDomain}\n${String(match.primary_product_id || "")}`;
     const rivalKey = `${rivalDomain}\n${String(match.rival_product_id || "")}`;
-    matchedProductKeys.add(primaryKey);
-    matchedProductKeys.add(rivalKey);
+    if (priceEligible) {
+      matchedProductKeys.add(primaryKey);
+      matchedProductKeys.add(rivalKey);
+    }
     const matchId = `match:${index + 1}`;
     const reasons = Array.isArray(evidence.reasons) ? evidence.reasons.slice(0, 2).map(String).join("; ") : "";
-    candidates.push({ id: `evidence:match:${index + 1}`, type: "match", companyId: companyIds.get(rivalDomain) || null, productId: productIds.get(primaryKey) || null, matchId, recommendationId: null, domain: rivalDomain, sourceUrl: String(evidence.rivalSourceUrl || ""), text: `${String(match.verdict || "match")}; ${String(match.confidence || "unknown confidence")}${reasons ? `; ${reasons}` : ""}`, priority: "accepted_match", sourceOrder: index });
+    candidates.push({ id: `evidence:match:${index + 1}`, type: "match", companyId: companyIds.get(rivalDomain) || null, productId: productIds.get(primaryKey) || null, matchId, recommendationId: null, domain: rivalDomain, sourceUrl: String(evidence.rivalSourceUrl || ""), text: `${String(match.verdict || "match")}; ${String(match.confidence || "unknown confidence")}${reasons ? `; ${reasons}` : ""}${priceEligible ? "" : `; excluded from public price comparison: ${suppressionReason}`}`, priority: priceEligible ? "accepted_match" : "other", sourceOrder: index });
     const decision = evidence.decision && typeof evidence.decision === "object" && !Array.isArray(evidence.decision) ? evidence.decision as Record<string, unknown> : {};
     const actionPlan = decision.actionPlan && typeof decision.actionPlan === "object" && !Array.isArray(decision.actionPlan) ? decision.actionPlan as Record<string, unknown> : {};
     const action = cleanText(decision.recommendedMove || actionPlan.actionEn, 320);
-    if (action) candidates.push({ id: `evidence:recommendation:${index + 1}`, type: "recommendation", companyId: companyIds.get(rivalDomain) || null, productId: productIds.get(primaryKey) || null, matchId, recommendationId: `recommendation:${index + 1}`, domain: rivalDomain, sourceUrl: String(evidence.rivalSourceUrl || ""), text: action, priority: "accepted_match", sourceOrder: index });
+    if (action && priceEligible) candidates.push({ id: `evidence:recommendation:${index + 1}`, type: "recommendation", companyId: companyIds.get(rivalDomain) || null, productId: productIds.get(primaryKey) || null, matchId, recommendationId: `recommendation:${index + 1}`, domain: rivalDomain, sourceUrl: String(evidence.rivalSourceUrl || ""), text: action, priority: "accepted_match", sourceOrder: index });
   });
   products.forEach((product, index) => {
     const domain = String(product.domain || "");
