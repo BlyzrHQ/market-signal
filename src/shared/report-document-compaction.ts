@@ -112,6 +112,8 @@ function projectedMatch(value: unknown) {
   const item = record(value);
   if (!item) return value;
   const product = projectedProduct(item.product);
+  const excludedProduct = record(item.excludedProduct) ? projectedProduct(item.excludedProduct) : null;
+  const publication = record(item.publication);
   const assessment = record(item.assessment);
   const decision = record(item.decision);
   const priceComparison = record(decision?.priceComparison);
@@ -123,6 +125,13 @@ function projectedMatch(value: unknown) {
     sharedTerms: boundedStrings(item.sharedTerms, 20, 120),
     claimIds: boundedStrings(item.claimIds, 20, 160),
     product,
+    ...(excludedProduct ? { excludedProduct } : {}),
+    ...(publication ? {
+      publication: {
+        priceEligible: publication.priceEligible === true,
+        ...(boundedText(publication.reason, 80) ? { reason: boundedText(publication.reason, 80) } : {}),
+      },
+    } : {}),
     ...(assessment ? {
       assessment: {
         method: boundedText(assessment.method, 80),
