@@ -57,7 +57,7 @@ export interface ReportOrchestrationPort {
   preflight(): Promise<void>;
   loadReport(publicId: string): Promise<StoredReport | null>;
   appendEvent(publicId: string, event: ReportEvent & { attemptNumber?: number }): Promise<void>;
-  crawl(input: { primary: string; domains: string[] }): Promise<CrawlOutcome>;
+  crawl(input: { primary: string; domains: string[]; productLimit: number }): Promise<CrawlOutcome>;
   brief(input: { primary: string; domains: string[] }): Promise<unknown>;
   ads(input: unknown): Promise<{ ok: true; block: JsonBlock }>;
   match(input: { publicId: string; reportAttempt: number; primaryDomain: string; productLimit: number; catalogs: Array<{ domain: string; products: ProductRecord[] }>; pinnedPairs?: PinnedProductPair[] }): Promise<{ ok: true; comparison: ProductComparison }>;
@@ -151,7 +151,7 @@ export async function orchestrateReport(
 
   let crawl: CrawlOutcome;
   try {
-    crawl = await port.crawl({ primary: payload.primaryDomain, domains: [payload.primaryDomain] });
+    crawl = await port.crawl({ primary: payload.primaryDomain, domains: [payload.primaryDomain], productLimit: payload.productLimit });
     if (!crawl || (crawl.ok !== true && crawl.code !== "parked-domain" && crawl.code !== "unavailable-domain")) throw new Error("The public crawl could not be completed.");
   } catch (error) {
     const detail = message(error, "The public crawl could not be completed.");

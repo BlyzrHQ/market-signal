@@ -265,3 +265,25 @@ test("public fetch can skip and cancel an unsuccessful response body", async () 
   assert.equal(cancelled, true);
   assert.ok(pulled <= 1);
 });
+
+test("public fetch sends a bounded same-domain JSON-RPC POST without weakening redirect handling", async () => {
+  let captured;
+  const result = await fetchPublicText("https://mcp.example/mcp", "application/json", {
+    expectedDomain: "mcp.example",
+    timeoutMs: 1_000,
+    maxDocumentBytes: 10_000,
+    userAgent: "test-agent",
+    jsonRpcBody: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "resources/read", params: { uri: "store://info" } }),
+    protocolVersion: "2025-06-18",
+    fetchImpl: async (url, init) => {
+      captured = { url, init };
+      return Response.json({ jsonrpc: "2.0", id: 1, result: {} });
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(captured.url, "https://mcp.example/mcp");
+  assert.equal(captured.init.method, "POST");
+  assert.equal(captured.init.headers["Content-Type"], "application/json");
+  assert.equal(captured.init.headers["MCP-Protocol-Version"], "2025-06-18");
+  assert.match(captured.init.body, /store:\/\/info/);
+});
