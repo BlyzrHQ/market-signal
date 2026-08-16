@@ -1,6 +1,7 @@
 import { canonicalDomain } from "./domain.ts";
 import { bilingualNormalize, bilingualTokens, parseCanonicalQuantity, quantitiesConflict } from "./product-normalization.ts";
 import { CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX, catalogReplacementAuditAttribute, directProductMetadataOffer, directProductScopedMetadataOffer, extractProductsFromHtml, isSupportedCurrency, publicSourceMarketContext, publicSourceMarketEvidence, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "./product-intelligence.ts";
+import { redirectedMarketRetryUrl } from "./market-localization.ts";
 import { confirmedProductCurrency, hasConflictingDirectProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "./product-page-adapters.ts";
 import { fetchPublicText } from "./public-fetch.ts";
 import { sharedRobotsPolicyResolver } from "./robots-policy.ts";
@@ -31,6 +32,16 @@ export type ProductEnrichmentCoverage = {
 
 function text(value: unknown, limit: number) {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
+}
+
+function translatedMarketLanguage(expectedName: string, fetchedUrl: string) {
+  let redirectedLanguage = "";
+  try { redirectedLanguage = new URL(fetchedUrl).pathname.match(/^\/([a-z]{2,3})-[a-z]{2}\//i)?.[1]?.toLowerCase() || ""; } catch { return ""; }
+  const hasArabic = /\p{Script=Arabic}/u.test(expectedName);
+  const hasLatin = /\p{Script=Latin}/u.test(expectedName);
+  if (redirectedLanguage === "ar" && hasLatin && !hasArabic) return "en";
+  if (redirectedLanguage === "en" && hasArabic && !hasLatin) return "ar";
+  return "";
 }
 
 class ProductFetchFailure extends Error {
@@ -919,9 +930,18 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       const robots = robotsResult?.policy;
       if (!robots) return { product: null, gap: gap("robots.txt was unreachable, so selected-product enrichment was skipped.", "robots_unreachable", undefined, "robots") };
       if (!robots.allows(new URL(item.sourceUrl).pathname)) return { product: null, gap: gap("robots.txt disallows this selected product page.", "robots_disallowed", undefined, "robots") };
-      const fetched = await fetchSameDomain(item.sourceUrl, item.domain, "text/html,application/xhtml+xml", fetchImpl);
+      let fetched = await fetchSameDomain(item.sourceUrl, item.domain, "text/html,application/xhtml+xml", fetchImpl);
       if (!fetched.ok) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed", fetched.status, "http") };
       if (!/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed", fetched.status, "content") };
+      const marketRetryUrl = redirectedMarketRetryUrl(item.sourceUrl, fetched.url, item.marketCountryCode || "", translatedMarketLanguage(item.expectedName, fetched.url));
+      let marketRetryApplied = false;
+      if (marketRetryUrl && robots.allows(new URL(marketRetryUrl).pathname)) {
+        const marketFetched = await fetchSameDomain(marketRetryUrl, item.domain, "text/html,application/xhtml+xml", fetchImpl);
+        if (marketFetched.ok && /text\/html|application\/xhtml\+xml/i.test(marketFetched.contentType)) {
+          fetched = marketFetched;
+          marketRetryApplied = true;
+        }
+      }
       const requestedMarket = publicSourceMarketEvidence(item.sourceUrl);
       const fetchedMarket = publicSourceMarketEvidence(fetched.url);
       const requestedContext = publicSourceMarketContext(item.sourceUrl);
@@ -935,6 +955,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       }
       const extracted = pageExtraction(fetched.text, fetched.url, item.domain);
       const expected = expectedProduct(item);
+      if (marketRetryApplied) expected.sourceUrl = fetched.url;
       addScopedProductPageEvidence(fetched.text, fetched.url, expected, extracted.result.products, extracted.pageTitle);
       extracted.result.products = rejectContradictoryPageCurrencies(fetched.text, extracted.result.products, fetched.url, expected, extracted.pageTitle);
       const canonicalCrossLanguageOptions = { allowCanonicalCrossLanguageIdentity: canonicalSelectedPage(item.sourceUrl) === canonicalSelectedPage(fetched.url) };
@@ -1092,5 +1113,7 @@ export function publicProductTarget(value: unknown): ProductEnrichmentTarget | n
     sourceUrl = "";
   }
   if (!domain || !sourceUrl || !productId || !expectedName || item.expectedType !== "Product") return null;
-  return { domain, sourceUrl, productId, expectedName, expectedType: "Product", pairScore: typeof item.pairScore === "number" && Number.isFinite(item.pairScore) ? item.pairScore : 0, role: item.role === "rival" ? "rival" : "primary", ...(item.allowCatalogReplacement === true ? { allowCatalogReplacement: true as const } : {}) };
+  const rawMarketCountryCode = typeof item.marketCountryCode === "string" ? item.marketCountryCode.trim().toUpperCase() : "";
+  const marketCountryCode = /^[A-Z]{2}$/.test(rawMarketCountryCode) ? rawMarketCountryCode : "";
+  return { domain, sourceUrl, productId, expectedName, expectedType: "Product", pairScore: typeof item.pairScore === "number" && Number.isFinite(item.pairScore) ? item.pairScore : 0, role: item.role === "rival" ? "rival" : "primary", ...(marketCountryCode ? { marketCountryCode } : {}), ...(item.allowCatalogReplacement === true ? { allowCatalogReplacement: true as const } : {}) };
 }
