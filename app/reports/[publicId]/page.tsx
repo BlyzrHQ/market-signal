@@ -121,7 +121,6 @@ function ReportWorkspace({ blocks, primaryProducts, publicId, primaryDomain, obs
 
   const competitors = useMemo(() => blocks.filter((block) => block.type === "competitor").sort((a, b) => numeric(b.verificationScore) - numeric(a.verificationScore)), [blocks]);
   const comparison = blocks.find((block) => block.type === "product-comparison");
-  const compaction = blocks.find((block) => block.type === "presentation-compaction");
   const battles = useMemo(() => list(comparison?.rows).flatMap((row, rowIndex) => {
     const item = object(row); const primary = object(item.primary);
     return list(item.matches).flatMap((match, matchIndex) => { const candidate = object(match); const rival = object(candidate.product); return object(candidate.publication).priceEligible === true && rival.name ? [{ primary, rival, match: candidate, key: `${rowIndex}-${matchIndex}` }] : []; });
