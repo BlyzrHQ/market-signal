@@ -528,7 +528,15 @@ export function extractScopedProductPageEvidence(document: string, sourceUrl = "
     || "";
   const currentMarkup = priceMarkup.match(/<ins\b[^>]*>([\s\S]*?)<\/ins>/i)?.[1]
     || priceMarkup.replace(/<del\b[^>]*>[\s\S]*?<\/del>/gi, " ");
-  const decodedPriceMarkup = normalizeLocalizedNumbers(decodeEvidence(currentMarkup).replace(/<[^>]*>/g, " "));
+  // Some Shopify themes render decimal cents as an unclosed superscript,
+  // for example `£20<sup>25 </span>`. Preserve that first-party visible
+  // amount before stripping markup so it can agree with product metadata and
+  // the identity-gated Shopify JSON payload instead of becoming a false £20.
+  const normalizedCurrentMarkup = currentMarkup.replace(
+    /((?:\p{Sc}|[A-Z]{3})\s*[+-]?\d{1,9}(?:[,.]\d{3})*)\s*<sup\b[^>]*>\s*(\d{2})(?=\s*(?:<\/sup\s*>)?)/giu,
+    "$1.$2",
+  );
+  const decodedPriceMarkup = normalizeLocalizedNumbers(decodeEvidence(normalizedCurrentMarkup).replace(/<[^>]*>/g, " "));
   const markedCurrencies = currenciesFromMarkup(currentMarkup);
   const directCurrency = confirmedProductCurrency(document, { allowStructured: false });
   const hasDollarSymbol = /\$/.test(decodedPriceMarkup);
@@ -597,10 +605,10 @@ export function extractScopedProductPageEvidence(document: string, sourceUrl = "
   }
 
   const comparableMarkup = directCurrency && hasDollarSymbol && dollarCurrencies.has(directCurrency)
-    ? currentMarkup
+    ? normalizedCurrentMarkup
       .replace(/\b(?:US|CA|C|AU|A|RD|R|HK|MX|NZ|S|NT)\s*\$/gi, `${directCurrency} `)
       .replace(/\$/g, `${directCurrency} `)
-    : currentMarkup;
+    : normalizedCurrentMarkup;
   const signals = scopedPriceSignals(currency, markedAmounts(comparableMarkup, currency));
   return {
     priceSignals: signals,

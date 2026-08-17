@@ -51,7 +51,8 @@ test("product analysis limits are server-controlled, clamped, and receive scaled
   assert.equal(productAnalysisLimit("500"), 500);
   assert.equal(productAnalysisLimit("1000"), 1_000);
   assert.equal(productAnalysisLimit("5000"), 20);
-  assert.equal(productAnalysisBudgetMs(60), 45_000);
+  assert.equal(productAnalysisBudgetMs(20), 90_000);
+  assert.equal(productAnalysisBudgetMs(60), 90_000);
   assert.equal(productAnalysisBudgetMs(500), 360_000);
   assert.equal(productAnalysisBudgetMs(1_000), 720_000);
 });

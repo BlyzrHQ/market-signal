@@ -82,6 +82,18 @@ test("extracts only the requested product summary price and ignores related prod
   assert.equal(evidence.basis, "point");
 });
 
+test("preserves Shopify superscript cents before comparing product price evidence", () => {
+  const evidence = extractScopedProductPageEvidence(`
+    <meta property="og:price:amount" content="20.25">
+    <meta property="og:price:currency" content="GBP">
+    <h1>Beef Fillet Halal 500G</h1>
+    <div class="product-info"><div class="price price--sale-color text-h3">
+      <span class="price__current">£20<sup>25 </span>
+    </div></div>
+  `);
+  assert.deepEqual(evidence.priceSignals, [{ raw: "GBP 20.25", currency: "GBP", amount: 20.25 }]);
+});
+
 test("uses the current ins price instead of the crossed-out WooCommerce price", () => {
   const evidence = extractScopedProductPageEvidence(`
     <h1 class="product_title">Halloumi Cheese 250g</h1>
