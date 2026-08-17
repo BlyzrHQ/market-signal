@@ -17,4 +17,8 @@ test("uses Archivo for interface copy and Abril for display headings", () => {
   assert.match(css, /\.hero-v2 h1 \{[^}]*font-family:var\(--font-abril\)/);
   assert.match(css, /\.panel-intro h2 \{[^}]*font-family: var\(--font-abril\)/);
   assert.match(css, /\.stored-report-page\[dir="rtl"\] \{ font-family: Tahoma/);
+  assert.match(
+    css,
+    /\.stored-report-page\[dir="rtl"\] \.panel-intro h2,\.stored-report-page\[dir="rtl"\] \.stopped-report-card h1 \{ font-family: Tahoma/,
+  );
 });
