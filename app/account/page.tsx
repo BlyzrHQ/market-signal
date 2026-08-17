@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
+import { newestAccountReportPath, safeAccountReturnPath } from "../lib/account-report-redirect.ts";
 
 const PLANS = [
   { id: "starter", name: "Starter", monthlyPriceUsd: 8, reportsPerMonth: 5, productLimit: 20 },
@@ -54,6 +55,19 @@ export default function AccountPage() {
         password: String(data.get("password") || ""),
         ...(mode === "sign-up" ? { name: String(data.get("name") || "") } : {}),
       });
+      const requestedPath = safeAccountReturnPath(new URLSearchParams(window.location.search).get("next"));
+      if (requestedPath) {
+        window.location.assign(requestedPath);
+        return;
+      }
+      const reportsResponse = await fetch("/api/account/reports", { cache: "no-store", credentials: "same-origin" });
+      if (reportsResponse.ok) {
+        const reportsPath = newestAccountReportPath(await reportsResponse.json().catch(() => null));
+        if (reportsPath) {
+          window.location.assign(reportsPath);
+          return;
+        }
+      }
       await load();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Authentication failed.");
