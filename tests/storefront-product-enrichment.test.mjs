@@ -1584,6 +1584,65 @@ test("retains product evidence but no price when Shopify currency is not confirm
   }
 });
 
+test("recovers a Shopify product price from the active first-party runtime market", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /products/", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({ title: "Maamoul Pistachio", handle: "maamoul-pistachio", variants: [{ title: "Default Title", price: 1199 }] });
+    return new Response(`<html><head><title>Maamoul Pistachio</title></head><body><h1>Maamoul Pistachio</h1><script>var Shopify = Shopify || {}; Shopify.shop = "shop-test.myshopify.com"; Shopify.currency = {"active":"GBP","rate":"1.0"}; Shopify.country = "GB";</script></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ marketCountryCode: "GB" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, [{ raw: "GBP 11.99", currency: "GBP", amount: 11.99 }]);
+    assert.equal(result.coverage.gaps.length, 0);
+    assert.deepEqual(calls, ["https://shop.test/robots.txt", "https://shop.test/products/maamoul-pistachio", "https://shop.test/products/maamoul-pistachio.js"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Shopify runtime currency cannot cross a report market or explicit URL market selector", async (t) => {
+  for (const scenario of [
+    { name: "country mismatch", sourceUrl: "https://shop.test/products/maamoul-pistachio", marketCountryCode: "US" },
+    { name: "explicit selector", sourceUrl: "https://shop.test/products/maamoul-pistachio?currency=USD", marketCountryCode: "GB" },
+  ]) await t.test(scenario.name, async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /products/", { headers: { "content-type": "text/plain" } });
+      if (url.includes(".js")) return Response.json({ title: "Maamoul Pistachio", handle: "maamoul-pistachio", variants: [{ title: "Default Title", price: 1199 }] });
+      return new Response(`<html><head><title>Maamoul Pistachio</title></head><body><h1>Maamoul Pistachio</h1><script>var Shopify = Shopify || {}; Shopify.shop = "shop-test.myshopify.com"; Shopify.currency = {"active":"GBP","rate":"1.0"}; Shopify.country = "GB";</script></body></html>`, { headers: { "content-type": "text/html" } });
+    };
+    try {
+      const result = await enrichProductTargets([target(scenario)], 1);
+      assert.deepEqual(result.products[0].priceSignals, []);
+      assert.match(result.coverage.gaps[0].reason, /no same-page currency/i);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("Shopify runtime currency rejects contradictory structured product currency", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /products/", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) return Response.json({ title: "Maamoul Pistachio", handle: "maamoul-pistachio", variants: [{ title: "Default Title", price: 1199 }] });
+    return new Response(`<html><head><title>Maamoul Pistachio</title><script type="application/ld+json">${JSON.stringify({ "@type": "Product", name: "Maamoul Pistachio", image: "https://cdn.shop.test/maamoul.jpg", offers: { price: 12, priceCurrency: "USD" } })}</script></head><body><h1>Maamoul Pistachio</h1><script>var Shopify = Shopify || {}; Shopify.shop = "shop-test.myshopify.com"; Shopify.currency = {"active":"GBP","rate":"1.0"}; Shopify.country = "GB";</script></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ marketCountryCode: "GB" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+    assert.ok(result.products[0].attributes.some((attribute) => /contradictory structured currency/i.test(attribute)));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("rejects a storefront payload whose product identity contradicts the target", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {

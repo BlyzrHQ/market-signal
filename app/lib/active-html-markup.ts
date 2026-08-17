@@ -73,3 +73,40 @@ export function stripInactiveHtmlMarkup(value: string) {
   }
   return output;
 }
+
+export function activeScriptContents(value: string) {
+  const scripts: string[] = [];
+  let cursor = 0;
+  while (cursor < value.length) {
+    const next = value.indexOf("<", cursor);
+    if (next < 0) break;
+    if (value.startsWith("<!--", next)) {
+      const commentEnd = value.indexOf("-->", next + 4);
+      cursor = commentEnd < 0 ? value.length : commentEnd + 3;
+      continue;
+    }
+    const end = tagEnd(value, next);
+    const identity = tagIdentity(value, next, end);
+    if (identity && !identity.closing && !identity.selfClosing && identity.name === "script") {
+      const closing = /<\/\s*script\s*>/gi;
+      closing.lastIndex = end;
+      const match = closing.exec(value);
+      if (!match) break;
+      const openingTag = value.slice(next, end);
+      const typeMatch = openingTag.match(/(?:^|\s)type\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+      const scriptType = String(typeMatch?.[1] || typeMatch?.[2] || typeMatch?.[3] || "").trim().toLowerCase();
+      const executable = !scriptType
+        || scriptType === "module"
+        || /^(?:text|application)\/(?:java|ecma)script$/.test(scriptType);
+      if (executable) scripts.push(value.slice(end, match.index));
+      cursor = match.index + match[0].length;
+      continue;
+    }
+    if (identity && !identity.closing && !identity.selfClosing && INERT_ELEMENTS.has(identity.name)) {
+      cursor = inertElementEnd(value, next, end, identity.name);
+      continue;
+    }
+    cursor = end;
+  }
+  return scripts;
+}

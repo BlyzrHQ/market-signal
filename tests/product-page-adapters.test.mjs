@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { confirmedProductCurrency, hasConflictingDirectProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "../app/lib/product-page-adapters.ts";
+import { confirmedProductCurrency, confirmedShopifyRuntimeMarket, hasConflictingDirectProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "../app/lib/product-page-adapters.ts";
 import { validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
 import { bilingualNormalize, parseCanonicalQuantity } from "../app/lib/product-normalization.ts";
 
@@ -74,6 +74,32 @@ test("confirms Shopify currency only from same-page public metadata", () => {
   assert.equal(hasConflictingDirectProductCurrency('<meta property="product:price:currency" content="USD"><script type="application/ld+json">{"priceCurrency":"EUR"}</script>'), false);
   assert.equal(confirmedProductCurrency('<script type="application/ld+json">{"priceCurrency":"EUR"}</script>'), "EUR");
   assert.equal(confirmedProductCurrency("Prices in pounds"), "");
+});
+
+test("confirms one active first-party Shopify runtime market", () => {
+  const bootstrap = `<script>var Shopify = Shopify || {}; Shopify.shop = "myjamstore.myshopify.com"; Shopify.locale = "en"; Shopify.currency = {"active":"GBP","rate":"1.0"}; Shopify.country = "GB"; Shopify.theme = {"role":"main"};</script>`;
+  assert.deepEqual(confirmedShopifyRuntimeMarket(bootstrap), {
+    shop: "myjamstore.myshopify.com",
+    currency: "GBP",
+    countryCode: "GB",
+  });
+});
+
+test("Shopify runtime market rejects inert, malformed, duplicate, and conflicting bootstrap state", () => {
+  const valid = `var Shopify = Shopify || {}; Shopify.shop = "shop-test.myshopify.com"; Shopify.currency = {"active":"USD","rate":"1.0"}; Shopify.country = "US";`;
+  for (const inert of [
+    `<!-- <script>${valid}</script> -->`,
+    `<template><script>${valid}</script></template>`,
+    `<textarea><script>${valid}</script></textarea>`,
+    `<iframe srcdoc='<script>${valid}</script>'></iframe>`,
+    `<script type="application/ld+json">${JSON.stringify(valid)}</script>`,
+  ]) assert.equal(confirmedShopifyRuntimeMarket(inert), null, inert.slice(0, 20));
+  assert.equal(confirmedShopifyRuntimeMarket(`<script>${valid} Shopify.currency = {"active":"EUR"};</script>`), null);
+  assert.deepEqual(confirmedShopifyRuntimeMarket(`<script>${valid}</script><script>${valid}</script>`), { shop: "shop-test.myshopify.com", currency: "USD", countryCode: "US" });
+  assert.equal(confirmedShopifyRuntimeMarket(`<script>${valid}</script><script>${valid.replace('"USD"', '"EUR"')}</script>`), null);
+  assert.equal(confirmedShopifyRuntimeMarket(`<script>${valid.replace("shop-test.myshopify.com", "shop.test")}</script>`), null);
+  assert.equal(confirmedShopifyRuntimeMarket(`<script>${valid.replace('{"active":"USD","rate":"1.0"}', "{active:'USD'}")}</script>`), null);
+  assert.equal(confirmedShopifyRuntimeMarket(`<script>${valid.replace('"US"', '"us"')}</script>`), null);
 });
 
 test("parses an identity-gated Shopify product price, image, quantity, and SKU", () => {
