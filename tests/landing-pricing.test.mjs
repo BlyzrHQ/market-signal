@@ -54,5 +54,6 @@ test("landing proves the product and moves supporting pages to dedicated routes"
   assert.match(styles, /\.proof-browser/);
   assert.match(styles, /@keyframes systemFloat/);
   assert.match(styles, /@media\(prefers-reduced-motion:reduce\)/);
-  assert.match(styles, /var\(--font-geist-sans\)/);
+  assert.match(styles, /var\(--font-archivo\)/);
+  assert.match(styles, /var\(--font-abril\)/);
 });
