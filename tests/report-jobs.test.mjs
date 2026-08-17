@@ -55,8 +55,8 @@ test("report dispatch deduplicates one attempt and creates a distinct recovery r
   assert.equal(first.runId, duplicate.runId);
   assert.notEqual(first.runId, recovery.runId);
   assert.deepEqual(payloads.map((payload) => payload.reportAttempt), [1, 1, 2]);
-  assert.equal(reportDispatchIdempotencyKey(initial), `${PUBLIC_ID}:3:1`);
-  assert.equal(reportDispatchIdempotencyKey({ ...initial, attemptCount: 2 }), `${PUBLIC_ID}:3:2`);
+  assert.equal(reportDispatchIdempotencyKey(initial), `${PUBLIC_ID}:4:1`);
+  assert.equal(reportDispatchIdempotencyKey({ ...initial, attemptCount: 2 }), `${PUBLIC_ID}:4:2`);
 });
 
 test("report dispatch diagnostics distinguish missing credentials without exposing their value", async () => {
@@ -246,9 +246,9 @@ test("authenticated recovery increments the attempt, dispatches it, and safely r
   assert.equal((await replay.json()).replayed, true);
   assert.deepEqual(calls, [
     ["recover", 2],
-    ["dispatch", `${PUBLIC_ID}:3:2`],
+    ["dispatch", `${PUBLIC_ID}:4:2`],
     ["record", "run_recovered2"],
-    ["dispatch", `${PUBLIC_ID}:3:2`],
+    ["dispatch", `${PUBLIC_ID}:4:2`],
     ["record", "run_recovered2"],
   ]);
 });

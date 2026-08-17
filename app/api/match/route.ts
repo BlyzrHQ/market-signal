@@ -130,7 +130,7 @@ async function boundedJsonBody(request: Request) {
 export function parseCatalogs(value: unknown, primaryDomain = "", requestedPins?: unknown) {
   if (!Array.isArray(value)) return [];
   const pinIds = requestedPinIds(requestedPins);
-  const rawProductIds = new Set<string>();
+  const rawProductDomains = new Map<string, string>();
   const catalogDomains = new Set<string>();
   let invalidIdentity = false;
   const catalogs = value.slice(0, MAX_CATALOGS).flatMap((entry) => {
@@ -140,19 +140,40 @@ export function parseCatalogs(value: unknown, primaryDomain = "", requestedPins?
     if (!domain || !Array.isArray(item.products) || item.products.length > MAX_SUBMITTED_PRODUCTS_PER_CATALOG) return [];
     if (catalogDomains.has(domain)) invalidIdentity = true;
     catalogDomains.add(domain);
+    const deduplicatedValues: unknown[] = [];
+    const indexById = new Map<string, number>();
+    const conflictedIds = new Set<string>();
     for (const value of item.products) {
       if (!value || typeof value !== "object" || Array.isArray(value)) continue;
       const id = text((value as Record<string, unknown>).id, 300);
-      if (!id) continue;
-      if (rawProductIds.has(id)) invalidIdentity = true;
-      rawProductIds.add(id);
+      if (!id) {
+        deduplicatedValues.push(value);
+        continue;
+      }
+      const previousDomain = rawProductDomains.get(id);
+      if (previousDomain && previousDomain !== domain) invalidIdentity = true;
+      else rawProductDomains.set(id, domain);
+      if (conflictedIds.has(id)) continue;
+      const existingIndex = indexById.get(id);
+      if (existingIndex === undefined) {
+        indexById.set(id, deduplicatedValues.length);
+        deduplicatedValues.push(value);
+        continue;
+      }
+      const existing = deduplicatedValues[existingIndex] as Record<string, unknown> | null;
+      const existingSource = existing ? publicUrl(existing.sourceUrl, domain).split("#")[0].replace(/\/$/, "") : "";
+      const duplicateSource = publicUrl((value as Record<string, unknown>).sourceUrl, domain).split("#")[0].replace(/\/$/, "");
+      if (existingSource && existingSource === duplicateSource) continue;
+      deduplicatedValues[existingIndex] = null;
+      conflictedIds.add(id);
     }
     const catalogLimit = domain === canonicalDomain(primaryDomain) ? MAX_PRIMARY_PRODUCTS : MAX_RIVAL_PRODUCTS;
     const wanted = pinIds.get(domain === canonicalDomain(primaryDomain) ? "$primary" : domain) || new Set<string>();
     const pinned: unknown[] = [];
     const ordinary: unknown[] = [];
     const retainedPinnedIds = new Set<string>();
-    for (const value of item.products) {
+    for (const value of deduplicatedValues) {
+      if (!value) continue;
       const id = value && typeof value === "object" && !Array.isArray(value) ? text((value as Record<string, unknown>).id, 300) : "";
       if (id && wanted.has(id)) {
         if (!retainedPinnedIds.has(id)) {

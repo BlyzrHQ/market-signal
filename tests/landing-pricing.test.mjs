@@ -36,10 +36,9 @@ test("landing proves the product and moves supporting pages to dedicated routes"
 
   assert.match(pricing, /price: "\$8"/);
   assert.match(pricing, /reports: "5"/);
-  assert.match(pricing, /products: "20"/);
-  assert.match(pricing, /products: "50"/);
-  assert.match(pricing, /products: "500"/);
-  assert.match(pricing, /products: "1,000"/);
+  assert.equal((pricing.match(/products: "20"/g) || []).length, 4);
+  assert.doesNotMatch(pricing, /products: "(?:50|500|1,000)"/);
+  assert.match(pricing, /Plans differ by monthly report allowance/);
   assert.match(pricing, /price: "\$79"/);
   assert.match(pricing, /price: "\$199"/);
   assert.match(pricing, /Self-hosted edition/);

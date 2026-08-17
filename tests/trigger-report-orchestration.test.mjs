@@ -25,7 +25,7 @@ import { createWorkerApiManifest } from "../src/shared/worker-api-contract.ts";
 import { AI_ACTION_PLANNER_LIMITS, deterministicProductActionResult } from "../app/lib/ai-action-planner.ts";
 
 const payload = {
-  contractVersion: "3",
+  contractVersion: "4",
   publicId: "a".repeat(32),
   primaryDomain: "shop.example",
   locale: "en",
@@ -153,6 +153,7 @@ function mockPort(overrides = {}) {
 test("payload contract accepts only a canonical, exact, versioned payload", () => {
   assert.deepEqual(parseReportOrchestrationPayload(payload), payload);
   assert.deepEqual(parseReportOrchestrationPayload({ contractVersion: "2", publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, reportAttempt: 1 }), { ...payload, productPlan: "starter", productLimit: 20 });
+  assert.deepEqual(parseReportOrchestrationPayload({ ...payload, contractVersion: "3", productPlan: "agency", productLimit: 1_000 }), { ...payload, productPlan: "agency", productLimit: 1_000 });
   for (const invalid of [
     { ...payload, primaryDomain: "https://shop.example" },
     { ...payload, primaryDomain: "Shop.example" },
@@ -161,7 +162,7 @@ test("payload contract accepts only a canonical, exact, versioned payload", () =
     { ...payload, callbackUrl: "https://attacker.example" },
     { ...payload, contractVersion: "1" },
     { ...payload, reportAttempt: 0 },
-    { ...payload, productPlan: "agency", productLimit: 20 },
+    { ...payload, productPlan: "agency", productLimit: 1_000 },
     { ...payload, productPlan: "unlimited", productLimit: 1_000 },
   ]) assert.throws(() => parseReportOrchestrationPayload(invalid), PermanentOrchestrationError);
 });
@@ -716,7 +717,7 @@ test("accepted rivals are enriched in 64-page batches and successful batches sur
       return { ok: true, products: targets.map((target) => ({ ...product(target.domain, target.productId), name: target.expectedName, normalizedName: target.expectedName.toLowerCase(), sourceUrl: target.sourceUrl, priceSignals: [{ raw: "GBP 7", currency: "GBP", amount: 7 }] })), coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: 64, gaps: [] } };
     },
   });
-  const result = await orchestrateReport({ ...payload, productPlan: "growth", productLimit: 500 }, { attemptNumber: 1, isFinalAttempt: false }, port);
+  const result = await orchestrateReport({ ...payload, contractVersion: "3", productPlan: "growth", productLimit: 500 }, { attemptNumber: 1, isFinalAttempt: false }, port);
   assert.deepEqual(batchSizes, [64, 6]);
   assert.equal(result.reportStatus, "limited");
   const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
