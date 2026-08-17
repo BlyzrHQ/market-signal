@@ -1,6 +1,10 @@
 import { auth, tasks } from "@trigger.dev/sdk";
 import type { marketSignalReportOrchestration } from "../../src/trigger/report-orchestration.ts";
-import { REPORT_ORCHESTRATION_CONTRACT_VERSION, type ReportOrchestrationPayload } from "../../src/shared/report-orchestration-contract.ts";
+import {
+  reportOrchestrationWireVersion,
+  type ReportOrchestrationPayload,
+  type ReportOrchestrationWirePayload,
+} from "../../src/shared/report-orchestration-contract.ts";
 import { runtimeEnvironmentValue } from "./runtime-env.ts";
 import type { ProductPlan } from "./product-entitlements.ts";
 
@@ -17,10 +21,16 @@ export type DispatchableReport = {
 };
 
 type TriggerHandle = { id: string };
-type TriggerReport = (payload: ReportOrchestrationPayload, options: { idempotencyKey: string; idempotencyKeyTTL: string; tags: string[] }) => Promise<TriggerHandle>;
+type TriggerReport = (payload: ReportOrchestrationWirePayload, options: { idempotencyKey: string; idempotencyKeyTTL: string; tags: string[] }) => Promise<TriggerHandle>;
 
-export function reportDispatchIdempotencyKey(report: Pick<DispatchableReport, "publicId" | "attemptCount">) {
-  return `${report.publicId}:${REPORT_ORCHESTRATION_CONTRACT_VERSION}:${report.attemptCount}`;
+function dispatchIdentity(report: DispatchableReport) {
+  const productPlan = report.productPlan || "starter";
+  const productLimit = report.productLimit || 20;
+  return { productPlan, productLimit, contractVersion: reportOrchestrationWireVersion(productPlan, productLimit) };
+}
+
+export function reportDispatchIdempotencyKey(report: DispatchableReport) {
+  return `${report.publicId}:${dispatchIdentity(report).contractVersion}:${report.attemptCount}`;
 }
 
 export class ReportDispatchError extends Error {
@@ -40,14 +50,15 @@ function publicDispatchError(code: ReportDispatchError["code"]) {
 export async function dispatchReportJob(report: DispatchableReport, options: { secret?: string; trigger?: TriggerReport } = {}) {
   const secret = await runtimeEnvironmentValue("TRIGGER_SECRET_KEY", options.secret);
   if (!options.trigger && !/^tr_(?:prod|dev)_[A-Za-z0-9_-]+$/.test(secret)) throw publicDispatchError("trigger-secret-unavailable");
-  const payload: ReportOrchestrationPayload = {
-    contractVersion: REPORT_ORCHESTRATION_CONTRACT_VERSION,
+  const identity = dispatchIdentity(report);
+  const payload: ReportOrchestrationWirePayload = {
+    contractVersion: identity.contractVersion,
     publicId: report.publicId,
     primaryDomain: report.primaryDomain,
     locale: report.locale,
     reportAttempt: report.attemptCount,
-    productPlan: report.productPlan || "starter",
-    productLimit: report.productLimit || 20,
+    productPlan: identity.productPlan,
+    productLimit: identity.productLimit,
   };
   const triggerOptions = {
     idempotencyKey: reportDispatchIdempotencyKey(report),
@@ -57,7 +68,7 @@ export async function dispatchReportJob(report: DispatchableReport, options: { s
   try {
     const handle = options.trigger
       ? await options.trigger(payload, triggerOptions)
-      : await auth.withAuth({ accessToken: secret }, () => tasks.trigger<typeof marketSignalReportOrchestration>(REPORT_TASK_ID, payload, triggerOptions));
+      : await auth.withAuth({ accessToken: secret }, () => tasks.trigger<typeof marketSignalReportOrchestration>(REPORT_TASK_ID, payload as ReportOrchestrationPayload, triggerOptions));
     if (!handle || typeof handle.id !== "string" || !/^run_[A-Za-z0-9]+$/.test(handle.id)) throw publicDispatchError("trigger-request-failed");
     return { runId: handle.id, idempotencyKey: triggerOptions.idempotencyKey };
   } catch (error) {

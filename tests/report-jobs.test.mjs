@@ -59,6 +59,30 @@ test("report dispatch deduplicates one attempt and creates a distinct recovery r
   assert.equal(reportDispatchIdempotencyKey({ ...initial, attemptCount: 2 }), `${PUBLIC_ID}:4:2`);
 });
 
+test("report recovery dispatches historical plan limits with the accepted version 3 contract", async () => {
+  let capturedPayload;
+  let capturedOptions;
+  const historical = {
+    publicId: PUBLIC_ID,
+    primaryDomain: "myjam.co.uk",
+    locale: "en",
+    attemptCount: 2,
+    productPlan: "agency",
+    productLimit: 1_000,
+  };
+  const result = await dispatchReportJob(historical, {
+    trigger: async (payload, options) => {
+      capturedPayload = payload;
+      capturedOptions = options;
+      return { id: "run_historical1" };
+    },
+  });
+  assert.equal(capturedPayload.contractVersion, "3");
+  assert.equal(capturedPayload.productLimit, 1_000);
+  assert.equal(capturedOptions.idempotencyKey, `${PUBLIC_ID}:3:2`);
+  assert.equal(result.idempotencyKey, `${PUBLIC_ID}:3:2`);
+});
+
 test("report dispatch diagnostics distinguish missing credentials without exposing their value", async () => {
   await assert.rejects(
     dispatchReportJob({ publicId: PUBLIC_ID, primaryDomain: "myjam.co.uk", locale: "en", attemptCount: 1 }, { secret: "" }),

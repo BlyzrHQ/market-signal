@@ -10,6 +10,10 @@ export type ReportOrchestrationPayload = {
   productLimit: number;
 };
 
+export type ReportOrchestrationWirePayload = Omit<ReportOrchestrationPayload, "contractVersion"> & {
+  contractVersion: "3" | typeof REPORT_ORCHESTRATION_CONTRACT_VERSION;
+};
+
 export type ReportOrchestrationSummary = {
   ok: true;
   contractVersion: typeof REPORT_ORCHESTRATION_CONTRACT_VERSION;
@@ -56,4 +60,10 @@ export function parseReportOrchestrationPayload(value: unknown): ReportOrchestra
     : version3
       ? { ...input, contractVersion: REPORT_ORCHESTRATION_CONTRACT_VERSION } as ReportOrchestrationPayload
       : input as ReportOrchestrationPayload;
+}
+
+export function reportOrchestrationWireVersion(productPlan: keyof typeof PLAN_LIMITS, productLimit: number) {
+  if (productLimit === PLAN_LIMITS[productPlan]) return REPORT_ORCHESTRATION_CONTRACT_VERSION;
+  if (productLimit === VERSION_3_PLAN_LIMITS[productPlan]) return "3" as const;
+  throw new PermanentOrchestrationError("Product limit does not match the persisted plan.");
 }

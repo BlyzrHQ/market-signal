@@ -10,7 +10,7 @@ A live 20-product MyJam report reached product matching with valid crawled catal
 - Drop only the ambiguous ID when the same domain submits that ID for conflicting source URLs.
 - Continue rejecting the entire request when a caller-controlled ID crosses canonical domain boundaries or catalog domains collide.
 - Set every new hosted plan to the same 20 assessed products per report; plan tiers now differ by monthly report allowance rather than expanding one report's assessed set.
-- Preserve old reports' persisted product limits and accept already-dispatched version 3 worker payloads so the change does not rewrite history or strand in-flight work.
+- Preserve old reports' persisted product limits, accept already-dispatched version 3 worker payloads, and emit recovery re-dispatches with historical limits as version 3 so the change does not rewrite history or strand in-flight work.
 
 ## Validation
 
