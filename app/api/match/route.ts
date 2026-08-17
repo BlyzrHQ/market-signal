@@ -183,7 +183,7 @@ export function productAnalysisLimit(value?: string) {
 }
 
 export function productAnalysisBudgetMs(limit: number) {
-  return limit <= 60 ? 45_000 : limit <= 500 ? 360_000 : 720_000;
+  return limit <= 60 ? 90_000 : limit <= 500 ? 360_000 : 720_000;
 }
 
 export function parsePinnedPairs(value: unknown, catalogs: Array<{ domain: string; products: ProductRecord[] }>, primaryDomain: string): PinnedProductPair[] {
