@@ -97,15 +97,36 @@ test("rejects duplicate caller-controlled product IDs across the submitted catal
   ], "shop.test"), []);
 });
 
-test("rejects duplicate IDs before a requested pin can discard the conflicting record", () => {
+test("deduplicates repeated same-source IDs within one catalog without discarding valid catalogs", () => {
+  const catalogs = parseCatalogs([
+    { domain: "shop.test", products: [
+      { id: "p1", name: "Honey", sourceUrl: "https://shop.test/products/honey" },
+      { id: "p1", name: "Honey", sourceUrl: "https://shop.test/products/honey" },
+      { id: "p2", name: "Oil", sourceUrl: "https://shop.test/products/oil" },
+    ] },
+    { domain: "rival.test", products: [{ id: "r1", name: "Honey", sourceUrl: "https://rival.test/products/honey" }] },
+  ], "shop.test");
+
+  assert.deepEqual(catalogs.map((catalog) => [catalog.domain, catalog.products.map((product) => product.id)]), [
+    ["shop.test", ["p1", "p2"]],
+    ["rival.test", ["r1"]],
+  ]);
+});
+
+test("drops a conflicting repeated ID without discarding unrelated catalog records", () => {
   const catalogs = parseCatalogs([
     { domain: "shop.test", products: [{ id: "p1", name: "Honey", sourceUrl: "https://shop.test/products/honey" }] },
     { domain: "rival.test", products: [
       { id: "r1", name: "Wrong", sourceUrl: "https://rival.test/products/wrong" },
       { id: "r1", name: "Exact", sourceUrl: "https://rival.test/products/exact" },
+      { id: "r2", name: "Oil", sourceUrl: "https://rival.test/products/oil" },
     ] },
   ], "shop.test", [{ primaryId: "p1", rivalDomain: "rival.test", rivalId: "r1" }]);
-  assert.deepEqual(catalogs, []);
+  assert.deepEqual(catalogs.map((catalog) => [catalog.domain, catalog.products.map((product) => product.id)]), [
+    ["shop.test", ["p1"]],
+    ["rival.test", ["r2"]],
+  ]);
+  assert.deepEqual(parsePinnedPairs([{ primaryId: "p1", rivalDomain: "rival.test", rivalId: "r1" }], catalogs, "shop.test"), []);
 });
 
 test("rejects duplicate canonical catalog domains", () => {
