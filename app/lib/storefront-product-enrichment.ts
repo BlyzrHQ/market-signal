@@ -2,7 +2,7 @@ import { canonicalDomain } from "./domain.ts";
 import { bilingualNormalize, bilingualTokens, parseCanonicalQuantity, quantitiesConflict } from "./product-normalization.ts";
 import { CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX, catalogReplacementAuditAttribute, directProductMetadataOffer, directProductScopedMetadataOffer, extractProductsFromHtml, isSupportedCurrency, publicSourceMarketContext, publicSourceMarketEvidence, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "./product-intelligence.ts";
 import { redirectedMarketRetryUrl } from "./market-localization.ts";
-import { confirmedProductCurrency, hasConflictingDirectProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "./product-page-adapters.ts";
+import { confirmedProductCurrency, confirmedShopifyRuntimeMarket, hasConflictingDirectProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "./product-page-adapters.ts";
 import { fetchPublicText } from "./public-fetch.ts";
 import { sharedRobotsPolicyResolver } from "./robots-policy.ts";
 import { stripInactiveHtmlMarkup } from "./active-html-markup.ts";
@@ -673,7 +673,7 @@ function pageExtraction(document: string, sourceUrl: string, domain: string) {
   return { pageTitle, result: extractProductsFromHtml({ document, sourceUrl, domain, observedAt: new Date().toISOString(), pageTitle, pageDescription, headings, pagePriceSignals }) };
 }
 
-function rejectContradictoryPageCurrencies(document: string, products: ProductRecord[], sourceUrl: string, expected: ProductRecord, pageTitle: string) {
+function rejectContradictoryPageCurrencies(document: string, products: ProductRecord[], sourceUrl: string, expected: ProductRecord, pageTitle: string, expectedCountryCode = "") {
   let detailPage = false;
   try {
     const path = new URL(sourceUrl).pathname;
@@ -685,22 +685,34 @@ function rejectContradictoryPageCurrencies(document: string, products: ProductRe
   const selectedId = identity.products[0].id;
   const directConflict = hasConflictingDirectProductCurrency(document);
   const directCurrency = confirmedProductCurrency(document, { allowStructured: false });
-  if (!directConflict && !directCurrency) return products;
+  const shopifyRuntime = storefrontAdapterRequest(sourceUrl)?.kind === "shopify" && !hasUrlMarketSelector(sourceUrl)
+    ? confirmedShopifyRuntimeMarket(document)
+    : null;
+  const expectedCountry = /^[A-Za-z]{2}$/.test(expectedCountryCode) ? expectedCountryCode.toUpperCase() : "";
+  const runtimeCountryConflict = Boolean(shopifyRuntime && expectedCountry && shopifyRuntime.countryCode !== expectedCountry);
+  const runtimeCurrency = runtimeCountryConflict ? "" : shopifyRuntime?.currency || "";
+  const pageCurrencyConflict = Boolean(directCurrency && runtimeCurrency && directCurrency !== runtimeCurrency);
+  const confirmedCurrency = directCurrency || runtimeCurrency;
+  if (!directConflict && !runtimeCountryConflict && !pageCurrencyConflict && !confirmedCurrency) return products;
   return products.map((product) => {
     if (product.id !== selectedId) return product;
     const supported = product.priceSignals.filter((signal) => isSupportedCurrency(signal.currency));
-    const contradiction = directConflict
+    const contradiction = directConflict || runtimeCountryConflict || pageCurrencyConflict
       ? supported.length > 0
-      : supported.some((signal) => String(signal.currency).trim().toUpperCase() !== directCurrency);
+      : supported.some((signal) => String(signal.currency).trim().toUpperCase() !== confirmedCurrency);
     if (!contradiction) return product;
     return {
       ...product,
-      priceSignals: directConflict
+      priceSignals: directConflict || runtimeCountryConflict || pageCurrencyConflict
         ? []
-        : product.priceSignals.filter((signal) => String(signal.currency || "").trim().toUpperCase() === directCurrency),
+        : product.priceSignals.filter((signal) => String(signal.currency || "").trim().toUpperCase() === confirmedCurrency),
       attributes: [...new Set([...product.attributes, directConflict
         ? "Price evidence conflict: multiple direct metadata currencies"
-        : "Price evidence conflict: contradictory structured currency rejected"])],
+        : runtimeCountryConflict
+          ? "Price evidence conflict: Shopify runtime country contradicts the report market"
+          : pageCurrencyConflict
+            ? "Price evidence conflict: Shopify runtime currency contradicts direct metadata"
+            : "Price evidence conflict: contradictory structured currency rejected"])],
     };
   });
 }
@@ -829,10 +841,13 @@ function hasConfirmedPrice(products: ProductRecord[]) {
   return products.some((product) => product.priceSignals.some(isPositivePriceSignal));
 }
 
-function confirmedAdapterCurrency(document: string, matchedProduct?: ProductRecord) {
+function confirmedAdapterCurrency(document: string, matchedProduct?: ProductRecord, expectedCountryCode = "") {
   if (hasConflictingDirectProductCurrency(document)) return "";
   if (matchedProduct?.attributes.some((attribute) => attribute.startsWith("Price evidence conflict:"))) return "";
   const storefrontCurrency = confirmedProductCurrency(document, { allowStructured: false });
+  const runtimeMarket = confirmedShopifyRuntimeMarket(document);
+  const expectedCountry = /^[A-Za-z]{2}$/.test(expectedCountryCode) ? expectedCountryCode.toUpperCase() : "";
+  if (runtimeMarket && expectedCountry && runtimeMarket.countryCode !== expectedCountry) return "";
   const matchedCurrencies = [...new Set((matchedProduct?.priceSignals || [])
     .map((signal) => {
       const currency = signal.currency?.trim().toUpperCase() || "";
@@ -841,7 +856,10 @@ function confirmedAdapterCurrency(document: string, matchedProduct?: ProductReco
     .filter(isSupportedCurrency))];
   if (matchedCurrencies.length > 1) return "";
   if (storefrontCurrency && matchedCurrencies.length === 1 && storefrontCurrency !== matchedCurrencies[0]) return "";
-  return storefrontCurrency || matchedCurrencies[0] || "";
+  const runtimeCurrency = runtimeMarket?.currency || "";
+  const confirmedCurrencies = [...new Set([storefrontCurrency, matchedCurrencies[0], runtimeCurrency].filter(Boolean))];
+  if (confirmedCurrencies.length > 1) return "";
+  return confirmedCurrencies[0] || "";
 }
 
 function hasSecureImage(products: ProductRecord[]) {
@@ -957,7 +975,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       const expected = expectedProduct(item);
       if (marketRetryApplied) expected.sourceUrl = fetched.url;
       addScopedProductPageEvidence(fetched.text, fetched.url, expected, extracted.result.products, extracted.pageTitle);
-      extracted.result.products = rejectContradictoryPageCurrencies(fetched.text, extracted.result.products, fetched.url, expected, extracted.pageTitle);
+      extracted.result.products = rejectContradictoryPageCurrencies(fetched.text, extracted.result.products, fetched.url, expected, extracted.pageTitle, item.marketCountryCode);
       const canonicalCrossLanguageOptions = { allowCanonicalCrossLanguageIdentity: canonicalSelectedPage(item.sourceUrl) === canonicalSelectedPage(fetched.url) };
       const rawInitialIdentity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle, { allowScopedPageSignal: true, ...canonicalCrossLanguageOptions });
       const rawMatchedProduct = rawInitialIdentity.products[0];
@@ -986,7 +1004,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
               // Shopify's legacy .js payload has no currency field. A page
               // currency cannot qualify its amount when the selected market is
               // carried only by URL query state that the endpoint may ignore.
-              const directPageCurrency = selectedMarket ? "" : confirmedAdapterCurrency(fetched.text, rawMatchedProduct);
+              const directPageCurrency = selectedMarket ? "" : confirmedAdapterCurrency(fetched.text, rawMatchedProduct, item.marketCountryCode);
               const adapterResult = adapter.kind === "shopify"
                 ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: directPageCurrency, expectedQuantity: expected.quantity })
                 : parseWooCommerceProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt: new Date().toISOString() });

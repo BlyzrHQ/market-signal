@@ -5,8 +5,8 @@ import {
   quantitiesEqual,
   type CanonicalProductQuantity,
 } from "./product-normalization.ts";
-import type { ProductPriceSignal, ProductRecord } from "./product-intelligence.ts";
-import { stripInactiveHtmlMarkup } from "./active-html-markup.ts";
+import { isSupportedCurrency, type ProductPriceSignal, type ProductRecord } from "./product-intelligence.ts";
+import { activeScriptContents, stripInactiveHtmlMarkup } from "./active-html-markup.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -147,6 +147,56 @@ export function confirmedProductCurrency(document: string, options: { allowStruc
     .filter(Boolean);
   const unique = [...new Set(structured)];
   return unique.length === 1 ? unique[0] : "";
+}
+
+export type ShopifyRuntimeMarket = {
+  shop: string;
+  currency: string;
+  countryCode: string;
+};
+
+function assignmentValues(script: string, pattern: RegExp) {
+  return [...script.matchAll(pattern)].map((match) => text(match[1], 300)).filter(Boolean);
+}
+
+export function confirmedShopifyRuntimeMarket(document: string): ShopifyRuntimeMarket | null {
+  const scripts = activeScriptContents(document);
+  const markets: ShopifyRuntimeMarket[] = [];
+  const allShops: string[] = [];
+  const allCountries: string[] = [];
+  const allCurrencies: string[] = [];
+  for (const script of scripts) {
+    const shopAssignments = [...script.matchAll(/\bShopify\.shop\s*=/gi)].length;
+    const countryAssignments = [...script.matchAll(/\bShopify\.country\s*=/gi)].length;
+    const currencyAssignments = [...script.matchAll(/\bShopify\.currency\s*=/gi)].length;
+    const shops = assignmentValues(script, /\bShopify\.shop\s*=\s*["']([^"']+)["']\s*;/gi).map((value) => value.toLowerCase());
+    const countries = assignmentValues(script, /\bShopify\.country\s*=\s*["']([A-Z]{2})["']\s*;/g);
+    const currencyObjects = assignmentValues(script, /\bShopify\.currency\s*=\s*(\{[^;]{1,300}\})\s*;/gi);
+    const currencies: string[] = [];
+    for (const value of currencyObjects) {
+      try {
+        const currency = isoCurrency(record(JSON.parse(value))?.active);
+        if (!currency || !isSupportedCurrency(currency)) return null;
+        currencies.push(currency);
+      } catch { return null; }
+    }
+    if (shopAssignments !== shops.length || countryAssignments !== countries.length || currencyAssignments !== currencies.length) return null;
+    if (shops.some((shop) => !/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(shop))) return null;
+    allShops.push(...shops);
+    allCountries.push(...countries);
+    allCurrencies.push(...currencies);
+    const uniqueShops = [...new Set(shops)];
+    const uniqueCountries = [...new Set(countries)];
+    const uniqueCurrencies = [...new Set(currencies)];
+    if (uniqueShops.length === 1 && uniqueCountries.length === 1 && uniqueCurrencies.length === 1) {
+      markets.push({ shop: uniqueShops[0], currency: uniqueCurrencies[0], countryCode: uniqueCountries[0] });
+    }
+  }
+  const uniqueShops = [...new Set(allShops)];
+  const uniqueCountries = [...new Set(allCountries)];
+  const uniqueCurrencies = [...new Set(allCurrencies)];
+  if (uniqueShops.length !== 1 || uniqueCountries.length !== 1 || uniqueCurrencies.length !== 1 || markets.length < 1) return null;
+  return { shop: uniqueShops[0], currency: uniqueCurrencies[0], countryCode: uniqueCountries[0] };
 }
 
 function canonicalMinorUnits(value: unknown) {
