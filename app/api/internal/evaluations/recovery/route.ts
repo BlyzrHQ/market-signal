@@ -1,5 +1,6 @@
-import { beginReportEvaluationDispatch, markReportEvaluationDispatchFailed, reconcileReportEvaluationStates, reconcileRequestedReportEvaluations } from "../../../../lib/report-store.ts";
+import { beginReportEvaluationDispatch, beginReportSearchChallengeDispatch, markReportEvaluationDispatchFailed, markReportSearchChallengeDispatchFailed, reconcileReportEvaluationStates, reconcileRequestedReportEvaluations, reconcileRequestedReportSearchChallenges } from "../../../../lib/report-store.ts";
 import { dispatchReportEvaluation } from "../../../../lib/report-evaluation-dispatch.ts";
+import { dispatchReportSearchChallenge, reportSearchChallengeEnabled } from "../../../../lib/report-search-challenge-dispatch.ts";
 import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../../../lib/internal-auth.ts";
 
 type RecoveryServices = {
@@ -8,8 +9,13 @@ type RecoveryServices = {
   begin: typeof beginReportEvaluationDispatch;
   dispatch: typeof dispatchReportEvaluation;
   markFailed: typeof markReportEvaluationDispatchFailed;
+  reconcileSearch: typeof reconcileRequestedReportSearchChallenges;
+  beginSearch: typeof beginReportSearchChallengeDispatch;
+  dispatchSearch: typeof dispatchReportSearchChallenge;
+  markSearchFailed: typeof markReportSearchChallengeDispatchFailed;
+  searchEnabled: typeof reportSearchChallengeEnabled;
 };
-const liveServices: RecoveryServices = { watchdog: reconcileReportEvaluationStates, reconcile: reconcileRequestedReportEvaluations, begin: beginReportEvaluationDispatch, dispatch: dispatchReportEvaluation, markFailed: markReportEvaluationDispatchFailed };
+const liveServices: RecoveryServices = { watchdog: reconcileReportEvaluationStates, reconcile: reconcileRequestedReportEvaluations, begin: beginReportEvaluationDispatch, dispatch: dispatchReportEvaluation, markFailed: markReportEvaluationDispatchFailed, reconcileSearch: reconcileRequestedReportSearchChallenges, beginSearch: beginReportSearchChallengeDispatch, dispatchSearch: dispatchReportSearchChallenge, markSearchFailed: markReportSearchChallengeDispatchFailed, searchEnabled: reportSearchChallengeEnabled };
 
 const PUBLIC_REPORT_ID = /^[a-f0-9]{32}$/;
 const MAX_RECOVERY_BODY_BYTES = 512;
@@ -74,7 +80,29 @@ export function createReportEvaluationRecoveryHandler(services: RecoveryServices
           if (payload) await services.markFailed(payload.evaluationId, payload.dispatchAttempt).catch(() => undefined);
         }
       }
-      return Response.json({ ok: true, requested: publicReportIds.length, candidates: recovery.candidates.length, dispatched, failed }, { headers: { "Cache-Control": "no-store" } });
+      let searchRecovery: { candidates: string[]; deferred?: string[]; skipped?: string[] } = { candidates: [] };
+      let searchRecoveryFailed = false;
+      if (await services.searchEnabled()) {
+        try {
+          searchRecovery = await services.reconcileSearch(publicReportIds);
+        } catch {
+          searchRecoveryFailed = true;
+        }
+      }
+      let searchDispatched = 0;
+      let searchFailed = 0;
+      for (const challengeId of searchRecovery.candidates) {
+        let payload: Awaited<ReturnType<typeof beginReportSearchChallengeDispatch>> | null = null;
+        try {
+          payload = await services.beginSearch(challengeId);
+          await services.dispatchSearch(payload);
+          searchDispatched += 1;
+        } catch {
+          searchFailed += 1;
+          if (payload) await services.markSearchFailed(payload.challengeId, payload.dispatchAttempt).catch(() => undefined);
+        }
+      }
+      return Response.json({ ok: true, requested: publicReportIds.length, candidates: recovery.candidates.length, dispatched, failed, searchCandidates: searchRecovery.candidates.length, searchDispatched, searchFailed, searchDeferred: searchRecovery.deferred?.length || 0, searchSkipped: searchRecovery.skipped?.length || 0, searchRecoveryFailed }, { headers: { "Cache-Control": "no-store" } });
     } catch (error) {
       if (error instanceof SyntaxError || (error instanceof Error && error.message === "invalid-scope")) return Response.json({ ok: false, error: "A bounded list of public report IDs is required." }, { status: 400, headers: { "Cache-Control": "no-store" } });
       return Response.json({ ok: false, error: "Report evaluation recovery failed." }, { status: 503, headers: { "Cache-Control": "no-store" } });

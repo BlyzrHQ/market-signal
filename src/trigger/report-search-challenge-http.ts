@@ -6,9 +6,22 @@ type FetchLike = typeof fetch;
 function origin(value: string) { const url = new URL(value); if (url.protocol !== "https:" || url.pathname !== "/" || url.search || url.hash || url.username || url.password) throw new Error("MARKET_SIGNAL_APP_ORIGIN must be an HTTPS origin."); return url.origin; }
 function token(value: string) { if (!value || value.length < 32 || /\s/.test(value)) throw new Error("MARKET_SIGNAL_CALLBACK_TOKEN is not configured correctly."); return value; }
 function object(value: unknown) { if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Search challenge worker API returned an invalid response."); return value as Record<string, unknown>; }
+export class SearchChallengeWorkerApiError extends Error {
+  readonly status: number;
+  readonly code: string;
+  constructor(status: number, code: string) { super(`Search challenge worker API request failed with HTTP ${status} (${code}).`); this.name = "SearchChallengeWorkerApiError"; this.status = status; this.code = code; }
+}
 async function json(fetchImpl: FetchLike, url: string, authorization: string, method: "GET" | "POST", body?: unknown) {
   const response = await fetchImpl(url, { method, headers: { Accept: "application/json", Authorization: `Bearer ${authorization}`, ...(body === undefined ? {} : { "Content-Type": "application/json" }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-  if (!response.ok || !/application\/json/i.test(response.headers.get("content-type") || "")) throw new Error(`Search challenge worker API request failed with HTTP ${response.status}.`);
+  const isJson = /application\/json/i.test(response.headers.get("content-type") || "");
+  if (!response.ok) {
+    let code = "worker-api-rejected";
+    if (isJson) {
+      try { const value = object(await response.json()); if (typeof value.code === "string" && /^[a-z0-9-]{1,80}$/.test(value.code)) code = value.code; } catch { /* retain the bounded generic code */ }
+    } else await response.body?.cancel().catch(() => undefined);
+    throw new SearchChallengeWorkerApiError(response.status, code);
+  }
+  if (!isJson) throw new SearchChallengeWorkerApiError(response.status, "worker-api-invalid-content-type");
   return await response.json() as unknown;
 }
 export function createReportSearchChallengeHttpPort(configuration: { appOrigin: string; callbackToken: string; fetchImpl?: FetchLike }): ReportSearchChallengePort & { preflight(): Promise<void> } {

@@ -1456,13 +1456,29 @@ export function sampleReportSearchChallengeProducts<T extends { productId: strin
   return selected;
 }
 
+async function reportSearchChallengeBudget(database: D1DatabaseLike, now: Date) {
+  const observedAt = now.toISOString();
+  const dayStart = `${observedAt.slice(0, 10)}T00:00:00.000Z`;
+  const dayEnd = new Date(Date.parse(dayStart) + 86_400_000).toISOString();
+  const rows = await database.prepare(`SELECT COALESCE(SUM(CASE WHEN completed_at >= ? AND completed_at < ? AND usage_status = 'known' THEN cost_microusd WHEN status = 'reserved' AND reserved_at >= ? AND reserved_at < ? THEN reserved_cost_microusd ELSE 0 END), 0) AS known_total, SUM(CASE WHEN completed_at >= ? AND completed_at < ? AND usage_status = 'unknown' THEN 1 ELSE 0 END) AS unknown_count FROM report_evaluations`).bind(dayStart, dayEnd, dayStart, dayEnd, dayStart, dayEnd).all<Record<string, unknown>>();
+  const knownDailyCostMicrousd = Number(rows.results?.[0]?.known_total || 0);
+  const unknownDailyCost = Number(rows.results?.[0]?.unknown_count || 0) > 0;
+  return {
+    dayStart,
+    dayEnd,
+    knownDailyCostMicrousd,
+    unknownDailyCost,
+    blocked: unknownDailyCost || knownDailyCostMicrousd + SEARCH_CHALLENGE_MAX_RESERVED_COST_MICROUSD > SEARCH_CHALLENGE_DAILY_BUDGET_MICROUSD,
+  };
+}
+
 export async function createReportSearchChallenge(publicReportId: string, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
   const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
   if (!database) throw new Error("Persistent report storage is unavailable.");
   await ensureSchema(database);
   const run = await findRun(database, publicReportId);
   if (!run || !["complete", "limited"].includes(run.status)) throw new Error("A terminal report is required for a search challenge.");
-  const existing = await database.prepare(`SELECT * FROM report_evaluations WHERE run_id = ? AND evaluation_type = 'search_challenge' ORDER BY created_at DESC LIMIT 1`).bind(run.id).all<Record<string, unknown>>();
+  const existing = await database.prepare(`SELECT * FROM report_evaluations WHERE run_id = ? AND evaluation_type = 'search_challenge' AND evaluator_version = ? ORDER BY created_at DESC LIMIT 1`).bind(run.id, REPORT_SEARCH_CHALLENGER_VERSION).all<Record<string, unknown>>();
   if (existing.results?.[0]) return rowEvaluation(existing.results[0]);
   const [manifestRows, documentRows, productsRows, matchesRows] = await Promise.all([
     database.prepare(`SELECT manifest_hash, status FROM report_fact_manifests WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>(),
@@ -1490,17 +1506,16 @@ export async function createReportSearchChallenge(publicReportId: string, now = 
     .filter((item) => item.productId && item.name));
   const canonicalInput = { schemaVersion: "report-search-challenge-input-v1", publicReportId, primaryDomain: run.primaryDomain, locale: run.locale, marketCountryCode: challengeCountryCode(run.primaryDomain, document), factManifestHash, products };
   const inputHash = await sha256Text(JSON.stringify(stableJsonValue(canonicalInput))); const id = internalId(); const observedAt = now.toISOString();
-  const dayStart = `${observedAt.slice(0, 10)}T00:00:00.000Z`; const dayEnd = new Date(Date.parse(dayStart) + 86_400_000).toISOString();
-  const budgetRows = await database.prepare(`SELECT COALESCE(SUM(CASE WHEN completed_at >= ? AND completed_at < ? AND usage_status = 'known' THEN cost_microusd WHEN status = 'reserved' AND reserved_at >= ? AND reserved_at < ? THEN reserved_cost_microusd ELSE 0 END), 0) AS known_total, SUM(CASE WHEN completed_at >= ? AND completed_at < ? AND usage_status = 'unknown' THEN 1 ELSE 0 END) AS unknown_count FROM report_evaluations`).bind(dayStart, dayEnd, dayStart, dayEnd, dayStart, dayEnd).all<Record<string, unknown>>();
-  const knownDailyCost = Number(budgetRows.results?.[0]?.known_total || 0); const unknownDailyCost = Number(budgetRows.results?.[0]?.unknown_count || 0) > 0;
-  const budgetBlocked = unknownDailyCost || knownDailyCost + SEARCH_CHALLENGE_MAX_RESERVED_COST_MICROUSD > SEARCH_CHALLENGE_DAILY_BUDGET_MICROUSD;
+  const budget = await reportSearchChallengeBudget(database, now);
+  const knownDailyCost = budget.knownDailyCostMicrousd; const unknownDailyCost = budget.unknownDailyCost;
+  const budgetBlocked = budget.blocked;
   const noProducts = products.length === 0; const terminal = noProducts || budgetBlocked;
   const terminalError = noProducts ? "search-challenge-no-products" : budgetBlocked ? "search-challenge-daily-budget" : "";
   const terminalExplanation = noProducts
     ? "No assessed product identifiers were available for an independent search challenge."
     : `The independent search challenge was not launched because the UTC-day evaluation budget is ${unknownDailyCost ? "unknown" : `USD ${(knownDailyCost / 1_000_000).toFixed(6)}`} and the next bounded reservation could exceed USD 0.10.`;
-  await database.prepare(`INSERT INTO report_evaluations (id, run_id, evaluation_type, input_hash, fact_manifest_hash, evaluator_version, rubric_version, status, rating_basis, deterministic_json, agent_json, findings_json, proposals_json, model, prompt_version, pricing_version, cost_microusd, input_tokens, output_tokens, usage_status, reserved_cost_microusd, error_code, dispatch_attempts, deterministic_at, created_at, completed_at) VALUES (?, ?, 'search_challenge', ?, ?, ?, 'independent-recall-v1', ?, ?, ?, ?, '[]', '[]', '', '', '', 0, 0, 0, 'not_called', 0, ?, 0, ?, ?, ?) ON CONFLICT(run_id, input_hash, evaluator_version, evaluation_type) DO NOTHING`).bind(id, run.id, inputHash, factManifestHash, REPORT_SEARCH_CHALLENGER_VERSION, terminal ? "insufficient_facts" : "deterministic", terminal ? "none" : "deterministic_only", JSON.stringify({ canonicalInput, budget: { knownDailyCostMicrousd: knownDailyCost, unknownDailyCost, maximumMicrousd: SEARCH_CHALLENGE_DAILY_BUDGET_MICROUSD } }), JSON.stringify(terminal ? { strengths: [], weaknesses: [{ issueCode: "search_challenge_unavailable", subjectKind: "report", subjectId: `report:${publicReportId}`, explanation: terminalExplanation, evidenceIds: [] }], proposals: [] } : {}), terminalError, observedAt, observedAt, terminal ? observedAt : "").run();
-  const rows = await database.prepare(`SELECT * FROM report_evaluations WHERE run_id = ? AND evaluation_type = 'search_challenge' ORDER BY created_at DESC LIMIT 1`).bind(run.id).all<Record<string, unknown>>();
+  await database.prepare(`INSERT INTO report_evaluations (id, run_id, evaluation_type, input_hash, fact_manifest_hash, evaluator_version, rubric_version, status, rating_basis, deterministic_json, agent_json, findings_json, proposals_json, model, prompt_version, pricing_version, cost_microusd, input_tokens, output_tokens, usage_status, reserved_cost_microusd, error_code, dispatch_attempts, deterministic_at, created_at, completed_at) VALUES (?, ?, 'search_challenge', ?, ?, ?, ?, ?, ?, ?, ?, '[]', '[]', '', '', '', 0, 0, 0, 'not_called', 0, ?, 0, ?, ?, ?) ON CONFLICT(run_id, input_hash, evaluator_version, evaluation_type) DO NOTHING`).bind(id, run.id, inputHash, factManifestHash, REPORT_SEARCH_CHALLENGER_VERSION, REPORT_SEARCH_CHALLENGER_VERSION, terminal ? "insufficient_facts" : "deterministic", terminal ? "none" : "deterministic_only", JSON.stringify({ canonicalInput, budget: { knownDailyCostMicrousd: knownDailyCost, unknownDailyCost, maximumMicrousd: SEARCH_CHALLENGE_DAILY_BUDGET_MICROUSD } }), JSON.stringify(terminal ? { strengths: [], weaknesses: [{ issueCode: "search_challenge_unavailable", subjectKind: "report", subjectId: `report:${publicReportId}`, explanation: terminalExplanation, evidenceIds: [] }], proposals: [] } : {}), terminalError, observedAt, observedAt, terminal ? observedAt : "").run();
+  const rows = await database.prepare(`SELECT * FROM report_evaluations WHERE run_id = ? AND evaluation_type = 'search_challenge' AND evaluator_version = ? ORDER BY created_at DESC LIMIT 1`).bind(run.id, REPORT_SEARCH_CHALLENGER_VERSION).all<Record<string, unknown>>();
   if (!rows.results?.[0]) throw new Error("The report search challenge was not persisted.");
   return rowEvaluation(rows.results[0]);
 }
@@ -1854,6 +1869,27 @@ export async function reconcileRequestedReportEvaluations(publicReportIds: strin
   const placeholders = normalizedIds.map(() => "?").join(", ");
   const candidates = await database.prepare(`SELECT evaluations.id FROM report_evaluations evaluations JOIN report_runs runs ON runs.id = evaluations.run_id WHERE runs.public_id IN (${placeholders}) AND evaluations.evaluator_version = ? AND evaluations.status IN ('deterministic', 'dispatch_failed') AND evaluations.dispatch_attempts < 3 ORDER BY evaluations.deterministic_at, evaluations.created_at LIMIT 3`).bind(...normalizedIds, AGENT_EVALUATOR_VERSION).all<Record<string, unknown>>();
   return { candidates: (candidates.results || []).map((row) => String(row.id || "")).filter(Boolean) };
+}
+
+export async function reconcileRequestedReportSearchChallenges(publicReportIds: string[], now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+  const normalizedIds = [...new Set(publicReportIds.map((id) => id.trim().toLowerCase()))];
+  if (normalizedIds.length !== publicReportIds.length || normalizedIds.length < 1 || normalizedIds.length > 3 || normalizedIds.some((id) => !PUBLIC_ID_PATTERN.test(id))) throw new Error("Invalid report search challenge recovery scope.");
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error("Persistent report storage is unavailable.");
+  await ensureSchema(database);
+  await reconcileReportEvaluationWatchdogs(database, now);
+  const budget = await reportSearchChallengeBudget(database, now);
+  if (budget.blocked) return { candidates: [], deferred: normalizedIds };
+  const placeholders = normalizedIds.map(() => "?").join(", ");
+  const eligibleRows = await database.prepare(`SELECT runs.public_id FROM report_runs runs JOIN report_fact_manifests manifests ON manifests.run_id = runs.id WHERE runs.public_id IN (${placeholders}) AND runs.status IN ('complete', 'limited') AND manifests.status = 'complete' AND length(manifests.manifest_hash) = 64`).bind(...normalizedIds).all<Record<string, unknown>>();
+  const eligibleIds = new Set((eligibleRows.results || []).map((row) => String(row.public_id || "")));
+  const candidates: string[] = [];
+  for (const publicReportId of normalizedIds) {
+    if (!eligibleIds.has(publicReportId)) continue;
+    const challenge = await createReportSearchChallenge(publicReportId, now, database);
+    if (["deterministic", "dispatch_failed"].includes(challenge.status) && challenge.dispatchAttempts < 3) candidates.push(challenge.id);
+  }
+  return { candidates, deferred: [], skipped: normalizedIds.filter((id) => !eligibleIds.has(id)) };
 }
 
 export async function saveReportFactChunk(publicReportId: string, input: ReportFactChunkInput, now = new Date(), databaseOverride?: D1DatabaseLike | null) {

@@ -61,7 +61,7 @@ function sourceUrls(root: Record<string, unknown>) {
   for (const output of Array.isArray(root.output) ? root.output : []) {
     const action = record(record(output).action);
     for (const source of Array.isArray(action.sources) ? action.sources : []) {
-      try { urls.add(new URL(String(record(source).url || "")).toString()); } catch { /* invalid source */ }
+      try { const url = new URL(String(record(source).url || "")).toString(); if (url.length <= 2_000) urls.add(url); } catch { /* invalid source */ }
     }
   }
   return urls;
@@ -77,7 +77,7 @@ function candidates(root: Record<string, unknown>, allowedProductIds: Set<string
     if (!allowedProductIds.has(productId) || !query) continue;
     for (const candidate of Array.isArray(item.candidates) ? item.candidates : []) {
       const value = record(candidate); let url = "";
-      try { url = new URL(String(value.url || "")).toString(); } catch { continue; }
+      try { url = new URL(String(value.url || "")).toString(); if (url.length > 2_000) continue; } catch { continue; }
       const title = String(value.title || "").trim().slice(0, 300);
       if (title && sources.has(url)) found.push({ productId, query, title, url });
     }
@@ -124,6 +124,14 @@ export async function runReportSearchChallenge(payload: ReportSearchChallengePay
       ? { ...base, status: "agent_rejected", errorCode: error.code, providerResponseId: error.responseId, providerRequestId: error.requestId, usageStatus: error.usage ? "known" : "unknown", usage: error.usage, candidates: null }
       : { ...base, status: "call_outcome_unknown", errorCode: "provider-transport-unknown", providerResponseId: null, providerRequestId: null, usageStatus: "unknown", usage: null, candidates: null };
   }
-  await port.terminal(payload.challengeId, callback);
+  try {
+    await port.terminal(payload.challengeId, callback);
+  } catch (error) {
+    const status = Number(record(error).status);
+    if (status !== 400) throw error;
+    const usage = callback.usageStatus === "known" ? callback.usage : null;
+    callback = { ...base, status: "agent_rejected", errorCode: "terminal-callback-rejected", providerResponseId: null, providerRequestId: null, usageStatus: usage ? "known" : "unknown", usage, candidates: null };
+    await port.terminal(payload.challengeId, callback);
+  }
   return { ok: callback.status === "complete", called: true, status: callback.status };
 }

@@ -10,6 +10,7 @@ import {
   parseReportSearchChallengeTerminal,
 } from "../src/shared/report-search-challenge-contract.ts";
 import { runReportSearchChallenge } from "../src/trigger/report-search-challenge-core.ts";
+import { createReportSearchChallengeHttpPort, SearchChallengeWorkerApiError } from "../src/trigger/report-search-challenge-http.ts";
 import { reportSearchChallengeDispatchKey, reportSearchChallengeEnabled } from "../app/lib/report-search-challenge-dispatch.ts";
 import { sampleReportSearchChallengeProducts } from "../app/lib/report-store.ts";
 
@@ -57,6 +58,47 @@ test("a model URL absent from web-search source evidence is discarded", async ()
   const sourceUrl = "https://source.example/products/beef-cubes";
   const response = providerResponse(sourceUrl); const body = await response.json(); body.output[1].content[0].text = JSON.stringify({ results: [{ productId: "beef-cubes", query: "UK Beef Cubes Halal 500g", candidates: [{ title: "Invented", url: "https://invented.example/products/beef-cubes" }] }] });
   await runReportSearchChallenge(PAYLOAD, port, { apiKey: "test_api_key_long_enough_for_validation", randomUUID: () => "client-1", fetchImpl: async () => Response.json(body, { headers: { "x-request-id": "req_search_1" } }) });
+  assert.deepEqual(terminals[0].candidates, []);
+});
+
+test("a schema-rejected terminal callback is retried once as a cost-preserving terminal failure", async () => {
+  const terminals = [];
+  const port = {
+    async reserve(_payload, _owner, clientRequestId) { return { ok: true, reservationId: "reservation-1", clientRequestId, canonicalInput: CANONICAL }; },
+    async terminal(_id, callback) {
+      terminals.push(callback);
+      if (terminals.length === 1) throw new SearchChallengeWorkerApiError(400, "search-challenge-contract-invalid");
+    },
+  };
+  const result = await runReportSearchChallenge(PAYLOAD, port, { apiKey: "test_api_key_long_enough_for_validation", randomUUID: () => "client-1", fetchImpl: async () => providerResponse() });
+  assert.deepEqual(result, { ok: false, called: true, status: "agent_rejected" });
+  assert.equal(terminals.length, 2);
+  assert.equal(terminals[1].errorCode, "terminal-callback-rejected");
+  assert.equal(terminals[1].usageStatus, "known");
+  assert.equal(terminals[1].usage.webSearchCalls, 1);
+  assert.equal(terminals[1].providerResponseId, null);
+  assert.equal(terminals[1].candidates, null);
+});
+
+test("worker HTTP failures expose only a bounded machine-readable error code", async () => {
+  const port = createReportSearchChallengeHttpPort({
+    appOrigin: "https://signal.example",
+    callbackToken: "callback-token-that-is-long-enough-for-tests",
+    fetchImpl: async () => Response.json({ ok: false, code: "search-challenge-contract-invalid", error: "sensitive details are not forwarded" }, { status: 400 }),
+  });
+  await assert.rejects(
+    () => port.terminal(PAYLOAD.challengeId, {}),
+    (error) => error instanceof SearchChallengeWorkerApiError && error.status === 400 && error.code === "search-challenge-contract-invalid" && !error.message.includes("sensitive details"),
+  );
+});
+
+test("overlong provider source URLs are discarded before the terminal callback", async () => {
+  const terminals = [];
+  const url = `https://butcher.example/products/beef?value=${"a".repeat(2_100)}`;
+  await runReportSearchChallenge(PAYLOAD, {
+    async reserve(_payload, _owner, clientRequestId) { return { ok: true, reservationId: "reservation-1", clientRequestId, canonicalInput: CANONICAL }; },
+    async terminal(_id, callback) { terminals.push(callback); },
+  }, { apiKey: "test_api_key_long_enough_for_validation", randomUUID: () => "client-1", fetchImpl: async () => providerResponse(url) });
   assert.deepEqual(terminals[0].candidates, []);
 });
 
