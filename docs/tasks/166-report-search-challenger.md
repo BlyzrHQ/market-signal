@@ -42,7 +42,8 @@ redirect, supported-currency, and finite-positive-price checks.
    must never mutate report companies, products, matches, recommendations, or
    presentation.
 7. Use an at-most-once paid search reservation with bounded retries only before
-   the provider call. Unknown call outcomes are terminal and never retried.
+   the provider call. The conditional reservation write must be re-read before
+   work is authorized. Unknown call outcomes are terminal and never retried.
 8. Run for every new eligible terminal report behind a server-owned kill switch;
    historical reports are not silently backfilled.
 
@@ -71,6 +72,9 @@ redirect, supported-currency, and finite-positive-price checks.
   observation timestamps.
 - Unknown cost is never recorded as zero. A daily or per-run budget breach
   suppresses future challenger launches without discarding completed feedback.
+- The USD 0.10 UTC-day ceiling introduced by this task is enforced again in the
+  conditional reservation write. Completed known cost and in-flight reserved
+  cost are counted; any completed unknown cost closes the budget for that day.
 
 ## Architecture review
 
@@ -88,3 +92,31 @@ in the persisted verification gaps and bounded sample.
 The maximum reservation is USD 0.06 per challenge: up to five versioned USD
 0.01 web-search-call allowances plus measured model tokens. Transport-unknown
 outcomes are terminal and are not retried as paid work.
+
+Pricing was re-verified on 2026-08-21. OpenAI's official API pricing lists web
+search at USD 10 per 1,000 calls (USD 0.01 per call). The model-token rates are
+the existing provider-contract rates documented by Task 126 and used by the
+current report evaluator: USD 0.20/M input, USD 0.25/M cache-write input, USD
+0.02/M cached input, and USD 1.20/M output. Sources:
+<https://platform.openai.com/pricing> and
+`docs/tasks/126-evaluation-provider-contract-fix.md`.
+
+## Exact-head review remediation
+
+Fable 5's review of head `8a82d4b7acd8a933d563c5f9fdaafe2fc4b43f2b`
+returned blockers. The follow-up change:
+
+- verifies the conditional reservation winner before authorizing a provider
+  call and atomically rechecks the UTC-day budget including in-flight work;
+- preserves canonical input and budget provenance on failed callbacks;
+- requires provider response identity and known usage before candidate
+  verification;
+- identifies search-challenge feedback with its evaluation type and evaluator
+  version;
+- expands package typecheck coverage to the callback route and all challenger
+  task files; and
+- adds lifecycle tests for reservation races, daily budget closure, callback
+  binding, exclusions, recall, cost, provenance, and category-diverse sampling.
+
+The remediated exact head still requires a fresh strict Fable 5 review before
+the PR can be marked ready or merged.

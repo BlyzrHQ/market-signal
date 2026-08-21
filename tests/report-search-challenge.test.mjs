@@ -11,6 +11,7 @@ import {
 } from "../src/shared/report-search-challenge-contract.ts";
 import { runReportSearchChallenge } from "../src/trigger/report-search-challenge-core.ts";
 import { reportSearchChallengeDispatchKey, reportSearchChallengeEnabled } from "../app/lib/report-search-challenge-dispatch.ts";
+import { sampleReportSearchChallengeProducts } from "../app/lib/report-store.ts";
 
 const PAYLOAD = { challengeId: "challenge-1", challengerVersion: REPORT_SEARCH_CHALLENGER_VERSION, dispatchAttempt: 1 };
 const CANONICAL = JSON.stringify({ schemaVersion: "report-search-challenge-input-v1", primaryDomain: "myjam.co.uk", marketCountryCode: "GB", products: [{ productId: "beef-cubes", name: "Beef Cubes Halal 500g", knownComparisonUrls: [] }] });
@@ -63,4 +64,18 @@ test("the global challenger is controlled by one explicit kill switch and dispat
   assert.equal(await reportSearchChallengeEnabled("false"), false);
   assert.equal(await reportSearchChallengeEnabled("true"), true);
   assert.notEqual(reportSearchChallengeDispatchKey(PAYLOAD), reportSearchChallengeDispatchKey({ ...PAYLOAD, dispatchAttempt: 2 }));
+});
+
+test("product sampling prefers weak coverage across distinct categories before filling by rank", () => {
+  const sampled = sampleReportSearchChallengeProducts([
+    { productId: "meat-b", category: "Meat", knownComparisonUrls: [] },
+    { productId: "meat-a", category: "MEAT", knownComparisonUrls: [] },
+    { productId: "dairy", category: "Dairy", knownComparisonUrls: [] },
+    { productId: "bakery", category: "Bakery", knownComparisonUrls: ["https://known.example/bakery"] },
+    { productId: "produce", category: "Produce", knownComparisonUrls: ["https://known.example/produce"] },
+    { productId: "pantry", category: "Pantry", knownComparisonUrls: ["https://known.example/pantry"] },
+  ]);
+
+  assert.deepEqual(sampled.map((item) => item.productId), ["dairy", "meat-a", "bakery", "pantry", "produce"]);
+  assert.equal(new Set(sampled.map((item) => item.category.toLowerCase())).size, 5);
 });

@@ -17,7 +17,7 @@ export function createReportSearchChallengeHttpPort(configuration: { appOrigin: 
     async preflight() { const manifest = parseWorkerApiManifest(await json(fetchImpl, `${appOrigin}/api/internal/capabilities`, authorization, "GET")); if (!manifest.capabilities.includes(REPORT_SEARCH_CHALLENGE_CAPABILITY)) throw new Error("The application does not support report search challenges."); },
     async reserve(payload, reservationOwner, clientRequestId) {
       const value = object(await json(fetchImpl, `${appOrigin}/api/internal/search-challenges/${encodeURIComponent(payload.challengeId)}`, authorization, "POST", { action: "reserve", challengerVersion: payload.challengerVersion, dispatchAttempt: payload.dispatchAttempt, reservationOwner, clientRequestId }));
-      if (value.ok === false && ["already_reserved", "terminal", "stale_attempt", "ineligible"].includes(String(value.code))) return value as ReportSearchChallengeReservationDeclined;
+      if (value.ok === false && ["already_reserved", "terminal", "stale_attempt", "ineligible", "daily_budget_exceeded"].includes(String(value.code))) return value as ReportSearchChallengeReservationDeclined;
       if (value.ok !== true || typeof value.reservationId !== "string" || value.clientRequestId !== clientRequestId || typeof value.canonicalInput !== "string") throw new Error("Search challenge reservation response is invalid.");
       return value as ReportSearchChallengeReservation;
     },

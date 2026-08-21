@@ -9,6 +9,7 @@ import { compactTerminalReportDocument, REPORT_SNAPSHOT_HARD_BYTES } from "../..
 import { PRODUCT_PLAN_LIMITS, type ProductEntitlement, type ProductPlan } from "./product-entitlements.ts";
 import { enrichProductTargets } from "./storefront-product-enrichment.ts";
 import { isSupportedCurrency, type ProductEnrichmentTarget } from "./product-intelligence.ts";
+import { bilingualNormalize } from "./product-normalization.ts";
 import {
   AGENT_EVALUATOR_VERSION,
   AGENT_MAX_RESERVED_COST_MICROUSD,
@@ -182,6 +183,8 @@ export type StoredEvaluationFeedback = {
   queueSeq: number;
   deliveryId: string;
   evaluationId: string;
+  evaluationType: StoredReportEvaluation["evaluationType"];
+  evaluatorVersion: string;
   publicReportId: string;
   primaryDomain: string;
   status: StoredReportEvaluation["status"];
@@ -1436,6 +1439,23 @@ function canonicalChallengeUrl(value: unknown) {
   } catch { return ""; }
 }
 
+export function sampleReportSearchChallengeProducts<T extends { productId: string; category: string; knownComparisonUrls: string[] }>(items: T[]) {
+  const ranked = [...items].sort((left, right) => left.knownComparisonUrls.length - right.knownComparisonUrls.length || left.productId.localeCompare(right.productId));
+  const selected: T[] = []; const selectedIds = new Set<string>(); const categories = new Set<string>();
+  for (const item of ranked) {
+    const category = bilingualNormalize(item.category || "uncategorized");
+    if (categories.has(category)) continue;
+    selected.push(item); selectedIds.add(item.productId); categories.add(category);
+    if (selected.length === REPORT_SEARCH_CHALLENGE_MAX_PRODUCTS) return selected;
+  }
+  for (const item of ranked) {
+    if (selectedIds.has(item.productId)) continue;
+    selected.push(item);
+    if (selected.length === REPORT_SEARCH_CHALLENGE_MAX_PRODUCTS) break;
+  }
+  return selected;
+}
+
 export async function createReportSearchChallenge(publicReportId: string, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
   const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
   if (!database) throw new Error("Persistent report storage is unavailable.");
@@ -1464,16 +1484,14 @@ export async function createReportSearchChallenge(publicReportId: string, now = 
     const id = String(match.primary_product_id || ""); const url = canonicalChallengeUrl(evidence.rivalSourceUrl);
     if (id && url) knownByProduct.set(id, [...new Set([...(knownByProduct.get(id) || []), url])]);
   }
-  const products = (productsRows.results || [])
+  const products = sampleReportSearchChallengeProducts((productsRows.results || [])
     .filter((row) => !eligibleIds.size || eligibleIds.has(String(row.product_id || "")))
     .map((row) => { const metadata = parsedRecord(row.metadata_json); const productId = String(row.product_id || ""); return { productId, name: cleanText(row.name, 240), category: cleanText(metadata.category, 120), sourceUrl: String(row.source_url || ""), knownComparisonUrls: knownByProduct.get(productId) || [] }; })
-    .filter((item) => item.productId && item.name)
-    .sort((left, right) => left.knownComparisonUrls.length - right.knownComparisonUrls.length || left.productId.localeCompare(right.productId))
-    .slice(0, REPORT_SEARCH_CHALLENGE_MAX_PRODUCTS);
+    .filter((item) => item.productId && item.name));
   const canonicalInput = { schemaVersion: "report-search-challenge-input-v1", publicReportId, primaryDomain: run.primaryDomain, locale: run.locale, marketCountryCode: challengeCountryCode(run.primaryDomain, document), factManifestHash, products };
   const inputHash = await sha256Text(JSON.stringify(stableJsonValue(canonicalInput))); const id = internalId(); const observedAt = now.toISOString();
   const dayStart = `${observedAt.slice(0, 10)}T00:00:00.000Z`;
-  const budgetRows = await database.prepare(`SELECT COALESCE(SUM(CASE WHEN usage_status = 'known' THEN cost_microusd ELSE 0 END), 0) AS known_total, SUM(CASE WHEN usage_status = 'unknown' THEN 1 ELSE 0 END) AS unknown_count FROM report_evaluations WHERE completed_at >= ? AND completed_at <= ?`).bind(dayStart, observedAt).all<Record<string, unknown>>();
+  const budgetRows = await database.prepare(`SELECT COALESCE(SUM(CASE WHEN completed_at >= ? AND completed_at <= ? AND usage_status = 'known' THEN cost_microusd WHEN status = 'reserved' AND reserved_at >= ? AND reserved_at <= ? THEN reserved_cost_microusd ELSE 0 END), 0) AS known_total, SUM(CASE WHEN completed_at >= ? AND completed_at <= ? AND usage_status = 'unknown' THEN 1 ELSE 0 END) AS unknown_count FROM report_evaluations`).bind(dayStart, observedAt, dayStart, observedAt, dayStart, observedAt).all<Record<string, unknown>>();
   const knownDailyCost = Number(budgetRows.results?.[0]?.known_total || 0); const unknownDailyCost = Number(budgetRows.results?.[0]?.unknown_count || 0) > 0;
   const budgetBlocked = unknownDailyCost || knownDailyCost + SEARCH_CHALLENGE_MAX_RESERVED_COST_MICROUSD > SEARCH_CHALLENGE_DAILY_BUDGET_MICROUSD;
   const noProducts = products.length === 0; const terminal = noProducts || budgetBlocked;
@@ -1513,20 +1531,31 @@ export async function reserveReportSearchChallenge(challengeId: string, input: {
   if (input.challengerVersion !== challenge.evaluatorVersion || input.dispatchAttempt !== challenge.dispatchAttempts) return { ok: false as const, code: "stale_attempt" as const };
   if (challenge.status !== "dispatching" || challenge.evaluatorVersion !== REPORT_SEARCH_CHALLENGER_VERSION) return { ok: false as const, code: "ineligible" as const };
   const canonicalInput = challengeRecord(challenge.deterministic.canonicalInput); if (!Array.isArray(canonicalInput.products) || canonicalInput.products.length < 1 || canonicalInput.products.length > REPORT_SEARCH_CHALLENGE_MAX_PRODUCTS) return { ok: false as const, code: "ineligible" as const };
-  const reservationId = internalId(); const observedAt = now.toISOString();
-  await database.prepare(`UPDATE report_evaluations SET status = 'reserved', reservation_id = ?, reservation_owner = ?, reserved_at = ?, client_request_id = ?, usage_status = 'reserved', reserved_cost_microusd = ?, model = ?, prompt_version = ?, pricing_version = ?, started_at = ? WHERE id = ? AND status = 'dispatching' AND dispatch_attempts = ? AND reservation_id = ''`).bind(reservationId, cleanText(input.reservationOwner, 120), observedAt, cleanText(input.clientRequestId, 120), SEARCH_CHALLENGE_MAX_RESERVED_COST_MICROUSD, REPORT_SEARCH_CHALLENGE_MODEL, REPORT_SEARCH_CHALLENGE_PROMPT_VERSION, REPORT_SEARCH_CHALLENGE_PRICING_VERSION, observedAt, challenge.id, input.dispatchAttempt).run();
-  return { ok: true as const, reservationId, clientRequestId: input.clientRequestId, canonicalInput: JSON.stringify(stableJsonValue(canonicalInput)) };
+  const reservationId = internalId(); const observedAt = now.toISOString(); const dayStart = `${observedAt.slice(0, 10)}T00:00:00.000Z`;
+  await database.prepare(`UPDATE report_evaluations SET status = 'reserved', reservation_id = ?, reservation_owner = ?, reserved_at = ?, client_request_id = ?, usage_status = 'reserved', reserved_cost_microusd = ?, model = ?, prompt_version = ?, pricing_version = ?, started_at = ? WHERE id = ? AND status = 'dispatching' AND dispatch_attempts = ? AND reservation_id = '' AND NOT EXISTS (SELECT 1 FROM report_evaluations budget_unknown WHERE budget_unknown.completed_at >= ? AND budget_unknown.completed_at <= ? AND budget_unknown.usage_status = 'unknown') AND (SELECT COALESCE(SUM(CASE WHEN budget.completed_at >= ? AND budget.completed_at <= ? AND budget.usage_status = 'known' THEN budget.cost_microusd WHEN budget.status = 'reserved' AND budget.reserved_at >= ? AND budget.reserved_at <= ? THEN budget.reserved_cost_microusd ELSE 0 END), 0) FROM report_evaluations budget WHERE budget.id != ?) + ? <= ?`).bind(reservationId, cleanText(input.reservationOwner, 120), observedAt, cleanText(input.clientRequestId, 120), SEARCH_CHALLENGE_MAX_RESERVED_COST_MICROUSD, REPORT_SEARCH_CHALLENGE_MODEL, REPORT_SEARCH_CHALLENGE_PROMPT_VERSION, REPORT_SEARCH_CHALLENGE_PRICING_VERSION, observedAt, challenge.id, input.dispatchAttempt, dayStart, observedAt, dayStart, observedAt, dayStart, observedAt, challenge.id, SEARCH_CHALLENGE_MAX_RESERVED_COST_MICROUSD, SEARCH_CHALLENGE_DAILY_BUDGET_MICROUSD).run();
+  const persistedRows = await database.prepare(`SELECT * FROM report_evaluations WHERE id = ? AND evaluation_type = 'search_challenge' LIMIT 1`).bind(challenge.id).all<Record<string, unknown>>();
+  const persisted = persistedRows.results?.[0] && rowEvaluation(persistedRows.results[0]);
+  if (!persisted || persisted.status !== "reserved" || persisted.reservationId !== reservationId) {
+    if (persisted?.status === "reserved") return { ok: false as const, code: "already_reserved" as const };
+    const budgetRows = await database.prepare(`SELECT COALESCE(SUM(CASE WHEN completed_at >= ? AND completed_at <= ? AND usage_status = 'known' THEN cost_microusd WHEN status = 'reserved' AND reserved_at >= ? AND reserved_at <= ? THEN reserved_cost_microusd ELSE 0 END), 0) AS known_total, SUM(CASE WHEN completed_at >= ? AND completed_at <= ? AND usage_status = 'unknown' THEN 1 ELSE 0 END) AS unknown_count FROM report_evaluations`).bind(dayStart, observedAt, dayStart, observedAt, dayStart, observedAt).all<Record<string, unknown>>();
+    const budget = budgetRows.results?.[0];
+    if (Number(budget?.unknown_count || 0) > 0 || Number(budget?.known_total || 0) + SEARCH_CHALLENGE_MAX_RESERVED_COST_MICROUSD > SEARCH_CHALLENGE_DAILY_BUDGET_MICROUSD) return { ok: false as const, code: "daily_budget_exceeded" as const };
+    return { ok: false as const, code: "already_reserved" as const };
+  }
+  return { ok: true as const, reservationId, clientRequestId: persisted.clientRequestId, canonicalInput: JSON.stringify(stableJsonValue(canonicalInput)) };
 }
 
-export async function completeReportSearchChallenge(challengeId: string, callback: ReportSearchChallengeTerminalCallback, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+export async function completeReportSearchChallenge(challengeId: string, callback: ReportSearchChallengeTerminalCallback, now = new Date(), databaseOverride?: D1DatabaseLike | null, dependencies: { enrich?: typeof enrichProductTargets } = {}) {
   const database = databaseOverride === undefined ? await getDatabase() : databaseOverride; if (!database) throw new Error("Persistent report storage is unavailable."); await ensureSchema(database);
   const rows = await database.prepare(`SELECT evaluations.*, runs.primary_domain, runs.public_id FROM report_evaluations evaluations JOIN report_runs runs ON runs.id = evaluations.run_id WHERE evaluations.id = ? AND evaluations.evaluation_type = 'search_challenge' LIMIT 1`).bind(challengeId).all<Record<string, unknown>>();
   const row = rows.results?.[0]; const challenge = row && rowEvaluation(row); if (!challenge) throw new ReportEvaluationStateError("search-challenge-not-found", "Report search challenge not found.", 404);
   if (challenge.status !== "reserved") throw new ReportEvaluationStateError("search-challenge-terminal-or-not-reserved", "The report search challenge is immutable or not reserved.", 409);
   if (callback.challengerVersion !== challenge.evaluatorVersion || callback.dispatchAttempt !== challenge.dispatchAttempts || callback.reservationId !== challenge.reservationId || callback.reservationOwner !== challenge.reservationOwner || callback.clientRequestId !== challenge.clientRequestId || callback.model !== REPORT_SEARCH_CHALLENGE_MODEL || callback.promptVersion !== REPORT_SEARCH_CHALLENGE_PROMPT_VERSION || callback.pricingVersion !== REPORT_SEARCH_CHALLENGE_PRICING_VERSION) throw new ReportEvaluationStateError("search-challenge-callback-binding-conflict", "The report search challenge callback binding conflicts with its reservation.", 409);
   const canonicalInput = challengeRecord(challenge.deterministic.canonicalInput); const products = Array.isArray(canonicalInput.products) ? canonicalInput.products.map(challengeRecord) : []; const productMap = new Map(products.map((item) => [String(item.productId || ""), item]));
-  let status: StoredReportEvaluation["status"] = callback.status; let errorCode = cleanText(callback.errorCode, 120); let summary: Record<string, unknown> = {}; let agent: Record<string, unknown> = {}; let score: number | null = null; let grade: string | null = null;
-  if (callback.status === "complete" && callback.candidates) {
+  let status: StoredReportEvaluation["status"] = callback.status; let errorCode = cleanText(callback.errorCode, 120); let summary: Record<string, unknown> = challenge.deterministic; let agent: Record<string, unknown> = {}; let score: number | null = null; let grade: string | null = null;
+  if (status === "complete" && !callback.providerResponseId) { status = "agent_rejected"; errorCode = "provider-response-id-missing"; }
+  if (status === "complete" && (callback.usageStatus !== "known" || !callback.usage)) { status = "agent_rejected"; errorCode = "missing-or-invalid-usage"; }
+  if (status === "complete" && callback.candidates) {
     const primaryDomain = String(row.primary_domain || ""); const known = new Set(products.flatMap((item) => Array.isArray(item.knownComparisonUrls) ? item.knownComparisonUrls.map(canonicalChallengeUrl).filter(Boolean) : [])); const accepted = new Map<string, { candidate: typeof callback.candidates[number]; targetId: string }>();
     for (const candidate of callback.candidates.slice(0, REPORT_SEARCH_CHALLENGE_MAX_CANDIDATES)) {
       const product = productMap.get(candidate.productId); const url = canonicalChallengeUrl(candidate.url); const domain = canonicalDomain(url);
@@ -1534,7 +1563,7 @@ export async function completeReportSearchChallenge(challengeId: string, callbac
       const key = `${candidate.productId}\n${url}`; if (!accepted.has(key)) accepted.set(key, { candidate: { ...candidate, url }, targetId: `challenge:${accepted.size + 1}` });
     }
     const targets: ProductEnrichmentTarget[] = [...accepted.values()].map(({ candidate, targetId }) => ({ domain: canonicalDomain(candidate.url), sourceUrl: candidate.url, productId: targetId, expectedName: String(productMap.get(candidate.productId)?.name || ""), expectedType: "Product", pairScore: 100, role: "rival", ...(canonicalInput.marketCountryCode ? { marketCountryCode: String(canonicalInput.marketCountryCode) } : {}) }));
-    const enrichment = await enrichProductTargets(targets, REPORT_SEARCH_CHALLENGE_MAX_CANDIDATES);
+    const enrichment = await (dependencies.enrich || enrichProductTargets)(targets, REPORT_SEARCH_CHALLENGE_MAX_CANDIDATES);
     const acceptedByTarget = new Map([...accepted.values()].map((item) => [item.targetId, item.candidate]));
     const verified = enrichment.products.flatMap((product) => {
       const candidate = acceptedByTarget.get(product.id); const prices = product.priceSignals.filter((price) => Number.isFinite(price.amount) && price.amount > 0 && isSupportedCurrency(price.currency));
@@ -1555,7 +1584,7 @@ export async function completeReportSearchChallenge(challengeId: string, callbac
   const usage = callback.usageStatus === "known" ? callback.usage : null; const cost = usage ? Math.ceil((usage.inputTokens - usage.cachedInputTokens - usage.cacheWriteInputTokens) * 0.2 + usage.cacheWriteInputTokens * 0.25 + usage.cachedInputTokens * 0.02 + usage.outputTokens * 1.2 + usage.webSearchCalls * 10_000) : 0;
   if (usage && cost > SEARCH_CHALLENGE_MAX_RESERVED_COST_MICROUSD) { status = "agent_rejected"; errorCode = "search-challenge-cost-budget-exceeded"; }
   const observedAt = now.toISOString();
-  const write = await database.prepare(`UPDATE report_evaluations SET status = ?, rating_basis = ?, overall_score = ?, grade = ?, deterministic_json = ?, agent_json = ?, findings_json = ?, proposals_json = ?, provider_response_id = ?, provider_request_id = ?, usage_status = ?, cost_microusd = ?, input_tokens = ?, cached_input_tokens = ?, cache_write_input_tokens = ?, output_tokens = ?, error_code = ?, completed_at = ? WHERE id = ? AND status = 'reserved' AND evaluator_version = ? AND dispatch_attempts = ? AND reservation_id = ? AND reservation_owner = ? AND client_request_id = ?`).bind(status, status === "complete" ? "deterministic_only" : "none", score, grade, JSON.stringify(summary), JSON.stringify(agent), JSON.stringify([...(Array.isArray((agent as { strengths?: unknown[] }).strengths) ? (agent as { strengths: unknown[] }).strengths : []), ...(Array.isArray((agent as { weaknesses?: unknown[] }).weaknesses) ? (agent as { weaknesses: unknown[] }).weaknesses : [])]), JSON.stringify(Array.isArray((agent as { proposals?: unknown[] }).proposals) ? (agent as { proposals: unknown[] }).proposals : []), cleanText(callback.providerResponseId, 120), cleanText(callback.providerRequestId, 120), callback.usageStatus, cost, usage?.inputTokens || 0, usage?.cachedInputTokens || null, usage?.cacheWriteInputTokens || null, usage?.outputTokens || 0, errorCode, observedAt, challenge.id, challenge.evaluatorVersion, challenge.dispatchAttempts, challenge.reservationId, challenge.reservationOwner, challenge.clientRequestId).run();
+  const write = await database.prepare(`UPDATE report_evaluations SET status = ?, rating_basis = ?, overall_score = ?, grade = ?, deterministic_json = ?, agent_json = ?, findings_json = ?, proposals_json = ?, provider_response_id = ?, provider_request_id = ?, usage_status = ?, cost_microusd = ?, input_tokens = ?, cached_input_tokens = ?, cache_write_input_tokens = ?, output_tokens = ?, error_code = ?, completed_at = ? WHERE id = ? AND status = 'reserved' AND evaluator_version = ? AND dispatch_attempts = ? AND reservation_id = ? AND reservation_owner = ? AND client_request_id = ?`).bind(status, status === "complete" ? "deterministic_only" : "none", score, grade, JSON.stringify(summary), JSON.stringify(agent), JSON.stringify([...(Array.isArray((agent as { strengths?: unknown[] }).strengths) ? (agent as { strengths: unknown[] }).strengths : []), ...(Array.isArray((agent as { weaknesses?: unknown[] }).weaknesses) ? (agent as { weaknesses: unknown[] }).weaknesses : [])]), JSON.stringify(Array.isArray((agent as { proposals?: unknown[] }).proposals) ? (agent as { proposals: unknown[] }).proposals : []), cleanText(callback.providerResponseId, 120), cleanText(callback.providerRequestId, 120), callback.usageStatus, cost, usage?.inputTokens ?? 0, usage?.cachedInputTokens ?? null, usage?.cacheWriteInputTokens ?? null, usage?.outputTokens ?? 0, errorCode, observedAt, challenge.id, challenge.evaluatorVersion, challenge.dispatchAttempts, challenge.reservationId, challenge.reservationOwner, challenge.clientRequestId).run();
   if (databaseWriteChanged(write) === false) throw new ReportEvaluationStateError("search-challenge-callback-state-conflict", "The report search challenge callback conflicted with current state.", 409);
   const persisted = await database.prepare(`SELECT * FROM report_evaluations WHERE id = ? LIMIT 1`).bind(challenge.id).all<Record<string, unknown>>(); return rowEvaluation(persisted.results![0]);
 }
@@ -1618,6 +1647,8 @@ function evaluationFeedbackRow(row: Record<string, unknown>): StoredEvaluationFe
     queueSeq: Number(row.queue_seq || 0),
     deliveryId: String(row.delivery_id || ""),
     evaluationId: String(row.evaluation_id || ""),
+    evaluationType: row.evaluation_type === "run_failure" ? "run_failure" : row.evaluation_type === "search_challenge" ? "search_challenge" : "report",
+    evaluatorVersion: String(row.evaluator_version || ""),
     publicReportId: String(row.public_id || ""),
     primaryDomain: String(row.primary_domain || ""),
     status: String(row.status || "failed") as StoredReportEvaluation["status"],
@@ -1644,6 +1675,8 @@ function feedbackPayload(item: StoredEvaluationFeedback) {
   return {
     deliveryId: item.deliveryId,
     evaluationId: item.evaluationId,
+    evaluationType: item.evaluationType,
+    evaluatorVersion: item.evaluatorVersion,
     publicReportId: item.publicReportId,
     primaryDomain: item.primaryDomain,
     status: item.status,
@@ -1660,8 +1693,8 @@ function feedbackPayload(item: StoredEvaluationFeedback) {
   };
 }
 
-const FEEDBACK_ROW_SELECT = `SELECT outbox.queue_seq, outbox.id AS delivery_id, evaluations.id AS evaluation_id, evaluations.status, evaluations.rating_basis, evaluations.grade, evaluations.overall_score, evaluations.agent_json, evaluations.error_code, evaluations.usage_status, evaluations.cost_microusd, evaluations.completed_at, runs.public_id, runs.primary_domain, runs.expires_at, requests.id AS human_request_id, requests.uncertainty_code, requests.question, requests.evidence_ids_json, human_open.request_id AS human_open_id FROM report_evaluation_feedback_outbox outbox JOIN report_evaluations evaluations ON evaluations.id = outbox.evaluation_id JOIN report_runs runs ON runs.id = outbox.run_id LEFT JOIN report_evaluation_feedback_receipts receipts ON receipts.outbox_id = outbox.id LEFT JOIN report_human_review_requests requests ON requests.evaluation_id = evaluations.id LEFT JOIN report_human_review_open human_open ON human_open.request_id = requests.id`;
-const FEEDBACK_PENDING_ROW_SELECT = `SELECT pending.queue_seq, outbox.id AS delivery_id, evaluations.id AS evaluation_id, evaluations.status, evaluations.rating_basis, evaluations.grade, evaluations.overall_score, evaluations.agent_json, evaluations.error_code, evaluations.usage_status, evaluations.cost_microusd, evaluations.completed_at, runs.public_id, runs.primary_domain, runs.expires_at, requests.id AS human_request_id, requests.uncertainty_code, requests.question, requests.evidence_ids_json, human_open.request_id AS human_open_id FROM (SELECT window.outbox_id, window.run_id, window.queue_seq, window.created_at FROM report_evaluation_feedback_pending window INDEXED BY report_evaluation_feedback_pending_queue_uidx ORDER BY window.queue_seq LIMIT ?) pending JOIN report_evaluation_feedback_outbox outbox ON outbox.id = pending.outbox_id JOIN report_evaluations evaluations ON evaluations.id = outbox.evaluation_id JOIN report_runs runs ON runs.id = pending.run_id LEFT JOIN report_human_review_requests requests ON requests.evaluation_id = evaluations.id LEFT JOIN report_human_review_open human_open ON human_open.request_id = requests.id`;
+const FEEDBACK_ROW_SELECT = `SELECT outbox.queue_seq, outbox.id AS delivery_id, evaluations.id AS evaluation_id, evaluations.evaluation_type, evaluations.evaluator_version, evaluations.status, evaluations.rating_basis, evaluations.grade, evaluations.overall_score, evaluations.agent_json, evaluations.error_code, evaluations.usage_status, evaluations.cost_microusd, evaluations.completed_at, runs.public_id, runs.primary_domain, runs.expires_at, requests.id AS human_request_id, requests.uncertainty_code, requests.question, requests.evidence_ids_json, human_open.request_id AS human_open_id FROM report_evaluation_feedback_outbox outbox JOIN report_evaluations evaluations ON evaluations.id = outbox.evaluation_id JOIN report_runs runs ON runs.id = outbox.run_id LEFT JOIN report_evaluation_feedback_receipts receipts ON receipts.outbox_id = outbox.id LEFT JOIN report_human_review_requests requests ON requests.evaluation_id = evaluations.id LEFT JOIN report_human_review_open human_open ON human_open.request_id = requests.id`;
+const FEEDBACK_PENDING_ROW_SELECT = `SELECT pending.queue_seq, outbox.id AS delivery_id, evaluations.id AS evaluation_id, evaluations.evaluation_type, evaluations.evaluator_version, evaluations.status, evaluations.rating_basis, evaluations.grade, evaluations.overall_score, evaluations.agent_json, evaluations.error_code, evaluations.usage_status, evaluations.cost_microusd, evaluations.completed_at, runs.public_id, runs.primary_domain, runs.expires_at, requests.id AS human_request_id, requests.uncertainty_code, requests.question, requests.evidence_ids_json, human_open.request_id AS human_open_id FROM (SELECT window.outbox_id, window.run_id, window.queue_seq, window.created_at FROM report_evaluation_feedback_pending window INDEXED BY report_evaluation_feedback_pending_queue_uidx ORDER BY window.queue_seq LIMIT ?) pending JOIN report_evaluation_feedback_outbox outbox ON outbox.id = pending.outbox_id JOIN report_evaluations evaluations ON evaluations.id = outbox.evaluation_id JOIN report_runs runs ON runs.id = pending.run_id LEFT JOIN report_human_review_requests requests ON requests.evaluation_id = evaluations.id LEFT JOIN report_human_review_open human_open ON human_open.request_id = requests.id`;
 const REPORT_FEEDBACK_BACKLOG_SCAN_LIMIT = 1_001;
 
 export async function claimEvaluationFeedback(now = new Date(), databaseOverride?: D1DatabaseLike | null) {

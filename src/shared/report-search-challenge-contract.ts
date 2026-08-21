@@ -17,7 +17,7 @@ export type ReportSearchChallengePayload = { challengeId: string; challengerVers
 export type ReportSearchChallengeUsage = { inputTokens: number; cachedInputTokens: number; cacheWriteInputTokens: number; outputTokens: number; webSearchCalls: number };
 export type ReportSearchChallengeCandidate = { productId: string; query: string; title: string; url: string };
 export type ReportSearchChallengeReservation = { ok: true; reservationId: string; clientRequestId: string; canonicalInput: string };
-export type ReportSearchChallengeReservationDeclined = { ok: false; code: "already_reserved" | "terminal" | "stale_attempt" | "ineligible" };
+export type ReportSearchChallengeReservationDeclined = { ok: false; code: "already_reserved" | "terminal" | "stale_attempt" | "ineligible" | "daily_budget_exceeded" };
 export type ReportSearchChallengeTerminalCallback = {
   action: "terminal";
   challengerVersion: string;
