@@ -8,9 +8,11 @@ import Database from "better-sqlite3";
 import { NodeSqliteDatabase } from "../app/lib/node-sqlite-database.ts";
 import {
   beginReportEvaluationDispatch,
+  beginReportSearchChallengeDispatch,
   acknowledgeEvaluationFeedback,
   claimEvaluationFeedback,
   completeReportAgentEvaluation,
+  createReportSearchChallenge,
   createReportRun,
   finalizeReportFactManifest,
   getReportEvaluation,
@@ -19,6 +21,7 @@ import {
   reconcileReportEvaluations,
   reconcileRequestedReportEvaluations,
   reserveReportAgentEvaluation,
+  reserveReportSearchChallenge,
   saveReportDocument,
   saveReportFactChunk,
   submitHumanReviewResponse,
@@ -30,6 +33,7 @@ import {
 } from "../src/shared/report-evaluation-contract.ts";
 import { buildReportFactBundle } from "../src/shared/report-facts.ts";
 import { REPORT_FEEDBACK_CONSUMER } from "../src/shared/report-feedback-contract.ts";
+import { REPORT_SEARCH_CHALLENGER_VERSION } from "../src/shared/report-search-challenge-contract.ts";
 
 const LEGACY_EVALUATIONS_SCHEMA = `CREATE TABLE report_evaluations (
   id text PRIMARY KEY NOT NULL, run_id text NOT NULL, evaluation_type text NOT NULL,
@@ -131,6 +135,31 @@ async function preparedEvaluation(database, suffix, now = new Date("2026-08-09T1
   assert.equal(evaluation.status, "deterministic");
   return { created, evaluation };
 }
+
+test("a terminal report creates one immutable bounded search challenge and reserves its exact fact snapshot", async () => {
+  const value = await fixture();
+  try {
+    const now = new Date("2026-08-21T10:00:00.000Z");
+    const { created } = await preparedEvaluation(value.database, "search-challenge", now);
+    const first = await createReportSearchChallenge(created.publicId, now, value.database);
+    const replay = await createReportSearchChallenge(created.publicId, new Date(now.getTime() + 1_000), value.database);
+    assert.equal(first.id, replay.id);
+    assert.equal(first.evaluationType, "search_challenge");
+    assert.equal(first.status, "deterministic");
+    const dispatch = await beginReportSearchChallengeDispatch(first.id, now, value.database);
+    assert.equal(dispatch.challengerVersion, REPORT_SEARCH_CHALLENGER_VERSION);
+    const reservation = await reserveReportSearchChallenge(first.id, { challengerVersion: REPORT_SEARCH_CHALLENGER_VERSION, dispatchAttempt: 1, reservationOwner: "worker:challenge", clientRequestId: "client:challenge" }, now, value.database);
+    assert.equal(reservation.ok, true);
+    const input = JSON.parse(reservation.canonicalInput);
+    assert.equal(input.publicReportId, created.publicId);
+    assert.equal(input.factManifestHash, first.factManifestHash);
+    assert.equal(input.products.length, 1);
+    assert.equal(input.products[0].name, "Observed product");
+    assert.equal(input.products[0].knownComparisonUrls.length, 1);
+  } finally {
+    await closeFixture(value);
+  }
+});
 
 test("agent evaluation labels excluded matches without promoting their recommendations", async () => {
   const value = await fixture();

@@ -12,6 +12,9 @@ import {
   saveReportDocument,
   beginReportEvaluationDispatch,
   markReportEvaluationDispatchFailed,
+  beginReportSearchChallengeDispatch,
+  createReportSearchChallenge,
+  markReportSearchChallengeDispatchFailed,
   type ReportPhase,
   type ReportRunStatus,
   type StoredReportEvent,
@@ -19,6 +22,7 @@ import {
 import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../../../lib/internal-auth.ts";
 import { dispatchReportJob } from "../../../../lib/report-dispatch.ts";
 import { dispatchReportEvaluation, reportEvaluationPilotEnabled } from "../../../../lib/report-evaluation-dispatch.ts";
+import { dispatchReportSearchChallenge, reportSearchChallengeEnabled } from "../../../../lib/report-search-challenge-dispatch.ts";
 import { settleTerminalReportReservation } from "../../../../lib/report-terminal-billing.ts";
 
 type RouteContext = { params: Promise<{ publicId: string }> | { publicId: string } };
@@ -259,6 +263,19 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
             } catch {
               if (payload) await markReportEvaluationDispatchFailed(payload.evaluationId, payload.dispatchAttempt).catch(() => undefined);
               console.error("report evaluation dispatch failed", { stage: "evaluation-dispatch", diagnosticCode: "evaluation-dispatch-failed" });
+            }
+          }
+          if (await reportSearchChallengeEnabled()) {
+            let challengePayload: Awaited<ReturnType<typeof beginReportSearchChallengeDispatch>> | null = null;
+            try {
+              const challenge = await createReportSearchChallenge(id);
+              if (challenge.status === "deterministic") {
+                challengePayload = await beginReportSearchChallengeDispatch(challenge.id);
+                await dispatchReportSearchChallenge(challengePayload);
+              }
+            } catch {
+              if (challengePayload) await markReportSearchChallengeDispatchFailed(challengePayload.challengeId, challengePayload.dispatchAttempt).catch(() => undefined);
+              console.error("report search challenge dispatch failed", { stage: "search-challenge-dispatch", diagnosticCode: "search-challenge-dispatch-failed" });
             }
           }
           return Response.json({ ok: true, saved, replayed: false });
