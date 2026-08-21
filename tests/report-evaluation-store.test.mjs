@@ -8,9 +8,12 @@ import Database from "better-sqlite3";
 import { NodeSqliteDatabase } from "../app/lib/node-sqlite-database.ts";
 import {
   beginReportEvaluationDispatch,
+  beginReportSearchChallengeDispatch,
   acknowledgeEvaluationFeedback,
   claimEvaluationFeedback,
   completeReportAgentEvaluation,
+  completeReportSearchChallenge,
+  createReportSearchChallenge,
   createReportRun,
   finalizeReportFactManifest,
   getReportEvaluation,
@@ -19,6 +22,7 @@ import {
   reconcileReportEvaluations,
   reconcileRequestedReportEvaluations,
   reserveReportAgentEvaluation,
+  reserveReportSearchChallenge,
   saveReportDocument,
   saveReportFactChunk,
   submitHumanReviewResponse,
@@ -30,6 +34,12 @@ import {
 } from "../src/shared/report-evaluation-contract.ts";
 import { buildReportFactBundle } from "../src/shared/report-facts.ts";
 import { REPORT_FEEDBACK_CONSUMER } from "../src/shared/report-feedback-contract.ts";
+import {
+  REPORT_SEARCH_CHALLENGER_VERSION,
+  REPORT_SEARCH_CHALLENGE_MODEL,
+  REPORT_SEARCH_CHALLENGE_PRICING_VERSION,
+  REPORT_SEARCH_CHALLENGE_PROMPT_VERSION,
+} from "../src/shared/report-search-challenge-contract.ts";
 
 const LEGACY_EVALUATIONS_SCHEMA = `CREATE TABLE report_evaluations (
   id text PRIMARY KEY NOT NULL, run_id text NOT NULL, evaluation_type text NOT NULL,
@@ -131,6 +141,219 @@ async function preparedEvaluation(database, suffix, now = new Date("2026-08-09T1
   assert.equal(evaluation.status, "deterministic");
   return { created, evaluation };
 }
+
+function challengeTerminal(reservation, overrides = {}) {
+  return {
+    action: "terminal",
+    challengerVersion: REPORT_SEARCH_CHALLENGER_VERSION,
+    dispatchAttempt: 1,
+    reservationOwner: "worker:challenge",
+    reservationId: reservation.reservationId,
+    clientRequestId: reservation.clientRequestId,
+    status: "agent_rejected",
+    errorCode: "provider-rejected",
+    providerResponseId: null,
+    providerRequestId: null,
+    usageStatus: "unknown",
+    usage: null,
+    candidates: null,
+    model: REPORT_SEARCH_CHALLENGE_MODEL,
+    promptVersion: REPORT_SEARCH_CHALLENGE_PROMPT_VERSION,
+    pricingVersion: REPORT_SEARCH_CHALLENGE_PRICING_VERSION,
+    ...overrides,
+  };
+}
+
+test("a terminal report creates one immutable bounded search challenge and reserves its exact fact snapshot", async () => {
+  const value = await fixture();
+  try {
+    const now = new Date("2026-08-21T10:00:00.000Z");
+    const { created } = await preparedEvaluation(value.database, "search-challenge", now);
+    const first = await createReportSearchChallenge(created.publicId, now, value.database);
+    const replay = await createReportSearchChallenge(created.publicId, new Date(now.getTime() + 1_000), value.database);
+    assert.equal(first.id, replay.id);
+    assert.equal(first.evaluationType, "search_challenge");
+    assert.equal(first.status, "deterministic");
+    const dispatch = await beginReportSearchChallengeDispatch(first.id, now, value.database);
+    assert.equal(dispatch.challengerVersion, REPORT_SEARCH_CHALLENGER_VERSION);
+    const reservation = await reserveReportSearchChallenge(first.id, { challengerVersion: REPORT_SEARCH_CHALLENGER_VERSION, dispatchAttempt: 1, reservationOwner: "worker:challenge", clientRequestId: "client:challenge" }, now, value.database);
+    assert.equal(reservation.ok, true);
+    const input = JSON.parse(reservation.canonicalInput);
+    assert.equal(input.publicReportId, created.publicId);
+    assert.equal(input.factManifestHash, first.factManifestHash);
+    assert.equal(input.products.length, 1);
+    assert.equal(input.products[0].name, "Observed product");
+    assert.equal(input.products[0].knownComparisonUrls.length, 1);
+  } finally {
+    await closeFixture(value);
+  }
+});
+
+test("a lost search-challenge reservation write is declined instead of authorizing a paid call", async () => {
+  const value = await fixture();
+  try {
+    const now = new Date("2026-08-21T10:00:00.000Z");
+    const { created } = await preparedEvaluation(value.database, "challenge-race", now);
+    const challenge = await createReportSearchChallenge(created.publicId, now, value.database);
+    await beginReportSearchChallengeDispatch(challenge.id, now, value.database);
+    const guardedPrefix = "UPDATE report_evaluations SET status = 'reserved', reservation_id = ?";
+    const losingDatabase = {
+      prepare(query) {
+        if (!query.startsWith(guardedPrefix)) return value.database.prepare(query);
+        return { bind() { return { async run() { return { changes: 0 }; } }; } };
+      },
+      batch(statements) { return value.database.batch(statements); },
+    };
+    const reservation = await reserveReportSearchChallenge(challenge.id, { challengerVersion: REPORT_SEARCH_CHALLENGER_VERSION, dispatchAttempt: 1, reservationOwner: "worker:challenge", clientRequestId: "client:loser" }, now, losingDatabase);
+    assert.equal(reservation.ok, false);
+    assert.equal(reservation.code, "already_reserved");
+  } finally {
+    await closeFixture(value);
+  }
+});
+
+test("search-challenge reservations atomically include same-day in-flight cost even when the committed reservation has a later timestamp", async () => {
+  const value = await fixture();
+  try {
+    const now = new Date("2026-08-21T10:00:00.000Z");
+    const firstRun = await preparedEvaluation(value.database, "challenge-budget-one", now);
+    const secondRun = await preparedEvaluation(value.database, "challenge-budget-two", now);
+    const first = await createReportSearchChallenge(firstRun.created.publicId, now, value.database);
+    const second = await createReportSearchChallenge(secondRun.created.publicId, now, value.database);
+    await beginReportSearchChallengeDispatch(first.id, now, value.database);
+    await beginReportSearchChallengeDispatch(second.id, now, value.database);
+    const firstReservation = await reserveReportSearchChallenge(first.id, { challengerVersion: REPORT_SEARCH_CHALLENGER_VERSION, dispatchAttempt: 1, reservationOwner: "worker:challenge", clientRequestId: "client:budget-one" }, new Date("2026-08-21T10:00:00.002Z"), value.database);
+    assert.equal(firstReservation.ok, true);
+    const secondReservation = await reserveReportSearchChallenge(second.id, { challengerVersion: REPORT_SEARCH_CHALLENGER_VERSION, dispatchAttempt: 1, reservationOwner: "worker:challenge", clientRequestId: "client:budget-two" }, new Date("2026-08-21T10:00:00.001Z"), value.database);
+    assert.deepEqual(secondReservation, { ok: false, code: "daily_budget_exceeded" });
+  } finally {
+    await closeFixture(value);
+  }
+});
+
+test("unknown completed evaluation cost suppresses a new daily search challenge", async () => {
+  const value = await fixture();
+  try {
+    const now = new Date("2026-08-21T10:00:00.000Z");
+    const { created, evaluation } = await preparedEvaluation(value.database, "challenge-unknown-budget", now);
+    await value.database.prepare("UPDATE report_evaluations SET status = 'agent_rejected', usage_status = 'unknown', completed_at = ? WHERE id = ?").bind(now.toISOString(), evaluation.id).run();
+    const challenge = await createReportSearchChallenge(created.publicId, now, value.database);
+    assert.equal(challenge.status, "insufficient_facts");
+    assert.equal(challenge.errorCode, "search-challenge-daily-budget");
+    assert.equal(challenge.deterministic.budget.unknownDailyCost, true);
+  } finally {
+    await closeFixture(value);
+  }
+});
+
+test("failed search-challenge callbacks retain canonical input and expose challenge identity in feedback", async () => {
+  const value = await fixture();
+  try {
+    const now = new Date("2026-08-21T10:00:00.000Z");
+    const { created } = await preparedEvaluation(value.database, "challenge-failure", now);
+    const challenge = await createReportSearchChallenge(created.publicId, now, value.database);
+    await beginReportSearchChallengeDispatch(challenge.id, now, value.database);
+    const reservation = await reserveReportSearchChallenge(challenge.id, { challengerVersion: REPORT_SEARCH_CHALLENGER_VERSION, dispatchAttempt: 1, reservationOwner: "worker:challenge", clientRequestId: "client:challenge" }, now, value.database);
+    assert.equal(reservation.ok, true);
+    const before = (await value.database.prepare("SELECT deterministic_json FROM report_evaluations WHERE id = ?").bind(challenge.id).all()).results[0].deterministic_json;
+    await completeReportSearchChallenge(challenge.id, challengeTerminal(reservation), now, value.database);
+    const after = (await value.database.prepare("SELECT deterministic_json FROM report_evaluations WHERE id = ?").bind(challenge.id).all()).results[0].deterministic_json;
+    assert.deepEqual(JSON.parse(after), JSON.parse(before));
+    const claimed = await claimEvaluationFeedback(new Date(now.getTime() + 1_000), value.database);
+    assert.equal(claimed.item.evaluationType, "search_challenge");
+    assert.equal(claimed.item.evaluatorVersion, REPORT_SEARCH_CHALLENGER_VERSION);
+  } finally {
+    await closeFixture(value);
+  }
+});
+
+test("a complete search challenge verifies candidates, exclusions, recall, cost, and provider provenance", async () => {
+  const value = await fixture();
+  try {
+    const now = new Date("2026-08-21T10:00:00.000Z");
+    const { created } = await preparedEvaluation(value.database, "challenge-complete", now);
+    const challenge = await createReportSearchChallenge(created.publicId, now, value.database);
+    await beginReportSearchChallengeDispatch(challenge.id, now, value.database);
+    const reservation = await reserveReportSearchChallenge(challenge.id, { challengerVersion: REPORT_SEARCH_CHALLENGER_VERSION, dispatchAttempt: 1, reservationOwner: "worker:challenge", clientRequestId: "client:challenge" }, now, value.database);
+    assert.equal(reservation.ok, true);
+    const input = JSON.parse(reservation.canonicalInput);
+    const productId = input.products[0].productId;
+    const knownUrl = input.products[0].knownComparisonUrls[0];
+    const missedUrl = "https://independent-rival.example/products/observed";
+    const blockedUrl = "https://blocked-rival.example/products/observed";
+    const candidates = [
+      { productId, query: "observed product", title: "Known", url: knownUrl },
+      { productId, query: "observed product", title: "Missed", url: missedUrl },
+      { productId, query: "observed product", title: "Blocked", url: blockedUrl },
+      { productId, query: "observed product", title: "Marketplace", url: "https://amazon.co.uk/dp/example" },
+      { productId, query: "observed product", title: "Listing", url: "https://another-rival.example/search/observed" },
+      { productId, query: "observed product", title: "Primary", url: input.products[0].sourceUrl },
+    ];
+    const enrich = async (targets, maxPages) => ({
+      products: targets.filter((target) => target.sourceUrl !== blockedUrl).map((target) => ({ id: target.productId, domain: target.domain, name: "Observed product", normalizedName: "observed product", priceSignals: [{ raw: "GBP 8.00", currency: "GBP", amount: 8 }], sourceUrl: target.sourceUrl, imageUrl: "https://images.example/observed.jpg", observedAt: now.toISOString(), jsonLdType: "Product", attributes: [] })),
+      coverage: { pagesRequested: targets.length, pagesFetched: targets.length - 1, maxPages, gaps: [{ url: blockedUrl, productId: targets.find((target) => target.sourceUrl === blockedUrl).productId, role: "rival", reason: "robots disallowed", code: "robots_disallowed", failureKind: "robots" }] },
+    });
+    const completed = await completeReportSearchChallenge(challenge.id, challengeTerminal(reservation, {
+      status: "complete",
+      errorCode: null,
+      providerResponseId: "response:challenge",
+      providerRequestId: "request:challenge",
+      usageStatus: "known",
+      usage: { inputTokens: 100, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 50, webSearchCalls: 1 },
+      candidates,
+    }), now, value.database, { enrich });
+    assert.equal(completed.status, "complete");
+    assert.equal(completed.overallScore, 50);
+    assert.equal(completed.grade, "D");
+    assert.equal(completed.costMicrousd, 10_080);
+    assert.equal(completed.deterministic.candidateCount, 3);
+    assert.equal(completed.deterministic.verifiedCandidateCount, 2);
+    assert.equal(completed.deterministic.missedValidComparisonCount, 1);
+    assert.deepEqual(completed.deterministic.missedDomains, ["independent-rival.example"]);
+    assert.deepEqual(completed.deterministic.rootCauseCounts, { notDiscovered: 1 });
+    assert.deepEqual(completed.deterministic.verificationGapCounts, { robots_disallowed: 1 });
+    const row = (await value.database.prepare("SELECT cached_input_tokens, provider_response_id FROM report_evaluations WHERE id = ?").bind(challenge.id).all()).results[0];
+    assert.equal(row.cached_input_tokens, 0);
+    assert.equal(row.provider_response_id, "response:challenge");
+  } finally {
+    await closeFixture(value);
+  }
+});
+
+test("a mismatched search-challenge callback cannot mutate its reservation", async () => {
+  const value = await fixture();
+  try {
+    const now = new Date("2026-08-21T10:00:00.000Z");
+    const { created } = await preparedEvaluation(value.database, "challenge-binding", now);
+    const challenge = await createReportSearchChallenge(created.publicId, now, value.database);
+    await beginReportSearchChallengeDispatch(challenge.id, now, value.database);
+    const reservation = await reserveReportSearchChallenge(challenge.id, { challengerVersion: REPORT_SEARCH_CHALLENGER_VERSION, dispatchAttempt: 1, reservationOwner: "worker:challenge", clientRequestId: "client:challenge" }, now, value.database);
+    await assert.rejects(() => completeReportSearchChallenge(challenge.id, challengeTerminal(reservation, { reservationId: "reservation:wrong" }), now, value.database), /binding conflicts/);
+    const persisted = (await value.database.prepare("SELECT status, reservation_id FROM report_evaluations WHERE id = ?").bind(challenge.id).all()).results[0];
+    assert.equal(persisted.status, "reserved");
+    assert.equal(persisted.reservation_id, reservation.reservationId);
+  } finally {
+    await closeFixture(value);
+  }
+});
+
+test("a complete search challenge without provider provenance is rejected before verification", async () => {
+  const value = await fixture();
+  try {
+    const now = new Date("2026-08-21T10:00:00.000Z");
+    const { created } = await preparedEvaluation(value.database, "challenge-provider", now);
+    const challenge = await createReportSearchChallenge(created.publicId, now, value.database);
+    await beginReportSearchChallengeDispatch(challenge.id, now, value.database);
+    const reservation = await reserveReportSearchChallenge(challenge.id, { challengerVersion: REPORT_SEARCH_CHALLENGER_VERSION, dispatchAttempt: 1, reservationOwner: "worker:challenge", clientRequestId: "client:challenge" }, now, value.database);
+    let enrichmentCalled = false;
+    const completed = await completeReportSearchChallenge(challenge.id, challengeTerminal(reservation, { status: "complete", errorCode: null, usageStatus: "known", usage: { inputTokens: 1, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 1, webSearchCalls: 1 }, candidates: [] }), now, value.database, { enrich: async () => { enrichmentCalled = true; throw new Error("must not run"); } });
+    assert.equal(completed.status, "agent_rejected");
+    assert.equal(completed.errorCode, "provider-response-id-missing");
+    assert.equal(enrichmentCalled, false);
+  } finally {
+    await closeFixture(value);
+  }
+});
 
 test("agent evaluation labels excluded matches without promoting their recommendations", async () => {
   const value = await fixture();
