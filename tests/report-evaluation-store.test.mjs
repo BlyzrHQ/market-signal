@@ -212,7 +212,7 @@ test("a lost search-challenge reservation write is declined instead of authorizi
   }
 });
 
-test("search-challenge reservations atomically include in-flight cost in the UTC-day ceiling", async () => {
+test("search-challenge reservations atomically include same-day in-flight cost even when the committed reservation has a later timestamp", async () => {
   const value = await fixture();
   try {
     const now = new Date("2026-08-21T10:00:00.000Z");
@@ -222,9 +222,9 @@ test("search-challenge reservations atomically include in-flight cost in the UTC
     const second = await createReportSearchChallenge(secondRun.created.publicId, now, value.database);
     await beginReportSearchChallengeDispatch(first.id, now, value.database);
     await beginReportSearchChallengeDispatch(second.id, now, value.database);
-    const firstReservation = await reserveReportSearchChallenge(first.id, { challengerVersion: REPORT_SEARCH_CHALLENGER_VERSION, dispatchAttempt: 1, reservationOwner: "worker:challenge", clientRequestId: "client:budget-one" }, now, value.database);
+    const firstReservation = await reserveReportSearchChallenge(first.id, { challengerVersion: REPORT_SEARCH_CHALLENGER_VERSION, dispatchAttempt: 1, reservationOwner: "worker:challenge", clientRequestId: "client:budget-one" }, new Date("2026-08-21T10:00:00.002Z"), value.database);
     assert.equal(firstReservation.ok, true);
-    const secondReservation = await reserveReportSearchChallenge(second.id, { challengerVersion: REPORT_SEARCH_CHALLENGER_VERSION, dispatchAttempt: 1, reservationOwner: "worker:challenge", clientRequestId: "client:budget-two" }, now, value.database);
+    const secondReservation = await reserveReportSearchChallenge(second.id, { challengerVersion: REPORT_SEARCH_CHALLENGER_VERSION, dispatchAttempt: 1, reservationOwner: "worker:challenge", clientRequestId: "client:budget-two" }, new Date("2026-08-21T10:00:00.001Z"), value.database);
     assert.deepEqual(secondReservation, { ok: false, code: "daily_budget_exceeded" });
   } finally {
     await closeFixture(value);
