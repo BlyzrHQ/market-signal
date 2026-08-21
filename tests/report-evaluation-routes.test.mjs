@@ -49,6 +49,11 @@ test("recovery authenticates before parsing and rejects unbounded or malformed s
     async begin() { throw new Error("must not dispatch"); },
     async dispatch() { throw new Error("must not dispatch"); },
     async markFailed() { throw new Error("must not dispatch"); },
+    async reconcileSearch() { throw new Error("must not reconcile"); },
+    async beginSearch() { throw new Error("must not dispatch"); },
+    async dispatchSearch() { throw new Error("must not dispatch"); },
+    async markSearchFailed() { throw new Error("must not dispatch"); },
+    async searchEnabled() { throw new Error("must not inspect runtime configuration"); },
   }, token);
   assert.equal((await post(recoveryRequest("{", "Bearer wrong"))).status, 401);
   assert.equal((await post(recoveryRequest("{"))).status, 400);
@@ -76,6 +81,11 @@ test("scheduled recovery keeps watchdog reconciliation active without dispatchin
     async begin() { throw new Error("must not dispatch"); },
     async dispatch() { throw new Error("must not dispatch"); },
     async markFailed() { throw new Error("must not dispatch"); },
+    async reconcileSearch() { throw new Error("must not query dispatch candidates"); },
+    async beginSearch() { throw new Error("must not dispatch"); },
+    async dispatchSearch() { throw new Error("must not dispatch"); },
+    async markSearchFailed() { throw new Error("must not dispatch"); },
+    async searchEnabled() { throw new Error("must not inspect runtime configuration"); },
   }, token);
   const response = await post(new Request("https://example.test/api/internal/evaluations/recovery", { method: "POST", headers: { authorization: `Bearer ${token}` } }));
   assert.equal(response.status, 200);
@@ -92,9 +102,14 @@ test("recovery dispatches only the exact requested report candidates", async () 
     async begin(id) { calls.push(["begin", id]); return { evaluationId: id, evaluatorVersion: "agent-v1", dispatchAttempt: 1 }; },
     async dispatch(payload) { calls.push(["dispatch", payload.evaluationId]); return { runId: "run_test" }; },
     async markFailed() { calls.push("markFailed"); throw new Error("must not dispatch"); },
+    async reconcileSearch(ids) { calls.push(["reconcileSearch", ids]); return { candidates: ["challenge-1"] }; },
+    async beginSearch(id) { calls.push(["beginSearch", id]); return { challengeId: id, challengerVersion: "search-v2", dispatchAttempt: 1 }; },
+    async dispatchSearch(payload) { calls.push(["dispatchSearch", payload.challengeId]); return { runId: "run_search" }; },
+    async markSearchFailed() { calls.push("markSearchFailed"); throw new Error("must not dispatch"); },
+    async searchEnabled() { calls.push("searchEnabled"); return true; },
   }, token);
   const response = await post(recoveryRequest({ publicReportIds: [reportId] }));
   assert.equal(response.status, 200);
-  assert.deepEqual(calls, [["reconcile", [reportId]], ["begin", evaluationId], ["dispatch", evaluationId]]);
-  assert.deepEqual(await response.json(), { ok: true, requested: 1, candidates: 1, dispatched: 1, failed: 0 });
+  assert.deepEqual(calls, [["reconcile", [reportId]], "searchEnabled", ["reconcileSearch", [reportId]], ["begin", evaluationId], ["dispatch", evaluationId], ["beginSearch", "challenge-1"], ["dispatchSearch", "challenge-1"]]);
+  assert.deepEqual(await response.json(), { ok: true, requested: 1, candidates: 1, dispatched: 1, failed: 0, searchCandidates: 1, searchDispatched: 1, searchFailed: 0 });
 });

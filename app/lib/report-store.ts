@@ -1462,7 +1462,7 @@ export async function createReportSearchChallenge(publicReportId: string, now = 
   await ensureSchema(database);
   const run = await findRun(database, publicReportId);
   if (!run || !["complete", "limited"].includes(run.status)) throw new Error("A terminal report is required for a search challenge.");
-  const existing = await database.prepare(`SELECT * FROM report_evaluations WHERE run_id = ? AND evaluation_type = 'search_challenge' ORDER BY created_at DESC LIMIT 1`).bind(run.id).all<Record<string, unknown>>();
+  const existing = await database.prepare(`SELECT * FROM report_evaluations WHERE run_id = ? AND evaluation_type = 'search_challenge' AND evaluator_version = ? ORDER BY created_at DESC LIMIT 1`).bind(run.id, REPORT_SEARCH_CHALLENGER_VERSION).all<Record<string, unknown>>();
   if (existing.results?.[0]) return rowEvaluation(existing.results[0]);
   const [manifestRows, documentRows, productsRows, matchesRows] = await Promise.all([
     database.prepare(`SELECT manifest_hash, status FROM report_fact_manifests WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>(),
@@ -1854,6 +1854,21 @@ export async function reconcileRequestedReportEvaluations(publicReportIds: strin
   const placeholders = normalizedIds.map(() => "?").join(", ");
   const candidates = await database.prepare(`SELECT evaluations.id FROM report_evaluations evaluations JOIN report_runs runs ON runs.id = evaluations.run_id WHERE runs.public_id IN (${placeholders}) AND evaluations.evaluator_version = ? AND evaluations.status IN ('deterministic', 'dispatch_failed') AND evaluations.dispatch_attempts < 3 ORDER BY evaluations.deterministic_at, evaluations.created_at LIMIT 3`).bind(...normalizedIds, AGENT_EVALUATOR_VERSION).all<Record<string, unknown>>();
   return { candidates: (candidates.results || []).map((row) => String(row.id || "")).filter(Boolean) };
+}
+
+export async function reconcileRequestedReportSearchChallenges(publicReportIds: string[], now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+  const normalizedIds = [...new Set(publicReportIds.map((id) => id.trim().toLowerCase()))];
+  if (normalizedIds.length !== publicReportIds.length || normalizedIds.length < 1 || normalizedIds.length > 3 || normalizedIds.some((id) => !PUBLIC_ID_PATTERN.test(id))) throw new Error("Invalid report search challenge recovery scope.");
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error("Persistent report storage is unavailable.");
+  await ensureSchema(database);
+  await reconcileReportEvaluationWatchdogs(database, now);
+  const candidates: string[] = [];
+  for (const publicReportId of normalizedIds) {
+    const challenge = await createReportSearchChallenge(publicReportId, now, database);
+    if (["deterministic", "dispatch_failed"].includes(challenge.status) && challenge.dispatchAttempts < 3) candidates.push(challenge.id);
+  }
+  return { candidates };
 }
 
 export async function saveReportFactChunk(publicReportId: string, input: ReportFactChunkInput, now = new Date(), databaseOverride?: D1DatabaseLike | null) {

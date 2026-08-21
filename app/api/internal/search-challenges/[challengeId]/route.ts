@@ -18,6 +18,7 @@ export async function POST(request: Request, context: RouteContext) {
     return Response.json({ ok: false, error: "Unknown search challenge callback action." }, { status: 400 });
   } catch (error) {
     const status = error instanceof ReportEvaluationStateError ? error.httpStatus : error instanceof ReportSearchChallengeContractError ? 400 : 503;
-    return Response.json({ ok: false, error: error instanceof Error ? error.message : "The search challenge callback failed." }, { status, headers: { "Cache-Control": "no-store" } });
+    const code = error instanceof ReportEvaluationStateError ? error.code : error instanceof ReportSearchChallengeContractError ? "search-challenge-contract-invalid" : "search-challenge-callback-failed";
+    return Response.json({ ok: false, code, error: error instanceof Error ? error.message : "The search challenge callback failed." }, { status, headers: { "Cache-Control": "no-store" } });
   }
 }
