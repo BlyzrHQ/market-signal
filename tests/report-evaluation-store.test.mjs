@@ -392,6 +392,43 @@ test("the corrected challenger version can evaluate a report after an older term
   }
 });
 
+test("same-day unknown recovery defers v2 without permanently consuming its version slot", async () => {
+  const value = await fixture();
+  try {
+    const reservedAt = new Date("2026-08-21T10:00:00.000Z");
+    const sameDay = new Date("2026-08-21T10:11:00.000Z");
+    const nextDay = new Date("2026-08-22T10:00:00.000Z");
+    const { created, evaluation } = await preparedEvaluation(value.database, "challenge-same-day-version-recovery", reservedAt);
+    await value.database.prepare("INSERT INTO report_evaluations (id, run_id, evaluation_type, input_hash, fact_manifest_hash, evaluator_version, rubric_version, status, rating_basis, usage_status, reserved_cost_microusd, reservation_id, reservation_owner, reserved_at, client_request_id, created_at, started_at) VALUES ('old-reserved-search-challenge', ?, 'search_challenge', 'old-reserved-search-input', ?, 'independent-recall-v1', 'independent-recall-v1', 'reserved', 'none', 'reserved', 60000, 'old-reservation', 'old-worker', ?, 'old-request', ?, ?)").bind(evaluation.runId, evaluation.factManifestHash, reservedAt.toISOString(), reservedAt.toISOString(), reservedAt.toISOString()).run();
+
+    const deferred = await reconcileRequestedReportSearchChallenges([created.publicId], sameDay, value.database);
+    assert.deepEqual(deferred.candidates, []);
+    assert.deepEqual(deferred.deferred, [created.publicId]);
+    assert.equal((await value.database.prepare("SELECT COUNT(*) AS count FROM report_evaluations WHERE run_id = ? AND evaluation_type = 'search_challenge' AND evaluator_version = ?").bind(evaluation.runId, REPORT_SEARCH_CHALLENGER_VERSION).all()).results[0].count, 0);
+
+    const retry = await reconcileRequestedReportSearchChallenges([created.publicId], nextDay, value.database);
+    assert.equal(retry.candidates.length, 1);
+    const current = (await value.database.prepare("SELECT evaluator_version, rubric_version, status FROM report_evaluations WHERE id = ?").bind(retry.candidates[0]).all()).results[0];
+    assert.deepEqual(current, { evaluator_version: REPORT_SEARCH_CHALLENGER_VERSION, rubric_version: REPORT_SEARCH_CHALLENGER_VERSION, status: "deterministic" });
+  } finally {
+    await closeFixture(value);
+  }
+});
+
+test("scoped search recovery skips ineligible report IDs without blocking eligible ones", async () => {
+  const value = await fixture();
+  try {
+    const now = new Date("2026-08-22T10:00:00.000Z");
+    const { created } = await preparedEvaluation(value.database, "challenge-partial-scope", now);
+    const missing = "f".repeat(32);
+    const recovery = await reconcileRequestedReportSearchChallenges([missing, created.publicId], now, value.database);
+    assert.equal(recovery.candidates.length, 1);
+    assert.deepEqual(recovery.skipped, [missing]);
+  } finally {
+    await closeFixture(value);
+  }
+});
+
 test("agent evaluation labels excluded matches without promoting their recommendations", async () => {
   const value = await fixture();
   try {

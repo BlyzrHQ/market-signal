@@ -110,6 +110,27 @@ test("recovery dispatches only the exact requested report candidates", async () 
   }, token);
   const response = await post(recoveryRequest({ publicReportIds: [reportId] }));
   assert.equal(response.status, 200);
-  assert.deepEqual(calls, [["reconcile", [reportId]], "searchEnabled", ["reconcileSearch", [reportId]], ["begin", evaluationId], ["dispatch", evaluationId], ["beginSearch", "challenge-1"], ["dispatchSearch", "challenge-1"]]);
-  assert.deepEqual(await response.json(), { ok: true, requested: 1, candidates: 1, dispatched: 1, failed: 0, searchCandidates: 1, searchDispatched: 1, searchFailed: 0 });
+  assert.deepEqual(calls, [["reconcile", [reportId]], ["begin", evaluationId], ["dispatch", evaluationId], "searchEnabled", ["reconcileSearch", [reportId]], ["beginSearch", "challenge-1"], ["dispatchSearch", "challenge-1"]]);
+  assert.deepEqual(await response.json(), { ok: true, requested: 1, candidates: 1, dispatched: 1, failed: 0, searchCandidates: 1, searchDispatched: 1, searchFailed: 0, searchDeferred: 0, searchSkipped: 0, searchRecoveryFailed: false });
+});
+
+test("search recovery failure does not block requested report evaluation dispatch", async () => {
+  const calls = [];
+  const reportId = "b".repeat(32);
+  const post = createReportEvaluationRecoveryHandler({
+    async watchdog() { throw new Error("must not run watchdog-only mode"); },
+    async reconcile() { return { candidates: [evaluationId] }; },
+    async begin(id) { calls.push(["begin", id]); return { evaluationId: id, evaluatorVersion: "agent-v1", dispatchAttempt: 1 }; },
+    async dispatch(payload) { calls.push(["dispatch", payload.evaluationId]); return { runId: "run_test" }; },
+    async markFailed() { throw new Error("must not fail"); },
+    async reconcileSearch() { calls.push("reconcileSearch"); throw new Error("ineligible report"); },
+    async beginSearch() { throw new Error("must not dispatch search"); },
+    async dispatchSearch() { throw new Error("must not dispatch search"); },
+    async markSearchFailed() { throw new Error("must not fail search"); },
+    async searchEnabled() { return true; },
+  }, token);
+  const response = await post(recoveryRequest({ publicReportIds: [reportId] }));
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls, [["begin", evaluationId], ["dispatch", evaluationId], "reconcileSearch"]);
+  assert.equal((await response.json()).searchRecoveryFailed, true);
 });

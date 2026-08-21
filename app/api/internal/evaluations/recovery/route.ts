@@ -67,7 +67,6 @@ export function createReportEvaluationRecoveryHandler(services: RecoveryServices
         return Response.json({ ok: true, mode: "watchdog", dispatched: 0, failed: 0 }, { headers: { "Cache-Control": "no-store" } });
       }
       const recovery = await services.reconcile(publicReportIds);
-      const searchRecovery = await services.searchEnabled() ? await services.reconcileSearch(publicReportIds) : { candidates: [] };
       let dispatched = 0;
       let failed = 0;
       for (const evaluationId of recovery.candidates) {
@@ -79,6 +78,15 @@ export function createReportEvaluationRecoveryHandler(services: RecoveryServices
         } catch {
           failed += 1;
           if (payload) await services.markFailed(payload.evaluationId, payload.dispatchAttempt).catch(() => undefined);
+        }
+      }
+      let searchRecovery: { candidates: string[]; deferred?: string[]; skipped?: string[] } = { candidates: [] };
+      let searchRecoveryFailed = false;
+      if (await services.searchEnabled()) {
+        try {
+          searchRecovery = await services.reconcileSearch(publicReportIds);
+        } catch {
+          searchRecoveryFailed = true;
         }
       }
       let searchDispatched = 0;
@@ -94,7 +102,7 @@ export function createReportEvaluationRecoveryHandler(services: RecoveryServices
           if (payload) await services.markSearchFailed(payload.challengeId, payload.dispatchAttempt).catch(() => undefined);
         }
       }
-      return Response.json({ ok: true, requested: publicReportIds.length, candidates: recovery.candidates.length, dispatched, failed, searchCandidates: searchRecovery.candidates.length, searchDispatched, searchFailed }, { headers: { "Cache-Control": "no-store" } });
+      return Response.json({ ok: true, requested: publicReportIds.length, candidates: recovery.candidates.length, dispatched, failed, searchCandidates: searchRecovery.candidates.length, searchDispatched, searchFailed, searchDeferred: searchRecovery.deferred?.length || 0, searchSkipped: searchRecovery.skipped?.length || 0, searchRecoveryFailed }, { headers: { "Cache-Control": "no-store" } });
     } catch (error) {
       if (error instanceof SyntaxError || (error instanceof Error && error.message === "invalid-scope")) return Response.json({ ok: false, error: "A bounded list of public report IDs is required." }, { status: 400, headers: { "Cache-Control": "no-store" } });
       return Response.json({ ok: false, error: "Report evaluation recovery failed." }, { status: 503, headers: { "Cache-Control": "no-store" } });

@@ -18,6 +18,11 @@ remained `reserved`, so its result, usage state, and feedback were not visible.
   dispatch the corrected challenge for an existing terminal report.
 - Preserve the USD 0.10 UTC-day budget gate; an unknown prior call closes that
   day's budget.
+- Defer scoped recovery without writing a terminal current-version row while
+  that UTC-day budget is closed, so the same saved report remains retryable on
+  a later day.
+- Keep report-evaluation dispatch independent from search recovery and skip
+  ineligible report IDs without failing the rest of a bounded recovery scope.
 
 ## Validation
 
