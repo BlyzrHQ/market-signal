@@ -190,7 +190,7 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
   const displayedBattles = authoritativeBattles ?? battles;
   const rows = useMemo(() => displayedBattles.map((battle) => prepareRow(battle, ar)), [displayedBattles, ar]);
   const catalogProducts = primaryProducts?.authoritative ? primaryProducts.products : [];
-  const assessedProducts = numeric(object(comparison?.matching).primaryProductsAssessed) || list(comparison?.rows).length;
+  const assessedProducts = numeric(object(comparison?.matching).publishedPrimaryProducts) || numeric(object(comparison?.matching).primaryProductsAssessed) || list(comparison?.rows).length;
   const publication = object(object(comparison?.matching).publication);
   const excludedPriceMatches = numeric(publication.suppressedAcceptedPairs);
   const suppressionReasons = Object.entries(object(publication.reasons))

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createMatchHandler, MAX_MATCH_BODY_BYTES, parseCatalogs, parsePinnedPairs, productAnalysisBudgetMs, productAnalysisLimit } from "../app/api/match/route.ts";
+import { createMatchHandler, MAX_MATCH_BODY_BYTES, parseCatalogs, parsePinnedPairs, productAnalysisBudgetMs, productAnalysisLimit, productBackfillPoolSize } from "../app/api/match/route.ts";
 
 test("AI matching input keeps a broad but bounded first-party catalog", () => {
   const products = Array.from({ length: 605 }, (_, index) => ({
@@ -55,6 +55,10 @@ test("product analysis limits are server-controlled, clamped, and receive scaled
   assert.equal(productAnalysisBudgetMs(60), 90_000);
   assert.equal(productAnalysisBudgetMs(500), 360_000);
   assert.equal(productAnalysisBudgetMs(1_000), 720_000);
+  assert.equal(productBackfillPoolSize(20), 80);
+  assert.equal(productBackfillPoolSize(50), 200);
+  assert.equal(productBackfillPoolSize(500), 1_000);
+  assert.equal(productBackfillPoolSize(1_000), 1_000);
 });
 
 test("catalog bounds retain valid pinned records beyond both ordinary limits", () => {

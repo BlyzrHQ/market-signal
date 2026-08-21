@@ -213,3 +213,61 @@ export function publishPricedProductComparison(comparison: ProductComparison): P
     } : comparison.matching,
   };
 }
+
+export function limitPublishedProductComparison(comparison: ProductComparison, resultTarget: number): ProductComparison {
+  const requestedTarget = Math.max(1, Math.floor(resultTarget));
+  const target = Math.min(requestedTarget, Math.max(0, comparison.coverage.primaryProductsAvailable));
+  const candidates = comparison.rows.flatMap((row) => {
+    const strongest = row.matches
+      .filter((match) => match.product && match.publication?.priceEligible === true)
+      .sort((left, right) => Number(right.assessment?.verdict === "same_product") - Number(left.assessment?.verdict === "same_product")
+        || right.score - left.score
+        || left.domain.localeCompare(right.domain))[0];
+    return strongest ? [{ row, match: strongest }] : [];
+  }).sort((left, right) => Number(right.match.assessment?.verdict === "same_product") - Number(left.match.assessment?.verdict === "same_product")
+    || right.match.score - left.match.score
+    || left.row.primary.id.localeCompare(right.row.primary.id));
+  const selected = candidates.slice(0, target);
+  const selectedByPrimary = new Map(selected.map(({ row, match }) => [row.primary.id, match]));
+  const rows = comparison.rows.flatMap((row) => {
+    const selectedMatch = selectedByPrimary.get(row.primary.id);
+    if (!selectedMatch) return [];
+    return [{
+      ...row,
+      matches: row.matches.map((match) => match === selectedMatch
+        ? match
+        : { domain: match.domain, product: null, score: 0, confidence: null, sharedTerms: [], claimIds: row.primary.claimIds, decision: null }),
+    }];
+  });
+  const publishedPrimaryProducts = rows.length;
+  const resultShortfall = Math.max(0, target - publishedPrimaryProducts);
+  const priorMatching = comparison.matching;
+  const screened = priorMatching?.primaryProductsScreened || priorMatching?.primaryProductsAssessed || 0;
+  const shortfallGap = resultShortfall
+    ? `Published ${publishedPrimaryProducts} of ${target} requested priced product comparisons after screening ${screened} primary products; the bounded candidate pool was exhausted.`
+    : "";
+  return {
+    ...comparison,
+    rows,
+    coverage: {
+      ...comparison.coverage,
+      primaryProductFamiliesCompared: publishedPrimaryProducts,
+      assignedPairCount: publishedPrimaryProducts,
+      verifiedPairCount: publishedPrimaryProducts,
+      rowsReturned: publishedPrimaryProducts,
+      rowLimit: target,
+      truncated: candidates.length > target || comparison.coverage.truncated,
+    },
+    matching: priorMatching ? {
+      ...priorMatching,
+      primaryProductsScreened: screened,
+      primaryProductsAssessed: publishedPrimaryProducts,
+      resultTarget: target,
+      publishedPrimaryProducts,
+      resultShortfall,
+      selectedPrimaryIds: rows.map((row) => row.primary.id),
+      assessedPrimaryIds: rows.map((row) => row.primary.id).sort(),
+      gaps: shortfallGap ? [...new Set([...priorMatching.gaps, shortfallGap])] : priorMatching.gaps,
+    } : priorMatching,
+  };
+}

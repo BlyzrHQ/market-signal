@@ -207,6 +207,11 @@ export function productAnalysisBudgetMs(limit: number) {
   return limit <= 60 ? 90_000 : limit <= 500 ? 360_000 : 720_000;
 }
 
+export function productBackfillPoolSize(resultTarget: number) {
+  const boundedTarget = Math.max(1, Math.min(MAX_PRIMARY_PRODUCTS, Math.floor(resultTarget)));
+  return Math.min(MAX_PRIMARY_PRODUCTS, Math.max(boundedTarget, boundedTarget * 4));
+}
+
 export function parsePinnedPairs(value: unknown, catalogs: Array<{ domain: string; products: ProductRecord[] }>, primaryDomain: string): PinnedProductPair[] {
   if (!Array.isArray(value)) return [];
   if (value.length > 12) return [];
@@ -264,8 +269,9 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
       if (hasReportAttempt && (!/^[a-f0-9]{32}$/.test(publicId) || !Number.isInteger(reportAttempt) || reportAttempt < 1)) return Response.json({ ok: false, error: "A complete active report attempt is required for checkpointed matching." }, { status: 400 });
       if (!primaryDomain || !catalogs.some((catalog) => catalog.domain === primaryDomain && catalog.products.length)) return Response.json({ ok: false, error: "A crawled primary product catalog is required." }, { status: 400 });
       const entitlement = hasReportAttempt ? await services.loadEntitlement(publicId, reportAttempt) : null;
-      const maxPrimaryProducts = entitlement?.productLimit || DEFAULT_PRODUCT_ANALYSIS_LIMIT;
-      if (hasReportAttempt && Number(body.productLimit) !== maxPrimaryProducts) return Response.json({ ok: false, error: "The report product limit does not match its persisted entitlement." }, { status: 409 });
+      const resultTarget = entitlement?.productLimit || DEFAULT_PRODUCT_ANALYSIS_LIMIT;
+      if (hasReportAttempt && Number(body.productLimit) !== resultTarget) return Response.json({ ok: false, error: "The report product limit does not match its persisted entitlement." }, { status: 409 });
+      const maxPrimaryProducts = productBackfillPoolSize(resultTarget);
       const checkpointOptions = hasReportAttempt ? {
         loadJudgeBatchCheckpoint: async (key: JudgeBatchCheckpointKey) => {
           const checkpoints = await services.loadCheckpoints(publicId, { attemptNumber: reportAttempt, batchIndex: key.batchIndex });
@@ -287,7 +293,7 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
         pinnedPairs,
         ...checkpointOptions,
       });
-      return Response.json({ ok: true, comparison });
+      return Response.json({ ok: true, comparison: comparison.matching ? { ...comparison, matching: { ...comparison.matching, resultTarget } } : comparison });
     } catch (error) {
       return Response.json({ ok: false, error: error instanceof Error ? error.message : "AI product matching was unavailable." }, { status: 400 });
     }

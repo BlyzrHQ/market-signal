@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   composeProductMatchAttempts,
   hasProductMatchCoverageDefect,
+  limitPublishedProductComparison,
   publishPricedProductComparison,
   shouldRetryProductMatch,
   upsertProductComparisonBlock,
@@ -319,6 +320,40 @@ test("the final publication gate keeps complete same-currency observations", () 
   assert.deepEqual(published.rows[0].matches[0].publication, { priceEligible: true });
   assert.equal(published.matching.publication.suppressedAcceptedPairs, 0);
   assert.deepEqual(published.matching.publication.reasons, {});
+});
+
+test("priced result backfill exposes exactly the requested number of publishable products", () => {
+  const rows = Array.from({ length: 4 }, (_, index) => row(`p${index}`, `r${index}`));
+  for (const [index, item] of rows.entries()) {
+    item.primary.priceSignals = [{ raw: `USD ${10 + index}`, currency: "USD", amount: 10 + index }];
+    item.matches[0].product.priceSignals = [{ raw: `USD ${8 + index}`, currency: "USD", amount: 8 + index }];
+    item.matches[0].assessment = { method: "ai-hybrid", claimType: "Inferred", verdict: index < 2 ? "same_product" : "close_substitute", confidence: 0.9, model: "test", promptVersion: "test", reasons: ["same"], contradictions: [], normalizedCategory: "grocery", normalizedVariant: "", normalizedSize: "", primarySourceUrl: item.primary.sourceUrl, rivalSourceUrl: item.matches[0].product.sourceUrl };
+  }
+  const screened = comparison({ selected: rows.map((item) => item.primary.id), assessed: rows.map((item) => item.primary.id), rows, accepted: 4 });
+  const result = limitPublishedProductComparison(publishPricedProductComparison(screened), 2);
+
+  assert.equal(result.rows.length, 2);
+  assert.equal(result.coverage.assignedPairCount, 2);
+  assert.equal(result.matching.primaryProductsScreened, 4);
+  assert.equal(result.matching.primaryProductsAssessed, 2);
+  assert.equal(result.matching.publishedPrimaryProducts, 2);
+  assert.equal(result.matching.resultTarget, 2);
+  assert.equal(result.matching.resultShortfall, 0);
+  assert.equal(result.matching.gaps.length, 0);
+});
+
+test("priced result backfill records an explicit bounded-pool shortfall", () => {
+  const priced = row("p1", "r1");
+  priced.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+  priced.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+  const screened = comparison({ selected: ["p1", "p2", "p3"], assessed: ["p1", "p2", "p3"], rows: [priced, row("p2"), row("p3")], accepted: 1 });
+  const result = limitPublishedProductComparison(publishPricedProductComparison(screened), 3);
+
+  assert.equal(result.coverage.assignedPairCount, 1);
+  assert.equal(result.matching.primaryProductsScreened, 3);
+  assert.equal(result.matching.resultShortfall, 2);
+  assert.match(result.matching.gaps.join(" "), /Published 1 of 3.*screening 3/i);
+  assert.equal(hasProductMatchCoverageDefect(result), true);
 });
 
 test("the final publication gate keeps low-confidence pairs as excluded semantic evidence", () => {

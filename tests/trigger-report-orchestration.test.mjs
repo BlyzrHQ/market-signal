@@ -57,7 +57,7 @@ function product(domain = "shop.example", id = "p1") {
 }
 
 function comparison({ withPair = false } = {}) {
-  const primary = product();
+  const primary = { ...product(), priceSignals: withPair ? [{ raw: "GBP 10", currency: "GBP", amount: 10 }] : [] };
   const rival = { ...product("rival.example", "r1"), priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }] };
   return {
     primaryDomain: "shop.example",
@@ -139,8 +139,8 @@ function mockPort(overrides = {}) {
     },
     async brief() { return { ok: true, summary: "Observed market" }; },
     async ads() { return { ok: true, block: { type: "ad-intelligence", id: "ad-intelligence" } }; },
-    async match() { return { ok: true, comparison: comparison() }; },
-    async enrich() { throw new Error("not expected"); },
+    async match() { return { ok: true, comparison: comparison({ withPair: true }) }; },
+    async enrich({ targets }) { return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: targets.length, gaps: [] } }; },
     async actions({ inputs }) { return { ok: true, result: deterministicProductActionResult(inputs) }; },
     async persistFactChunk(_publicId, value) { factChunks.push(value); },
     async finalizeFactManifest(_publicId, value) { factManifests.push(value); },
@@ -170,7 +170,7 @@ test("payload contract accepts only a canonical, exact, versioned payload", () =
 test("successful orchestration persists ordered heartbeats and a complete document", async () => {
   const port = mockPort({ async match(input) {
     assert.equal(input.productLimit, 20);
-    return { ok: true, comparison: comparison() };
+    return { ok: true, comparison: comparison({ withPair: true }) };
   } });
   const dates = ["2026-07-20T10:00:00.000Z", "2026-07-20T10:01:00.000Z"];
   const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port, () => new Date(dates.shift()));
@@ -184,12 +184,12 @@ test("successful orchestration persists ordered heartbeats and a complete docume
   assert.ok(port.events.some((item) => item.idempotencyKey === "matching-complete"));
   assert.ok(port.events.some((item) => item.idempotencyKey === "facts-complete"));
   assert.equal(port.factChunks.length, 4);
-  assert.deepEqual(port.factManifests[0].counts, { companies: 1, products: 1, matches: 0, ads: 0 });
+  assert.deepEqual(port.factManifests[0].counts, { companies: 2, products: 2, matches: 1, ads: 0 });
   assert.equal(port.events.some((item) => item.idempotencyKey.startsWith("brief-")), false);
   assert.equal(port.saves[0].document.marketBrief, null);
   const compaction = port.saves[0].document.document.blocks.find((block) => block.type === "presentation-compaction");
   assert.equal(compaction.relationalFactsAuthoritative, true);
-  assert.deepEqual(compaction.factCounts, { companies: 1, products: 1, matches: 0, ads: 0 });
+  assert.deepEqual(compaction.factCounts, { companies: 2, products: 2, matches: 1, ads: 0 });
 });
 
 test("orchestration forwards crawl-validated exact product pins to every match attempt", async () => {

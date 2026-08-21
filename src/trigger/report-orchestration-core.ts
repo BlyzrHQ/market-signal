@@ -1,6 +1,7 @@
 import {
   composeProductMatchAttempts,
   hasProductMatchCoverageDefect,
+  limitPublishedProductComparison,
   publishPricedProductComparison,
   shouldRetryProductMatch,
   upsertProductComparisonBlock,
@@ -35,6 +36,10 @@ export const FINAL_ENRICHMENT_BATCH_SIZE = 64;
 export const FINAL_ENRICHMENT_BATCH_CONCURRENCY = 2;
 export const MAX_FINAL_ENRICHMENT_TARGETS = 1_000;
 export const MAX_FINAL_ENRICHMENT_BATCH_WAVES = Math.ceil(MAX_FINAL_ENRICHMENT_TARGETS / FINAL_ENRICHMENT_BATCH_SIZE / FINAL_ENRICHMENT_BATCH_CONCURRENCY);
+
+export function pricedResultEnrichmentBudget(resultTarget: number) {
+  return Math.min(MAX_FINAL_ENRICHMENT_TARGETS, Math.max(1, Math.floor(resultTarget)) * 8);
+}
 
 type RunStatus = "queued" | "running" | "complete" | "limited" | "failed" | "interrupted";
 type ReportEvent = { idempotencyKey: string; phase: string; status: RunStatus; message: string; metadata?: Record<string, unknown> };
@@ -259,7 +264,7 @@ export async function orchestrateReport(
     comparison = composeProductMatchAttempts(baseline, attempts, requestCount);
     if (comparison && marketCountryCode) comparison = { ...comparison, marketCountryCode };
     if (comparison) {
-      const enrichmentPlan = planFinalProductEnrichmentTargets(comparison, Math.min(payload.productLimit, MAX_FINAL_ENRICHMENT_TARGETS));
+      const enrichmentPlan = planFinalProductEnrichmentTargets(comparison, pricedResultEnrichmentBudget(payload.productLimit));
       const targets = enrichmentPlan.targets;
       if (targets.length) {
         const batches = Array.from({ length: Math.ceil(targets.length / FINAL_ENRICHMENT_BATCH_SIZE) }, (_, index) => targets.slice(index * FINAL_ENRICHMENT_BATCH_SIZE, (index + 1) * FINAL_ENRICHMENT_BATCH_SIZE));
@@ -333,6 +338,7 @@ export async function orchestrateReport(
         }
       }
       comparison = publishPricedProductComparison(comparison);
+      comparison = limitPublishedProductComparison(comparison, payload.productLimit);
       const actionInputs = collectProductActionInputs(comparison);
       if (actionInputs.length) {
         await port.appendEvent(payload.publicId, event("actions-started", "actions", "Drafting evidence-grounded next moves for the accepted product pairs.", { pairs: actionInputs.length }));

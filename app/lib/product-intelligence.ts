@@ -154,6 +154,10 @@ export type ProductComparison = {
     embeddingModel: string;
     promptVersion: string;
     primaryProductsAssessed: number;
+    primaryProductsScreened?: number;
+    resultTarget?: number;
+    publishedPrimaryProducts?: number;
+    resultShortfall?: number;
     candidatePairsAssessed: number;
     retrievalPairsScored: number;
     judgeCalls: number;

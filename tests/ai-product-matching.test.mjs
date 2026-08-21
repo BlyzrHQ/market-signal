@@ -527,6 +527,34 @@ test("AI coverage is not limited to the lexical fallback's sixteen visible rows"
   assert.equal(comparison.rows.length, 20);
 });
 
+test("the bounded backfill pool judges already-priced product pairs before unpriced ties", async () => {
+  const pricedPrimary = product("z-priced", "shop.test", "Sidr Honey 500g", { price: { raw: "GBP 10", currency: "GBP", amount: 10 } });
+  const unpricedPrimary = product("a-unpriced", "shop.test", "Sidr Honey 500g");
+  const pricedRival = product("r-priced", "rival.test", "Sidr Honey 500g", { price: { raw: "GBP 8", currency: "GBP", amount: 8 } });
+  let judgedPrimaryId = "";
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, 0] })) });
+    const request = JSON.parse(body.input[1].content);
+    judgedPrimaryId = request.groups[0].primary.id;
+    return response({ output_text: JSON.stringify({ assessments: request.groups[0].candidates.map((candidate) => ({
+      primaryId: judgedPrimaryId,
+      candidateId: candidate.id,
+      verdict: "same_product",
+      confidence: 0.99,
+      reason: "Same observed offer.",
+      contradiction: "",
+    })) }) });
+  };
+
+  await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [unpricedPrimary, pricedPrimary] },
+    { domain: "rival.test", products: [pricedRival] },
+  ], {}, { apiKey: "test", fetch, maxPrimaryProducts: 1, maxCandidatesPerPrimary: 1 });
+
+  assert.equal(judgedPrimaryId, "z-priced");
+});
+
 test("candidate retrieval performs an exact semantic scan across the bounded catalogs", async () => {
   const primaryProducts = Array.from({ length: 10 }, (_, index) => product(`p${index}`, "shop.test", `Primary ${index}`));
   const rivalProducts = Array.from({ length: 500 }, (_, index) => product(`r${index}`, "rival.test", `Rival ${index}`));
