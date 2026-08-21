@@ -35,5 +35,5 @@ Only attributable first-party public product pages may be published. Search or m
 
 - The installed Claude Code `2.1.238` launcher resolved to Bun `1.4.0` before model selection, so no Claude or Fable review was claimed.
 - The required high-risk Codex fallback used two independent, read-only reviewers on the exact PR head.
-- The first review blocked hidden target clamping, repeated-rival enrichment that could starve distinct primary products, and stale fact-manifest reuse. The revision keeps the purchased target intact, funds at most one completable rival per primary before optional work, and reuses facts only when the current manifest ID and hash match.
-- Revised validation: typechecks and production build passed; all 917 tests passed; VPS packaging assertions passed; lint passed with zero errors and two pre-existing image warnings.
+- The initial fallback reviews blocked hidden target clamping, repeated-rival enrichment that could starve distinct primary products, stale fact-manifest reuse, deleted suppressed evidence, and misleading assessed-versus-published metrics. The revision keeps the purchased target intact, funds at most one completable rival per primary before optional work, reuses facts only when the current manifest ID and hash match, persists the full screened evidence set for evaluation, and labels the customer-visible count as priced products compared.
+- Revised validation: typechecks and production build passed; all 918 tests passed; VPS packaging assertions passed; lint passed with zero errors and two pre-existing image warnings.
