@@ -56,13 +56,17 @@ function product(domain = "shop.example", id = "p1") {
   };
 }
 
-function comparison({ withPair = false } = {}) {
-  const primary = { ...product(), priceSignals: withPair ? [{ raw: "GBP 10", currency: "GBP", amount: 10 }] : [] };
-  const rival = { ...product("rival.example", "r1"), priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }] };
+function comparison({ withPair = false, count = withPair ? 20 : 1 } = {}) {
+  const pairs = Array.from({ length: count }, (_, index) => {
+    const suffix = index ? `-${index + 1}` : "";
+    const primary = { ...product("shop.example", `p1${suffix}`), name: `Honey ${index + 1} 500g`, normalizedName: `honey ${index + 1} 500g`, sourceUrl: `https://shop.example/products/honey${suffix}`, priceSignals: withPair ? [{ raw: "GBP 10", currency: "GBP", amount: 10 }] : [] };
+    const rival = { ...product("rival.example", `r1${suffix}`), name: primary.name, normalizedName: primary.normalizedName, sourceUrl: `https://rival.example/products/honey${suffix}`, priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }] };
+    return { primary, rival };
+  });
   return {
     primaryDomain: "shop.example",
     comparisonDomains: ["rival.example"],
-    rows: withPair ? [{ primary, matches: [{
+    rows: withPair ? pairs.map(({ primary, rival }) => ({ primary, matches: [{
       domain: rival.domain,
       product: rival,
       score: 0.9,
@@ -76,17 +80,17 @@ function comparison({ withPair = false } = {}) {
         recommendedMove: "Compare the attributable offer before acting.",
         priceComparison: null,
       },
-    }] }] : [],
+    }] })) : [],
     unmatched: [],
     coverage: {
-      primaryProductsAvailable: 1,
-      primaryProductsScanned: 1,
-      primaryProductFamiliesCompared: withPair ? 1 : 0,
-      competitorProductsAvailable: withPair ? 1 : 0,
-      competitorProductsScanned: withPair ? 1 : 0,
-      assignedPairCount: withPair ? 1 : 0,
-      verifiedPairCount: withPair ? 1 : 0,
-      rowsReturned: withPair ? 1 : 0,
+      primaryProductsAvailable: count,
+      primaryProductsScanned: count,
+      primaryProductFamiliesCompared: withPair ? count : 0,
+      competitorProductsAvailable: withPair ? count : 0,
+      competitorProductsScanned: withPair ? count : 0,
+      assignedPairCount: withPair ? count : 0,
+      verifiedPairCount: withPair ? count : 0,
+      rowsReturned: withPair ? count : 0,
       rowLimit: 30,
       truncated: false,
     },
@@ -96,15 +100,15 @@ function comparison({ withPair = false } = {}) {
       model: "gpt-5.4-mini",
       embeddingModel: "text-embedding-3-small",
       promptVersion: "test",
-      primaryProductsAssessed: withPair ? 1 : 0,
-      candidatePairsAssessed: withPair ? 1 : 0,
-      retrievalPairsScored: withPair ? 1 : 0,
-      judgeCalls: withPair ? 1 : 0,
-      embeddingCalls: withPair ? 1 : 0,
+      primaryProductsAssessed: withPair ? count : 0,
+      candidatePairsAssessed: withPair ? count : 0,
+      retrievalPairsScored: withPair ? count : 0,
+      judgeCalls: withPair ? count : 0,
+      embeddingCalls: withPair ? count : 0,
       durationMs: 1,
       gaps: [],
-      selectedPrimaryIds: withPair ? [primary.id] : [],
-      assessedPrimaryIds: withPair ? [primary.id] : [],
+      selectedPrimaryIds: withPair ? pairs.map(({ primary }) => primary.id) : [],
+      assessedPrimaryIds: withPair ? pairs.map(({ primary }) => primary.id) : [],
       attempts: 1,
     },
   };
@@ -184,12 +188,31 @@ test("successful orchestration persists ordered heartbeats and a complete docume
   assert.ok(port.events.some((item) => item.idempotencyKey === "matching-complete"));
   assert.ok(port.events.some((item) => item.idempotencyKey === "facts-complete"));
   assert.equal(port.factChunks.length, 4);
-  assert.deepEqual(port.factManifests[0].counts, { companies: 2, products: 2, matches: 1, ads: 0 });
+  assert.deepEqual(port.factManifests[0].counts, { companies: 2, products: 40, matches: 20, ads: 0 });
   assert.equal(port.events.some((item) => item.idempotencyKey.startsWith("brief-")), false);
   assert.equal(port.saves[0].document.marketBrief, null);
   const compaction = port.saves[0].document.document.blocks.find((block) => block.type === "presentation-compaction");
   assert.equal(compaction.relationalFactsAuthoritative, true);
-  assert.deepEqual(compaction.factCounts, { companies: 2, products: 2, matches: 1, ads: 0 });
+  assert.deepEqual(compaction.factCounts, { companies: 2, products: 40, matches: 20, ads: 0 });
+});
+
+test("the priced table is capped while suppressed screened evidence remains in relational facts", async () => {
+  const screened = comparison({ withPair: true, count: 21 });
+  screened.rows[20].matches[0].product.priceSignals = [];
+  const port = mockPort({
+    async match() { return { ok: true, comparison: screened }; },
+  });
+
+  const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
+  assert.equal(result.reportStatus, "complete");
+  const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
+  assert.equal(block.rows.length, 20);
+  assert.equal(block.matching.primaryProductsAssessed, 21);
+  assert.equal(block.matching.publishedPrimaryProducts, 20);
+  assert.equal(block.matching.publication.suppressedAcceptedPairs, 1);
+  const matchFacts = port.factChunks.filter((chunk) => chunk.kind === "matches").flatMap((chunk) => chunk.items);
+  assert.equal(matchFacts.length, 21);
+  assert.ok(matchFacts.some((fact) => fact.evidence.publication?.priceEligible === false && fact.evidence.publication?.reason === "missing-valid-rival-price"));
 });
 
 test("orchestration forwards crawl-validated exact product pins to every match attempt", async () => {
@@ -247,7 +270,7 @@ test("relational fact persistence failure stays visible while the dashboard snap
   assert.equal(port.saves[0].document.document.blocks.find((block) => block.type === "presentation-compaction").relationalFactsAuthoritative, false);
 });
 
-test("a retry after manifest finalization reuses the completed facts without rewriting chunks", async () => {
+test("a retry does not reuse a completed fact manifest whose hash differs from the current document", async () => {
   const counts = { companies: 2, products: 63, matches: 4, ads: 1 };
   const port = mockPort({
     async loadReport() {
@@ -260,9 +283,31 @@ test("a retry after manifest finalization reuses the completed facts without rew
   });
   const result = await orchestrateReport(recoveryPayload, { attemptNumber: 2, isFinalAttempt: true }, port);
   assert.equal(result.reportStatus, "complete");
+  assert.ok(port.factChunks.length > 0);
+  assert.equal(port.factManifests.length, 1);
+  assert.notEqual(port.factManifests[0].manifestHash, "b".repeat(64));
+  assert.notDeepEqual(port.events.find((item) => item.idempotencyKey === "facts-complete").metadata, counts);
+});
+
+test("a retry reuses a completed fact manifest only when its current bundle hashes match", async () => {
+  const first = mockPort();
+  await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, first);
+  const manifest = first.factManifests[0];
+  const port = mockPort({
+    async loadReport() {
+      return {
+        run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "running", attemptCount: 1, createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T10:00:00.000Z" },
+        events: [],
+        factManifest: { ...manifest, status: "complete", completedAt: "2026-07-20T09:59:00.000Z" },
+      };
+    },
+  });
+
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port);
+  assert.equal(result.reportStatus, "complete");
   assert.equal(port.factChunks.length, 0);
   assert.equal(port.factManifests.length, 0);
-  assert.deepEqual(port.events.find((item) => item.idempotencyKey === "facts-complete").metadata, counts);
+  assert.deepEqual(port.events.find((item) => item.idempotencyKey === "facts-complete").metadata, manifest.counts);
 });
 
 test("fact telemetry callback failures never prevent the terminal document", async () => {
@@ -302,10 +347,11 @@ test("a lost finalization response reloads and reuses the authoritative complete
     async finalizeFactManifest() { throw new Error("response lost after commit"); },
   });
   const result = await orchestrateReport(recoveryPayload, { attemptNumber: 2, isFinalAttempt: true }, port);
-  assert.equal(result.reportStatus, "complete");
+  assert.equal(result.reportStatus, "limited");
   assert.equal(loads, 2);
-  assert.equal(port.factChunks.length, 0);
+  assert.ok(port.factChunks.length > 0);
   assert.equal(port.saves.length, 1);
+  assert.equal(port.saves[0].document.document.blocks.find((block) => block.type === "presentation-compaction").relationalFactsAuthoritative, false);
 });
 
 test("crawl failure remains non-terminal before the final task attempt", async () => {
@@ -756,7 +802,7 @@ test("action planning runs after final enrichment and persists source-labelled p
   assert.ok(eventKeys.indexOf("enrichment-complete") < eventKeys.indexOf("actions-started"));
   assert.ok(eventKeys.indexOf("actions-complete") < eventKeys.indexOf("matching-complete"));
   const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
-  assert.equal(block.actionPlanning.fallbackActions, 1);
+  assert.equal(block.actionPlanning.fallbackActions, 20);
   assert.equal(block.rows[0].matches[0].decision.actionPlan.source, "deterministic");
 });
 

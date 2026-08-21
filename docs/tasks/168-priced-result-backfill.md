@@ -30,3 +30,10 @@ The live MyJam Agency report `4a9a78f9c4a442cea8d19cf21d2d224e` discovered 1,001
 ## Data boundaries
 
 Only attributable first-party public product pages may be published. Search or model output remains discovery/inference and cannot bypass price, source, market, currency, or identity validation.
+
+## Review and validation record
+
+- The installed Claude Code `2.1.238` launcher resolved to Bun `1.4.0` before model selection, so no Claude or Fable review was claimed.
+- The required high-risk Codex fallback used two independent, read-only reviewers on the exact PR head.
+- The first review blocked hidden target clamping, repeated-rival enrichment that could starve distinct primary products, and stale fact-manifest reuse. The revision keeps the purchased target intact, funds at most one completable rival per primary before optional work, and reuses facts only when the current manifest ID and hash match.
+- Revised validation: typechecks and production build passed; all 917 tests passed; VPS packaging assertions passed; lint passed with zero errors and two pre-existing image warnings.

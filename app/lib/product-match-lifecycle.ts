@@ -216,7 +216,7 @@ export function publishPricedProductComparison(comparison: ProductComparison): P
 
 export function limitPublishedProductComparison(comparison: ProductComparison, resultTarget: number): ProductComparison {
   const requestedTarget = Math.max(1, Math.floor(resultTarget));
-  const target = Math.min(requestedTarget, Math.max(0, comparison.coverage.primaryProductsAvailable));
+  const target = requestedTarget;
   const candidates = comparison.rows.flatMap((row) => {
     const strongest = row.matches
       .filter((match) => match.product && match.publication?.priceEligible === true)
@@ -261,12 +261,9 @@ export function limitPublishedProductComparison(comparison: ProductComparison, r
     matching: priorMatching ? {
       ...priorMatching,
       primaryProductsScreened: screened,
-      primaryProductsAssessed: publishedPrimaryProducts,
       resultTarget: target,
       publishedPrimaryProducts,
       resultShortfall,
-      selectedPrimaryIds: rows.map((row) => row.primary.id),
-      assessedPrimaryIds: rows.map((row) => row.primary.id).sort(),
       gaps: shortfallGap ? [...new Set([...priorMatching.gaps, shortfallGap])] : priorMatching.gaps,
     } : priorMatching,
   };

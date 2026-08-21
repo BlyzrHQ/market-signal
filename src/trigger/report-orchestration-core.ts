@@ -41,6 +41,23 @@ export function pricedResultEnrichmentBudget(resultTarget: number) {
   return Math.min(MAX_FINAL_ENRICHMENT_TARGETS, Math.max(1, Math.floor(resultTarget)) * 8);
 }
 
+function mergePublishedSelectionIntoScreenedComparison(screened: ProductComparison, published: ProductComparison) {
+  const publishedRows = new Map(published.rows.map((row) => [row.primary.id, row]));
+  return {
+    ...screened,
+    rows: screened.rows.map((row) => {
+      const publishedRow = publishedRows.get(row.primary.id);
+      const selected = publishedRow?.matches.find((match) => match.product);
+      if (!selected?.product) return row;
+      return {
+        ...row,
+        matches: row.matches.map((match) => match.domain === selected.domain
+          && (match.product?.id || match.excludedProduct?.id) === selected.product?.id ? selected : match),
+      };
+    }),
+  } satisfies ProductComparison;
+}
+
 type RunStatus = "queued" | "running" | "complete" | "limited" | "failed" | "interrupted";
 type ReportEvent = { idempotencyKey: string; phase: string; status: RunStatus; message: string; metadata?: Record<string, unknown> };
 type StoredReport = {
@@ -212,6 +229,7 @@ export async function orchestrateReport(
 
   let document = ensureDocument(crawl.document);
   let comparison: ProductComparison | null = null;
+  let screenedComparison: ProductComparison | null = null;
   let adBlock: JsonBlock | null = null;
 
   const adsWork = (async () => {
@@ -338,6 +356,7 @@ export async function orchestrateReport(
         }
       }
       comparison = publishPricedProductComparison(comparison);
+      screenedComparison = comparison;
       comparison = limitPublishedProductComparison(comparison, payload.productLimit);
       const actionInputs = collectProductActionInputs(comparison);
       if (actionInputs.length) {
@@ -362,6 +381,7 @@ export async function orchestrateReport(
           }));
         }
       }
+      screenedComparison = mergePublishedSelectionIntoScreenedComparison(screenedComparison, comparison);
       document = upsertProductComparisonBlock(document, comparison) as JsonDocument;
     }
     const limited = attempts.length === 0 || hasProductMatchCoverageDefect(comparison);
@@ -383,14 +403,16 @@ export async function orchestrateReport(
         priorManifest = refreshed?.factManifest || null;
       }
     }
-    const counts = priorManifest?.status === "complete" ? priorManifest.counts : null;
-    if (!counts) {
-      const facts = await buildReportFactBundle({ publicId: payload.publicId, crawlResults: crawl.results, comparison, adBlock, observedAt: stored.run.createdAt, attemptNumber: attempt.attemptNumber });
+    const facts = await buildReportFactBundle({ publicId: payload.publicId, crawlResults: crawl.results, comparison: screenedComparison || comparison, adBlock, observedAt: stored.run.createdAt, attemptNumber: attempt.attemptNumber });
+    const reusableManifest = priorManifest?.status === "complete"
+      && priorManifest.manifestId === facts.manifest.manifestId
+      && priorManifest.manifestHash === facts.manifest.manifestHash;
+    if (!reusableManifest) {
       for (const chunk of facts.chunks) await port.persistFactChunk(payload.publicId, chunk);
       await port.finalizeFactManifest(payload.publicId, facts.manifest);
       persistedCounts = facts.manifest.counts;
     } else {
-      persistedCounts = counts;
+      persistedCounts = priorManifest.counts;
     }
   } catch (error) {
     limitedPhases.push("persistence");

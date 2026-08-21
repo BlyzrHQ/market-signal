@@ -335,11 +335,12 @@ test("priced result backfill exposes exactly the requested number of publishable
   assert.equal(result.rows.length, 2);
   assert.equal(result.coverage.assignedPairCount, 2);
   assert.equal(result.matching.primaryProductsScreened, 4);
-  assert.equal(result.matching.primaryProductsAssessed, 2);
+  assert.equal(result.matching.primaryProductsAssessed, 4);
   assert.equal(result.matching.publishedPrimaryProducts, 2);
   assert.equal(result.matching.resultTarget, 2);
   assert.equal(result.matching.resultShortfall, 0);
   assert.equal(result.matching.gaps.length, 0);
+  assert.deepEqual(result.matching.assessedPrimaryIds, rows.map((item) => item.primary.id));
 });
 
 test("priced result backfill records an explicit bounded-pool shortfall", () => {
@@ -354,6 +355,20 @@ test("priced result backfill records an explicit bounded-pool shortfall", () => 
   assert.equal(result.matching.resultShortfall, 2);
   assert.match(result.matching.gaps.join(" "), /Published 1 of 3.*screening 3/i);
   assert.equal(hasProductMatchCoverageDefect(result), true);
+});
+
+test("priced result backfill does not shrink the purchased target to a small catalog", () => {
+  const priced = row("p1", "r1");
+  priced.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+  priced.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+  const screened = comparison({ selected: ["p1"], assessed: ["p1"], rows: [priced], accepted: 1 });
+  screened.coverage.primaryProductsAvailable = 1;
+  const result = limitPublishedProductComparison(publishPricedProductComparison(screened), 20);
+
+  assert.equal(result.matching.resultTarget, 20);
+  assert.equal(result.matching.publishedPrimaryProducts, 1);
+  assert.equal(result.matching.resultShortfall, 19);
+  assert.match(result.matching.gaps.join(" "), /Published 1 of 20/i);
 });
 
 test("the final publication gate keeps low-confidence pairs as excluded semantic evidence", () => {

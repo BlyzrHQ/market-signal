@@ -1925,15 +1925,10 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
       || left.domain.localeCompare(right.domain)
       || (left.product?.id || "").localeCompare(right.product?.id || "")),
   }));
-  const pairs = acceptedByRow.flatMap(({ row, rowIndex, accepted }) => accepted.map((match, matchIndex) => ({ row, rowIndex, match, matchIndex })))
-    .filter((pair): pair is typeof pair & { match: ProductMatch & { product: ProductRecord } } => Boolean(pair.match.product))
-    .sort((left, right) => right.match.score - left.match.score
-      || left.rowIndex - right.rowIndex
-      || left.match.domain.localeCompare(right.match.domain)
-      || left.match.product.id.localeCompare(right.match.product.id));
-  const strongest = pairs.filter((pair) => pair.matchIndex === 0);
-  const secondary = pairs.filter((pair) => pair.matchIndex > 0);
-  const schedulePair = (pair: (typeof pairs)[number]) => {
+  const rowGroups = acceptedByRow
+    .filter((group): group is typeof group & { accepted: Array<ProductMatch & { product: ProductRecord }> } => group.accepted.some((match) => Boolean(match.product)))
+    .sort((left, right) => (right.accepted[0]?.score || 0) - (left.accepted[0]?.score || 0) || left.rowIndex - right.rowIndex);
+  const missingForPair = (pair: { row: ProductComparison["rows"][number]; match: ProductMatch & { product: ProductRecord } }) => {
     const missing = [
       { product: pair.match.product, role: "rival" as const },
       { product: pair.row.primary, role: "primary" as const },
@@ -1942,23 +1937,31 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
       const sourceUrl = safeProductSource(candidate.product);
       return sourceUrl && !seenTargets.has(targetKey(candidate.product, sourceUrl)) ? [{ ...candidate, sourceUrl }] : [];
     });
-    const uniqueMissing = missing.filter((candidate, index) => missing.findIndex((other) => targetKey(other.product, other.sourceUrl) === targetKey(candidate.product, candidate.sourceUrl)) === index);
-    if (eligible.length + uniqueMissing.length > boundedMax) {
-      uniqueMissing.forEach((candidate) => deferredPriceTargets.add(targetKey(candidate.product, candidate.sourceUrl)));
-      return;
-    }
-    uniqueMissing.forEach((candidate) => add(candidate.product, candidate.role, pair.match.score, "price"));
+    return missing.filter((candidate, index) => missing.findIndex((other) => targetKey(other.product, other.sourceUrl) === targetKey(candidate.product, candidate.sourceUrl)) === index);
   };
-  // Schedule each pair as an atomic, globally score-ranked unit. This never
-  // spends the last page on half of a two-page comparison and gives every
-  // row's strongest match priority over secondary matches.
-  pairs.forEach(schedulePair);
+  const schedulePair = (pair: { row: ProductComparison["rows"][number]; match: ProductMatch & { product: ProductRecord } }) => {
+    const uniqueMissing = missingForPair(pair);
+    if (eligible.length + uniqueMissing.length > boundedMax) return false;
+    uniqueMissing.forEach((candidate) => add(candidate.product, candidate.role, pair.match.score, "price"));
+    return true;
+  };
+  // Spend the price budget on at most one completable match per primary row.
+  // When the strongest pair cannot fit atomically, a cheaper accepted rival
+  // for that same primary may fill the row before capacity moves onward.
+  const selectedPairs: Array<{ row: ProductComparison["rows"][number]; match: ProductMatch & { product: ProductRecord } }> = [];
+  for (const group of rowGroups) {
+    const candidates = group.accepted
+      .filter((match): match is ProductMatch & { product: ProductRecord } => Boolean(match.product))
+      .map((match) => ({ row: group.row, match }));
+    const selected = candidates.find((pair) => schedulePair(pair));
+    if (selected) selectedPairs.push(selected);
+    else missingForPair(candidates[0]).forEach((candidate) => deferredPriceTargets.add(targetKey(candidate.product, candidate.sourceUrl)));
+  }
   if (deferredPriceTargets.size === 0) {
-    for (const pair of strongest) {
+    for (const pair of selectedPairs) {
       add(pair.match.product, "rival", pair.match.score, "image");
       add(pair.row.primary, "primary", pair.match.score, "image");
     }
-    for (const pair of secondary) add(pair.match.product, "rival", pair.match.score, "image");
   }
 
   const targets = eligible.slice(0, boundedMax);
