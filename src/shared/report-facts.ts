@@ -384,7 +384,10 @@ async function adFacts(publicId: string, adBlock: JsonRecord | null, fallbackObs
 }
 
 const MAX_FACT_CHUNK_BYTES = 250_000;
-export const MAX_REPORT_FACT_CHUNKS = 250;
+// 1,000 primary products + 6,000 bounded rival products + 6,000 match facts
+// require at most 260 product/match chunks; verified companies and ads bring
+// the complete legal universe below this callback ceiling.
+export const MAX_REPORT_FACT_CHUNKS = 320;
 
 function chunkEnvelopeBytes(kind: ReportFactKind, manifestId: string, attemptNumber: number, items: Array<Record<string, unknown>>) {
   return new TextEncoder().encode(JSON.stringify({ manifestId, attemptNumber, kind, chunkIndex: 999, chunkCount: 1_000, contentHash: "f".repeat(64), items })).byteLength;

@@ -151,10 +151,11 @@ function mockPort(overrides = {}) {
     },
     async appendEvent(_publicId, value) { events.push(value); },
     async crawl() {
+      const primaryProducts = comparison({ withPair: true }).rows.map((row) => row.primary);
       return {
         ok: true,
         primaryDomain: payload.primaryDomain,
-        results: [{ domain: payload.primaryDomain, homepage: { sourceUrl: "https://shop.example" }, products: [product()] }],
+        results: [{ domain: payload.primaryDomain, homepage: { sourceUrl: "https://shop.example" }, products: primaryProducts }],
         discovery: { productSearchCoverage: { eligibleAnchors: 1, searchedAnchors: 1, startIndex: 0, endIndex: 1, truncated: false, searchesComplete: true, candidateDomainsFound: 1, candidateDomainsInvestigated: 1, candidateTruncated: false, verificationComplete: true, batchComplete: true, complete: true } },
         adRequest: { companies: [{ domain: payload.primaryDomain }], region: "GB" },
         document: { version: "1", blocks: [] },
@@ -272,12 +273,36 @@ test("report recovery starts a fresh discovery cursor instead of reusing prior-a
   assert.equal(crawlInput.discoveryExpectedAnchorSetHash, "");
 });
 
+test("explicit report recovery adopts the prior attempt's completed discovery cursor", async () => {
+  const base = mockPort();
+  let crawlInput;
+  const port = mockPort({
+    async loadReport() {
+      const stored = await base.loadReport();
+      return {
+        ...stored,
+        run: { ...stored.run, attemptCount: 2 },
+        events: [
+          { idempotencyKey: "report-1-task-5-crawl-complete", phase: "competitors", status: "running", metadata: { discoveryStartIndex: 0, discoveryEndIndex: 200, discoveryBatchComplete: true, discoveryAnchorSetHash: "a".repeat(64) } },
+          { idempotencyKey: "recovery-attempt-2", phase: "competitors", status: "running", metadata: { attempt: 2, adoptedAttempt: 1 } },
+        ],
+      };
+    },
+    async crawl(input) { crawlInput = input; return base.crawl(); },
+  });
+
+  await orchestrateReport(recoveryPayload, { attemptNumber: 2, taskAttemptNumber: 1, isFinalAttempt: false }, port);
+  assert.equal(crawlInput.discoverySearchOffset, 200);
+  assert.equal(crawlInput.discoveryPriorCoverageComplete, true);
+  assert.equal(crawlInput.discoveryExpectedAnchorSetHash, "a".repeat(64));
+});
+
 test("the matcher can publish a valid pair found after the first 20 primary catalog products", async () => {
   const primaryProducts = Array.from({ length: 25 }, (_, index) => ({
-    ...product("shop.example", `p-${index + 1}`),
-    name: `Catalog product ${index + 1}`,
-    normalizedName: `catalog product ${index + 1}`,
-    sourceUrl: `https://shop.example/products/catalog-${index + 1}?country=GB`,
+    ...product("shop.example", index === 0 ? "p1" : index < 19 ? `p1-${index + 1}` : `p-${index + 1}`),
+    name: index < 19 ? `Honey ${index + 1} 500g` : `Catalog product ${index + 1}`,
+    normalizedName: index < 19 ? `honey ${index + 1} 500g` : `catalog product ${index + 1}`,
+    sourceUrl: index === 0 ? "https://shop.example/products/honey?country=GB" : index < 19 ? `https://shop.example/products/honey-${index + 1}?country=GB` : `https://shop.example/products/catalog-${index + 1}?country=GB`,
     priceSignals: [{ raw: "GBP 10", currency: "GBP", amount: 10 }],
   }));
   const latePrimary = { ...primaryProducts[24], name: "Honey 20 500g", normalizedName: "honey 20 500g" };
@@ -350,7 +375,12 @@ test("enrichment checkpoints require one exact source-bound outcome per target",
 test("the priced table is capped while suppressed screened evidence remains in relational facts", async () => {
   const screened = comparison({ withPair: true, count: 22 });
   screened.rows[21].matches[0].product.priceSignals = [];
+  const base = mockPort();
   const port = mockPort({
+    async crawl() {
+      const value = await base.crawl();
+      return { ...value, results: [{ ...value.results[0], products: screened.rows.map((row) => row.primary) }] };
+    },
     async match() { return { ok: true, comparison: screened }; },
   });
 
@@ -413,14 +443,11 @@ test("Trigger task retries keep the same database report-attempt ownership", asy
   assert.ok(port.saves.every((item) => item.attemptNumber === 1));
 });
 
-test("relational fact persistence failure stays visible while the dashboard snapshot is still saved", async () => {
+test("relational fact persistence failure prevents a terminal dashboard snapshot", async () => {
   const port = mockPort({ async persistFactChunk() { throw new Error("database temporarily unavailable"); } });
-  const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
-  assert.equal(result.reportStatus, "limited");
-  assert.deepEqual(result.limitedPhases, ["persistence"]);
-  assert.equal(port.saves.length, 1);
-  assert.match(port.events.find((item) => item.idempotencyKey.endsWith("-facts-limited")).metadata.reason, /database temporarily unavailable/);
-  assert.equal(port.saves[0].document.document.blocks.find((block) => block.type === "presentation-compaction").relationalFactsAuthoritative, false);
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port), /persistence remained incomplete/i);
+  assert.equal(port.saves.length, 0);
+  assert.match(port.events.find((item) => item.idempotencyKey.endsWith("-facts-incomplete")).metadata.reason, /database temporarily unavailable/);
 });
 
 test("a retry fails closed before replacing a completed fact manifest or saving a mismatched document", async () => {
@@ -477,17 +504,16 @@ test("terminal replay validates attempt and entitlement before returning without
   assert.equal(port.saves.length, 0);
 });
 
-test("fact telemetry callback failures never prevent the terminal document", async () => {
+test("fact persistence failures block terminalization while post-manifest telemetry remains non-blocking", async () => {
   const port = mockPort({
     async persistFactChunk() { throw new Error("fact database unavailable"); },
     async appendEvent(_publicId, value) {
-      if (value.idempotencyKey.endsWith("-facts-limited")) throw new Error("telemetry unavailable");
+      if (value.idempotencyKey.endsWith("-facts-incomplete")) throw new Error("telemetry unavailable");
       port.events.push(value);
     },
   });
-  const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
-  assert.equal(result.reportStatus, "limited");
-  assert.equal(port.saves.length, 1);
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port), /persistence remained incomplete/i);
+  assert.equal(port.saves.length, 0);
   const completePort = mockPort({
     async appendEvent(_publicId, value) {
       if (value.idempotencyKey.endsWith("-facts-complete")) throw new Error("telemetry unavailable");
@@ -820,7 +846,7 @@ test("all operation deadlines keep a two-minute margin below the stale marker", 
   for (const timeout of Object.values(OPERATION_BUDGETS_MS)) assert.ok(timeout <= MAX_OPERATION_TIMEOUT_MS);
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS > OPERATION_BUDGETS_MS.match, "Undici must not preempt the match operation deadline");
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS < MAX_OPERATION_TIMEOUT_MS, "the worker deadline must remain inside the outer edge window");
-  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 13_675_000);
+  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 14_385_000);
   assert.ok(WORST_CASE_CRITICAL_PATH_MS <= 14_580_000, "critical path must preserve a two-minute task-ceiling margin");
 });
 
@@ -899,6 +925,7 @@ test("partial and failed selected enrichment fail closed even on the final task 
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, success), /remained incomplete after the final task attempt/);
   assert.equal(successfulCalls, 1);
   assert.equal(success.saves.length, 0);
+  assert.equal(success.checkpoints.has(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX), false);
   assert.equal(success.events.some((item) => item.idempotencyKey === "orchestration-failed"), false);
 
   const failure = mockPort({
@@ -1034,8 +1061,10 @@ test("task retries accumulate distinct priced results from earlier discovery wav
       const number = offset + index + 1;
       item.primary.id = `wave-p${number}`;
       item.primary.sourceUrl = `https://shop.example/products/wave-${number}?country=GB`;
+      item.primary.imageUrl = `https://shop.example/images/wave-${number}.jpg`;
       item.matches[0].product.id = `wave-r${number}`;
       item.matches[0].product.sourceUrl = `https://rival.example/products/wave-${number}?country=GB`;
+      item.matches[0].product.imageUrl = `https://rival.example/images/wave-${number}.jpg`;
     });
     value.matching.selectedPrimaryIds = value.rows.map((item) => item.primary.id);
     value.matching.assessedPrimaryIds = [...value.matching.selectedPrimaryIds];
@@ -1044,11 +1073,15 @@ test("task retries accumulate distinct priced results from earlier discovery wav
   };
   const port = mockPort({
     async crawl() {
+      const primaryProducts = Array.from({ length: 20 }, (_, index) => {
+        const number = index + 1;
+        return { ...product("shop.example", `wave-p${number}`), name: `Honey ${number} 500g`, normalizedName: `honey ${number} 500g`, sourceUrl: `https://shop.example/products/wave-${number}?country=GB` };
+      });
       return {
         ok: true,
         primaryDomain: payload.primaryDomain,
-        results: [{ domain: payload.primaryDomain, homepage: { sourceUrl: "https://shop.example", regionCountryCode: "GB" }, products: [product()] }],
-        discovery: { productSearchCoverage: { eligibleAnchors: 1_000, searchedAnchors: 200, startIndex: 0, endIndex: 200, truncated: true, searchesComplete: true, candidateDomainsFound: 1, candidateDomainsInvestigated: 1, candidateTruncated: false, verificationComplete: true, batchComplete: true, complete: false } },
+        results: [{ domain: payload.primaryDomain, homepage: { sourceUrl: "https://shop.example", regionCountryCode: "GB" }, products: primaryProducts }],
+        discovery: { productSearchCoverage: { eligibleAnchors: 1_000, searchedAnchors: 200, startIndex: 0, endIndex: 200, anchorSetHash: "stable-primary-catalog", truncated: true, searchesComplete: true, candidateDomainsFound: 1, candidateDomainsInvestigated: 1, candidateTruncated: false, verificationComplete: true, batchComplete: true, complete: false } },
         adRequest: { companies: [{ domain: payload.primaryDomain }], region: "GB" },
         document: { version: "1", blocks: [] },
       };
@@ -1063,6 +1096,53 @@ test("task retries accumulate distinct priced results from earlier discovery wav
   assert.equal(result.reportStatus, "complete");
   assert.equal(port.saves.at(-1).document.document.blocks.find((block) => block.type === "product-comparison").rows.length, 20);
   assert.ok(port.checkpoints.has(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX - 1));
+});
+
+test("catalog drift prevents stale priced-result accumulation", async () => {
+  let matchCall = 0;
+  let crawlCall = 0;
+  const waveComparison = (offset) => {
+    const value = comparison({ withPair: true, count: 10 });
+    value.rows.forEach((item, index) => {
+      const number = offset + index + 1;
+      item.primary.id = `drift-p${number}`;
+      item.primary.sourceUrl = `https://shop.example/products/drift-${number}?country=GB`;
+      item.primary.imageUrl = `https://shop.example/images/drift-${number}.jpg`;
+      item.matches[0].product.id = `drift-r${number}`;
+      item.matches[0].product.sourceUrl = `https://rival.example/products/drift-${number}?country=GB`;
+      item.matches[0].product.imageUrl = `https://rival.example/images/drift-${number}.jpg`;
+    });
+    value.matching.selectedPrimaryIds = value.rows.map((item) => item.primary.id);
+    value.matching.assessedPrimaryIds = [...value.matching.selectedPrimaryIds];
+    value.matching.processedPrimaryIds = [...value.matching.selectedPrimaryIds];
+    return value;
+  };
+  const port = mockPort({
+    async crawl() {
+      crawlCall += 1;
+      const count = crawlCall === 1 ? 20 : 21;
+      const primaryProducts = Array.from({ length: count }, (_, index) => {
+        const number = index + 1;
+        return { ...product("shop.example", `drift-p${number}`), name: `Honey ${number} 500g`, normalizedName: `honey ${number} 500g`, sourceUrl: `https://shop.example/products/drift-${number}?country=GB` };
+      });
+      return {
+        ok: true,
+        primaryDomain: payload.primaryDomain,
+        results: [{ domain: payload.primaryDomain, homepage: { sourceUrl: "https://shop.example", regionCountryCode: "GB" }, products: primaryProducts }],
+        discovery: { productSearchCoverage: { eligibleAnchors: count, searchedAnchors: count, startIndex: 0, endIndex: count, anchorSetHash: crawlCall === 1 ? "catalog-v1" : "catalog-v2", truncated: crawlCall === 1, searchesComplete: true, candidateDomainsFound: 1, candidateDomainsInvestigated: 1, candidateTruncated: false, verificationComplete: true, batchComplete: true, complete: crawlCall > 1 } },
+        adRequest: { companies: [{ domain: payload.primaryDomain }], region: "GB" },
+        document: { version: "1", blocks: [] },
+      };
+    },
+    async match() { const value = waveComparison(matchCall * 10); matchCall += 1; return { ok: true, comparison: value }; },
+  });
+
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/i);
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port);
+  const block = port.saves.at(-1).document.document.blocks.find((item) => item.type === "product-comparison");
+  assert.equal(result.reportStatus, "limited");
+  assert.equal(block.rows.length, 10);
+  assert.equal(block.matching.resultShortfall, 10);
 });
 
 test("a task retry reuses durable enrichment batches instead of fetching product pages again", async () => {

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { boundJudgeCandidatePairs, boundJudgeCandidatePairsWithCoverage, buildAIProductComparison, judgeBatchKey, MAX_COMPETITOR_PRODUCTS_PER_CATALOG, MAX_JUDGE_CANDIDATE_PAIRS } from "../app/lib/ai-product-matching.ts";
+import { boundJudgeCandidatePairs, boundJudgeCandidatePairsWithCoverage, buildAIProductComparison, judgeBatchKey, MAX_COMPETITOR_PRODUCTS_PER_CATALOG, MAX_JUDGE_CANDIDATE_PAIRS, screenedComparisonFromJudgeCheckpoints } from "../app/lib/ai-product-matching.ts";
 import { hasValidObservedRivalPrice } from "../app/lib/product-intelligence.ts";
 import { publishPricedProductComparison } from "../app/lib/product-match-lifecycle.ts";
 
@@ -1155,6 +1155,50 @@ test("replays complete deterministic judge checkpoints without another judge cal
   const firstLoadByIndex = new Map(loadedKeys.slice(0, 2).map((key) => [key.batchIndex, key.batchHash]));
   const replayLoadByIndex = new Map(loadedKeys.slice(2).map((key) => [key.batchIndex, key.batchHash]));
   assert.deepEqual(replayLoadByIndex, firstLoadByIndex);
+});
+
+test("durable judge evidence preserves accepted backup pairs within the checkpoint size bound", async () => {
+  const primary = product("evidence-p1", "shop.test", "Beef Cubes Halal 500g", {
+    price: { raw: "GBP 9", currency: "GBP", amount: 9 },
+    imageUrl: "https://shop.test/images/beef-cubes.jpg",
+  });
+  const rivals = Array.from({ length: 5 }, (_, index) => product(`evidence-r${index + 1}`, "rival.test", "Beef Cubes Halal 500g", {
+    price: { raw: `GBP ${8 - index / 10}`, currency: "GBP", amount: 8 - index / 10 },
+    imageUrl: `https://rival.test/images/beef-cubes-${index + 1}.jpg`,
+  }));
+  let savedCheckpoint = null;
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, index % 2] })) });
+    const request = JSON.parse(body.input[1].content);
+    return response({ output_text: JSON.stringify({ assessments: request.groups.flatMap((group) => group.candidates.map((candidate) => ({
+      primaryId: group.primary.id,
+      candidateId: candidate.id,
+      verdict: "same_product",
+      confidence: 0.98,
+      reason: "Same observed product and pack size.",
+      contradiction: "",
+    }))) }) });
+  };
+
+  await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [primary] },
+    { domain: "rival.test", products: rivals },
+  ], {}, {
+    apiKey: "test",
+    fetch,
+    maxPrimaryProducts: 1,
+    maxCandidatesPerPrimary: 5,
+    saveJudgeBatchCheckpoint: async (_key, checkpoint) => { savedCheckpoint = checkpoint; },
+  });
+
+  assert.ok(savedCheckpoint);
+  assert.ok(Buffer.byteLength(JSON.stringify(savedCheckpoint), "utf8") < 512 * 1024);
+  const screened = screenedComparisonFromJudgeCheckpoints("shop.test", [savedCheckpoint], "GB");
+  assert.equal(screened?.rows.length, 1);
+  assert.equal(screened?.rows[0].matches.length, 5);
+  assert.deepEqual(screened?.rows[0].matches.map((match) => match.excludedProduct?.id).sort(), rivals.map((item) => item.id).sort());
+  assert.ok(screened?.rows[0].matches.every((match) => match.publication?.reason === "outside-result-target"));
 });
 
 test("rejects malformed judge checkpoints and replaces them only with a complete live result", async () => {

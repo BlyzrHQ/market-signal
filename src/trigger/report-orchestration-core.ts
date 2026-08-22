@@ -33,6 +33,7 @@ import { buildReportFactBundle } from "../shared/report-facts.ts";
 import { compactTerminalReportDocument } from "../shared/report-document-compaction.ts";
 import type { ReportFactChunkInput, ReportFactManifestInput } from "../../app/lib/report-store.ts";
 import type { PinnedProductPair } from "../../app/lib/ai-product-matching.ts";
+import { screenedComparisonFromJudgeCheckpoints } from "../../app/lib/ai-product-matching.ts";
 import { createHash } from "node:crypto";
 
 class CompletedFactManifestConflict extends Error {}
@@ -60,13 +61,38 @@ function publishedResultCheckpointIndex(taskAttemptNumber: number) {
   return index;
 }
 
-function validPublishedResultCheckpoint(value: unknown, resultTarget: number, referenceTimeMs: number) {
+function primaryCatalogIdentity(products: ProductRecord[]) {
+  return products.map((product) => ({
+    id: product.id,
+    domain: canonicalDomain(product.domain),
+    sourceUrl: product.sourceUrl,
+    normalizedName: product.normalizedName,
+    quantity: product.quantity || null,
+  })).sort((left, right) => left.id.localeCompare(right.id) || left.sourceUrl.localeCompare(right.sourceUrl));
+}
+
+function primaryCatalogProductKeys(products: ProductRecord[]) {
+  return new Set(products.map((product) => `${product.id}\n${canonicalDomain(product.domain)}`));
+}
+
+function validPublishedResultCheckpoint(value: unknown, resultTarget: number, referenceTimeMs: number, allowedPrimaryProductKeys: Set<string>) {
   try {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const checkpoint = value as { version?: unknown; comparison?: ProductComparison };
     if (checkpoint.version !== 1 || !checkpoint.comparison || !Array.isArray(checkpoint.comparison.rows) || checkpoint.comparison.rows.length > resultTarget) return null;
     if (new Set(checkpoint.comparison.rows.map((row) => row?.primary?.id)).size !== checkpoint.comparison.rows.length) return null;
-    const validated = limitPublishedProductComparison(publishPricedProductComparison(checkpoint.comparison, referenceTimeMs), resultTarget);
+    if (!checkpoint.comparison.rows.every((row) => allowedPrimaryProductKeys.has(`${row.primary.id}\n${canonicalDomain(row.primary.domain)}`))) return null;
+    if (checkpoint.comparison.matching?.resultShortfallReason === "processing-incomplete") return null;
+    if (checkpoint.comparison.enrichment?.pagesTruncated === true || (checkpoint.comparison.enrichment?.failedBatchCount || 0) > 0) return null;
+    const comparisonForValidation = checkpoint.comparison.matching ? {
+      ...checkpoint.comparison,
+      matching: {
+        ...checkpoint.comparison.matching,
+        gaps: checkpoint.comparison.matching.gaps.filter((gap) => !/^Published \d+ of \d+ requested priced product comparisons/i.test(gap)),
+      },
+    } : checkpoint.comparison;
+    const validated = limitPublishedProductComparison(publishPricedProductComparison(comparisonForValidation, referenceTimeMs), resultTarget);
+    if (validated.matching?.resultShortfallReason === "processing-incomplete") return null;
     return validated.rows.length === checkpoint.comparison.rows.length ? validated : null;
   } catch { return null; }
 }
@@ -116,6 +142,12 @@ function mergeAccumulatedPublishedIntoScreenedComparison(screened: ProductCompar
     return { ...row, matches: [...row.matches, ...prior.matches.filter((match) => !currentKeys.has(matchKey(match)))] };
   });
   return { ...screened, rows: [...rows, ...accumulatedRows.values()] };
+}
+
+function comparisonWithinPrimaryCatalog(comparison: ProductComparison | null, allowedPrimaryProductKeys: Set<string>) {
+  if (!comparison) return null;
+  const rows = comparison.rows.filter((row) => allowedPrimaryProductKeys.has(`${row.primary.id}\n${canonicalDomain(row.primary.domain)}`));
+  return rows.length ? { ...comparison, rows } : null;
 }
 
 type EnrichmentResult = Awaited<ReturnType<ReportOrchestrationPort["enrich"]>>;
@@ -344,9 +376,17 @@ export interface ReportOrchestrationPort {
 const MAX_PRIMARY_CATALOG_PRODUCTS = 1_000;
 
 function completedDiscoveryCursor(events: StoredReport["events"], reportAttempt: number) {
-  const eventPrefix = `report-${reportAttempt}-task-`;
+  const adoptedAttempts = new Set([reportAttempt]);
+  let cursorAttempt = reportAttempt;
+  for (;;) {
+    const recovery = events.find((item) => item.idempotencyKey === `recovery-attempt-${cursorAttempt}`);
+    const adoptedAttempt = Number(recovery?.metadata?.adoptedAttempt);
+    if (!Number.isInteger(adoptedAttempt) || adoptedAttempt < 1 || adoptedAttempt >= cursorAttempt || adoptedAttempts.has(adoptedAttempt)) break;
+    adoptedAttempts.add(adoptedAttempt);
+    cursorAttempt = adoptedAttempt;
+  }
   const batches = events.flatMap((item, eventIndex) => {
-    if (!item.idempotencyKey?.startsWith(eventPrefix)) return [];
+    if (![...adoptedAttempts].some((attemptNumber) => item.idempotencyKey?.startsWith(`report-${attemptNumber}-task-`))) return [];
     const metadata = item.metadata;
     const startIndex = Number(metadata?.discoveryStartIndex);
     const endIndex = Number(metadata?.discoveryEndIndex);
@@ -553,12 +593,20 @@ export async function orchestrateReport(
     const taskAttemptNumber = attempt.taskAttemptNumber || 1;
     const reportReferenceTimeMs = Date.parse(stored.run.createdAt);
     const durableCheckpoints = new Map((await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber })).map((checkpoint) => [checkpoint.batchIndex, checkpoint]));
-    const publishedResultInputHash = createHash("sha256").update(JSON.stringify({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, reportObservedAt: stored.run.createdAt, marketCountryCode, resultTarget: payload.productLimit })).digest("hex");
+    const allowedPrimaryProductKeys = primaryCatalogProductKeys(primary.products);
+    const publishedResultInputHash = createHash("sha256").update(JSON.stringify({
+      publicId: payload.publicId,
+      reportObservedAt: stored.run.createdAt,
+      marketCountryCode,
+      resultTarget: payload.productLimit,
+      discoveryAnchorSetHash: crawl.discovery?.productSearchCoverage?.anchorSetHash || "",
+      primaryCatalog: primaryCatalogIdentity(primary.products),
+    })).digest("hex");
     let accumulatedPublished: ProductComparison | null = null;
     for (let priorTaskAttempt = taskAttemptNumber; priorTaskAttempt >= 1; priorTaskAttempt -= 1) {
       const saved = durableCheckpoints.get(publishedResultCheckpointIndex(priorTaskAttempt));
       if (!saved || saved.inputHash !== publishedResultInputHash) continue;
-      accumulatedPublished = validPublishedResultCheckpoint(saved.result, payload.productLimit, reportReferenceTimeMs);
+      accumulatedPublished = validPublishedResultCheckpoint(saved.result, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys);
       if (!accumulatedPublished) throw new Error("The durable published-result checkpoint is invalid.");
       break;
     }
@@ -785,18 +833,32 @@ export async function orchestrateReport(
         }));
       }
       comparison = publishPricedProductComparison(comparison, Date.parse(stored.run.createdAt));
-      screenedComparison = mergeAccumulatedPublishedIntoScreenedComparison(comparison, accumulatedPublished);
+      const refreshedCheckpoints = await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber });
+      for (const checkpoint of refreshedCheckpoints) durableCheckpoints.set(checkpoint.batchIndex, checkpoint);
+      const judgeEvidence = comparisonWithinPrimaryCatalog(screenedComparisonFromJudgeCheckpoints(
+        crawl.primaryDomain,
+        [...durableCheckpoints.values()].filter((checkpoint) => checkpoint.batchIndex >= 1_400 && checkpoint.batchIndex < 3_900).map((checkpoint) => checkpoint.result),
+        marketCountryCode,
+      ), allowedPrimaryProductKeys);
+      screenedComparison = mergeAccumulatedPublishedIntoScreenedComparison(comparison, judgeEvidence);
+      screenedComparison = mergeAccumulatedPublishedIntoScreenedComparison(screenedComparison, accumulatedPublished);
       comparison = mergePublishedProductComparisons(comparison, accumulatedPublished, payload.productLimit, reportReferenceTimeMs);
       const publishedCheckpointIndex = publishedResultCheckpointIndex(taskAttemptNumber);
       const publishedCheckpoint = { version: 1, comparison };
       const existingPublishedCheckpoint = durableCheckpoints.get(publishedCheckpointIndex);
-      if (!existingPublishedCheckpoint) {
+      const checkpointIsComplete = comparison.matching?.resultShortfallReason !== "processing-incomplete"
+        && comparison.enrichment?.pagesTruncated !== true
+        && (comparison.enrichment?.failedBatchCount || 0) === 0;
+      if (!existingPublishedCheckpoint && checkpointIsComplete) {
+        if (!validPublishedResultCheckpoint(publishedCheckpoint, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys)) {
+          throw new Error("The published-result checkpoint does not belong to the current primary catalog.");
+        }
         try {
           await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: publishedCheckpointIndex, inputHash: publishedResultInputHash, result: publishedCheckpoint });
           durableCheckpoints.set(publishedCheckpointIndex, { batchIndex: publishedCheckpointIndex, inputHash: publishedResultInputHash, result: publishedCheckpoint });
         } catch (saveError) {
           const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: publishedCheckpointIndex }))[0];
-          const validated = committed?.inputHash === publishedResultInputHash ? validPublishedResultCheckpoint(committed.result, payload.productLimit, reportReferenceTimeMs) : null;
+          const validated = committed?.inputHash === publishedResultInputHash ? validPublishedResultCheckpoint(committed.result, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys) : null;
           if (!validated) throw saveError;
           comparison = validated;
         }
@@ -884,8 +946,10 @@ export async function orchestrateReport(
     }
   } catch (error) {
     if (error instanceof CompletedFactManifestConflict) throw error;
-    limitedPhases.push("persistence");
-    try { await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "facts-limited"), "persistence", "The presentation can be saved, but the complete relational fact set was not available for evaluation.", { reason: message(error, "Relational fact persistence was unavailable.") })); } catch { /* quality telemetry must not block the terminal document */ }
+    try { await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "facts-incomplete"), "persistence", "The complete relational fact set was not available, so no terminal presentation was published.", { reason: message(error, "Relational fact persistence was unavailable.") })); } catch { /* the original persistence failure remains authoritative */ }
+    throw new RecoverableProcessingIncompleteError(attempt.isFinalAttempt
+      ? "Relational fact persistence remained incomplete after the final task attempt."
+      : "Relational fact persistence remained incomplete before the final task attempt.");
   }
   if (persistedCounts) try { await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "facts-complete"), "persistence", "The complete company, product, match, and attributable ad facts were saved for evaluation.", persistedCounts)); } catch { /* the manifest is authoritative and the terminal document still saves */ }
   const reportStatus = limitedPhases.length ? "limited" : "complete";

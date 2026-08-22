@@ -58,12 +58,13 @@ export type JudgeBatchCheckpointKey = {
 };
 
 export type JudgeBatchCheckpoint = {
-  version: 1;
+  version: 2;
   batchHash: string;
   batchIndex: number;
   batchCount: number;
   model: string;
   promptVersion: string;
+  evidenceGroups: Array<{ primary: ProductRecord; candidates: ProductRecord[] }>;
   assessments: Array<{
     primaryId: string;
     candidateId: string;
@@ -481,7 +482,11 @@ export function judgeBatchKey(model: string, groups: CandidateGroup[], batchInde
 function completeCheckpoint(value: unknown, key: JudgeBatchCheckpointKey, groups: CandidateGroup[]): JudgeBatchCheckpoint | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const checkpoint = value as Record<string, unknown>;
-  if (checkpoint.version !== 1 || checkpoint.batchHash !== key.batchHash || checkpoint.batchIndex !== key.batchIndex || checkpoint.batchCount !== key.batchCount || checkpoint.model !== key.model || checkpoint.promptVersion !== key.promptVersion || !Array.isArray(checkpoint.assessments)) return null;
+  if (checkpoint.version !== 2 || checkpoint.batchHash !== key.batchHash || checkpoint.batchIndex !== key.batchIndex || checkpoint.batchCount !== key.batchCount || checkpoint.model !== key.model || checkpoint.promptVersion !== key.promptVersion || !Array.isArray(checkpoint.assessments)) return null;
+  const evidenceGroups = candidateGroupsFromCheckpointEvidence(checkpoint.evidenceGroups);
+  if (!evidenceGroups) return null;
+  const evidenceKey = judgeBatchKey(key.model, evidenceGroups, key.batchIndex, key.batchCount);
+  if (evidenceKey.batchHash !== key.batchHash || evidenceKey.candidatePairCount !== key.candidatePairCount || JSON.stringify(evidenceKey.primaryIds) !== JSON.stringify(key.primaryIds)) return null;
   const allowed = new Set<Verdict>(["same_product", "close_substitute", "related", "no_match"]);
   const expectedPairs = new Set(groups.flatMap((group) => group.candidates.map((candidate) => `${group.primary.id}|${candidate.product.id}`)));
   const seenPairs = new Set<string>();
@@ -497,11 +502,11 @@ function completeCheckpoint(value: unknown, key: JudgeBatchCheckpointKey, groups
     seenPairs.add(pair);
     assessments.push({ primaryId, candidateId, verdict: item.verdict as Verdict, confidence, reason: item.reason, contradiction: item.contradiction });
   }
-  return seenPairs.size === expectedPairs.size ? { version: 1, batchHash: key.batchHash, batchIndex: key.batchIndex, batchCount: key.batchCount, model: key.model, promptVersion: key.promptVersion, assessments } : null;
+  return seenPairs.size === expectedPairs.size ? { version: 2, batchHash: key.batchHash, batchIndex: key.batchIndex, batchCount: key.batchCount, model: key.model, promptVersion: key.promptVersion, evidenceGroups: checkpointEvidenceGroups(evidenceGroups), assessments } : null;
 }
 
 function checkpointFromResult(key: JudgeBatchCheckpointKey, groups: CandidateGroup[], assessments: unknown[]): JudgeBatchCheckpoint | null {
-  return completeCheckpoint({ version: 1, batchHash: key.batchHash, batchIndex: key.batchIndex, batchCount: key.batchCount, model: key.model, promptVersion: key.promptVersion, assessments }, key, groups);
+  return completeCheckpoint({ version: 2, batchHash: key.batchHash, batchIndex: key.batchIndex, batchCount: key.batchCount, model: key.model, promptVersion: key.promptVersion, evidenceGroups: checkpointEvidenceGroups(groups), assessments }, key, groups);
 }
 
 async function judgeBatch(fetcher: FetchLike, endpoint: string, apiKey: string, model: string, groups: CandidateGroup[], timeoutMs: number, deadlineAt: number, onDispatch: () => void) {
@@ -586,6 +591,22 @@ function packJudgeBatches(groups: CandidateGroup[], maxPairs: number, maxGroups:
   }
   if (batch.length) batches.push(batch);
   return batches;
+}
+
+function checkpointEvidenceGroups(groups: CandidateGroup[]) {
+  return groups.map((group) => ({ primary: group.primary, candidates: group.candidates.map((candidate) => candidate.product) }));
+}
+
+function candidateGroupsFromCheckpointEvidence(value: unknown): CandidateGroup[] | null {
+  if (!Array.isArray(value) || value.length > MAX_GROUPS_PER_BATCH) return null;
+  const groups: CandidateGroup[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const item = raw as { primary?: ProductRecord; candidates?: ProductRecord[] };
+    if (!item.primary || !Array.isArray(item.candidates) || item.candidates.length > MAX_PAIRS_PER_BATCH) return null;
+    groups.push({ primary: item.primary, candidates: item.candidates.map((product) => ({ product, retrievalScore: 0, lexicalScore: 0, lexicalEligible: false, semanticScore: 0, identitySignal: false })) });
+  }
+  return groups;
 }
 
 function candidateStrength(group: CandidateGroup) {
@@ -728,6 +749,68 @@ function sanitizeAssessment(value: unknown, groups: Map<string, CandidateGroup>)
     normalizedCategory: clean(item.normalizedCategory, 160),
     normalizedVariant: clean(item.normalizedVariant, 160),
     normalizedSize: clean(item.normalizedSize, 100),
+  };
+}
+
+export function screenedComparisonFromJudgeCheckpoints(primaryDomain: string, values: unknown[], marketCountryCode = ""): ProductComparison | null {
+  const rows = new Map<string, ProductComparison["rows"][number]>();
+  const comparisonDomains = new Set<string>();
+  for (const value of values) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const checkpoint = value as Partial<JudgeBatchCheckpoint>;
+    const groups = candidateGroupsFromCheckpointEvidence(checkpoint.evidenceGroups);
+    if (!groups || checkpoint.version !== 2 || typeof checkpoint.model !== "string" || typeof checkpoint.promptVersion !== "string" || !Array.isArray(checkpoint.assessments)) continue;
+    const key = judgeBatchKey(checkpoint.model, groups, Number(checkpoint.batchIndex), Number(checkpoint.batchCount));
+    const complete = completeCheckpoint(value, key, groups);
+    if (!complete) continue;
+    const groupMap = new Map(groups.map((group) => [group.primary.id, group]));
+    for (const raw of complete.assessments) {
+      const assessed = sanitizeAssessment(raw, groupMap);
+      if (!assessed || (assessed.verdict !== "same_product" && assessed.verdict !== "close_substitute")) continue;
+      const primary = assessed.primary;
+      const rival = assessed.candidate.product;
+      const domain = canonicalDomain(rival.domain);
+      comparisonDomains.add(domain);
+      const row = rows.get(primary.id) || { primary, matches: [] };
+      const pairKey = `${domain}\n${rival.id}`;
+      if (!row.matches.some((match) => `${match.domain}\n${(match.product || match.excludedProduct)?.id || ""}` === pairKey)) row.matches.push({
+        domain,
+        product: null,
+        excludedProduct: rival,
+        score: aiScore(assessed.verdict, assessed.confidence),
+        confidence: assessed.confidence >= 0.65 ? "Medium" : "Low",
+        sharedTerms: assessed.reasons.slice(0, 8),
+        claimIds: [...primary.claimIds, ...rival.claimIds],
+        decision: null,
+        assessment: {
+          method: "ai-hybrid",
+          claimType: "Inferred",
+          verdict: assessed.verdict,
+          confidence: assessed.confidence,
+          model: complete.model,
+          promptVersion: complete.promptVersion,
+          reasons: assessed.reasons,
+          contradictions: assessed.contradictions,
+          normalizedCategory: assessed.normalizedCategory,
+          normalizedVariant: assessed.normalizedVariant,
+          normalizedSize: assessed.normalizedSize,
+          primarySourceUrl: primary.sourceUrl,
+          rivalSourceUrl: rival.sourceUrl,
+        },
+        publication: { priceEligible: false, reason: "outside-result-target" },
+      });
+      rows.set(primary.id, row);
+    }
+  }
+  if (!rows.size) return null;
+  const pairCount = [...rows.values()].reduce((sum, row) => sum + row.matches.length, 0);
+  return {
+    primaryDomain: canonicalDomain(primaryDomain),
+    ...(marketCountryCode ? { marketCountryCode } : {}),
+    comparisonDomains: [...comparisonDomains].sort(),
+    rows: [...rows.values()].sort((left, right) => left.primary.id.localeCompare(right.primary.id)),
+    unmatched: [],
+    coverage: { primaryProductsAvailable: rows.size, primaryProductsScanned: rows.size, primaryProductFamiliesCompared: rows.size, competitorProductsAvailable: pairCount, competitorProductsScanned: pairCount, assignedPairCount: 0, verifiedPairCount: 0, rowsReturned: rows.size, rowLimit: rows.size, truncated: false },
   };
 }
 
