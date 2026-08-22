@@ -1,6 +1,6 @@
 import { MAX_FINAL_ENRICHMENT_BATCHES, MAX_FINAL_ENRICHMENT_BATCH_WAVES, type ReportOrchestrationPort } from "./report-orchestration-core.ts";
 import { parkingProvider } from "../../app/lib/domain-recovery.ts";
-import { PermanentOrchestrationError } from "../shared/report-orchestration-contract.ts";
+import { MAX_REPORT_ATTEMPTS, MAX_REPORT_MATCH_CHECKPOINTS_PER_ATTEMPT, PermanentOrchestrationError } from "../shared/report-orchestration-contract.ts";
 import { parseWorkerApiManifest, WorkerApiContractError } from "../shared/worker-api-contract.ts";
 import { compactTerminalReportDocument, encodedJsonBytes, REPORT_CALLBACK_ENVELOPE_BYTES } from "../shared/report-document-compaction.ts";
 import { MAX_REPORT_FACT_CHUNKS } from "../shared/report-facts.ts";
@@ -9,6 +9,11 @@ import { Agent, fetch as undiciFetch } from "undici";
 type FetchLike = typeof fetch;
 const MAX_ACCEPTED_ERROR_BODY_BYTES = 1_000_000;
 export const MAX_SUCCESS_BODY_BYTES = 64 * 1_024 * 1_024;
+
+export function checkpointReadPageBound(attemptNumber: number, pageLimit: number) {
+  if (!Number.isSafeInteger(attemptNumber) || attemptNumber < 1 || attemptNumber > MAX_REPORT_ATTEMPTS || !Number.isSafeInteger(pageLimit) || pageLimit < 1) throw new Error("Invalid checkpoint paging bound.");
+  return Math.ceil((attemptNumber * MAX_REPORT_MATCH_CHECKPOINTS_PER_ATTEMPT) / pageLimit) + 1;
+}
 
 // Node's built-in fetch gives up while waiting for response headers after five
 // minutes, independently of a longer AbortSignal. Discovery and matching are
@@ -326,9 +331,10 @@ export function createReportOrchestrationHttpPort(configuration: { appOrigin: st
     async loadCheckpoint(publicId, input) {
       const checkpoints: Awaited<ReturnType<ReportOrchestrationPort["loadCheckpoint"]>> = [];
       const pageLimit = 20;
+      const maxPages = checkpointReadPageBound(input.attemptNumber, pageLimit);
       let afterAttemptNumber: number | undefined;
       let afterBatchIndex: number | undefined;
-      for (let page = 0; page < 2_000; page += 1) {
+      for (let page = 0; page < maxPages; page += 1) {
         const cursor = afterAttemptNumber === undefined ? {} : { afterAttemptNumber, afterBatchIndex };
         const payload = requiredObject<{ ok?: boolean; checkpoints?: unknown }>(await call(PATHS.report(publicId), "Report checkpoint read", OPERATION_BUDGETS_MS.report, { action: "match-batch-checkpoints-load", ...input, ...cursor, limit: pageLimit }), "Report checkpoint read");
         if (payload.ok !== true || !Array.isArray(payload.checkpoints)) throw new OrchestrationHttpError("Report checkpoint read", 502, true);

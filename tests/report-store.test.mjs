@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { appendReportEvent, compactReportDocument, createReportRun, createReportRunResult, getStoredReport, loadReportMatchBatchCheckpoints, markReportDispatched, MAX_REPORT_DOCUMENT_BYTES, MAX_REPORT_MATCH_BATCH_RESULT_BYTES, recoverInterruptedReport, reportStorageDiagnosticCode, ReportStorageError, saveReportDocument, saveReportMatchBatchCheckpoint } from "../app/lib/report-store.ts";
+import { MAX_REPORT_ATTEMPTS } from "../src/shared/report-orchestration-contract.ts";
 
 class FakeStatement {
   constructor(database, query) { this.database = database; this.query = query; this.values = []; }
@@ -249,6 +250,10 @@ test("interrupted jobs require an explicit recovery that increments the dispatch
   const report = await getStoredReport(created.publicId, new Date("2026-07-16T00:47:00.000Z"), database);
   assert.equal(report.events.at(-1).idempotencyKey, "recovery-attempt-2");
   await assert.rejects(() => recoverInterruptedReport(created.publicId, new Date(), database), /Only an interrupted report/);
+
+  database.runs[0].status = "interrupted";
+  database.runs[0].attempt_count = MAX_REPORT_ATTEMPTS;
+  await assert.rejects(() => recoverInterruptedReport(created.publicId, new Date(), database), /recovery-attempt limit/);
 });
 
 test("report persistence rejects missing databases, invalid ids, and oversized documents", async () => {

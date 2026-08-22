@@ -17,6 +17,7 @@ import {
   validEnrichmentCheckpoint,
 } from "../src/trigger/report-orchestration-core.ts";
 import {
+  checkpointReadPageBound,
   OPERATION_BUDGETS_MS,
   ORCHESTRATION_FETCH_TIMEOUT_MS,
   MAX_SUCCESS_BODY_BYTES,
@@ -1753,6 +1754,8 @@ test("the HTTP report adapter pages checkpoint recovery below the response trans
   assert.equal(bodies[0].afterAttemptNumber, undefined);
   assert.equal(bodies[1].afterAttemptNumber, 3);
   assert.equal(bodies[1].afterBatchIndex, 19);
+  assert.equal(checkpointReadPageBound(11, 20), 2_201);
+  assert.throws(() => checkpointReadPageBound(21, 20), /Invalid checkpoint paging bound/);
 });
 
 test("the HTTP report adapter compacts a large terminal document before transport", async () => {

@@ -1020,46 +1020,10 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
       || left.candidate.product.id.localeCompare(right.candidate.product.id));
   const proposalsByPrimary = new Map<string, Array<typeof proposals[number]>>();
   for (const proposal of proposals) proposalsByPrimary.set(proposal.primary.id, [...(proposalsByPrimary.get(proposal.primary.id) || []), proposal]);
-  const assignments = new Map<string, Array<typeof proposals[number]>>();
-  const usedRivals = new Set<string>();
-  const primaryByRival = new Map<string, string>();
-  const firstAssignment = new Map<string, typeof proposals[number]>();
-  const assignPrimary = (primaryId: string, visitedRivals: Set<string>, visitedPrimaries: Set<string>): boolean => {
-    if (visitedPrimaries.has(primaryId)) return false;
-    visitedPrimaries.add(primaryId);
-    for (const proposal of proposalsByPrimary.get(primaryId) || []) {
-      const rivalKey = productIdentityKey(proposal.candidate.product);
-      if (visitedRivals.has(rivalKey)) continue;
-      visitedRivals.add(rivalKey);
-      const owner = primaryByRival.get(rivalKey);
-      if (owner !== undefined && !assignPrimary(owner, visitedRivals, visitedPrimaries)) continue;
-      primaryByRival.set(rivalKey, primaryId);
-      firstAssignment.set(primaryId, proposal);
-      return true;
-    }
-    return false;
-  };
-  for (const primary of primaryProducts) assignPrimary(primary.id, new Set(), new Set());
-  for (const [primaryId, proposal] of firstAssignment) {
-    assignments.set(primaryId, [proposal]);
-    usedRivals.add(productIdentityKey(proposal.candidate.product));
-  }
-  const cursors = new Map<string, number>();
-  let assignedInRound = true;
-  while (assignedInRound) {
-    assignedInRound = false;
-    for (const primary of primaryProducts) {
-      const queue = proposalsByPrimary.get(primary.id) || [];
-      let cursor = cursors.get(primary.id) || 0;
-      while (cursor < queue.length && usedRivals.has(productIdentityKey(queue[cursor].candidate.product))) cursor += 1;
-      cursors.set(primary.id, cursor + 1);
-      const proposal = queue[cursor];
-      if (!proposal) continue;
-      assignments.set(primary.id, [...(assignments.get(primary.id) || []), proposal]);
-      usedRivals.add(productIdentityKey(proposal.candidate.product));
-      assignedInRound = true;
-    }
-  }
+  // Preserve the complete bounded semantic edge set through enrichment. Price,
+  // market, and global rival uniqueness are publication constraints; applying
+  // one-to-one assignment here can let an ineligible edge displace a valid one.
+  const assignments = proposalsByPrimary;
 
   const fallbackRows = new Map(fallback.rows.map((row) => [row.primary.id, row]));
   const productMatch = (row: ProductComparison["rows"][number], assigned: typeof proposals[number]): ProductMatch => {

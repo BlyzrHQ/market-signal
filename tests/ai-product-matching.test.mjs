@@ -255,7 +255,7 @@ test("exact-pair backfill preserves more than twelve bounded pins", async () => 
   assert.ok(judged.includes("p-pin-12|r-pin-12"));
 });
 
-test("an eligible pin wins global rival contention over a higher-confidence unpinned proposal", async () => {
+test("an eligible pin is prioritized while the contended semantic backup remains available", async () => {
   const unpinnedPrimary = product("p-unpinned", "shop.test", "Sidr Honey 500g");
   const pinnedPrimary = product("p-pinned", "shop.test", "عسل سدر ٥٠٠ جرام");
   const rival = product("r-shared", "rival.test", "Sidr Honey 500g", { price: { raw: "GBP 8", currency: "GBP", amount: 8 } });
@@ -278,7 +278,7 @@ test("an eligible pin wins global rival contention over a higher-confidence unpi
   ], {}, { apiKey: "test", fetch, maxPrimaryProducts: 2, pinnedPairs: [{ primaryId: pinnedPrimary.id, rivalDomain: "rival.test", rivalId: rival.id }] });
 
   assert.equal(comparison.rows.find((row) => row.primary.id === pinnedPrimary.id)?.matches[0].product?.id, rival.id);
-  assert.equal(comparison.rows.find((row) => row.primary.id === unpinnedPrimary.id)?.matches[0].product, null);
+  assert.equal(comparison.rows.find((row) => row.primary.id === unpinnedPrimary.id)?.matches[0].product?.id, rival.id);
 });
 
 test("a pinned deterministic pair still requires semantic confidence of at least 0.80", async () => {
@@ -381,7 +381,7 @@ test("low-confidence close substitutes are not assigned without deterministic id
   assert.equal(comparison.coverage.assignedPairCount, 0);
 });
 
-test("localized rival URLs collapse to one physical product and one assignment", async () => {
+test("localized rival URLs collapse to one physical product while semantic backup edges remain available", async () => {
   const primaries = [
     product("p-vinegar-original", "shop.test", "Organic Apple Vinegar 500ml Original"),
     product("p-vinegar-unfiltered", "shop.test", "Organic Apple Vinegar 500ml Unfiltered"),
@@ -410,8 +410,8 @@ test("localized rival URLs collapse to one physical product and one assignment",
   ], {}, { apiKey: "test", fetch });
 
   assert.equal(comparison.matching?.competitorProductsSynchronized, 1);
-  assert.equal(comparison.coverage.assignedPairCount, 1);
-  assert.equal(comparison.rows.flatMap((row) => row.matches).filter((match) => match.product).length, 1);
+  assert.equal(comparison.coverage.assignedPairCount, 2);
+  assert.equal(comparison.rows.flatMap((row) => row.matches).filter((match) => match.product).length, 2);
 });
 
 test("validated GTIN retrieval is guaranteed without semantic or lexical overlap", async () => {
@@ -605,7 +605,7 @@ test("AI coverage is not limited to the lexical fallback's sixteen visible rows"
   assert.equal(comparison.rows.length, 20);
 });
 
-test("accepted proposals use a maximum-cardinality one-to-one rival assignment", async () => {
+test("accepted proposals preserve contended backup edges for publication-time maximum matching", async () => {
   const primaries = [
     product("p-flexible", "shop.test", "Organic Apple Juice 1L"),
     product("p-constrained", "shop.test", "Organic Apple Juice 1L Family Pack"),
@@ -634,7 +634,41 @@ test("accepted proposals use a maximum-cardinality one-to-one rival assignment",
   ], {}, { apiKey: "test", fetch });
 
   assert.equal(comparison.rows.filter((row) => row.matches.some((match) => match.product)).length, 2);
+  assert.equal(comparison.coverage.assignedPairCount, 3);
   assert.deepEqual(new Set(comparison.rows.flatMap((row) => row.matches.flatMap((match) => match.product ? [match.product.id] : []))), new Set(["r-shared", "r-alternative"]));
+});
+
+test("an ineligible contended edge cannot displace an eligible priced edge before publication", async () => {
+  const primaries = [
+    product("p-us", "shop.test", "Sidr Honey 500g", { price: { raw: "USD 10", currency: "USD", amount: 10 }, sourceUrl: "https://shop.test/products/sidr-honey?country=US" }),
+    product("p-ca", "shop.test", "Sidr Honey 500g Gift", { price: { raw: "CAD 12", currency: "CAD", amount: 12 }, sourceUrl: "https://shop.test/products/sidr-honey-gift?country=CA" }),
+  ];
+  const rivals = [
+    product("r-us", "rival.test", "Sidr Honey 500g", { price: { raw: "USD 8", currency: "USD", amount: 8 }, sourceUrl: "https://rival.test/products/sidr-honey?country=US" }),
+    product("r-ca", "rival.test", "Sidr Honey 500g Premium", { price: { raw: "CAD 9", currency: "CAD", amount: 9 }, sourceUrl: "https://rival.test/products/sidr-honey-premium?country=CA" }),
+  ];
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, 0] })) });
+    const request = JSON.parse(body.input[1].content);
+    return response({ output_text: JSON.stringify({ assessments: request.groups.flatMap((group) => group.candidates.map((candidate) => ({
+      primaryId: group.primary.id,
+      candidateId: candidate.id,
+      verdict: group.primary.id === "p-ca" && candidate.id === "r-ca" ? "different_product" : "same_product",
+      confidence: candidate.id === "r-us" ? 0.99 : 0.95,
+      reason: "Compatible observed identity.",
+      contradiction: "",
+    }))) }) });
+  };
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: primaries },
+    { domain: "rival.test", products: rivals },
+  ], {}, { apiKey: "test", fetch, marketCountryCode: "US", referenceTimeMs: Date.parse("2026-08-22T00:00:00.000Z") });
+
+  const usEdges = comparison.rows.find((row) => row.primary.id === "p-us").matches.flatMap((match) => match.product ? [match.product.id] : []);
+  const caEdges = comparison.rows.find((row) => row.primary.id === "p-ca").matches.flatMap((match) => match.product ? [match.product.id] : []);
+  assert.deepEqual(new Set(usEdges), new Set(["r-us", "r-ca"]));
+  assert.deepEqual(caEdges, ["r-us"]);
 });
 
 test("the bounded backfill pool judges already-priced product pairs before unpriced ties", async () => {
