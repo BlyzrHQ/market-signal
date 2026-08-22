@@ -99,6 +99,12 @@ function compactPricedEvidenceMatch(primary: ProductRecord, match: ProductMatch 
   };
 }
 
+function exactProductPriority(match: ProductMatch) {
+  // Accepted legacy and compact same-product evidence may omit the assessment;
+  // close substitutes are always retained explicitly so retry ranking is stable.
+  return Number(!match.assessment || match.assessment.verdict === "same_product");
+}
+
 function evidenceRowsWithinByteBudget(rows: ProductComparison["rows"], maxBytes = MAX_DURABLE_EVIDENCE_ROWS_BYTES) {
   const retained = rows.map((row) => ({ ...row, matches: row.matches.slice(0, 1) }));
   const byteLength = () => new TextEncoder().encode(JSON.stringify(retained)).byteLength;
@@ -375,11 +381,11 @@ export function limitPublishedProductComparison(comparison: ProductComparison, r
   const candidates = comparison.rows.flatMap((row) => {
     const strongest = row.matches
       .filter((match) => match.product && match.publication?.priceEligible === true)
-      .sort((left, right) => Number(right.assessment?.verdict === "same_product") - Number(left.assessment?.verdict === "same_product")
+      .sort((left, right) => exactProductPriority(right) - exactProductPriority(left)
         || right.score - left.score
         || left.domain.localeCompare(right.domain))[0];
     return strongest ? [{ row, match: strongest }] : [];
-  }).sort((left, right) => Number(right.match.assessment?.verdict === "same_product") - Number(left.match.assessment?.verdict === "same_product")
+  }).sort((left, right) => exactProductPriority(right.match) - exactProductPriority(left.match)
     || right.match.score - left.match.score
     || left.row.primary.id.localeCompare(right.row.primary.id));
   const selected = candidates.slice(0, target);
@@ -486,7 +492,7 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
     const seen = new Set<string>();
     return row.matches
       .filter((match): match is ProductMatch & { product: ProductRecord } => Boolean(match.product && match.publication?.priceEligible === true))
-      .sort((left, right) => Number(right.assessment?.verdict === "same_product") - Number(left.assessment?.verdict === "same_product")
+      .sort((left, right) => exactProductPriority(right) - exactProductPriority(left)
         || right.score - left.score
         || productIdentityKey(left.product).localeCompare(productIdentityKey(right.product)))
       .filter((match) => {

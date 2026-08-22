@@ -1408,7 +1408,16 @@ test("a task retry reuses durable enrichment batches instead of fetching product
   let enrichCalls = 0;
   let saveCalls = 0;
   let matchCalls = 0;
+  let crawlCalls = 0;
+  const base = mockPort();
   const port = mockPort({
+    async crawl() {
+      crawlCalls += 1;
+      const result = await base.crawl();
+      const observedAt = `2026-07-2${crawlCalls}T10:00:00.000Z`;
+      for (const catalog of result.results) for (const item of catalog.products) item.observedAt = observedAt;
+      return result;
+    },
     async match() {
       matchCalls += 1;
       const value = comparison({ withPair: true, count: 1 });
@@ -1435,6 +1444,7 @@ test("a task retry reuses durable enrichment batches instead of fetching product
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
   await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
   assert.equal(enrichCalls, 1);
+  assert.equal(crawlCalls, 2);
   assert.equal(port.checkpoints.size, 6);
   assert.ok(port.checkpoints.has(299));
   assert.ok(port.checkpoints.has(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX));

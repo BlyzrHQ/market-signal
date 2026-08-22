@@ -373,8 +373,8 @@ export function validEnrichmentCheckpoint(value: unknown, targets: ProductEnrich
   return candidate as EnrichmentResult;
 }
 
-function enrichmentBatchHash(targets: unknown[], reportReferenceTimeMs: number) {
-  return createHash("sha256").update(JSON.stringify({ version: 1, reportReferenceTimeMs, targets })).digest("hex");
+function enrichmentBatchHash(targets: unknown[]) {
+  return createHash("sha256").update(JSON.stringify({ version: 2, targets })).digest("hex");
 }
 
 type DurableEnrichmentPlan = { version: 1; contentHash: string; targets: ProductEnrichmentTarget[]; totalEligible: number; truncated: boolean };
@@ -383,7 +383,7 @@ function enrichmentPlanContentHash(plan: Pick<DurableEnrichmentPlan, "targets" |
   return createHash("sha256").update(JSON.stringify({ targets: plan.targets, totalEligible: plan.totalEligible, truncated: plan.truncated })).digest("hex");
 }
 
-function enrichmentPlanInputHash(comparison: ProductComparison, maxPages: number, reportReferenceTimeMs: number) {
+function enrichmentPlanInputHash(comparison: ProductComparison, maxPages: number) {
   const productIdentity = (product: ProductRecord) => ({
     id: product.id,
     domain: canonicalDomain(product.domain),
@@ -398,7 +398,7 @@ function enrichmentPlanInputHash(comparison: ProductComparison, maxPages: number
       ? [{ domain: canonicalDomain(match.domain), product: productIdentity(match.product), verdict: match.assessment?.verdict || "" }]
       : []).sort((left, right) => left.domain.localeCompare(right.domain) || left.product.id.localeCompare(right.product.id)),
   })).sort((left, right) => left.primary.domain.localeCompare(right.primary.domain) || left.primary.id.localeCompare(right.primary.id));
-  return createHash("sha256").update(JSON.stringify({ version: 1, reportReferenceTimeMs, maxPages, marketCountryCode: comparison.marketCountryCode || "", rows })).digest("hex");
+  return createHash("sha256").update(JSON.stringify({ version: 2, maxPages, marketCountryCode: comparison.marketCountryCode || "", rows })).digest("hex");
 }
 
 function validEnrichmentPlanCheckpoint(value: unknown): DurableEnrichmentPlan | null {
@@ -787,7 +787,7 @@ export async function orchestrateReport(
       let enrichmentPlan = planFinalProductEnrichmentTargets(comparison, maxEnrichmentPages, reportReferenceTimeMs);
       let targetSatisfied = mergePublishedProductComparisons(comparison, accumulatedPublished, payload.productLimit, reportReferenceTimeMs).rows.length >= payload.productLimit;
       if (!targetSatisfied) {
-        const inputHash = enrichmentPlanInputHash(comparison, maxEnrichmentPages, reportReferenceTimeMs);
+        const inputHash = enrichmentPlanInputHash(comparison, maxEnrichmentPages);
         const planCheckpointIndex = enrichmentPlanCheckpointIndex(taskAttemptNumber);
         const saved = durableCheckpoints.get(planCheckpointIndex);
         if (saved) {
@@ -848,7 +848,7 @@ export async function orchestrateReport(
             const batchIndex = waveStart + waveIndex;
             const taskAttemptNumber = attempt.taskAttemptNumber || 1;
             const checkpointIndex = ENRICHMENT_CHECKPOINT_BATCH_INDEX_BASE + batchIndex + ((taskAttemptNumber - 1) * MAX_FINAL_ENRICHMENT_BATCHES);
-            const inputHash = enrichmentBatchHash(batch, reportReferenceTimeMs);
+            const inputHash = enrichmentBatchHash(batch);
             const saved = durableCheckpoints.get(checkpointIndex);
             if (saved) {
               if (saved.inputHash !== inputHash) throw new Error("A durable enrichment checkpoint conflicts with the current product-page batch.");

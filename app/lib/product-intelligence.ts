@@ -1817,7 +1817,8 @@ export function hasPriceCurrencyIntegrity(product: ProductRecord) {
     if (typeof signal.amount !== "number" || !Number.isFinite(signal.amount) || signal.amount <= 0 || !String(signal.raw || "").trim() || !isSupportedCurrency(signal.currency)) return false;
     const currency = String(signal.currency).trim().toUpperCase();
     const parsed = priceSignal(signal.raw, currency);
-    if (!parsed || parsed.currency !== currency) return false;
+    const amountTolerance = Number.EPSILON * Math.max(1, Math.abs(signal.amount), Math.abs(parsed?.amount ?? 0)) * 16;
+    if (!parsed || parsed.currency !== currency || typeof parsed.amount !== "number" || Math.abs(parsed.amount - signal.amount) > amountTolerance) return false;
     currencies.add(currency);
   }
   if (currencies.size !== 1) return false;

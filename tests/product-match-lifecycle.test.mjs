@@ -355,6 +355,15 @@ test("the final publication gate rejects currency evidence that contradicts its 
   assert.equal(publishPricedProductComparison(rawConflict).coverage.assignedPairCount, 0);
 });
 
+test("the final publication gate rejects structured amounts that contradict raw price evidence", () => {
+  for (const mismatchedSide of ["primary", "rival"]) {
+    const candidate = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "r1")], accepted: 1 });
+    candidate.rows[0].primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: mismatchedSide === "primary" ? 999 : 10 }];
+    candidate.rows[0].matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: mismatchedSide === "rival" ? 1 : 8 }];
+    assert.equal(publishPricedProductComparison(candidate).coverage.assignedPairCount, 0, mismatchedSide);
+  }
+});
+
 test("publication freshness is stable against the report observation timestamp", () => {
   const primary = { ...product("p1"), observedAt: "2025-08-01T00:00:00.000Z", priceSignals: [{ raw: "GBP 10", currency: "GBP", amount: 10 }] };
   const rival = { ...product("r1", "rival.test"), observedAt: "2025-08-01T00:00:00.000Z", priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }] };
@@ -644,6 +653,28 @@ test("a later unpriced observation does not evict an earlier valid priced compar
 
   assert.equal(result.rows.length, 1);
   assert.equal(result.rows[0].matches.find((match) => match.product)?.product.id, "r1");
+});
+
+test("compact recovery preserves exact-product priority over a higher-scored substitute", () => {
+  const candidateRow = row("p1", "r-exact");
+  candidateRow.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+  candidateRow.matches[0].score = 0.8;
+  candidateRow.matches[0].assessment = { verdict: "same_product" };
+  candidateRow.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+  const substitute = structuredClone(candidateRow.matches[0]);
+  substitute.product = product("r-close", "rival.test");
+  substitute.product.priceSignals = [{ raw: "USD 7", currency: "USD", amount: 7 }];
+  substitute.score = 0.9;
+  substitute.assessment = { verdict: "close_substitute" };
+  candidateRow.matches.push(substitute);
+  const screened = comparison({ selected: ["p1"], assessed: ["p1"], rows: [candidateRow], accepted: 2 });
+
+  const rich = mergePublishedProductComparisonState(screened, null, 1);
+  assert.equal(rich.comparison.rows[0].matches.find((match) => match.product)?.product.id, "r-exact");
+  const checkpoint = JSON.parse(JSON.stringify(compactPublishedProductComparisonCheckpoint(rich.evidence)));
+  const recovered = mergePublishedProductComparisonState(checkpoint, null, 1);
+
+  assert.equal(recovered.comparison.rows[0].matches.find((match) => match.product)?.product.id, "r-exact");
 });
 
 test("priced result backfill records an explicit bounded-pool shortfall", () => {
