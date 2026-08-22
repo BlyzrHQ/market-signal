@@ -118,16 +118,33 @@ function primaryCatalogRecoveryIdentities(products: ProductRecord[]) {
   ]));
 }
 
-function validPublishedResultCheckpoint(value: unknown, resultTarget: number, referenceTimeMs: number, allowedPrimaryProductKeys: Set<string>) {
+function bindComparisonPrimaryRecoveryIdentities(comparison: ProductComparison | null, primaryProducts: ProductRecord[]) {
+  if (!comparison) return null;
+  const identities = primaryCatalogRecoveryIdentities(primaryProducts);
+  return {
+    ...comparison,
+    rows: comparison.rows.map((row) => {
+      const key = `${row.primary.id}\n${canonicalDomain(row.primary.domain)}`;
+      const recoveryIdentityHash = identities.get(key);
+      return recoveryIdentityHash ? { ...row, primary: { ...row.primary, recoveryIdentityHash } } : row;
+    }),
+  } satisfies ProductComparison;
+}
+
+function validPublishedResultCheckpoint(value: unknown, resultTarget: number, referenceTimeMs: number, allowedPrimaryProductKeys: Set<string>, allowedPrimaryIdentities: Map<string, string>) {
   try {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const checkpoint = value as { version?: unknown; comparison?: ProductComparison; evidence?: ProductComparison };
-    if ((checkpoint.version !== 1 && checkpoint.version !== 2) || !checkpoint.comparison || !Array.isArray(checkpoint.comparison.rows) || checkpoint.comparison.rows.length > resultTarget) return null;
+    if ((checkpoint.version !== 1 && checkpoint.version !== 2 && checkpoint.version !== 3) || !checkpoint.comparison || !Array.isArray(checkpoint.comparison.rows) || checkpoint.comparison.rows.length > resultTarget) return null;
     const evidence = checkpoint.version === 2 ? checkpoint.evidence : null;
     if (checkpoint.version === 2 && (!evidence || !Array.isArray(evidence.rows) || evidence.rows.length > resultTarget)) return null;
     if (new Set(checkpoint.comparison.rows.map((row) => row?.primary?.id)).size !== checkpoint.comparison.rows.length) return null;
     if (evidence && new Set(evidence.rows.map((row) => row?.primary?.id)).size !== evidence.rows.length) return null;
     if (![...checkpoint.comparison.rows, ...(evidence?.rows || [])].every((row) => allowedPrimaryProductKeys.has(`${row.primary.id}\n${canonicalDomain(row.primary.domain)}`))) return null;
+    if (![...checkpoint.comparison.rows, ...(evidence?.rows || [])].every((row) => {
+      const key = `${row.primary.id}\n${canonicalDomain(row.primary.domain)}`;
+      return allowedPrimaryIdentities.get(key) === row.primary.recoveryIdentityHash;
+    })) return null;
     if (evidence && !evidence.rows.every((row) => row.matches.length > 0 && row.matches.every((match) => match.product && match.publication?.priceEligible === true))) return null;
     if (checkpoint.comparison.matching?.resultShortfallReason === "processing-incomplete") return null;
     if (checkpoint.comparison.enrichment?.pagesTruncated === true || (checkpoint.comparison.enrichment?.failedBatchCount || 0) > 0) return null;
@@ -686,6 +703,7 @@ export async function orchestrateReport(
       if (!durableCheckpoints.has(checkpoint.batchIndex)) durableCheckpoints.set(checkpoint.batchIndex, checkpoint);
     }
     const allowedPrimaryProductKeys = primaryCatalogProductKeys(primary.products);
+    const allowedPrimaryRecoveryIdentities = primaryCatalogRecoveryIdentities(primary.products);
     const publishedResultInputHash = createHash("sha256").update(JSON.stringify({
       publicId: payload.publicId,
       reportObservedAt: stored.run.createdAt,
@@ -699,7 +717,7 @@ export async function orchestrateReport(
       .filter((checkpoint) => checkpoint.batchIndex >= 270 && checkpoint.batchIndex <= PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX && checkpoint.inputHash === publishedResultInputHash)
       .sort((left, right) => left.attemptNumber - right.attemptNumber || right.batchIndex - left.batchIndex);
     for (const saved of priorPublishedCheckpoints) {
-      const validated = validPublishedResultCheckpoint(saved.result, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys);
+      const validated = validPublishedResultCheckpoint(saved.result, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys, allowedPrimaryRecoveryIdentities);
       if (!validated) throw new Error("The durable published-result checkpoint is invalid.");
       accumulatedPublished = mergePublishedProductComparisonState(validated.evidence, accumulatedPublished, payload.productLimit, reportReferenceTimeMs).evidence;
     }
@@ -723,11 +741,12 @@ export async function orchestrateReport(
     comparison = composeProductMatchAttempts(baseline, attempts, requestCount);
     if (comparison && marketCountryCode) comparison = { ...comparison, marketCountryCode };
     if (comparison) {
-      const adoptedJudgeEvidence = comparisonWithinPrimaryCatalog(screenedComparisonFromJudgeCheckpoints(
+      comparison = bindComparisonPrimaryRecoveryIdentities(comparison, primary.products);
+      const adoptedJudgeEvidence = bindComparisonPrimaryRecoveryIdentities(comparisonWithinPrimaryCatalog(screenedComparisonFromJudgeCheckpoints(
         crawl.primaryDomain,
         [...allDurableCheckpoints.values()].filter((checkpoint) => checkpoint.batchIndex >= 1_400 && checkpoint.batchIndex < 3_900).map((checkpoint) => checkpoint.result),
         marketCountryCode,
-      ), primary.products);
+      ), primary.products), primary.products);
       comparison = mergeAccumulatedPublishedIntoScreenedComparison(comparison, adoptedJudgeEvidence);
       const maxEnrichmentPages = pricedResultEnrichmentBudget(payload.productLimit);
       let enrichmentPlan = planFinalProductEnrichmentTargets(comparison, maxEnrichmentPages, reportReferenceTimeMs);
@@ -944,22 +963,22 @@ export async function orchestrateReport(
         const effective = durableCheckpoints.get(checkpoint.batchIndex);
         if (!effective || checkpoint.attemptNumber > effective.attemptNumber) durableCheckpoints.set(checkpoint.batchIndex, checkpoint);
       }
-      const judgeEvidence = comparisonWithinPrimaryCatalog(screenedComparisonFromJudgeCheckpoints(
+      const judgeEvidence = bindComparisonPrimaryRecoveryIdentities(comparisonWithinPrimaryCatalog(screenedComparisonFromJudgeCheckpoints(
         crawl.primaryDomain,
         [...allDurableCheckpoints.values()].filter((checkpoint) => checkpoint.batchIndex >= 1_400 && checkpoint.batchIndex < 3_900).map((checkpoint) => checkpoint.result),
         marketCountryCode,
-      ), primary.products);
+      ), primary.products), primary.products);
       screenedComparison = mergeAccumulatedPublishedIntoScreenedComparison(comparison, judgeEvidence);
       screenedComparison = mergeAccumulatedPublishedIntoScreenedComparison(screenedComparison, accumulatedPublished);
       const publishedState = mergePublishedProductComparisonState(comparison, accumulatedPublished, payload.productLimit, reportReferenceTimeMs);
       comparison = publishedState.comparison;
       const publishedCheckpointIndex = publishedResultCheckpointIndex(taskAttemptNumber);
-      const publishedCheckpoint = { version: 2, comparison, evidence: publishedState.evidence };
+      const publishedCheckpoint = { version: 3, comparison, evidence: publishedState.evidence };
       const checkpointIsComplete = comparison.matching?.resultShortfallReason !== "processing-incomplete"
         && comparison.enrichment?.pagesTruncated !== true
         && (comparison.enrichment?.failedBatchCount || 0) === 0;
       if (checkpointIsComplete) {
-        if (!validPublishedResultCheckpoint(publishedCheckpoint, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys)) {
+        if (!validPublishedResultCheckpoint(publishedCheckpoint, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys, allowedPrimaryRecoveryIdentities)) {
           throw new Error("The published-result checkpoint does not belong to the current primary catalog.");
         }
         try {
@@ -969,7 +988,7 @@ export async function orchestrateReport(
           allDurableCheckpoints.set(`${attempt.attemptNumber}:${publishedCheckpointIndex}`, savedCheckpoint);
         } catch (saveError) {
           const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: publishedCheckpointIndex }))[0];
-          const validated = committed?.attemptNumber === attempt.attemptNumber && committed.inputHash === publishedResultInputHash ? validPublishedResultCheckpoint(committed.result, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys) : null;
+          const validated = committed?.attemptNumber === attempt.attemptNumber && committed.inputHash === publishedResultInputHash ? validPublishedResultCheckpoint(committed.result, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys, allowedPrimaryRecoveryIdentities) : null;
           if (!validated) throw saveError;
           comparison = validated.comparison;
         }

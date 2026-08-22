@@ -406,6 +406,27 @@ test("priced result backfill keeps historical alternatives when a primary is obs
   assert.deepEqual(new Set(result.rows.flatMap((item) => item.matches.flatMap((match) => match.product ? [match.product.id] : []))), new Set(["r-old", "r-shared"]));
 });
 
+test("published backfill never inherits a historical rival across a reused primary id", () => {
+  const priced = (primaryName, primaryUrl, rivalId) => {
+    const item = row("reused-id", rivalId);
+    item.primary.name = primaryName;
+    item.primary.normalizedName = primaryName.toLowerCase();
+    item.primary.sourceUrl = primaryUrl;
+    item.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+    item.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+    return item;
+  };
+  const prior = comparison({ selected: ["reused-id"], assessed: ["reused-id"], rows: [priced("Old Honey 500g", "https://shop.test/products/old-honey?country=US", "old-honey-rival")], accepted: 1 });
+  const current = comparison({ selected: ["reused-id"], assessed: ["reused-id"], rows: [priced("New Coffee 1kg", "https://shop.test/products/new-coffee?country=US", "new-coffee-rival")], accepted: 1 });
+  const merged = mergePublishedProductComparisonState(current, prior, 1);
+  assert.deepEqual(merged.comparison.rows.flatMap((item) => item.matches.flatMap((match) => match.product ? [match.product.id] : [])), ["new-coffee-rival"]);
+
+  const unpricedCurrent = structuredClone(current);
+  unpricedCurrent.rows[0].matches[0].product.priceSignals = [];
+  const withoutCurrentPrice = mergePublishedProductComparisonState(unpricedCurrent, prior, 1);
+  assert.equal(withoutCurrentPrice.comparison.rows.length, 0);
+});
+
 test("durable priced evidence preserves backup rivals until a later global assignment", () => {
   const pricedRow = (primaryId, rivalId, score = 0.9) => {
     const item = row(primaryId, rivalId);

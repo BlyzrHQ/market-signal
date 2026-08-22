@@ -10,6 +10,23 @@ function compactEvidenceText(value: unknown, maxLength: number) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 }
 
+function durablePrimaryIdentity(product: ProductRecord) {
+  if (/^[a-f0-9]{64}$/.test(product.recoveryIdentityHash || "")) return `bound:${product.recoveryIdentityHash}`;
+  return JSON.stringify({
+    id: product.id,
+    domain: canonicalDomain(product.domain),
+    name: compactEvidenceText(product.name, 220),
+    normalizedName: product.normalizedName,
+    category: compactEvidenceText(product.category, 160),
+    type: product.jsonLdType,
+    description: compactEvidenceText(product.description, 500),
+    attributes: product.attributes.map((item) => compactEvidenceText(item, 100)).filter(Boolean).slice(0, 8),
+    sourceUrl: product.sourceUrl,
+    observedIdentifiers: product.identifiers ? { gtins: product.identifiers.gtins, sku: product.identifiers.sku || "", mpn: product.identifiers.mpn || "", brand: product.identifiers.brand || "" } : null,
+    canonicalQuantity: product.quantity || null,
+  });
+}
+
 function compactPricedEvidenceProduct(product: ProductRecord): ProductRecord {
   const identifiers = product.identifiers ? {
     gtins: product.identifiers.gtins.slice(0, 1),
@@ -41,6 +58,7 @@ function compactPricedEvidenceProduct(product: ProductRecord): ProductRecord {
     claimIds: product.claimIds.slice(0, 2).map((claimId) => compactEvidenceText(claimId, 100)),
     ...(identifiers ? { identifiers } : {}),
     ...(product.quantity ? { quantity: product.quantity } : {}),
+    ...(product.recoveryIdentityHash ? { recoveryIdentityHash: product.recoveryIdentityHash } : {}),
   };
 }
 
@@ -388,13 +406,18 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
   const publishedPrior = prior ? evaluated(prior) : null;
   const publishable = (row: ProductComparison["rows"][number]) => row.matches.some((match) => match.product && match.publication?.priceEligible === true);
   const currentRows = publishedCurrent.rows.filter(publishable);
-  const priorRows = publishedPrior?.rows.filter(publishable) || [];
+  const currentIdentityById = new Map(publishedCurrent.rows.map((row) => [row.primary.id, durablePrimaryIdentity(row.primary)]));
+  const priorRows = (publishedPrior?.rows.filter(publishable) || []).filter((row) => {
+    const currentIdentity = currentIdentityById.get(row.primary.id);
+    return currentIdentity === undefined || currentIdentity === durablePrimaryIdentity(row.primary);
+  });
   const candidateRows: ProductComparison["rows"] = [];
   const rowByPrimary = new Map<string, number>();
   for (const row of [...currentRows, ...priorRows]) {
-    const existingIndex = rowByPrimary.get(row.primary.id);
+    const primaryIdentity = durablePrimaryIdentity(row.primary);
+    const existingIndex = rowByPrimary.get(primaryIdentity);
     if (existingIndex === undefined) {
-      rowByPrimary.set(row.primary.id, candidateRows.length);
+      rowByPrimary.set(primaryIdentity, candidateRows.length);
       candidateRows.push(row);
       continue;
     }
