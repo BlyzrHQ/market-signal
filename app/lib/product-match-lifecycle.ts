@@ -4,6 +4,7 @@ import { publicHttpUrl } from "./public-url.ts";
 
 export type ProductMatchLifecycle = "idle" | "matching" | "retrying" | "complete" | "limited";
 export const MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY = 20;
+const MAX_DURABLE_EVIDENCE_ROWS_BYTES = 280_000;
 
 function compactEvidenceText(value: unknown, maxLength: number) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
@@ -51,8 +52,8 @@ function compactPricedEvidenceMatch(primary: ProductRecord, match: ProductMatch 
     product: rival,
     score: match.score,
     confidence: match.confidence,
-    sharedTerms: match.sharedTerms.slice(0, 4).map((term) => compactEvidenceText(term, 60)),
-    claimIds: match.claimIds.slice(0, 2).map((claimId) => compactEvidenceText(claimId, 100)),
+    sharedTerms: [],
+    claimIds: [],
     decision: productDecision(primary, rival, match.score, exactProduct),
     ...(match.assessment ? { assessment: {
       ...match.assessment,
@@ -63,11 +64,26 @@ function compactPricedEvidenceMatch(primary: ProductRecord, match: ProductMatch 
       normalizedCategory: compactEvidenceText(match.assessment.normalizedCategory, 100),
       normalizedVariant: compactEvidenceText(match.assessment.normalizedVariant, 100),
       normalizedSize: compactEvidenceText(match.assessment.normalizedSize, 100),
-      primarySourceUrl: primary.sourceUrl,
-      rivalSourceUrl: rival.sourceUrl,
+      primarySourceUrl: "",
+      rivalSourceUrl: "",
     } } : {}),
     publication: { priceEligible: true },
   };
+}
+
+function evidenceRowsWithinByteBudget(rows: ProductComparison["rows"], maxBytes = MAX_DURABLE_EVIDENCE_ROWS_BYTES) {
+  const retained = rows.map((row) => ({ ...row, matches: row.matches.slice(0, 1) }));
+  const byteLength = () => new TextEncoder().encode(JSON.stringify(retained)).byteLength;
+  if (byteLength() > maxBytes) throw new Error("The minimum durable priced-evidence layer exceeds its persistence budget.");
+  for (let alternativeIndex = 1; alternativeIndex < MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY; alternativeIndex += 1) {
+    for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+      const alternative = rows[rowIndex].matches[alternativeIndex];
+      if (!alternative) continue;
+      retained[rowIndex].matches.push(alternative);
+      if (byteLength() > maxBytes) retained[rowIndex].matches.pop();
+    }
+  }
+  return retained;
 }
 
 type ReportBlock = { type: string; id: string } & Record<string, unknown>;
@@ -461,18 +477,22 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
     ...candidateRows.filter((row) => selectedPrimaryIds.has(row.primary.id)),
     ...candidateRows.filter((row) => !selectedPrimaryIds.has(row.primary.id)),
   ].slice(0, Math.max(1, Math.floor(resultTarget)));
-  const evidenceRows = evidenceCandidates.map((row) => {
+  const uncompactedEvidenceRows = evidenceCandidates.map((row) => {
     const compactPrimary = compactPricedEvidenceProduct(row.primary);
     const seenRivals = new Set<string>();
+    const selected = selectedByRow.get(candidateRows.indexOf(row));
     const matches = row.matches.filter((match): match is ProductMatch & { product: ProductRecord } => {
       if (!match.product || match.publication?.priceEligible !== true) return false;
       const key = productIdentityKey(match.product);
       if (seenRivals.has(key)) return false;
       seenRivals.add(key);
       return true;
-    }).slice(0, MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY).map((match) => compactPricedEvidenceMatch(compactPrimary, match));
+    }).sort((left, right) => Number(right === selected) - Number(left === selected))
+      .slice(0, MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY).map((match) => compactPricedEvidenceMatch(compactPrimary, match));
     return { primary: compactPrimary, matches };
   });
+  const evidenceRows = evidenceRowsWithinByteBudget(uncompactedEvidenceRows);
+  const evidencePrimaryIds = evidenceRows.map((row) => row.primary.id);
   const evidence: ProductComparison = {
     ...comparison,
     rows: evidenceRows,
@@ -483,6 +503,13 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
       assignedPairCount: evidenceRows.reduce((sum, row) => sum + row.matches.length, 0),
       verifiedPairCount: evidenceRows.reduce((sum, row) => sum + row.matches.filter((match) => match.confidence === "Medium").length, 0),
     },
+    matching: comparison.matching ? {
+      ...comparison.matching,
+      selectedPrimaryIds: evidencePrimaryIds,
+      assessedPrimaryIds: evidencePrimaryIds,
+      processedPrimaryIds: evidencePrimaryIds,
+      gaps: comparison.matching.gaps.slice(0, 4).map((gap) => compactEvidenceText(gap, 240)),
+    } : comparison.matching,
   };
   return { comparison, evidence };
 }

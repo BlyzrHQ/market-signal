@@ -497,6 +497,29 @@ test("a retry reuses a completed fact manifest only when its current bundle hash
   assert.equal(port.saves[0].expectedFactManifestHash, manifest.manifestHash);
 });
 
+test("completed fact recovery selects the newest owned terminal presentation", async () => {
+  const manifestHash = "b".repeat(64);
+  const port = mockPort({
+    async loadReport() {
+      return {
+        run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, productPlan: payload.productPlan, productLimit: payload.productLimit, status: "running", attemptCount: 2, createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T10:00:00.000Z" },
+        events: [],
+        factManifest: { manifestId: "a".repeat(64), manifestHash, counts: { companies: 2, products: 2, matches: 1, ads: 0 }, status: "complete", completedAt: "2026-07-20T09:59:00.000Z" },
+      };
+    },
+    async loadCheckpoint() {
+      return [
+        { attemptNumber: 1, batchIndex: 280, inputHash: "a".repeat(64), result: { version: 2, taskAttemptNumber: 1, manifestHash, status: "limited", observedAt: "2026-07-20T09:58:00.000Z", document: { marker: "old" } } },
+        { attemptNumber: 2, batchIndex: 281, inputHash: "b".repeat(64), result: { version: 2, taskAttemptNumber: 2, manifestHash, status: "complete", observedAt: "2026-07-20T10:00:00.000Z", document: { marker: "new" } } },
+      ];
+    },
+  });
+
+  const result = await orchestrateReport(recoveryPayload, { attemptNumber: 2, taskAttemptNumber: 3, isFinalAttempt: true }, port);
+  assert.equal(result.reportStatus, "complete");
+  assert.equal(port.saves[0].document.marker, "new");
+});
+
 test("terminal replay validates attempt and entitlement before returning without mutations", async () => {
   const port = mockPort({
     async loadReport() {

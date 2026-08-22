@@ -723,12 +723,13 @@ test("recovery adopts an immutable completed fact snapshot for the new attempt",
     await appendReportEvent(created.publicId, { attemptNumber: 2, idempotencyKey: "report-2-task-1-crawl-started", phase: "crawl", status: "running", message: "Collecting public pages after recovery." }, new Date("2026-08-16T10:47:00.000Z"), database);
     await appendReportEvent(created.publicId, { attemptNumber: 2, idempotencyKey: "report-2-task-2-matching-started", phase: "matching", status: "running", message: "Resuming matching in the second task attempt." }, new Date("2026-08-16T10:48:00.000Z"), database);
     await saveReportMatchBatchCheckpoint(created.publicId, { attemptNumber: 2, batchIndex: 1650, inputHash: "e".repeat(64), result: { assessments: [{ fresh: true }] } }, new Date("2026-08-16T10:49:00.000Z"), database);
+    await saveReportMatchBatchCheckpoint(created.publicId, { attemptNumber: 2, batchIndex: 1400, inputHash: "f".repeat(64), result: { assessments: [{ current: true }] } }, new Date("2026-08-16T10:49:30.000Z"), database);
     const heartbeat = await database.prepare("SELECT heartbeat_at FROM report_runs WHERE id = ?").bind(recovered.id).all();
     assert.equal(heartbeat.results[0].heartbeat_at, "2026-08-16T10:48:00.000Z");
     assert.deepEqual((await database.prepare("SELECT DISTINCT attempt_number FROM report_fact_chunks WHERE run_id = ?").bind(recovered.id).all()).results, [{ attempt_number: 2 }]);
     assert.deepEqual((await database.prepare("SELECT attempt_number, status FROM report_fact_manifests WHERE run_id = ?").bind(recovered.id).all()).results, [{ attempt_number: 2, status: "complete" }]);
-    assert.deepEqual((await database.prepare("SELECT attempt_number, batch_index FROM report_match_batch_checkpoints WHERE run_id = ? ORDER BY attempt_number, batch_index").bind(recovered.id).all()).results, [{ attempt_number: 1, batch_index: 0 }, { attempt_number: 1, batch_index: 299 }, { attempt_number: 1, batch_index: 1400 }, { attempt_number: 1, batch_index: 3900 }, { attempt_number: 2, batch_index: 1650 }]);
-    assert.deepEqual((await loadReportMatchBatchCheckpoints(created.publicId, { attemptNumber: 2 }, database)).map((checkpoint) => [checkpoint.attemptNumber, checkpoint.batchIndex]), [[1, 0], [1, 299], [1, 1400], [2, 1650], [1, 3900]]);
+    assert.deepEqual((await database.prepare("SELECT attempt_number, batch_index FROM report_match_batch_checkpoints WHERE run_id = ? ORDER BY attempt_number, batch_index").bind(recovered.id).all()).results, [{ attempt_number: 1, batch_index: 0 }, { attempt_number: 1, batch_index: 299 }, { attempt_number: 1, batch_index: 1400 }, { attempt_number: 1, batch_index: 3900 }, { attempt_number: 2, batch_index: 1400 }, { attempt_number: 2, batch_index: 1650 }]);
+    assert.deepEqual((await loadReportMatchBatchCheckpoints(created.publicId, { attemptNumber: 2 }, database)).map((checkpoint) => [checkpoint.attemptNumber, checkpoint.batchIndex]), [[2, 1400], [2, 1650], [1, 0], [1, 299], [1, 1400], [1, 3900]]);
   } finally {
     database.close();
     await rm(value.directory, { recursive: true, force: true });

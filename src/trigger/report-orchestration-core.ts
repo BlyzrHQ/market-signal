@@ -70,10 +70,11 @@ function terminalPresentationCheckpointIndex(taskAttemptNumber: number) {
   return index;
 }
 
-function validTerminalPresentationCheckpoint(value: unknown, manifestHash: string) {
+function validTerminalPresentationCheckpoint(value: unknown, manifestHash: string, expectedTaskAttemptNumber?: number) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const item = value as { version?: unknown; manifestHash?: unknown; status?: unknown; observedAt?: unknown; document?: unknown };
-  if (item.version !== 1 || item.manifestHash !== manifestHash || (item.status !== "complete" && item.status !== "limited") || typeof item.observedAt !== "string" || !Number.isFinite(Date.parse(item.observedAt)) || !item.document || typeof item.document !== "object" || Array.isArray(item.document)) return null;
+  const item = value as { version?: unknown; taskAttemptNumber?: unknown; manifestHash?: unknown; status?: unknown; observedAt?: unknown; document?: unknown };
+  if ((item.version !== 1 && item.version !== 2) || item.manifestHash !== manifestHash || (item.status !== "complete" && item.status !== "limited") || typeof item.observedAt !== "string" || !Number.isFinite(Date.parse(item.observedAt)) || !item.document || typeof item.document !== "object" || Array.isArray(item.document)) return null;
+  if (item.version === 2 && (!Number.isInteger(item.taskAttemptNumber) || item.taskAttemptNumber !== expectedTaskAttemptNumber)) return null;
   return { status: item.status, observedAt: new Date(item.observedAt).toISOString(), document: item.document } as const;
 }
 
@@ -517,7 +518,8 @@ export async function orchestrateReport(
     const checkpoints = await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber });
     const presentation = checkpoints
       .filter((checkpoint) => checkpoint.batchIndex >= TERMINAL_PRESENTATION_CHECKPOINT_BATCH_INDEX_BASE && checkpoint.batchIndex <= 289)
-      .map((checkpoint) => validTerminalPresentationCheckpoint(checkpoint.result, stored.factManifest!.manifestHash))
+      .sort((left, right) => right.attemptNumber - left.attemptNumber || right.batchIndex - left.batchIndex)
+      .map((checkpoint) => validTerminalPresentationCheckpoint(checkpoint.result, stored.factManifest!.manifestHash, checkpoint.batchIndex - TERMINAL_PRESENTATION_CHECKPOINT_BATCH_INDEX_BASE + 1))
       .find((value) => value !== null);
     if (presentation) {
       await port.saveDocument(payload.publicId, {
@@ -641,7 +643,12 @@ export async function orchestrateReport(
       : "";
     const taskAttemptNumber = attempt.taskAttemptNumber || 1;
     const reportReferenceTimeMs = Date.parse(stored.run.createdAt);
-    const durableCheckpoints = new Map((await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber })).map((checkpoint) => [checkpoint.batchIndex, checkpoint]));
+    const loadedCheckpoints = await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber });
+    const allDurableCheckpoints = new Map(loadedCheckpoints.map((checkpoint) => [`${checkpoint.attemptNumber}:${checkpoint.batchIndex}`, checkpoint]));
+    const durableCheckpoints = new Map<number, (typeof loadedCheckpoints)[number]>();
+    for (const checkpoint of loadedCheckpoints) {
+      if (!durableCheckpoints.has(checkpoint.batchIndex)) durableCheckpoints.set(checkpoint.batchIndex, checkpoint);
+    }
     const allowedPrimaryProductKeys = primaryCatalogProductKeys(primary.products);
     const publishedResultInputHash = createHash("sha256").update(JSON.stringify({
       publicId: payload.publicId,
@@ -652,9 +659,10 @@ export async function orchestrateReport(
       primaryCatalog: primaryCatalogIdentity(primary.products),
     })).digest("hex");
     let accumulatedPublished: ProductComparison | null = null;
-    for (let priorTaskAttempt = MAX_ORCHESTRATION_TASK_ATTEMPTS; priorTaskAttempt >= 1; priorTaskAttempt -= 1) {
-      const saved = durableCheckpoints.get(publishedResultCheckpointIndex(priorTaskAttempt));
-      if (!saved || saved.inputHash !== publishedResultInputHash) continue;
+    const priorPublishedCheckpoints = [...allDurableCheckpoints.values()]
+      .filter((checkpoint) => checkpoint.batchIndex >= 270 && checkpoint.batchIndex <= PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX && checkpoint.inputHash === publishedResultInputHash)
+      .sort((left, right) => left.attemptNumber - right.attemptNumber || right.batchIndex - left.batchIndex);
+    for (const saved of priorPublishedCheckpoints) {
       const validated = validPublishedResultCheckpoint(saved.result, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys);
       if (!validated) throw new Error("The durable published-result checkpoint is invalid.");
       accumulatedPublished = mergePublishedProductComparisonState(validated.evidence, accumulatedPublished, payload.productLimit, reportReferenceTimeMs).evidence;
@@ -679,6 +687,12 @@ export async function orchestrateReport(
     comparison = composeProductMatchAttempts(baseline, attempts, requestCount);
     if (comparison && marketCountryCode) comparison = { ...comparison, marketCountryCode };
     if (comparison) {
+      const adoptedJudgeEvidence = comparisonWithinPrimaryCatalog(screenedComparisonFromJudgeCheckpoints(
+        crawl.primaryDomain,
+        [...allDurableCheckpoints.values()].filter((checkpoint) => checkpoint.batchIndex >= 1_400 && checkpoint.batchIndex < 3_900).map((checkpoint) => checkpoint.result),
+        marketCountryCode,
+      ), allowedPrimaryProductKeys);
+      comparison = mergeAccumulatedPublishedIntoScreenedComparison(comparison, adoptedJudgeEvidence);
       const maxEnrichmentPages = pricedResultEnrichmentBudget(payload.productLimit);
       let enrichmentPlan = planFinalProductEnrichmentTargets(comparison, maxEnrichmentPages, reportReferenceTimeMs);
       let targetSatisfied = mergePublishedProductComparisons(comparison, accumulatedPublished, payload.productLimit, reportReferenceTimeMs).rows.length >= payload.productLimit;
@@ -708,7 +722,9 @@ export async function orchestrateReport(
             const durablePlan: DurableEnrichmentPlan = { version: 1, contentHash: enrichmentPlanContentHash(enrichmentPlan), ...enrichmentPlan };
             try {
               await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: planCheckpointIndex, inputHash, result: durablePlan });
-              durableCheckpoints.set(planCheckpointIndex, { attemptNumber: attempt.attemptNumber, batchIndex: planCheckpointIndex, inputHash, result: durablePlan });
+              const savedCheckpoint = { attemptNumber: attempt.attemptNumber, batchIndex: planCheckpointIndex, inputHash, result: durablePlan };
+              durableCheckpoints.set(planCheckpointIndex, savedCheckpoint);
+              allDurableCheckpoints.set(`${attempt.attemptNumber}:${planCheckpointIndex}`, savedCheckpoint);
             } catch (saveError) {
               const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: planCheckpointIndex }))[0];
               if (!committed || committed.attemptNumber !== attempt.attemptNumber || committed.inputHash !== inputHash) throw saveError;
@@ -780,7 +796,9 @@ export async function orchestrateReport(
             }
             try {
               await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointIndex, inputHash, result: mergedResult });
-              durableCheckpoints.set(checkpointIndex, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointIndex, inputHash, result: mergedResult });
+              const savedCheckpoint = { attemptNumber: attempt.attemptNumber, batchIndex: checkpointIndex, inputHash, result: mergedResult };
+              durableCheckpoints.set(checkpointIndex, savedCheckpoint);
+              allDurableCheckpoints.set(`${attempt.attemptNumber}:${checkpointIndex}`, savedCheckpoint);
             } catch (saveError) {
               const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointIndex }))[0];
               if (!committed || committed.attemptNumber !== attempt.attemptNumber || committed.inputHash !== inputHash) throw saveError;
@@ -885,10 +903,14 @@ export async function orchestrateReport(
       }
       comparison = publishPricedProductComparison(comparison, Date.parse(stored.run.createdAt));
       const refreshedCheckpoints = await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber });
-      for (const checkpoint of refreshedCheckpoints) durableCheckpoints.set(checkpoint.batchIndex, checkpoint);
+      for (const checkpoint of refreshedCheckpoints) {
+        allDurableCheckpoints.set(`${checkpoint.attemptNumber}:${checkpoint.batchIndex}`, checkpoint);
+        const effective = durableCheckpoints.get(checkpoint.batchIndex);
+        if (!effective || checkpoint.attemptNumber > effective.attemptNumber) durableCheckpoints.set(checkpoint.batchIndex, checkpoint);
+      }
       const judgeEvidence = comparisonWithinPrimaryCatalog(screenedComparisonFromJudgeCheckpoints(
         crawl.primaryDomain,
-        [...durableCheckpoints.values()].filter((checkpoint) => checkpoint.batchIndex >= 1_400 && checkpoint.batchIndex < 3_900).map((checkpoint) => checkpoint.result),
+        [...allDurableCheckpoints.values()].filter((checkpoint) => checkpoint.batchIndex >= 1_400 && checkpoint.batchIndex < 3_900).map((checkpoint) => checkpoint.result),
         marketCountryCode,
       ), allowedPrimaryProductKeys);
       screenedComparison = mergeAccumulatedPublishedIntoScreenedComparison(comparison, judgeEvidence);
@@ -906,7 +928,9 @@ export async function orchestrateReport(
         }
         try {
           await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: publishedCheckpointIndex, inputHash: publishedResultInputHash, result: publishedCheckpoint });
-          durableCheckpoints.set(publishedCheckpointIndex, { attemptNumber: attempt.attemptNumber, batchIndex: publishedCheckpointIndex, inputHash: publishedResultInputHash, result: publishedCheckpoint });
+          const savedCheckpoint = { attemptNumber: attempt.attemptNumber, batchIndex: publishedCheckpointIndex, inputHash: publishedResultInputHash, result: publishedCheckpoint };
+          durableCheckpoints.set(publishedCheckpointIndex, savedCheckpoint);
+          allDurableCheckpoints.set(`${attempt.attemptNumber}:${publishedCheckpointIndex}`, savedCheckpoint);
         } catch (saveError) {
           const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: publishedCheckpointIndex }))[0];
           const validated = committed?.attemptNumber === attempt.attemptNumber && committed.inputHash === publishedResultInputHash ? validPublishedResultCheckpoint(committed.result, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys) : null;
@@ -983,7 +1007,7 @@ export async function orchestrateReport(
     }
     const facts = await buildReportFactBundle({ publicId: payload.publicId, crawlResults: crawl.results, comparison: screenedComparison || comparison, adBlock, observedAt: stored.run.createdAt, attemptNumber: attempt.attemptNumber });
     terminalDocument = compactTerminalReportDocument({ primaryDomain: crawl.primaryDomain, document, marketBrief: null }, 430_000, { factsAuthoritative: true, factCounts: facts.manifest.counts });
-    const presentationCheckpoint = { version: 1, manifestHash: facts.manifest.manifestHash, status: reportStatus, observedAt: finishedAt, document: terminalDocument };
+    const presentationCheckpoint = { version: 2, taskAttemptNumber: attempt.taskAttemptNumber || 1, manifestHash: facts.manifest.manifestHash, status: reportStatus, observedAt: finishedAt, document: terminalDocument };
     const presentationInputHash = createHash("sha256").update(JSON.stringify(presentationCheckpoint)).digest("hex");
     await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: terminalPresentationCheckpointIndex(attempt.taskAttemptNumber || 1), inputHash: presentationInputHash, result: presentationCheckpoint });
     const reusableManifest = priorManifest?.status === "complete"

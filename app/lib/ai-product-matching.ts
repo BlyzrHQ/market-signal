@@ -1023,6 +1023,28 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   for (const proposal of proposals) proposalsByPrimary.set(proposal.primary.id, [...(proposalsByPrimary.get(proposal.primary.id) || []), proposal]);
   const assignments = new Map<string, Array<typeof proposals[number]>>();
   const usedRivals = new Set<string>();
+  const primaryByRival = new Map<string, string>();
+  const firstAssignment = new Map<string, typeof proposals[number]>();
+  const assignPrimary = (primaryId: string, visitedRivals: Set<string>, visitedPrimaries: Set<string>): boolean => {
+    if (visitedPrimaries.has(primaryId)) return false;
+    visitedPrimaries.add(primaryId);
+    for (const proposal of proposalsByPrimary.get(primaryId) || []) {
+      const rivalKey = productIdentityKey(proposal.candidate.product);
+      if (visitedRivals.has(rivalKey)) continue;
+      visitedRivals.add(rivalKey);
+      const owner = primaryByRival.get(rivalKey);
+      if (owner !== undefined && !assignPrimary(owner, visitedRivals, visitedPrimaries)) continue;
+      primaryByRival.set(rivalKey, primaryId);
+      firstAssignment.set(primaryId, proposal);
+      return true;
+    }
+    return false;
+  };
+  for (const primary of primaryProducts) assignPrimary(primary.id, new Set(), new Set());
+  for (const [primaryId, proposal] of firstAssignment) {
+    assignments.set(primaryId, [proposal]);
+    usedRivals.add(productIdentityKey(proposal.candidate.product));
+  }
   const cursors = new Map<string, number>();
   let assignedInRound = true;
   while (assignedInRound) {

@@ -605,6 +605,38 @@ test("AI coverage is not limited to the lexical fallback's sixteen visible rows"
   assert.equal(comparison.rows.length, 20);
 });
 
+test("accepted proposals use a maximum-cardinality one-to-one rival assignment", async () => {
+  const primaries = [
+    product("p-flexible", "shop.test", "Organic Apple Juice 1L"),
+    product("p-constrained", "shop.test", "Organic Apple Juice 1L Family Pack"),
+  ];
+  const rivals = [
+    product("r-shared", "rival.test", "Organic Apple Juice 1L"),
+    product("r-alternative", "rival.test", "Organic Apple Juice 1L Premium"),
+  ];
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, 0] })) });
+    const request = JSON.parse(body.input[1].content);
+    return response({ output_text: JSON.stringify({ assessments: request.groups.flatMap((group) => group.candidates.map((candidate) => ({
+      primaryId: group.primary.id,
+      candidateId: candidate.id,
+      verdict: group.primary.id === "p-constrained" && candidate.id === "r-alternative" ? "different_product" : "same_product",
+      confidence: candidate.id === "r-shared" ? 0.99 : 0.95,
+      reason: "Compatible observed product identity.",
+      contradiction: "",
+    }))) }) });
+  };
+
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: primaries },
+    { domain: "rival.test", products: rivals },
+  ], {}, { apiKey: "test", fetch });
+
+  assert.equal(comparison.rows.filter((row) => row.matches.some((match) => match.product)).length, 2);
+  assert.deepEqual(new Set(comparison.rows.flatMap((row) => row.matches.flatMap((match) => match.product ? [match.product.id] : []))), new Set(["r-shared", "r-alternative"]));
+});
+
 test("the bounded backfill pool judges already-priced product pairs before unpriced ties", async () => {
   const pricedPrimary = product("z-priced", "shop.test", "Sidr Honey 500g", { price: { raw: "GBP 10", currency: "GBP", amount: 10 } });
   const unpricedPrimary = product("a-unpriced", "shop.test", "Sidr Honey 500g");

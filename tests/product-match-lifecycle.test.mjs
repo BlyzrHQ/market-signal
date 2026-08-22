@@ -427,16 +427,20 @@ test("durable priced evidence preserves backup rivals until a later global assig
 });
 
 test("durable priced evidence stays below the checkpoint limit for a legal 6000-pair universe", () => {
+  const legalUrl = (domain, role, primaryIndex, rivalIndex = 0) => `https://${domain}/${role}/${primaryIndex}/${rivalIndex}/${"x".repeat(900)}?country=US`;
   const rows = Array.from({ length: 20 }, (_, primaryIndex) => {
     const item = row(`p${primaryIndex + 1}`, `r${primaryIndex + 1}-1`);
     item.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
     item.primary.description = "p".repeat(500);
     item.primary.attributes = Array.from({ length: 8 }, () => "a".repeat(100));
+    item.primary.sourceUrl = legalUrl("shop.test", "primary", primaryIndex);
     item.matches = Array.from({ length: 300 }, (_, rivalIndex) => {
       const match = row(item.primary.id, `r${primaryIndex + 1}-${rivalIndex + 1}`).matches[0];
       match.product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
       match.product.description = "r".repeat(500);
       match.product.attributes = Array.from({ length: 8 }, () => "b".repeat(100));
+      match.product.sourceUrl = legalUrl("rival.test", "rival", primaryIndex, rivalIndex);
+      match.assessment = { method: "ai-hybrid", claimType: "Inferred", verdict: "same_product", confidence: 0.99, model: "test", promptVersion: "v1", reasons: ["r".repeat(500)], contradictions: [], normalizedCategory: "food", normalizedVariant: "standard", normalizedSize: "1kg", primarySourceUrl: item.primary.sourceUrl, rivalSourceUrl: match.product.sourceUrl };
       match.score = 1 - (rivalIndex / 10_000);
       return match;
     });
@@ -447,7 +451,8 @@ test("durable priced evidence stays below the checkpoint limit for a legal 6000-
   const checkpoint = { version: 2, comparison: state.comparison, evidence: state.evidence };
 
   assert.equal(state.evidence.rows.length, 20);
-  assert.ok(state.evidence.rows.every((item) => item.matches.length === MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY));
+  assert.ok(state.evidence.rows.every((item) => item.matches.length >= 1 && item.matches.length <= MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY));
+  assert.ok(state.evidence.rows.every((item) => item.matches.some((match) => match.product?.sourceUrl.startsWith("https://rival.test/rival/"))));
   assert.ok(Buffer.byteLength(JSON.stringify(checkpoint), "utf8") < 512_000);
 });
 

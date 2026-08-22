@@ -1003,9 +1003,7 @@ export async function loadReportMatchBatchCheckpoints(publicReportId: string, in
   const byBatch = input.batchIndex === undefined ? "" : " AND batch_index = ?";
   const bindings = input.batchIndex === undefined ? [run.id, ...attempts] : [run.id, ...attempts, input.batchIndex];
   const rows = await database.prepare(`SELECT attempt_number, batch_index, input_hash, result_json, result_hash, created_at, updated_at FROM report_match_batch_checkpoints WHERE run_id = ? AND attempt_number IN (${placeholders})${byBatch} ORDER BY attempt_number DESC, batch_index ASC`).bind(...bindings).all<Record<string, unknown>>();
-  const latestByBatch = new Map<number, Record<string, unknown>>();
-  for (const row of rows.results || []) if (!latestByBatch.has(Number(row.batch_index))) latestByBatch.set(Number(row.batch_index), row);
-  return Promise.all([...latestByBatch.values()].sort((left, right) => Number(left.batch_index) - Number(right.batch_index)).map(async (row) => {
+  return Promise.all((rows.results || []).map(async (row) => {
     const checkpoint = rowMatchBatchCheckpoint(row);
     const resultJson = boundedCheckpointResult(checkpoint.result);
     const resultHash = await sha256Text(resultJson);
