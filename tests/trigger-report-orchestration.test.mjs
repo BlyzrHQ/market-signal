@@ -9,6 +9,8 @@ import {
 import {
   MAX_FINAL_ENRICHMENT_TARGETS,
   MAX_FINAL_ENRICHMENT_BATCHES,
+  CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE,
+  CRAWL_RESULT_CHECKPOINT_BATCH_INDEX,
   PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX,
   MAX_OPERATION_TIMEOUT_MS,
   comparisonWithinPrimaryCatalog,
@@ -327,6 +329,84 @@ test("successful orchestration persists ordered heartbeats and a complete docume
   assert.deepEqual(compaction.factCounts, { companies: 2, products: 40, matches: 20, ads: 0 });
 });
 
+test("a task retry resumes the durable successful crawl without another network crawl", async () => {
+  let crawlCalls = 0;
+  let saveCalls = 0;
+  const base = mockPort();
+  const port = mockPort({
+    async crawl() { crawlCalls += 1; return base.crawl(); },
+    async saveDocument(_publicId, value) {
+      saveCalls += 1;
+      if (saveCalls === 1) throw new Error("terminal callback lost");
+      port.saves.push(value);
+    },
+  });
+
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
+  await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
+  assert.equal(crawlCalls, 1);
+  assert.ok(port.checkpoints.has(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE));
+  assert.ok(port.events.some((item) => item.idempotencyKey === "report-1-task-2-crawl-resumed"));
+});
+
+test("a later task attempt cannot replace a durable successful crawl with an HTTP 403", async () => {
+  let crawlCalls = 0;
+  let saveCalls = 0;
+  const base = mockPort();
+  const port = mockPort({
+    async crawl() {
+      crawlCalls += 1;
+      if (crawlCalls > 1) throw Object.assign(new Error("homepage returned HTTP 403"), { errorCode: "primary-page-unavailable" });
+      const value = await base.crawl();
+      return { ...value, discovery: { productSearchCoverage: { ...value.discovery.productSearchCoverage, complete: false } } };
+    },
+    async saveDocument(_publicId, value) {
+      saveCalls += 1;
+      if (saveCalls === 1) throw new Error("terminal callback lost");
+      port.saves.push(value);
+    },
+  });
+
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port);
+  assert.equal(result.reportStatus, "complete");
+  assert.equal(crawlCalls, 2);
+  assert.equal(port.events.some((item) => item.idempotencyKey === "crawl-failed"), false);
+});
+
+test("a corrupt durable crawl checkpoint is ignored and replaced by a fresh valid crawl", async () => {
+  let crawlCalls = 0;
+  let saveCalls = 0;
+  const base = mockPort();
+  const port = mockPort({
+    async crawl() { crawlCalls += 1; return base.crawl(); },
+    async saveDocument(_publicId, value) {
+      saveCalls += 1;
+      if (saveCalls === 1) throw new Error("terminal callback lost");
+      port.saves.push(value);
+    },
+  });
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
+  port.checkpoints.get(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE).result.data = "not-gzip";
+  await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
+  assert.equal(crawlCalls, 2);
+  assert.ok(port.checkpoints.has(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1));
+});
+
+test("checkpoint storage failure does not relabel a successful crawl as failed", async () => {
+  const base = mockPort();
+  const port = mockPort({
+    async crawl() { return base.crawl(); },
+    async saveCheckpoint(_publicId, input) {
+      if (input.batchIndex === CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE) throw new Error("checkpoint store unavailable");
+      port.checkpoints.set(input.batchIndex, { attemptNumber: input.attemptNumber, batchIndex: input.batchIndex, inputHash: input.inputHash, result: input.result });
+    },
+  });
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: true }, port);
+  assert.equal(result.reportStatus, "complete");
+  assert.equal(port.events.some((item) => item.idempotencyKey === "crawl-failed"), false);
+});
+
 test("a retry advances to the next discovery anchor batch only after a complete prior batch", async () => {
   const base = mockPort();
   let crawlInput;
@@ -443,8 +523,9 @@ test("a priced shortfall cannot claim exhaustion while competitor discovery left
     },
   });
 
-  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port), /remained incomplete after the final task attempt/);
-  assert.equal(port.saves.length, 0);
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port);
+  assert.equal(result.reportStatus, "limited");
+  assert.equal(port.saves.length, 1);
   assert.equal(port.events.some((item) => item.idempotencyKey === "orchestration-failed"), false);
 });
 
@@ -1070,7 +1151,7 @@ test("a second match attempt refreshes the report heartbeat before another long 
   assert.ok(port.events.some((item) => item.idempotencyKey.endsWith("-matching-retry-started")));
 });
 
-test("partial and failed selected enrichment fail closed even on the final task attempt", async () => {
+test("partial and failed selected enrichment publish verified rows as limited on the final task attempt", async () => {
   let successfulCalls = 0;
   const success = mockPort({
     async match() { return { ok: true, comparison: comparison({ withPair: true, count: 1 }) }; },
@@ -1079,9 +1160,9 @@ test("partial and failed selected enrichment fail closed even on the final task 
       return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: 24, gaps: [] } };
     },
   });
-  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, success), /remained incomplete after the final task attempt/);
+  assert.equal((await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, success)).reportStatus, "limited");
   assert.equal(successfulCalls, 1);
-  assert.equal(success.saves.length, 0);
+  assert.equal(success.saves.length, 1);
   assert.equal(success.checkpoints.has(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX), false);
   assert.equal(success.events.some((item) => item.idempotencyKey === "orchestration-failed"), false);
 
@@ -1089,8 +1170,8 @@ test("partial and failed selected enrichment fail closed even on the final task 
     async match() { return { ok: true, comparison: comparison({ withPair: true, count: 1 }) }; },
     async enrich() { throw new Error("selected page timeout"); },
   });
-  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, failure), /remained incomplete after the final task attempt/);
-  assert.equal(failure.saves.length, 0);
+  assert.equal((await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, failure)).reportStatus, "limited");
+  assert.equal(failure.saves.length, 1);
   assert.equal(failure.events.some((item) => item.idempotencyKey === "orchestration-failed"), false);
   assert.ok(failure.events.some((item) => item.idempotencyKey.endsWith("-limited") && item.phase === "enrichment"));
 });
@@ -1301,6 +1382,7 @@ test("report recovery restores priced results accumulated by a later task attemp
   assert.ok(accumulated, `expected a published checkpoint after ${matchCall} match calls; keys=${[...port.checkpoints.keys()].join(",")}`);
   port.checkpoints.set(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX - 1, { ...accumulated, batchIndex: PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX - 1 });
   port.checkpoints.delete(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX);
+  for (let index = CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE; index <= CRAWL_RESULT_CHECKPOINT_BATCH_INDEX; index += 1) port.checkpoints.delete(index);
   const loadPriorReport = port.loadReport.bind(port);
   port.loadReport = async () => {
     const stored = await loadPriorReport();
@@ -1442,6 +1524,7 @@ test("catalog drift prevents stale priced-result accumulation", async () => {
   assert.equal(result.reportStatus, "limited");
   assert.equal(block.rows.length, 10);
   assert.equal(block.matching.resultShortfall, 10);
+  assert.equal(crawlCall, 2);
 });
 
 test("a task retry reuses durable enrichment batches instead of fetching product pages again", async () => {
@@ -1484,8 +1567,8 @@ test("a task retry reuses durable enrichment batches instead of fetching product
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
   await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
   assert.equal(enrichCalls, 1);
-  assert.equal(crawlCalls, 2);
-  assert.equal(port.checkpoints.size, 6);
+  assert.equal(crawlCalls, 1);
+  assert.equal(port.checkpoints.size, 7);
   assert.ok(port.checkpoints.has(299));
   assert.ok(port.checkpoints.has(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX));
   assert.ok(port.checkpoints.has(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX - 1));
@@ -1592,9 +1675,9 @@ test("a failed transient retry preserves prior successful pages and published pa
   });
 
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/);
-  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port), /remained incomplete after the final task attempt/);
+  assert.equal((await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port)).reportStatus, "limited");
   assert.equal(enrichCalls, 2);
-  assert.equal(port.saves.length, 0);
+  assert.equal(port.saves.length, 1);
   const firstBatch = [...port.checkpoints.values()].find((item) => item.result?.coverage?.pagesFetched === 3);
   assert.ok(firstBatch);
   assert.equal(firstBatch.result.coverage.gaps[0].failureKind, "network");

@@ -38,6 +38,7 @@ import type { ReportFactChunkInput, ReportFactManifestInput } from "../../app/li
 import type { PinnedProductPair } from "../../app/lib/ai-product-matching.ts";
 import { screenedComparisonFromJudgeCheckpoints } from "../../app/lib/ai-product-matching.ts";
 import { createHash } from "node:crypto";
+import { gunzipSync, gzipSync } from "node:zlib";
 
 class CompletedFactManifestConflict extends Error {}
 class RecoverableProcessingIncompleteError extends Error {}
@@ -51,6 +52,8 @@ export const MAX_FINAL_ENRICHMENT_BATCH_WAVES = Math.ceil(MAX_FINAL_ENRICHMENT_T
 export const ENRICHMENT_PLAN_CHECKPOINT_BATCH_INDEX = 299;
 export const ENRICHMENT_CHECKPOINT_BATCH_INDEX_BASE = 300;
 export const PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX = 279;
+export const CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE = 260;
+export const CRAWL_RESULT_CHECKPOINT_BATCH_INDEX = 269;
 export const TERMINAL_PRESENTATION_CHECKPOINT_BATCH_INDEX_BASE = 280;
 export const MAX_ORCHESTRATION_TASK_ATTEMPTS = 10;
 export const MATCH_JUDGE_CHECKPOINT_BATCH_INDEX_BASE = 1_400;
@@ -515,6 +518,62 @@ type ParkedDomainOutcome = { ok: false; code: "parked-domain"; primaryDomain: st
 type UnavailableDomainOutcome = { ok: false; code: "unavailable-domain"; primaryDomain: string; error: string; document: JsonDocument };
 type CrawlOutcome = CrawlSuccess | ParkedDomainOutcome | UnavailableDomainOutcome;
 
+const MAX_CRAWL_CHECKPOINT_UNCOMPRESSED_BYTES = 64 * 1_024 * 1_024;
+
+function crawlCheckpointBatchIndex(taskAttemptNumber: number) {
+  if (!Number.isInteger(taskAttemptNumber) || taskAttemptNumber < 1 || taskAttemptNumber > MAX_ORCHESTRATION_TASK_ATTEMPTS) throw new PermanentOrchestrationError("Unsupported crawl task attempt.");
+  return CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + taskAttemptNumber - 1;
+}
+
+function crawlCheckpointInputHash(payload: ReportOrchestrationPayload, taskAttemptNumber: number) {
+  return createHash("sha256").update(JSON.stringify({
+    version: 1,
+    publicId: payload.publicId,
+    primaryDomain: payload.primaryDomain,
+    reportAttempt: payload.reportAttempt,
+    productPlan: payload.productPlan,
+    productLimit: payload.productLimit,
+    taskAttemptNumber,
+  })).digest("hex");
+}
+
+function crawlCheckpoint(crawl: CrawlSuccess) {
+  const json = JSON.stringify(crawl);
+  if (Buffer.byteLength(json, "utf8") > MAX_CRAWL_CHECKPOINT_UNCOMPRESSED_BYTES) throw new Error("The successful crawl is too large to checkpoint safely.");
+  const checkpoint = { version: 1, encoding: "gzip-base64", data: gzipSync(json, { level: 9 }).toString("base64") };
+  if (encodedJsonBytes(checkpoint) > REPORT_MATCH_CHECKPOINT_RESULT_BYTES) throw new Error("The successful crawl checkpoint exceeds the durable checkpoint budget.");
+  return checkpoint;
+}
+
+function validCrawlSuccess(value: unknown, payload: ReportOrchestrationPayload): CrawlSuccess | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const crawl = value as Partial<CrawlSuccess>;
+  try {
+    if (crawl.ok !== true || crawl.primaryDomain !== payload.primaryDomain || !Array.isArray(crawl.results) || !crawl.results.length) return null;
+    if (!crawl.document || typeof crawl.document !== "object" || Array.isArray(crawl.document) || !Array.isArray((crawl.document as JsonDocument).blocks)) return null;
+    const primary = crawl.results.find((result) => result?.domain === payload.primaryDomain && result?.homepage && Array.isArray(result?.products));
+    if (!primary) return null;
+    for (const result of crawl.results) {
+      if (!result || canonicalDomain(String(result.domain || "")) !== result.domain || !Array.isArray(result.products)) return null;
+    }
+    return crawl as CrawlSuccess;
+  } catch {
+    return null;
+  }
+}
+
+function validCrawlCheckpoint(value: unknown, payload: ReportOrchestrationPayload): CrawlSuccess | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const checkpoint = value as { version?: unknown; encoding?: unknown; data?: unknown };
+  if (checkpoint.version !== 1 || checkpoint.encoding !== "gzip-base64" || typeof checkpoint.data !== "string" || !checkpoint.data) return null;
+  try {
+    const json = gunzipSync(Buffer.from(checkpoint.data, "base64"), { maxOutputLength: MAX_CRAWL_CHECKPOINT_UNCOMPRESSED_BYTES }).toString("utf8");
+    return validCrawlSuccess(JSON.parse(json), payload);
+  } catch {
+    return null;
+  }
+}
+
 export type ReportAttemptContext = { attemptNumber: number; taskAttemptNumber?: number; isFinalAttempt: boolean };
 
 export interface ReportOrchestrationPort {
@@ -682,21 +741,63 @@ export async function orchestrateReport(
   const startedAt = now().toISOString();
   const completedPhases: string[] = [];
   const limitedPhases: string[] = [];
-  await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "crawl-started"), "crawl", "Crawling the submitted website and collecting public product pages."));
-
   let crawl: CrawlOutcome;
-  try {
-    const discoveryCursor = completedDiscoveryCursor(stored.events, attempt.attemptNumber, legacyCompletedManifestWithoutPresentation);
-    crawl = await port.crawl({ primary: payload.primaryDomain, domains: [payload.primaryDomain], productLimit: payload.productLimit, catalogProductLimit: MAX_PRIMARY_CATALOG_PRODUCTS, discoverySearchOffset: discoveryCursor.offset, discoveryPriorCoverageComplete: true, discoveryExpectedAnchorSetHash: discoveryCursor.anchorSetHash });
-    if (!crawl || (crawl.ok !== true && crawl.code !== "parked-domain" && crawl.code !== "unavailable-domain")) throw new Error("The public crawl could not be completed.");
-  } catch (error) {
-    const detail = message(error, "The public crawl could not be completed.");
-    const errorCode = boundedErrorCode(error);
-    await port.appendEvent(payload.publicId, attempt.isFinalAttempt
-      ? { idempotencyKey: "crawl-failed", phase: "failed", status: "failed", message: detail, metadata: { attempt: attempt.attemptNumber }, ...(errorCode ? { errorCode } : {}) }
-      : event(`crawl-report-${attempt.attemptNumber}-task-${attempt.taskAttemptNumber || 1}-failed`, "crawl", "The crawl attempt failed and is eligible for one bounded retry.", { reportAttempt: attempt.attemptNumber, taskAttempt: attempt.taskAttemptNumber || 1 }));
-    terminalFailureRecorded = attempt.isFinalAttempt;
-    throw error;
+  const taskAttemptNumber = attempt.taskAttemptNumber || 1;
+  const crawlCheckpoints = await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE, batchIndexEnd: CRAWL_RESULT_CHECKPOINT_BATCH_INDEX, latestPerBatch: true });
+  const durableCrawls = crawlCheckpoints.flatMap((checkpoint) => {
+    const checkpointTaskAttempt = checkpoint.batchIndex - CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1;
+    if (checkpointTaskAttempt < 1 || checkpointTaskAttempt > taskAttemptNumber || checkpoint.inputHash !== crawlCheckpointInputHash(payload, checkpointTaskAttempt)) return [];
+    const value = validCrawlCheckpoint(checkpoint.result, payload);
+    return value ? [{ taskAttemptNumber: checkpointTaskAttempt, crawl: value }] : [];
+  }).sort((left, right) => right.taskAttemptNumber - left.taskAttemptNumber);
+  const priorDurableCrawl = durableCrawls[0] || null;
+  const priorCoverageComplete = priorDurableCrawl?.crawl.discovery?.productSearchCoverage?.complete === true;
+  const shouldRefreshCrawl = !priorDurableCrawl || (!priorCoverageComplete && priorDurableCrawl.taskAttemptNumber < taskAttemptNumber);
+  if (!shouldRefreshCrawl && priorDurableCrawl) {
+    crawl = priorDurableCrawl.crawl;
+    await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "crawl-resumed"), "crawl", "Resuming from the durable successful crawl; collected public facts were not fetched or replaced again.", {
+      primaryProducts: priorDurableCrawl.crawl.results.find((result) => result.domain === priorDurableCrawl.crawl.primaryDomain)?.products.length || 0,
+      taskAttempt: taskAttemptNumber,
+    }));
+  } else {
+    await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "crawl-started"), "crawl", "Crawling the submitted website and collecting public product pages."));
+    try {
+      const discoveryCursor = completedDiscoveryCursor(stored.events, attempt.attemptNumber, legacyCompletedManifestWithoutPresentation);
+      const freshCrawl = await port.crawl({ primary: payload.primaryDomain, domains: [payload.primaryDomain], productLimit: payload.productLimit, catalogProductLimit: MAX_PRIMARY_CATALOG_PRODUCTS, discoverySearchOffset: discoveryCursor.offset, discoveryPriorCoverageComplete: true, discoveryExpectedAnchorSetHash: discoveryCursor.anchorSetHash });
+      if (!freshCrawl || (freshCrawl.ok !== true && freshCrawl.code !== "parked-domain" && freshCrawl.code !== "unavailable-domain")) throw new Error("The public crawl could not be completed.");
+      const validatedFreshCrawl = freshCrawl.ok === true ? validCrawlSuccess(freshCrawl, payload) : null;
+      if (freshCrawl.ok === true && !validatedFreshCrawl) throw new Error("The successful crawl did not contain a valid primary result.");
+      crawl = validatedFreshCrawl || freshCrawl;
+      if (validatedFreshCrawl) {
+        let checkpoint: ReturnType<typeof crawlCheckpoint> | null = null;
+        try { checkpoint = crawlCheckpoint(validatedFreshCrawl); } catch { /* checkpointing is an optimization; the successful crawl remains usable */ }
+        const crawlInputHash = crawlCheckpointInputHash(payload, taskAttemptNumber);
+        const checkpointBatchIndex = crawlCheckpointBatchIndex(taskAttemptNumber);
+        if (checkpoint) try {
+          await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointBatchIndex, inputHash: crawlInputHash, result: checkpoint });
+        } catch {
+          const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointBatchIndex }))[0];
+          const committedCrawl = committed?.attemptNumber === attempt.attemptNumber && committed.inputHash === crawlInputHash ? validCrawlCheckpoint(committed.result, payload) : null;
+          crawl = committedCrawl || validatedFreshCrawl;
+        }
+      } else if (priorDurableCrawl) {
+        crawl = priorDurableCrawl.crawl;
+        await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "crawl-resumed"), "crawl", "The next discovery wave was unavailable, so processing resumed from the last durable successful crawl.", { taskAttempt: taskAttemptNumber }));
+      }
+    } catch (error) {
+      if (priorDurableCrawl) {
+        crawl = priorDurableCrawl.crawl;
+        await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "crawl-resumed"), "crawl", "The next discovery wave failed, so processing resumed from the last durable successful crawl.", { taskAttempt: taskAttemptNumber, reason: message(error, "Discovery wave unavailable.") }));
+      } else {
+      const detail = message(error, "The public crawl could not be completed.");
+      const errorCode = boundedErrorCode(error);
+      await port.appendEvent(payload.publicId, attempt.isFinalAttempt
+        ? { idempotencyKey: "crawl-failed", phase: "failed", status: "failed", message: detail, metadata: { attempt: attempt.attemptNumber }, ...(errorCode ? { errorCode } : {}) }
+        : event(`crawl-report-${attempt.attemptNumber}-task-${attempt.taskAttemptNumber || 1}-failed`, "crawl", "The crawl attempt failed and is eligible for one bounded retry.", { reportAttempt: attempt.attemptNumber, taskAttempt: attempt.taskAttemptNumber || 1 }));
+      terminalFailureRecorded = attempt.isFinalAttempt;
+      throw error;
+      }
+    }
   }
 
   if (crawl.ok === false) {
@@ -1167,13 +1268,20 @@ export async function orchestrateReport(
       document = upsertProductComparisonBlock(document, comparison) as JsonDocument;
     }
     const limited = attempts.length === 0 || hasProductMatchCoverageDefect(comparison);
-    if (attempts.length === 0 || comparison?.matching?.resultShortfallReason === "processing-incomplete") {
+    const processingIncomplete = attempts.length === 0 || comparison?.matching?.resultShortfallReason === "processing-incomplete";
+    const publishBestFinalResult = attempt.isFinalAttempt && Boolean(comparison?.rows.length);
+    if (processingIncomplete && !publishBestFinalResult) {
       await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "matching-task-retry"), "matching", attempt.isFinalAttempt
         ? "Product matching or enrichment remained incomplete after the final bounded task attempt; no terminal report was published."
         : "Product matching or enrichment remained incomplete; durable checkpoints will resume on the bounded task retry.", { attempts: requestCount }));
       throw new RecoverableProcessingIncompleteError(attempt.isFinalAttempt
         ? "Product matching or enrichment remained incomplete after the final task attempt."
         : "Product matching or enrichment remained incomplete before the final task attempt.");
+    }
+    if (processingIncomplete) {
+      limitedPhases.push("matching");
+      await port.appendEvent(payload.publicId, limitedEvent(progressEventKey(attempt, "matching-limited"), "matching", "The final bounded attempt retained the strongest verified comparisons, with the remaining coverage gap shown explicitly.", { attempts: requestCount, rows: comparison?.rows.length || 0 }));
+      return;
     }
     (limited ? limitedPhases : completedPhases).push("matching");
     await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "matching-complete"), "matching", limited ? "Product matching finished with a visible coverage limitation." : "Product matching finished and accepted comparisons were source-linked.", { limited, attempts: requestCount }));
