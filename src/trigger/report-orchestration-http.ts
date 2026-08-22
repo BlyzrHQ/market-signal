@@ -244,9 +244,10 @@ async function acceptedCrawlFailureError(response: Response, expectedPrimaryDoma
   return new OrchestrationHttpError("Public crawl", response.status, false, detail, errorCode);
 }
 
-async function requestJson(fetchImpl: FetchLike, url: string, token: string, operation: string, timeoutMs: number, body?: unknown, acceptError?: (response: Response) => Promise<unknown | undefined>) {
+async function requestJson(fetchImpl: FetchLike, url: string, token: string, operation: string, timeoutMs: number, body?: unknown, acceptError?: (response: Response) => Promise<unknown | undefined>, maxAttempts = 2) {
+  if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 2) throw new Error("The orchestration HTTP attempt bound is invalid.");
   const deadline = Date.now() + timeoutMs;
-  for (let requestAttempt = 1; requestAttempt <= 2; requestAttempt += 1) {
+  for (let requestAttempt = 1; requestAttempt <= maxAttempts; requestAttempt += 1) {
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) throw new OrchestrationHttpError(operation, 0, true);
     const controller = new AbortController();
@@ -270,10 +271,10 @@ async function requestJson(fetchImpl: FetchLike, url: string, token: string, ope
       const accepted = acceptError ? await acceptError(response) : undefined;
       if (accepted !== undefined) return accepted;
       const retryable = isRetryableHttpStatus(response.status);
-      if (!retryable || requestAttempt === 2) throw new OrchestrationHttpError(operation, response.status, retryable);
+      if (!retryable || requestAttempt === maxAttempts) throw new OrchestrationHttpError(operation, response.status, retryable);
     } catch (error) {
       if (error instanceof OrchestrationHttpError) throw error;
-      if (requestAttempt === 2) throw new OrchestrationHttpError(operation, 0, true);
+      if (requestAttempt === maxAttempts) throw new OrchestrationHttpError(operation, 0, true);
     } finally {
       clearTimeout(timeout);
     }
@@ -378,7 +379,10 @@ export function createReportOrchestrationHttpPort(configuration: { appOrigin: st
         || checkpoint.inputHash !== input.inputHash || !sameCheckpointValue(checkpoint.result, input.result)) throw new OrchestrationHttpError("Report checkpoint callback", 502, true);
     },
     async actions(input) {
-      const payload = requiredObject<Awaited<ReturnType<ReportOrchestrationPort["actions"]>>>(await call(PATHS.actions, "Product action planning", OPERATION_BUDGETS_MS.actions, input), "Product action planning");
+      // A response can be lost after the paid action request was accepted.
+      // Do not blindly POST it again; orchestration adopts a deterministic
+      // fallback and durably checkpoints that outcome for later task attempts.
+      const payload = requiredObject<Awaited<ReturnType<ReportOrchestrationPort["actions"]>>>(await requestJson(fetchImpl, new URL(PATHS.actions, appOrigin).toString(), token, "Product action planning", OPERATION_BUDGETS_MS.actions, input, undefined, 1), "Product action planning");
       if (payload.ok !== true) throw new OrchestrationHttpError("Product action planning", 422, false);
       return payload;
     },

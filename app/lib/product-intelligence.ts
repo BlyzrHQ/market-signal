@@ -199,6 +199,7 @@ export type ProductComparison = {
       code?: string;
       httpStatus?: number;
       failureKind?: "robots" | "network" | "http" | "content" | "identity" | "adapter" | "redirect";
+      retryExhausted?: true;
     }>;
   };
   actionPlanning?: {

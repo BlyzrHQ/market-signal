@@ -21,6 +21,7 @@ export type EnrichmentGap = {
   code?: "robots_unreachable" | "robots_disallowed" | "fetch_failed" | "identity_mismatch" | "adapter_limited";
   httpStatus?: number;
   failureKind?: "robots" | "network" | "http" | "content" | "identity" | "adapter" | "redirect";
+  retryExhausted?: true;
 };
 
 export type ProductEnrichmentCoverage = {

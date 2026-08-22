@@ -65,6 +65,7 @@ export const TERMINAL_PRESENTATION_CHECKPOINT_BATCH_INDEX_BASE = 280;
 export const MAX_ORCHESTRATION_TASK_ATTEMPTS = 10;
 export const MATCH_JUDGE_CHECKPOINT_BATCH_INDEX_BASE = 1_400;
 export const MAX_MATCH_JUDGE_CHECKPOINTS_PER_TASK_ATTEMPT = 250;
+export const ACTION_PLAN_CHECKPOINT_BATCH_INDEX = 3_910;
 
 export function productEvidenceReferenceTimeMs(catalogs: Array<{ products: ProductRecord[] }>, reportCreatedAt: string, wallClockMs = Date.now()) {
   const fallback = Date.parse(reportCreatedAt);
@@ -279,6 +280,7 @@ export function comparisonWithinPrimaryCatalog(comparison: ProductComparison | n
 type EnrichmentResult = Awaited<ReturnType<ReportOrchestrationPort["enrich"]>>;
 
 function isRetryableEnrichmentGap(gap: NonNullable<ProductComparison["enrichment"]>["gaps"][number]) {
+  if (gap.retryExhausted === true) return false;
   // Adapter gaps are terminal for this report even when the adapter transport
   // was transient. Retrying them in a later task can repeat paid matcher work
   // after a crash; the user can explicitly start a fresh report instead.
@@ -398,23 +400,20 @@ function validMatcherStateCheckpoint(value: unknown, primaryDomain: string, mark
   };
 }
 
-function terminalizeRepeatedAdapterGaps(previous: EnrichmentResult, retried: EnrichmentResult): EnrichmentResult {
-  const retriedAdapterKeys = new Set(previous.coverage.gaps
-    .filter((gap) => gap.code === "adapter_limited" && isRetryableEnrichmentGap(gap))
+function markRetriedEnrichmentGapsExhausted(previous: EnrichmentResult, retried: EnrichmentResult): EnrichmentResult {
+  const retriedKeys = new Set(previous.coverage.gaps
+    .filter(isRetryableEnrichmentGap)
     .map(enrichmentOutcomeKey));
-  if (!retriedAdapterKeys.size) return retried;
+  if (!retriedKeys.size) return retried;
   return {
     ...retried,
     coverage: {
       ...retried.coverage,
-      gaps: retried.coverage.gaps.map((gap) => gap.code === "adapter_limited"
-        && isRetryableEnrichmentGap(gap)
-        && retriedAdapterKeys.has(enrichmentOutcomeKey(gap))
+      gaps: retried.coverage.gaps.map((gap) => retriedKeys.has(enrichmentOutcomeKey(gap))
         ? {
             ...gap,
-            reason: `${gap.reason} The single bounded adapter retry was exhausted.`,
-            failureKind: "adapter" as const,
-            httpStatus: undefined,
+            reason: `${gap.reason} The single bounded enrichment retry was exhausted.`,
+            retryExhausted: true as const,
           }
         : gap),
     },
@@ -484,7 +483,7 @@ export function validEnrichmentCheckpoint(value: unknown, targets: ProductEnrich
   const gapKeys: string[] = [];
   if (!coverage.gaps.every((gap) => {
     if (!gap || typeof gap !== "object") return false;
-    const record = gap as { productId?: unknown; url?: unknown; role?: unknown; reason?: unknown; code?: unknown; failureKind?: unknown; httpStatus?: unknown };
+    const record = gap as { productId?: unknown; url?: unknown; role?: unknown; reason?: unknown; code?: unknown; failureKind?: unknown; httpStatus?: unknown; retryExhausted?: unknown };
     const validCodes = new Set(["robots_unreachable", "robots_disallowed", "fetch_failed", "identity_mismatch", "adapter_limited"]);
     const validFailureKinds = new Set(["robots", "network", "http", "content", "identity", "adapter", "redirect"]);
     const retryShaped = record.failureKind === "network" || record.httpStatus === 0 || record.code === "robots_unreachable"
@@ -503,6 +502,7 @@ export function validEnrichmentCheckpoint(value: unknown, targets: ProductEnrich
       || typeof record.reason !== "string" || !record.reason.trim() || record.reason.length > 2_000
       || typeof record.code !== "string" || !validCodes.has(record.code)
       || typeof record.failureKind !== "string" || !validFailureKinds.has(record.failureKind)
+      || (record.retryExhausted !== undefined && record.retryExhausted !== true)
       || (retryShaped && (typeof record.code !== "string" || typeof record.failureKind !== "string"))
       || (record.httpStatus !== undefined && (!Number.isInteger(record.httpStatus) || Number(record.httpStatus) < 0 || Number(record.httpStatus) > 599))) return false;
     if (!semanticallyValid) return false;
@@ -519,6 +519,47 @@ export function validEnrichmentCheckpoint(value: unknown, targets: ProductEnrich
   const represented = new Set([...productKeys, ...uniqueGapKeys]);
   if (represented.size !== targetByProduct.size || [...targetByProduct.keys()].some((key) => !represented.has(key))) return null;
   return candidate as EnrichmentResult;
+}
+
+function actionPlanInputHash(inputs: ProductActionInput[]) {
+  return createHash("sha256").update(JSON.stringify({ version: 1, inputs: stableCheckpointValue(inputs) })).digest("hex");
+}
+
+function validActionPlanCheckpoint(value: unknown, inputs: ProductActionInput[]): ProductActionPlanningResult | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Partial<ProductActionPlanningResult>;
+  if (!Array.isArray(candidate.plans) || !candidate.metadata || typeof candidate.metadata !== "object") return null;
+  const inputByPair = new Map(inputs.map((input) => [input.pairKey, input]));
+  if (inputByPair.size !== inputs.length || candidate.plans.length !== inputs.length) return null;
+  const seenPairs = new Set<string>();
+  const levers = new Set(["price_response", "merchandising", "positioning", "price_transparency", "evidence_gap", "packaging"]);
+  for (const entry of candidate.plans) {
+    if (!entry || typeof entry !== "object" || typeof entry.pairKey !== "string" || seenPairs.has(entry.pairKey)) return null;
+    const input = inputByPair.get(entry.pairKey);
+    const plan = entry.plan;
+    if (!input || !plan || typeof plan !== "object" || !["ai", "deterministic"].includes(plan.source)
+      || plan.claimType !== "Recommendation" || !levers.has(plan.leverType)
+      || [plan.actionEn, plan.actionAr, plan.rationaleEn, plan.rationaleAr, plan.model, plan.promptVersion].some((item) => typeof item !== "string" || item.length > 4_000)
+      || !plan.actionEn.trim() || !plan.actionAr.trim() || !plan.rationaleEn.trim() || !plan.rationaleAr.trim()
+      || !Array.isArray(plan.evidenceKeys) || plan.evidenceKeys.length > input.facts.length
+      || new Set(plan.evidenceKeys).size !== plan.evidenceKeys.length
+      || plan.evidenceKeys.some((key) => typeof key !== "string" || !input.facts.some((fact) => fact.key === key))) return null;
+    seenPairs.add(entry.pairKey);
+  }
+  const metadata = candidate.metadata as ProductActionPlanningResult["metadata"];
+  const boundedInteger = (item: unknown, max: number) => Number.isInteger(item) && Number(item) >= 0 && Number(item) <= max;
+  if (!["ai-grounded", "deterministic-fallback"].includes(metadata.method)
+    || typeof metadata.available !== "boolean" || typeof metadata.model !== "string" || metadata.model.length > 200
+    || typeof metadata.promptVersion !== "string" || metadata.promptVersion.length > 200
+    || metadata.actionsRequested !== inputs.length
+    || !boundedInteger(metadata.aiActionsAccepted, inputs.length)
+    || !boundedInteger(metadata.fallbackActions, inputs.length)
+    || metadata.aiActionsAccepted + metadata.fallbackActions !== inputs.length
+    || !boundedInteger(metadata.calls, 100) || !boundedInteger(metadata.durationMs, 60 * 60 * 1_000)
+    || !Array.isArray(metadata.gaps) || metadata.gaps.length > 12 || metadata.gaps.some((gap) => typeof gap !== "string" || gap.length > 2_000)
+    || (metadata.rejectionReasons !== undefined && (!metadata.rejectionReasons || typeof metadata.rejectionReasons !== "object" || Array.isArray(metadata.rejectionReasons)
+      || Object.entries(metadata.rejectionReasons).some(([reason, count]) => !reason || reason.length > 200 || !boundedInteger(count, inputs.length))))) return null;
+  return candidate as ProductActionPlanningResult;
 }
 
 function recoveredEnrichmentProducts(values: unknown[], comparison: ProductComparison) {
@@ -1137,13 +1178,14 @@ export async function orchestrateReport(
     // namespaces concurrently so crash recovery retains accepted edges from
     // every adopted attempt without turning the critical path into a single
     // 2,500-batch sequential scan.
-    const [matcherStateCheckpoints, stateCheckpoints, ...judgeCheckpointPages] = await Promise.all([
+    const [matcherStateCheckpoints, stateCheckpoints, actionCheckpoints, ...judgeCheckpointPages] = await Promise.all([
       port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: MATCHER_STATE_CHECKPOINT_BATCH_INDEX_BASE, batchIndexEnd: CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE - 1, latestPerBatch: true }),
       port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: 270, batchIndexEnd: MATCH_JUDGE_CHECKPOINT_BATCH_INDEX_BASE - 1, latestPerBatch: true }),
+      port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: ACTION_PLAN_CHECKPOINT_BATCH_INDEX, batchIndexEnd: ACTION_PLAN_CHECKPOINT_BATCH_INDEX, latestPerBatch: true, limit: 1 }),
       ...judgeCheckpointRanges.map((range) => port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: range.start, batchIndexEnd: range.end, latestPerBatch: true })),
     ]);
     const adoptedJudgeCheckpoints = judgeCheckpointPages.flat();
-    const loadedCheckpoints = [...matcherStateCheckpoints, ...stateCheckpoints, ...adoptedJudgeCheckpoints];
+    const loadedCheckpoints = [...matcherStateCheckpoints, ...stateCheckpoints, ...actionCheckpoints, ...adoptedJudgeCheckpoints];
     const allDurableCheckpoints = new Map(loadedCheckpoints.map((checkpoint) => [`${checkpoint.attemptNumber}:${checkpoint.batchIndex}`, checkpoint]));
     const durableCheckpoints = new Map<number, (typeof loadedCheckpoints)[number]>();
     for (const checkpoint of loadedCheckpoints) {
@@ -1362,16 +1404,16 @@ export async function orchestrateReport(
               const result = await port.enrich({ targets: targetsToFetch });
               const validatedResult = validEnrichmentCheckpoint(result, targetsToFetch);
               if (!validatedResult) throw new Error("Product-page enrichment returned an invalid batch result.");
-              const boundedRetryResult = previous ? terminalizeRepeatedAdapterGaps(previous, validatedResult) : validatedResult;
+              const boundedRetryResult = previous ? markRetriedEnrichmentGapsExhausted(previous, validatedResult) : validatedResult;
               const merged = previous ? validEnrichmentCheckpoint(mergeEnrichmentRetry(previous, boundedRetryResult, batch), batch) : validatedResult;
               if (!merged) throw new Error("Product-page enrichment retry could not be merged into its durable batch.");
               mergedResult = merged;
             } catch (error) {
               if (!previous) throw error;
-              // The request itself consumed the one adapter retry even when no
+              // The request itself consumed the one enrichment retry even when no
               // response arrived. Persist the exhausted classification so a
-              // later task cannot repeat that paid-work path indefinitely.
-              mergedResult = terminalizeRepeatedAdapterGaps(previous, previous);
+              // later task cannot repeat that work path indefinitely.
+              mergedResult = markRetriedEnrichmentGapsExhausted(previous, previous);
             }
             try {
               await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointIndex, inputHash, result: mergedResult });
@@ -1560,25 +1602,50 @@ export async function orchestrateReport(
         : collectProductActionInputs(comparison);
       if (actionInputs.length) {
         await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "actions-started"), "actions", "Drafting evidence-grounded next moves for the accepted product pairs.", { pairs: actionInputs.length }));
-        try {
-          const planned = await port.actions({ inputs: actionInputs });
-          comparison = applyProductActionPlans(comparison, planned.result);
-          completedPhases.push("actions");
-          await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "actions-complete"), "actions", "Next moves were drafted and checked against saved product evidence.", {
-            requested: planned.result.metadata.actionsRequested,
-            aiAccepted: planned.result.metadata.aiActionsAccepted,
-            deterministicFallbacks: planned.result.metadata.fallbackActions,
-          }));
-        } catch (error) {
-          const fallback = deterministicProductActionResult(actionInputs, undefined, [message(error, "AI action planning was unavailable; deterministic recommendations were retained.")]);
-          comparison = applyProductActionPlans(comparison, fallback);
-          completedPhases.push("actions");
-          await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "actions-complete"), "actions", "AI action drafting was unavailable, so the report retained its deterministic next moves.", {
-            requested: actionInputs.length,
-            aiAccepted: 0,
-            deterministicFallbacks: actionInputs.length,
-          }));
+        const inputHash = actionPlanInputHash(actionInputs);
+        const saved = durableCheckpoints.get(ACTION_PLAN_CHECKPOINT_BATCH_INDEX);
+        let actionResult: ProductActionPlanningResult;
+        if (saved) {
+          if (saved.inputHash !== inputHash) throw new Error("The durable action-plan checkpoint belongs to different product evidence.");
+          const validated = validActionPlanCheckpoint(saved.result, actionInputs);
+          if (!validated) throw new Error("The durable action-plan checkpoint is invalid.");
+          actionResult = validated;
+        } else {
+          try {
+            actionResult = (await port.actions({ inputs: actionInputs })).result;
+          } catch (error) {
+            actionResult = deterministicProductActionResult(actionInputs, undefined, [message(error, "AI action planning was unavailable; deterministic recommendations were retained.")]);
+          }
+          if (!validActionPlanCheckpoint(actionResult, actionInputs)) throw new Error("Product action planning returned an invalid result.");
+          const checkpoint = { attemptNumber: attempt.attemptNumber, batchIndex: ACTION_PLAN_CHECKPOINT_BATCH_INDEX, inputHash, result: actionResult };
+          try {
+            await port.saveCheckpoint(payload.publicId, checkpoint);
+            durableCheckpoints.set(ACTION_PLAN_CHECKPOINT_BATCH_INDEX, checkpoint);
+            allDurableCheckpoints.set(`${attempt.attemptNumber}:${ACTION_PLAN_CHECKPOINT_BATCH_INDEX}`, checkpoint);
+          } catch (saveError) {
+            const committed = (await port.loadCheckpoint(payload.publicId, {
+              attemptNumber: attempt.attemptNumber,
+              batchIndex: ACTION_PLAN_CHECKPOINT_BATCH_INDEX,
+            }))[0];
+            const committedResult = committed?.inputHash === inputHash
+              ? validActionPlanCheckpoint(committed.result, actionInputs)
+              : null;
+            if (!committed || !committedResult
+              || JSON.stringify(stableCheckpointValue(committed.result)) !== JSON.stringify(stableCheckpointValue(actionResult))) throw saveError;
+            actionResult = committedResult;
+            durableCheckpoints.set(ACTION_PLAN_CHECKPOINT_BATCH_INDEX, committed);
+            allDurableCheckpoints.set(`${committed.attemptNumber}:${ACTION_PLAN_CHECKPOINT_BATCH_INDEX}`, committed);
+          }
         }
+        comparison = applyProductActionPlans(comparison, actionResult);
+        completedPhases.push("actions");
+        await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "actions-complete"), "actions", actionResult.metadata.method === "ai-grounded"
+          ? "Next moves were drafted and checked against saved product evidence."
+          : "AI action drafting was unavailable, so the report retained its deterministic next moves.", {
+          requested: actionResult.metadata.actionsRequested,
+          aiAccepted: actionResult.metadata.aiActionsAccepted,
+          deterministicFallbacks: actionResult.metadata.fallbackActions,
+        }));
       }
       screenedComparison = mergePublishedSelectionIntoScreenedComparison(screenedComparison, comparison);
       document = upsertProductComparisonBlock(document, comparison) as JsonDocument;
