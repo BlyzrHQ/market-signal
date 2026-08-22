@@ -26,7 +26,7 @@ function product(id, domain = "shop.test") {
     ownership: "path-inferred",
     extraction: "json-ld",
     confidence: "High",
-    sourceUrl: `https://${domain}/products/${id}`,
+    sourceUrl: `https://${domain}/products/${id}?country=US`,
     imageUrl: "",
     observedAt: TEST_NOW,
     claimIds: [`claim-${id}`],
@@ -51,6 +51,7 @@ function row(id, rivalId = null) {
 function comparison({ selected = ["p1", "p2"], assessed = selected, rows = selected.map((id) => row(id)), gaps = [], method = "ai-hybrid", available = true, accepted = 0 } = {}) {
   return {
     primaryDomain: "shop.test",
+    marketCountryCode: "US",
     comparisonDomains: ["rival.test"],
     rows,
     unmatched: [],

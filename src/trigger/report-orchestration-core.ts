@@ -36,7 +36,7 @@ class CompletedFactManifestConflict extends Error {}
 export const MAX_OPERATION_TIMEOUT_MS = 13 * 60 * 1000;
 export const FINAL_ENRICHMENT_BATCH_SIZE = 64;
 export const FINAL_ENRICHMENT_BATCH_CONCURRENCY = 2;
-export const MAX_FINAL_ENRICHMENT_TARGETS = 1_000;
+export const MAX_FINAL_ENRICHMENT_TARGETS = 6_000;
 export const MAX_FINAL_ENRICHMENT_BATCH_WAVES = Math.ceil(MAX_FINAL_ENRICHMENT_TARGETS / FINAL_ENRICHMENT_BATCH_SIZE / FINAL_ENRICHMENT_BATCH_CONCURRENCY);
 
 export function pricedResultEnrichmentBudget(resultTarget: number) {
@@ -70,6 +70,10 @@ function mergePublishedSelectionIntoScreenedComparison(screened: ProductComparis
       };
     }),
   } satisfies ProductComparison;
+}
+
+function publishedPricedPrimaryCount(comparison: ProductComparison, referenceTimeMs: number) {
+  return publishPricedProductComparison(comparison, referenceTimeMs).rows.filter((row) => row.matches.some((match) => match.publication?.priceEligible === true)).length;
 }
 
 type RunStatus = "queued" | "running" | "complete" | "limited" | "failed" | "interrupted";
@@ -300,9 +304,11 @@ export async function orchestrateReport(
     comparison = composeProductMatchAttempts(baseline, attempts, requestCount);
     if (comparison && marketCountryCode) comparison = { ...comparison, marketCountryCode };
     if (comparison) {
-      const enrichmentPlan = planFinalProductEnrichmentTargets(comparison, pricedResultEnrichmentBudget(payload.productLimit), Date.parse(stored.run.createdAt));
+      const reportReferenceTimeMs = Date.parse(stored.run.createdAt);
+      const enrichmentPlan = planFinalProductEnrichmentTargets(comparison, pricedResultEnrichmentBudget(payload.productLimit), reportReferenceTimeMs);
       const targets = enrichmentPlan.targets;
-      if (targets.length) {
+      let targetSatisfied = publishedPricedPrimaryCount(comparison, reportReferenceTimeMs) >= payload.productLimit;
+      if (targets.length && !targetSatisfied) {
         const batches = Array.from({ length: Math.ceil(targets.length / FINAL_ENRICHMENT_BATCH_SIZE) }, (_, index) => targets.slice(index * FINAL_ENRICHMENT_BATCH_SIZE, (index + 1) * FINAL_ENRICHMENT_BATCH_SIZE));
         await port.appendEvent(payload.publicId, event("enrichment-started", "enrichment", "Re-reading accepted product pages in bounded batches for attributable prices and images.", {
           pagesEligible: enrichmentPlan.totalEligible,
@@ -313,9 +319,13 @@ export async function orchestrateReport(
         const products: ProductRecord[] = [];
         const gaps: NonNullable<ProductComparison["enrichment"]>["gaps"] = [];
         let pagesFetched = 0;
+        let pagesRequested = 0;
+        let batchesProcessed = 0;
         let failedBatchCount = 0;
         for (let waveStart = 0; waveStart < batches.length; waveStart += FINAL_ENRICHMENT_BATCH_CONCURRENCY) {
           const wave = batches.slice(waveStart, waveStart + FINAL_ENRICHMENT_BATCH_CONCURRENCY);
+          pagesRequested += wave.reduce((sum, batch) => sum + batch.length, 0);
+          batchesProcessed += wave.length;
           const results = await Promise.allSettled(wave.map((batch) => port.enrich({ targets: batch })));
           results.forEach((result, index) => {
             if (result.status === "fulfilled") {
@@ -339,41 +349,53 @@ export async function orchestrateReport(
           await port.appendEvent(payload.publicId, event(`enrichment-wave-${waveNumber}-checkpoint`, "enrichment", "A bounded selected-product enrichment wave finished.", {
             wave: waveNumber,
             waves: Math.ceil(batches.length / FINAL_ENRICHMENT_BATCH_CONCURRENCY),
-            pagesRequested: batches.slice(0, waveStart + wave.length).reduce((sum, batch) => sum + batch.length, 0),
+            pagesRequested,
             pagesFetched,
             failedBatches: failedBatchCount,
           }));
+          const provisional = applyFinalProductEnrichment(comparison, products, {
+            pagesRequested,
+            pagesFetched,
+            maxPages: targets.length,
+            pagesEligible: enrichmentPlan.totalEligible,
+            pagesTruncated: true,
+            batchCount: batchesProcessed,
+            failedBatchCount,
+            gaps,
+          });
+          targetSatisfied = publishedPricedPrimaryCount(provisional, reportReferenceTimeMs) >= payload.productLimit;
+          if (targetSatisfied) break;
         }
-        if (enrichmentPlan.truncated) gaps.push({ url: "", reason: `${enrichmentPlan.totalEligible - targets.length} eligible product pages were outside the plan-bounded enrichment budget.`, code: "plan_limit" });
+        if (!targetSatisfied && enrichmentPlan.truncated) gaps.push({ url: "", reason: `${enrichmentPlan.totalEligible - targets.length} eligible product pages were outside the plan-bounded enrichment budget.`, code: "plan_limit" });
         const enrichmentIncomplete = failedBatchCount > 0
-          || enrichmentPlan.truncated
-          || pagesFetched < targets.length
+          || (!targetSatisfied && enrichmentPlan.truncated)
+          || (!targetSatisfied && pagesFetched < targets.length)
           || gaps.length > 0;
         comparison = applyFinalProductEnrichment(comparison, products, {
-          pagesRequested: targets.length,
+          pagesRequested,
           pagesFetched,
           maxPages: targets.length,
           pagesEligible: enrichmentPlan.totalEligible,
           pagesTruncated: enrichmentIncomplete,
-          batchCount: batches.length,
+          batchCount: batchesProcessed,
           failedBatchCount,
           gaps,
         });
         if (enrichmentIncomplete) {
           limitedPhases.push("enrichment");
           await port.appendEvent(payload.publicId, event("enrichment-limited", "enrichment", "Selected product enrichment finished with explicit batch or plan coverage gaps.", {
-            pagesRequested: targets.length,
+            pagesRequested,
             pagesFetched,
-            batches: batches.length,
+            batches: batchesProcessed,
             failedBatches: failedBatchCount,
             truncated: enrichmentPlan.truncated,
           }));
         } else {
           completedPhases.push("enrichment");
-          await port.appendEvent(payload.publicId, event("enrichment-complete", "enrichment", "Selected product enrichment finished across all bounded batches.", {
-            pagesRequested: targets.length,
+          await port.appendEvent(payload.publicId, event("enrichment-complete", "enrichment", targetSatisfied ? "Selected product enrichment filled the priced result target." : "Selected product enrichment finished across all bounded batches.", {
+            pagesRequested,
             pagesFetched,
-            batches: batches.length,
+            batches: batchesProcessed,
           }));
         }
       }

@@ -186,6 +186,9 @@ test("authenticated matching binds durable judge checkpoints to the active repor
   const handler = createMatchHandler({
     async build(_domain, _catalogs, options) {
       receivedOptions = options;
+      const planKey = { batchIndex: 999, planHash: "c".repeat(64) };
+      assert.equal(await options.loadCandidatePlan(planKey), null);
+      await options.saveCandidatePlan(planKey, { version: 1, planHash: planKey.planHash, groups: [] });
       const key = { batchIndex: 3, batchCount: 5, batchHash: "a".repeat(64), model: "test", promptVersion: "v1", primaryIds: ["p1"], candidatePairCount: 1 };
       assert.deepEqual(await options.loadJudgeBatchCheckpoint(key), { version: 1 });
       await options.saveJudgeBatchCheckpoint(key, { version: 1 });
@@ -193,6 +196,7 @@ test("authenticated matching binds durable judge checkpoints to the active repor
     },
     async loadCheckpoints(publicId, input) {
       assert.equal(publicId, "b".repeat(32));
+      if (input.batchIndex === 999) return [];
       assert.deepEqual(input, { attemptNumber: 2, batchIndex: 3 });
       return [{ inputHash: "a".repeat(64), result: { version: 1 } }];
     },
@@ -217,9 +221,11 @@ test("authenticated matching binds durable judge checkpoints to the active repor
   assert.equal(receivedOptions.totalBudgetMs, 720_000);
   assert.equal(receivedOptions.referenceTimeMs, Date.parse("2026-07-20T09:00:00.000Z"));
   assert.equal(receivedOptions.marketCountryCode, "GB");
-  assert.equal(saved[0].publicId, "b".repeat(32));
-  assert.equal(saved[0].input.attemptNumber, 2);
-  assert.equal(saved[0].input.batchIndex, 3);
+  const savedJudge = saved.find((item) => item.input.batchIndex === 3);
+  const savedPlan = saved.find((item) => item.input.batchIndex === 999);
+  assert.equal(savedJudge.publicId, "b".repeat(32));
+  assert.equal(savedJudge.input.attemptNumber, 2);
+  assert.equal(savedPlan.input.inputHash, "c".repeat(64));
 
   const mismatch = await handler(new Request("https://signal.test/api/match", {
     method: "POST",
@@ -227,7 +233,7 @@ test("authenticated matching binds durable judge checkpoints to the active repor
     body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, reportObservedAt: "2026-07-20T09:00:00.000Z", primaryDomain: "shop.test", productLimit: 50, catalogs: [{ domain: "shop.test", products: [{ name: "Honey", sourceUrl: "https://shop.test/products/honey" }] }] }),
   }));
   assert.equal(mismatch.status, 409);
-  assert.equal(saved[0].input.inputHash, "a".repeat(64));
+  assert.equal(savedJudge.input.inputHash, "a".repeat(64));
 
   const malformedPins = await handler(new Request("https://signal.test/api/match", {
     method: "POST",

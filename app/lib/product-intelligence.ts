@@ -1812,8 +1812,8 @@ export function hasComparablePublicPricePair(primary: ProductRecord, rival: Prod
   if (primaryMarket.conflict || rivalMarket.conflict) return false;
   if ((primaryMarket.explicit && !primaryMarket.countryCode) || (rivalMarket.explicit && !rivalMarket.countryCode)) return false;
   const normalizedTarget = /^[A-Z]{2}$/.test(targetMarket.toUpperCase()) ? targetMarket.toUpperCase() : "";
-  if (normalizedTarget && (primaryMarket.countryCode !== normalizedTarget || rivalMarket.countryCode !== normalizedTarget)) return false;
-  return !(primaryMarket.countryCode && rivalMarket.countryCode && primaryMarket.countryCode !== rivalMarket.countryCode);
+  if (!normalizedTarget) return false;
+  return primaryMarket.countryCode === normalizedTarget && rivalMarket.countryCode === normalizedTarget;
 }
 
 function localeNeutralProductPageUrl(value: string) {
@@ -1921,7 +1921,7 @@ export function planPreliminaryCatalogReconciliation(comparison: ProductComparis
 }
 
 export function planFinalProductEnrichmentTargets(comparison: ProductComparison, maxPages = 24, referenceTimeMs = Date.now()) {
-  const boundedMax = Math.max(0, Math.min(1_000, Math.floor(maxPages)));
+  const boundedMax = Math.max(0, Math.min(6_000, Math.floor(maxPages)));
   const marketCountryCode = /^[A-Z]{2}$/.test(String(comparison.marketCountryCode || "").toUpperCase())
     ? String(comparison.marketCountryCode).toUpperCase()
     : "";

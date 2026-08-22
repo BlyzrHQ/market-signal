@@ -37,6 +37,10 @@ type Candidate = {
 
 type CandidateGroup = { primary: ProductRecord; candidates: Candidate[] };
 
+export type ProductCandidatePlanKey = { planHash: string; batchIndex: number };
+export type ProductCandidatePlan = { version: 1; planHash: string; groups: Array<{ primaryKey: string; candidateKeys: string[] }> };
+export const PRODUCT_CANDIDATE_PLAN_BATCH_INDEX = 999;
+
 export type PinnedProductPair = {
   primaryId: string;
   rivalDomain: string;
@@ -91,6 +95,8 @@ export type AIProductMatchingOptions = {
   pinnedPairs?: PinnedProductPair[];
   loadJudgeBatchCheckpoint?: (key: JudgeBatchCheckpointKey) => Promise<unknown>;
   saveJudgeBatchCheckpoint?: (key: JudgeBatchCheckpointKey, checkpoint: JudgeBatchCheckpoint) => Promise<void>;
+  loadCandidatePlan?: (key: ProductCandidatePlanKey) => Promise<unknown>;
+  saveCandidatePlan?: (key: ProductCandidatePlanKey, plan: ProductCandidatePlan) => Promise<void>;
 };
 
 const PROMPT_VERSION = "ai-product-match-v4-useful-identity";
@@ -98,8 +104,8 @@ const DEFAULT_MODEL = "gpt-5.4-mini";
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
 const DEFAULT_MAX_PRIMARY = 60;
 const MAX_PRIMARY_PRODUCTS = 1_000;
-const DEFAULT_MAX_CANDIDATES = 2;
-const DEFAULT_MAX_PER_DOMAIN = 2;
+const DEFAULT_MAX_CANDIDATES = 5;
+const DEFAULT_MAX_PER_DOMAIN = 5;
 const DEFAULT_MAX_COMPETITOR_PRODUCTS = 600;
 const DEFAULT_MAX_RETRIEVAL_POOL_PER_DOMAIN = 24;
 const DEFAULT_GROUPS_PER_BATCH = 20;
@@ -556,7 +562,6 @@ function hasPricedCandidate(group: CandidateGroup, referenceTimeMs: number, mark
 
 function selectJudgeGroups(groups: CandidateGroup[], maxPrimary: number, pinnedPrimaryIds = new Set<string>(), referenceTimeMs = Date.now(), marketCountryCode = "") {
   return [...groups]
-    .filter((group) => group.candidates.length)
     .sort((left, right) => Number(pinnedPrimaryIds.has(right.primary.id)) - Number(pinnedPrimaryIds.has(left.primary.id))
       || Number(hasPricedCandidate(right, referenceTimeMs, marketCountryCode)) - Number(hasPricedCandidate(left, referenceTimeMs, marketCountryCode))
       || candidateStrength(right) - candidateStrength(left)
@@ -564,6 +569,49 @@ function selectJudgeGroups(groups: CandidateGroup[], maxPrimary: number, pinnedP
       || Number(Boolean(right.primary.imageUrl)) - Number(Boolean(left.primary.imageUrl))
       || left.primary.id.localeCompare(right.primary.id))
     .slice(0, maxPrimary);
+}
+
+function candidatePlanHash(primary: ProductRecord[], competitors: ProductCatalog[], options: { maxPrimary: number; maxCandidates: number; maxPerDomain: number; maxRetrievalPool: number; referenceTimeMs: number; marketCountryCode: string; pinnedPairs: PinnedProductPair[] }) {
+  return createHash("sha256").update(JSON.stringify({
+    promptVersion: PROMPT_VERSION,
+    primary: primary.map(candidatePlanProductIdentity),
+    competitors: competitors.map((catalog) => ({ domain: canonicalDomain(catalog.domain), products: catalog.products.map(candidatePlanProductIdentity) })),
+    ...options,
+  })).digest("hex");
+}
+
+function candidatePlanProductIdentity(product: ProductRecord) {
+  return {
+    domain: canonicalDomain(product.domain),
+    id: product.id,
+    sourceUrl: product.sourceUrl,
+    normalizedName: product.normalizedName,
+    quantity: product.quantity || null,
+  };
+}
+
+function candidatePlanProductKey(product: ProductRecord) {
+  return createHash("sha256").update(JSON.stringify(candidatePlanProductIdentity(product))).digest("base64url");
+}
+
+function restoreCandidatePlan(value: unknown, planHash: string, primary: ProductRecord[], competitors: ProductCatalog[], embeddings: Map<string, number[]>) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const plan = value as ProductCandidatePlan;
+  if (plan.version !== 1 || plan.planHash !== planHash || !Array.isArray(plan.groups)) return null;
+  const primaryByKey = new Map(primary.map((product) => [candidatePlanProductKey(product), product]));
+  const rivalByKey = new Map<string, ProductRecord>(competitors.flatMap((catalog) => catalog.products.map((product) => [candidatePlanProductKey(product), product] as [string, ProductRecord])));
+  const groups: CandidateGroup[] = [];
+  const seenPrimary = new Set<string>();
+  for (const item of plan.groups) {
+    if (!item || typeof item.primaryKey !== "string" || !Array.isArray(item.candidateKeys) || seenPrimary.has(item.primaryKey)) return null;
+    const primaryProduct = primaryByKey.get(item.primaryKey);
+    if (!primaryProduct) return null;
+    const candidates = item.candidateKeys.map((identity) => rivalByKey.get(identity)).map((product) => product ? candidateForPair(primaryProduct, product, embeddings) : null);
+    if (candidates.some((candidate) => !candidate)) return null;
+    seenPrimary.add(item.primaryKey);
+    groups.push({ primary: primaryProduct, candidates: candidates as Candidate[] });
+  }
+  return groups;
 }
 
 function exactObservedVariant(primary: ProductRecord, rival: ProductRecord) {
@@ -629,7 +677,7 @@ function withoutUnassessedMatches(comparison: ProductComparison) {
 export function buildAIProductComparison(primaryDomain: string, catalogs: ProductCatalog[], options?: AIProductMatchingOptions): Promise<ProductComparison>;
 export function buildAIProductComparison(primaryDomain: string, catalogs: ProductCatalog[], requiredSourceUrls?: Record<string, string[]>, options?: AIProductMatchingOptions): Promise<ProductComparison>;
 export async function buildAIProductComparison(primaryDomain: string, catalogs: ProductCatalog[], requiredSourceUrlsOrOptions: Record<string, string[]> | AIProductMatchingOptions = {}, providedOptions?: AIProductMatchingOptions): Promise<ProductComparison> {
-  const optionKeys = new Set<keyof AIProductMatchingOptions>(["apiKey", "fetch", "baseUrl", "model", "embeddingModel", "maxPrimaryProducts", "maxCandidatesPerPrimary", "maxCandidatesPerDomain", "maxProductsPerCompetitor", "maxRetrievalPoolPerDomain", "primaryProductsPerJudgeCall", "maxPairsPerJudgeCall", "concurrency", "timeoutMs", "totalBudgetMs", "referenceTimeMs", "marketCountryCode", "pinnedPairs", "loadJudgeBatchCheckpoint", "saveJudgeBatchCheckpoint"]);
+  const optionKeys = new Set<keyof AIProductMatchingOptions>(["apiKey", "fetch", "baseUrl", "model", "embeddingModel", "maxPrimaryProducts", "maxCandidatesPerPrimary", "maxCandidatesPerDomain", "maxProductsPerCompetitor", "maxRetrievalPoolPerDomain", "primaryProductsPerJudgeCall", "maxPairsPerJudgeCall", "concurrency", "timeoutMs", "totalBudgetMs", "referenceTimeMs", "marketCountryCode", "pinnedPairs", "loadJudgeBatchCheckpoint", "saveJudgeBatchCheckpoint", "loadCandidatePlan", "saveCandidatePlan"]);
   const thirdArgumentIsOptions = providedOptions === undefined && Object.keys(requiredSourceUrlsOrOptions).some((key) => optionKeys.has(key as keyof AIProductMatchingOptions));
   const requiredSourceUrls = thirdArgumentIsOptions ? {} : requiredSourceUrlsOrOptions as Record<string, string[]>;
   const options = providedOptions || (thirdArgumentIsOptions ? requiredSourceUrlsOrOptions as AIProductMatchingOptions : {});
@@ -673,21 +721,33 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   let embeddings = new Map<string, number[]>();
   let embeddingCalls = 0;
   const gaps: string[] = [];
-  try {
-    const embedded = await embedProducts(fetcher, `${baseUrl}/embeddings`, apiKey, embeddingModel, embeddingProducts, timeoutMs, deadlineAt, concurrency);
-    embeddings = embedded.vectors;
-    embeddingCalls = embedded.calls;
-    if (embeddings.size < embeddingProducts.length) gaps.push(`Semantic retrieval covered ${embeddings.size} of ${embeddingProducts.length} bounded product records; lexical retrieval filled the remainder.`);
-  } catch (error) {
-    gaps.push(error instanceof Error && error.name === "AbortError" ? "Semantic product retrieval timed out; bounded lexical retrieval was used before AI judging." : "Semantic product retrieval was unavailable; bounded lexical retrieval was used before AI judging.");
-  }
-
   const pinnedPairs = requestedPins;
-  const retrieved = retrieveGroups(synchronizedPrimary, competitors, embeddings, fallback, maxCandidates, maxPerDomain, maxRetrievalPool, pinnedPairs);
   const referenceTimeMs = Number.isFinite(options.referenceTimeMs) ? Number(options.referenceTimeMs) : Date.now();
-  const groups = selectJudgeGroups(retrieved.groups, maxPrimary, new Set(pinnedPairs.map((pair) => pair.primaryId)), referenceTimeMs, options.marketCountryCode || "");
+  const planHash = candidatePlanHash(synchronizedPrimary, competitors, { maxPrimary, maxCandidates, maxPerDomain, maxRetrievalPool, referenceTimeMs, marketCountryCode: options.marketCountryCode || "", pinnedPairs });
+  const planKey = { planHash, batchIndex: PRODUCT_CANDIDATE_PLAN_BATCH_INDEX };
+  let groups: CandidateGroup[] | null = null;
+  if (options.loadCandidatePlan) {
+    try { groups = restoreCandidatePlan(await options.loadCandidatePlan(planKey), planHash, synchronizedPrimary, competitors, embeddings); } catch { /* a candidate-plan provider failure is a cache miss */ }
+  }
+  if (!groups) {
+    try {
+      const embedded = await embedProducts(fetcher, `${baseUrl}/embeddings`, apiKey, embeddingModel, embeddingProducts, timeoutMs, deadlineAt, concurrency);
+      embeddings = embedded.vectors;
+      embeddingCalls = embedded.calls;
+      if (embeddings.size < embeddingProducts.length) gaps.push(`Semantic retrieval covered ${embeddings.size} of ${embeddingProducts.length} bounded product records; lexical retrieval filled the remainder.`);
+    } catch (error) {
+      gaps.push(error instanceof Error && error.name === "AbortError" ? "Semantic product retrieval timed out; bounded lexical retrieval was used before AI judging." : "Semantic product retrieval was unavailable; bounded lexical retrieval was used before AI judging.");
+    }
+    const retrievedGroups = retrieveGroups(synchronizedPrimary, competitors, embeddings, fallback, maxCandidates, maxPerDomain, maxRetrievalPool, pinnedPairs);
+    groups = selectJudgeGroups(retrievedGroups.groups, maxPrimary, new Set(pinnedPairs.map((pair) => pair.primaryId)), referenceTimeMs, options.marketCountryCode || "");
+    if (options.saveCandidatePlan) {
+      const plan: ProductCandidatePlan = { version: 1, planHash, groups: groups.map((group) => ({ primaryKey: candidatePlanProductKey(group.primary), candidateKeys: group.candidates.map((candidate) => candidatePlanProductKey(candidate.product)) })) };
+      try { await options.saveCandidatePlan(planKey, plan); } catch { /* live matching can proceed when plan persistence is unavailable */ }
+    }
+  }
+  const retrievalPairsScored = synchronizedPrimary.length * competitors.reduce((sum, catalog) => sum + catalog.products.length, 0);
   matchingBase.selectedPrimaryIds = groups.map((group) => group.primary.id);
-  matchingBase.primaryProductsScreened = matchingBase.selectedPrimaryIds.length;
+  matchingBase.primaryProductsScreened = groups.length;
   matchingBase.candidateSlotsByDomain = groups.flatMap((group) => group.candidates).reduce((counts, candidate) => {
     const domain = canonicalDomain(candidate.product.domain);
     counts[domain] = (counts[domain] || 0) + 1;
@@ -752,7 +812,7 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
     const assessment = sanitizeAssessment(value, groupMap);
     return assessment ? [assessment] : [];
   });
-  if (!successfulPrimaryIds.size) return { ...withoutUnassessedMatches(fallback), matching: { ...matchingBase, method: "lexical-fallback", available: false, retrievalPairsScored: retrieved.scoredPairs, judgeCalls, embeddingCalls, reusedJudgeCheckpoints, savedJudgeCheckpoints, durationMs: Date.now() - startedAt, selectedPrimaryIds: primaryProducts.map((product) => product.id), gaps: gaps.length ? gaps : ["AI product judging returned no usable assessments; no product pair was accepted."] } };
+  if (!successfulPrimaryIds.size) return { ...withoutUnassessedMatches(fallback), matching: { ...matchingBase, method: "lexical-fallback", available: false, retrievalPairsScored, judgeCalls, embeddingCalls, reusedJudgeCheckpoints, savedJudgeCheckpoints, durationMs: Date.now() - startedAt, selectedPrimaryIds: primaryProducts.map((product) => product.id), gaps: gaps.length ? gaps : ["AI product judging returned no usable assessments; no product pair was accepted."] } };
 
   const pinnedPairKeys = new Set(pinnedPairs.map((pair) => `${pair.primaryId}|${canonicalDomain(pair.rivalDomain)}|${pair.rivalId}`));
   const proposals = sanitized.filter((item): item is typeof item & { verdict: "same_product" | "close_substitute" } => {
@@ -766,7 +826,6 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
       - Number(pinnedPairKeys.has(`${left.primary.id}|${canonicalDomain(left.candidate.product.domain)}|${left.candidate.product.id}`))
       || Number(right.verdict === "same_product") - Number(left.verdict === "same_product")
       || right.confidence - left.confidence
-      || right.candidate.retrievalScore - left.candidate.retrievalScore
       || left.candidate.product.id.localeCompare(right.candidate.product.id));
   const assignments = new Map<string, typeof proposals[number]>();
   const usedRivals = new Set<string>();
@@ -833,7 +892,7 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
       primaryProductsAssessed: successfulPrimaryIds.size,
       primaryProductsScreened: matchingBase.primaryProductsScreened,
       candidatePairsAssessed: sanitized.length,
-      retrievalPairsScored: retrieved.scoredPairs,
+      retrievalPairsScored,
       judgeCalls,
       embeddingCalls,
       totalJudgeBatches: judgeBatches.length,

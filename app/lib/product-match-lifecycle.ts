@@ -132,14 +132,14 @@ export function publishPricedProductComparison(comparison: ProductComparison, re
     ? String(comparison.marketCountryCode).toUpperCase()
     : "";
   const marketCompatible = (primary: ProductRecord, rival: ProductRecord) => {
+    if (!targetMarket) return false;
     const primaryEvidence = publicSourceMarketEvidence(primary.sourceUrl);
     const rivalEvidence = publicSourceMarketEvidence(rival.sourceUrl);
     if (primaryEvidence.conflict || rivalEvidence.conflict) return false;
     if ((primaryEvidence.explicit && !primaryEvidence.countryCode) || (rivalEvidence.explicit && !rivalEvidence.countryCode)) return false;
     const primaryMarket = publicSourceMarketCountryCode(primary.sourceUrl);
     const rivalMarket = publicSourceMarketCountryCode(rival.sourceUrl);
-    if (targetMarket && (primaryMarket !== targetMarket || rivalMarket !== targetMarket)) return false;
-    return !(primaryMarket && rivalMarket && primaryMarket !== rivalMarket);
+    return primaryMarket === targetMarket && rivalMarket === targetMarket;
   };
   const validPublicSource = (product: ProductRecord) => {
     try {

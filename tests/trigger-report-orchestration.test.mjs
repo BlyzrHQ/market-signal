@@ -67,12 +67,13 @@ function product(domain = "shop.example", id = "p1") {
 function comparison({ withPair = false, count = withPair ? 20 : 1 } = {}) {
   const pairs = Array.from({ length: count }, (_, index) => {
     const suffix = index ? `-${index + 1}` : "";
-    const primary = { ...product("shop.example", `p1${suffix}`), name: `Honey ${index + 1} 500g`, normalizedName: `honey ${index + 1} 500g`, sourceUrl: `https://shop.example/products/honey${suffix}`, priceSignals: withPair ? [{ raw: "GBP 10", currency: "GBP", amount: 10 }] : [] };
-    const rival = { ...product("rival.example", `r1${suffix}`), name: primary.name, normalizedName: primary.normalizedName, sourceUrl: `https://rival.example/products/honey${suffix}`, priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }] };
+    const primary = { ...product("shop.example", `p1${suffix}`), name: `Honey ${index + 1} 500g`, normalizedName: `honey ${index + 1} 500g`, sourceUrl: `https://shop.example/products/honey${suffix}?country=GB`, priceSignals: withPair ? [{ raw: "GBP 10", currency: "GBP", amount: 10 }] : [] };
+    const rival = { ...product("rival.example", `r1${suffix}`), name: primary.name, normalizedName: primary.normalizedName, sourceUrl: `https://rival.example/products/honey${suffix}?country=GB`, priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }] };
     return { primary, rival };
   });
   return {
     primaryDomain: "shop.example",
+    marketCountryCode: "GB",
     comparisonDomains: ["rival.example"],
     rows: withPair ? pairs.map(({ primary, rival }) => ({ primary, matches: [{
       domain: rival.domain,
@@ -676,8 +677,8 @@ test("all operation deadlines keep a two-minute margin below the stale marker", 
   for (const timeout of Object.values(OPERATION_BUDGETS_MS)) assert.ok(timeout <= MAX_OPERATION_TIMEOUT_MS);
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS > OPERATION_BUDGETS_MS.match, "Undici must not preempt the match operation deadline");
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS < MAX_OPERATION_TIMEOUT_MS, "the worker deadline must remain inside the outer edge window");
-  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 2_995_000);
-  assert.ok(WORST_CASE_CRITICAL_PATH_MS <= 3_000_000, "critical path must preserve a two-minute task-ceiling margin");
+  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 8_065_000);
+  assert.ok(WORST_CASE_CRITICAL_PATH_MS <= 8_280_000, "critical path must preserve a two-minute task-ceiling margin");
 });
 
 test("the managed orchestration fetch controls the response-header deadline", async () => {
@@ -746,7 +747,7 @@ test("a second match attempt refreshes the report heartbeat before another long 
 test("partial and failed selected enrichment remain visibly limited", async () => {
   let successfulCalls = 0;
   const success = mockPort({
-    async match() { return { ok: true, comparison: comparison({ withPair: true }) }; },
+    async match() { return { ok: true, comparison: comparison({ withPair: true, count: 1 }) }; },
     async enrich({ targets }) {
       successfulCalls += 1;
       return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: 24, gaps: [] } };
@@ -758,7 +759,7 @@ test("partial and failed selected enrichment remain visibly limited", async () =
   assert.ok(successResult.limitedPhases.includes("enrichment"));
 
   const failure = mockPort({
-    async match() { return { ok: true, comparison: comparison({ withPair: true }) }; },
+    async match() { return { ok: true, comparison: comparison({ withPair: true, count: 1 }) }; },
     async enrich() { throw new Error("selected page timeout"); },
   });
   const failureResult = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, failure);
@@ -771,8 +772,8 @@ test("accepted rivals are enriched in 64-page batches and successful batches sur
   const batched = comparison({ withPair: true });
   const template = batched.rows[0];
   batched.rows = Array.from({ length: 70 }, (_, index) => {
-    const primary = { ...template.primary, id: `p-${index}`, name: `Honey ${index} 500g`, normalizedName: `honey ${index} 500g`, sourceUrl: `https://shop.example/products/honey-${index}`, imageUrl: "https://shop.example/images/honey.jpg", priceSignals: [{ raw: "GBP 9", currency: "GBP", amount: 9 }] };
-    const rival = { ...template.matches[0].product, id: `r-${index}`, name: `Honey ${index} 500g`, normalizedName: `honey ${index} 500g`, sourceUrl: `https://rival.example/products/honey-${index}`, imageUrl: "", priceSignals: [] };
+    const primary = { ...template.primary, id: `p-${index}`, name: `Honey ${index} 500g`, normalizedName: `honey ${index} 500g`, sourceUrl: `https://shop.example/products/honey-${index}?country=GB`, imageUrl: "https://shop.example/images/honey.jpg", priceSignals: [{ raw: "GBP 9", currency: "GBP", amount: 9 }] };
+    const rival = { ...template.matches[0].product, id: `r-${index}`, name: `Honey ${index} 500g`, normalizedName: `honey ${index} 500g`, sourceUrl: `https://rival.example/products/honey-${index}?country=GB`, imageUrl: "", priceSignals: [] };
     return { primary, matches: [{ ...template.matches[0], product: rival, assessment: { ...template.matches[0].assessment, primarySourceUrl: primary.sourceUrl, rivalSourceUrl: rival.sourceUrl } }] };
   });
   batched.coverage = { ...batched.coverage, primaryProductsAvailable: 70, primaryProductsScanned: 70, primaryProductFamiliesCompared: 70, competitorProductsAvailable: 70, competitorProductsScanned: 70, assignedPairCount: 70, verifiedPairCount: 70, rowsReturned: 70, rowLimit: 70 };
@@ -805,14 +806,15 @@ test("accepted rivals are enriched in 64-page batches and successful batches sur
 test("action planning runs after final enrichment and persists source-labelled plans", async () => {
   let sawEnrichedPrice = false;
   const port = mockPort({
-    async match() { return { ok: true, comparison: comparison({ withPair: true }) }; },
+    async match() {
+      const input = comparison({ withPair: true });
+      for (const row of input.rows) row.primary.priceSignals = [];
+      return { ok: true, comparison: input };
+    },
     async enrich({ targets }) {
       return {
         ok: true,
-        products: [
-          { ...product(), priceSignals: [{ raw: "GBP 9", currency: "GBP", amount: 9 }] },
-          { ...product("rival.example", "r1"), priceSignals: [{ raw: "GBP 7", currency: "GBP", amount: 7 }] },
-        ],
+        products: targets.map((target) => ({ ...product(target.domain, target.productId), name: target.expectedName, normalizedName: target.expectedName.toLowerCase(), sourceUrl: target.sourceUrl, priceSignals: [{ raw: target.role === "primary" ? "GBP 9" : "GBP 7", currency: "GBP", amount: target.role === "primary" ? 9 : 7 }] })),
         coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: 64, gaps: [] },
       };
     },

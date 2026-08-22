@@ -1,4 +1,4 @@
-import { buildAIProductComparison, type JudgeBatchCheckpoint, type JudgeBatchCheckpointKey, type PinnedProductPair } from "../../lib/ai-product-matching.ts";
+import { buildAIProductComparison, type JudgeBatchCheckpoint, type JudgeBatchCheckpointKey, type PinnedProductPair, type ProductCandidatePlan, type ProductCandidatePlanKey } from "../../lib/ai-product-matching.ts";
 import { canonicalDomain, normalizeDomain } from "../../lib/domain.ts";
 import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../lib/internal-auth.ts";
 import type { ProductRecord } from "../../lib/product-intelligence.ts";
@@ -278,6 +278,14 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
       const primaryCatalogSize = catalogs.find((catalog) => catalog.domain === primaryDomain)?.products.length || 0;
       const maxPrimaryProducts = Math.min(productBackfillPoolSize(resultTarget), primaryCatalogSize);
       const checkpointOptions = hasReportAttempt ? {
+        loadCandidatePlan: async (key: ProductCandidatePlanKey) => {
+          const checkpoints = await services.loadCheckpoints(publicId, { attemptNumber: reportAttempt, batchIndex: key.batchIndex });
+          const checkpoint = checkpoints[0];
+          return checkpoint?.inputHash === key.planHash ? checkpoint.result : null;
+        },
+        saveCandidatePlan: async (key: ProductCandidatePlanKey, plan: ProductCandidatePlan) => {
+          await services.saveCheckpoint(publicId, { attemptNumber: reportAttempt, batchIndex: key.batchIndex, inputHash: key.planHash, result: plan });
+        },
         loadJudgeBatchCheckpoint: async (key: JudgeBatchCheckpointKey) => {
           const checkpoints = await services.loadCheckpoints(publicId, { attemptNumber: reportAttempt, batchIndex: key.batchIndex });
           const checkpoint = checkpoints[0];

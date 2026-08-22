@@ -663,7 +663,63 @@ test("judge batches are bounded by candidate-pair count across many competitor d
   assert.ok(pairCounts.every((count) => count <= 25));
 });
 
-test("the fixed two-slot budget follows the strongest candidates instead of forcing domain diversity", async () => {
+test("the default retrieval budget judges five viable candidates for one primary product", async () => {
+  const primary = product("five-p", "shop.test", "Beef Cubes Halal 500g");
+  const rivals = Array.from({ length: 5 }, (_, index) => product(
+    `five-r${index}`,
+    "rival.test",
+    `Beef Cubes Halal 500g option ${index}`,
+  ));
+  let judgedCandidateIds = [];
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, index / 100] })) });
+    const request = JSON.parse(body.input[1].content);
+    judgedCandidateIds = request.groups[0].candidates.map((candidate) => candidate.id);
+    return response({ output_text: JSON.stringify({ assessments: request.groups[0].candidates.map((candidate) => ({
+      primaryId: primary.id,
+      candidateId: candidate.id,
+      verdict: "no_match",
+      confidence: 0.99,
+      reason: "Test assessment.",
+      contradiction: "",
+    })) }) });
+  };
+
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [primary] },
+    { domain: "rival.test", products: rivals },
+  ], {}, { apiKey: "test", fetch });
+
+  assert.equal(judgedCandidateIds.length, 5);
+  assert.equal(new Set(judgedCandidateIds).size, 5);
+  assert.equal(comparison.matching?.candidatePairsAssessed, 5);
+});
+
+test("products with no viable candidates still count as screened for honest exhaustion", async () => {
+  const primaries = Array.from({ length: 4 }, (_, index) => product(`empty-p${index}`, "shop.test", `Unique local item ${index}`));
+  const rival = product("empty-r", "rival.test", "Unrelated imported service");
+  let judgeCalls = 0;
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: primaries },
+    { domain: "rival.test", products: [rival] },
+  ], {}, {
+    apiKey: "test",
+    fetch: async (url, init) => {
+      const body = JSON.parse(init.body);
+      if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [0, 0] })) });
+      judgeCalls += 1;
+      return response({ output_text: JSON.stringify({ assessments: [] }) });
+    },
+    maxPrimaryProducts: 4,
+  });
+
+  assert.equal(judgeCalls, 0);
+  assert.equal(comparison.matching?.primaryProductsScreened, 4);
+  assert.deepEqual(comparison.matching?.selectedPrimaryIds, primaries.map((item) => item.id));
+});
+
+test("the candidate budget follows the strongest candidates instead of forcing domain diversity", async () => {
   const primary = product("p1", "shop.test", "Organic Honey");
   const strong = [product("a1", "strong.test", "Organic Honey 500g"), product("a2", "strong.test", "Raw Organic Honey")];
   const weak = [product("b1", "weak.test", "Unrelated Soup"), product("b2", "weak.test", "Kitchen Towels")];
@@ -798,6 +854,44 @@ test("checkpoint identity ignores nondeterministic retrieval-score drift", () =>
   const retry = judgeBatchKey("test-model", group(0.81239), 0, 1);
 
   assert.equal(retry.batchHash, first.batchHash);
+});
+
+test("a persisted candidate plan makes retries independent of embedding drift", async () => {
+  const primary = product("plan-p", "shop.test", "Organic Sidr Honey 500g");
+  const rivals = [
+    product("plan-r1", "rival.test", "Organic Sidr Honey 500g"),
+    product("plan-r2", "rival.test", "Raw Honey 500g"),
+    product("plan-r3", "rival.test", "Olive Oil 500ml"),
+  ];
+  let savedPlan;
+  const judged = [];
+  const run = async (retry) => buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [primary] },
+    { domain: "rival.test", products: rivals },
+  ], {}, {
+    apiKey: "test",
+    maxCandidatesPerPrimary: 2,
+    referenceTimeMs: Date.parse("2026-08-01T00:00:00.000Z"),
+    loadCandidatePlan: async () => retry ? savedPlan : null,
+    saveCandidatePlan: async (_key, plan) => { savedPlan = plan; },
+    fetch: async (url, init) => {
+      const body = JSON.parse(init.body);
+      if (String(url).endsWith("/embeddings")) {
+        if (retry) throw new Error("retry must reuse the persisted candidate plan");
+        return response({ data: body.input.map((_, index) => ({ index, embedding: index === 0 ? [1, 0] : [1, index / 10] })) });
+      }
+      const request = JSON.parse(body.input[1].content);
+      judged.push(request.groups.flatMap((group) => group.candidates.map((candidate) => candidate.id)));
+      return response({ output_text: JSON.stringify({ assessments: request.groups.flatMap((group) => group.candidates.map((candidate) => ({ primaryId: group.primary.id, candidateId: candidate.id, verdict: "no_match", confidence: 0.99, reason: "Different product.", contradiction: "" }))) }) });
+    },
+  });
+
+  const first = await run(false);
+  const second = await run(true);
+  assert.ok(savedPlan);
+  assert.deepEqual(judged[1], judged[0]);
+  assert.ok(first.matching.embeddingCalls > 0);
+  assert.equal(second.matching.embeddingCalls, 0);
 });
 
 test("replays complete deterministic judge checkpoints without another judge call", async () => {
