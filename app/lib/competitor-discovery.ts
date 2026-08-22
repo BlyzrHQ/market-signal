@@ -359,9 +359,7 @@ function sourceFirstLeadFromSource(source: SearchSource, url: string, profile: D
   };
 }
 
-export function productSearchAnchors(products: ProductRecord[], maxSearches = MAX_PRODUCT_SEARCHES, brandName = "") {
-  const limit = Math.max(0, Math.min(MAX_PRODUCT_SEARCH_ANCHORS, Math.floor(maxSearches)));
-  if (!limit) return [];
+function rankedProductSearchCandidates(products: ProductRecord[], brandName = "") {
   const compactBrand = brandName.normalize("NFKD").replace(/[^\p{L}\p{N}]+/gu, "").toLowerCase();
   const brandTokens = new Set([...normalizedTokens(brandName), ...(compactBrand.length >= 3 ? [compactBrand] : [])]);
   const meaningfulTokens = (product: ProductRecord) => normalizedTokens(productSearchLabel(product)).filter((token) => !GENERIC_ANCHOR_TOKENS.has(token) && !brandTokens.has(token));
@@ -370,7 +368,7 @@ export function productSearchAnchors(products: ProductRecord[], maxSearches = MA
     for (const token of new Set(meaningfulTokens(product))) recurrence.set(token, (recurrence.get(token) || 0) + 1);
   }
   const quality = (product: ProductRecord) => Number(product.ownership === "self-declared-brand") * 4 + Number(product.priceSignals.length > 0) * 2 + Number(product.extraction === "json-ld");
-  const ranked = products.map((product, index) => {
+  return products.map((product, index) => {
     const tokens = meaningfulTokens(product);
     const recurringScore = tokens.reduce((sum, token) => sum + ((recurrence.get(token) || 0) >= 2 ? recurrence.get(token) || 0 : 0), 0) / Math.max(1, tokens.length);
     const family = [...tokens].sort((left, right) => (recurrence.get(right) || 0) - (recurrence.get(left) || 0) || tokens.indexOf(left) - tokens.indexOf(right))[0] || "uncategorized";
@@ -381,6 +379,20 @@ export function productSearchAnchors(products: ProductRecord[], maxSearches = MA
       || quality(right.product) - quality(left.product)
       || left.index - right.index,
   );
+}
+
+export function boundedPrimaryCatalogProducts(products: ProductRecord[], maxProducts: number) {
+  const limit = Math.max(0, Math.floor(maxProducts));
+  if (!limit) return [];
+  const anchors = productSearchAnchors(products, limit);
+  const anchorIds = new Set(anchors.map((product) => `${canonicalDomain(product.domain)}|${product.id}`));
+  return [...anchors, ...products.filter((product) => !anchorIds.has(`${canonicalDomain(product.domain)}|${product.id}`))].slice(0, limit);
+}
+
+export function productSearchAnchors(products: ProductRecord[], maxSearches = MAX_PRODUCT_SEARCHES, brandName = "") {
+  const limit = Math.max(0, Math.min(MAX_PRODUCT_SEARCH_ANCHORS, Math.floor(maxSearches)));
+  if (!limit) return [];
+  const ranked = rankedProductSearchCandidates(products, brandName);
   const selected: typeof ranked = [];
   const residue: typeof ranked = [];
   const seenFamilies = new Set<string>();

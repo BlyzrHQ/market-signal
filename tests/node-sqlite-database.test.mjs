@@ -651,6 +651,29 @@ test("manifest finalization rejects missing chunks and conflicting completed rep
   }
 });
 
+test("stored report history retains the newest active-attempt events when the bounded window is full", async () => {
+  const { directory, databasePath } = await fixture();
+  let database;
+  try {
+    const now = new Date("2026-08-22T06:00:00.000Z");
+    database = await NodeSqliteDatabase.open(databasePath);
+    const created = await createReportRun({ primaryDomain: "history.example" }, now, database);
+    await database.prepare("UPDATE report_runs SET attempt_count = 2 WHERE id = ?").bind(created.id).run();
+    await database.prepare(`WITH RECURSIVE seq(n) AS (SELECT 2 UNION ALL SELECT n + 1 FROM seq WHERE n < 1002)
+      INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at)
+      SELECT ?, n, CASE WHEN n = 1002 THEN 'report-2-task-1-crawl-complete' ELSE 'history-' || n END,
+        'crawl', 'running', 'history', CASE WHEN n = 1002 THEN '{"discoveryStartIndex":0,"discoveryEndIndex":200,"discoveryBatchComplete":true}' ELSE '{}' END, ? FROM seq`).bind(created.id, now.toISOString()).run();
+
+    const stored = await getStoredReport(created.publicId, now, database);
+    assert.equal(stored.events.length, 1_000);
+    assert.equal(stored.events[0].sequence, 3);
+    assert.equal(stored.events.at(-1).idempotencyKey, "report-2-task-1-crawl-complete");
+  } finally {
+    await database?.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("recovery adopts an immutable completed fact snapshot for the new attempt", async () => {
   const value = await fixture();
   const database = await NodeSqliteDatabase.open(value.databasePath);

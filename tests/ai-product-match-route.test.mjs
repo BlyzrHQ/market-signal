@@ -248,7 +248,7 @@ test("authenticated matching binds durable judge checkpoints to the active repor
       receivedOptions = options;
       const planKey = { batchIndex: 999, planHash: "c".repeat(64) };
       assert.equal(await options.loadCandidatePlan(planKey), null);
-      await options.saveCandidatePlan(planKey, { version: 2, planHash: planKey.planHash, contentHash: createHash("sha256").update("[]").digest("hex"), primaryCatalogCount: 1_000, selectedPrimaryCount: 0, candidatePairCount: 0, groups: [] });
+      await options.saveCandidatePlan(planKey, { version: 3, planHash: planKey.planHash, contentHash: createHash("sha256").update(JSON.stringify({ groups: [], candidatePairPoolTruncated: false })).digest("hex"), primaryCatalogCount: 1_000, selectedPrimaryCount: 0, candidatePairCount: 0, candidatePairPoolTruncated: false, groups: [] });
       const key = { batchIndex: 3, batchCount: 5, batchHash: "a".repeat(64), model: "test", promptVersion: "v1", primaryIds: ["p1"], candidatePairCount: 1 };
       assert.deepEqual(await options.loadJudgeBatchCheckpoint(key), { version: 1 });
       await options.saveJudgeBatchCheckpoint(key, { version: 1 });

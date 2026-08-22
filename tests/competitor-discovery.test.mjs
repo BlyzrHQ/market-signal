@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { candidatesFromSearchEvidence, discoverCompetitors, entityCandidatesFromSearchEvidence, mergeCandidates, productSearchAnchors, publicDiscoveryCandidate, publicDiscoverySnapshot, sanitizeCandidate, structuredProductLeadCandidate } from "../app/lib/competitor-discovery.ts";
+import { boundedPrimaryCatalogProducts, candidatesFromSearchEvidence, discoverCompetitors, entityCandidatesFromSearchEvidence, mergeCandidates, productSearchAnchors, publicDiscoveryCandidate, publicDiscoverySnapshot, sanitizeCandidate, structuredProductLeadCandidate } from "../app/lib/competitor-discovery.ts";
 
 function product(name, sourceUrl) {
   return {
@@ -813,6 +813,18 @@ test("runs one bounded search request per selected ecommerce product", async () 
     globalThis.fetch = previousFetch;
     if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
   }
+});
+
+test("freezes the same bounded primary catalog used by product discovery", () => {
+  const products = Array.from({ length: 1_001 }, (_, index) => product(`Unique Product ${index} 500g`, `https://myjam.co.uk/products/${index}`));
+  products[1_000] = product("Recurring Family Special 500g", "https://myjam.co.uk/products/recurring-special");
+  products[999] = product("Recurring Family Classic 500g", "https://myjam.co.uk/products/recurring-classic");
+  const bounded = boundedPrimaryCatalogProducts(products, 1_000);
+  const boundedIds = new Set(bounded.map((item) => item.id));
+
+  assert.equal(bounded.length, 1_000);
+  assert.equal(boundedIds.has(products[1_000].id), true);
+  assert.equal(productSearchAnchors(products, 1_000).every((anchor) => boundedIds.has(anchor.id)), true);
 });
 
 test("rejects an oversized successful provider body before parsing it", async () => {

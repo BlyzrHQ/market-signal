@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { boundJudgeCandidatePairs, buildAIProductComparison, judgeBatchKey, MAX_COMPETITOR_PRODUCTS_PER_CATALOG, MAX_JUDGE_CANDIDATE_PAIRS } from "../app/lib/ai-product-matching.ts";
+import { createHash } from "node:crypto";
+import { boundJudgeCandidatePairs, boundJudgeCandidatePairsWithCoverage, buildAIProductComparison, judgeBatchKey, MAX_COMPETITOR_PRODUCTS_PER_CATALOG, MAX_JUDGE_CANDIDATE_PAIRS } from "../app/lib/ai-product-matching.ts";
 import { hasValidObservedRivalPrice } from "../app/lib/product-intelligence.ts";
 import { publishPricedProductComparison } from "../app/lib/product-match-lifecycle.ts";
 
@@ -213,6 +214,23 @@ test("candidate judging retains every pin while staying inside the global 6000-p
   assert.equal(pins.length, 5_250);
   assert.equal(bounded.reduce((total, group) => total + group.candidates.length, 0), 6_000);
   assert.equal(bounded.slice(0, 750).every((group) => group.candidates.length === 7), true);
+});
+
+test("candidate judging reports when pins consume capacity needed by ordinary backups", () => {
+  const primary = product("p-budget", "shop.test", "Primary");
+  const candidates = Array.from({ length: 7 }, (_, index) => ({
+    product: product(`r-budget-${index}`, "rival.test", `Rival ${index}`),
+    retrievalScore: 1,
+    lexicalScore: 1,
+    lexicalEligible: true,
+    semanticScore: 1,
+    identitySignal: true,
+  }));
+  const pins = candidates.slice(0, 6).map((candidate) => ({ primaryId: primary.id, rivalDomain: candidate.product.domain, rivalId: candidate.product.id }));
+  const bounded = boundJudgeCandidatePairsWithCoverage([{ primary, candidates }], pins, 6);
+
+  assert.equal(bounded.groups[0].candidates.length, 6);
+  assert.equal(bounded.truncated, true);
 });
 
 test("exact-pair backfill preserves more than twelve bounded pins", async () => {
@@ -1061,11 +1079,18 @@ test("a persisted candidate plan makes retries independent of embedding drift", 
   assert.ok(first.matching.embeddingCalls > 0);
   assert.equal(second.matching.embeddingCalls, 0);
 
+  const completePlan = savedPlan;
+  savedPlan = { ...savedPlan, candidatePairPoolTruncated: true };
+  savedPlan.contentHash = createHash("sha256").update(JSON.stringify({ groups: savedPlan.groups, candidatePairPoolTruncated: true })).digest("hex");
+  const poolTruncated = await run(true);
+  assert.match(poolTruncated.matching.gaps.join(" "), /omitted additional ordinary backup candidates/i);
+
+  savedPlan = completePlan;
   savedPlan = { ...savedPlan, groups: savedPlan.groups.map((group) => ({ ...group, candidateKeys: group.candidateKeys.slice(1) })), candidatePairCount: savedPlan.groups.reduce((sum, group) => sum + Math.max(0, group.candidateKeys.length - 1), 0) };
   const truncated = await run(true);
   assert.equal(truncated.matching.available, false);
   assert.match(truncated.matching.gaps.join(" "), /incomplete or invalid|truncated matching pool/i);
-  assert.equal(judged.length, 2);
+  assert.equal(judged.length, 3);
 });
 
 test("replays complete deterministic judge checkpoints without another judge call", async () => {

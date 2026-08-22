@@ -38,7 +38,7 @@ type Candidate = {
 type CandidateGroup = { primary: ProductRecord; candidates: Candidate[] };
 
 export type ProductCandidatePlanKey = { planHash: string; batchIndex: number };
-export type ProductCandidatePlan = { version: 2; planHash: string; contentHash: string; primaryCatalogCount: number; selectedPrimaryCount: number; candidatePairCount: number; groups: Array<{ primaryKey: string; candidateKeys: string[] }> };
+export type ProductCandidatePlan = { version: 3; planHash: string; contentHash: string; primaryCatalogCount: number; selectedPrimaryCount: number; candidatePairCount: number; candidatePairPoolTruncated: boolean; groups: Array<{ primaryKey: string; candidateKeys: string[] }> };
 export const PRODUCT_CANDIDATE_PLAN_BATCH_INDEX = 999;
 
 export type PinnedProductPair = {
@@ -389,7 +389,7 @@ function retrieveGroups(primaryProducts: ProductRecord[], competitors: ProductCa
   return { groups, scoredPairs };
 }
 
-export function boundJudgeCandidatePairs(groups: CandidateGroup[], pinnedPairs: PinnedProductPair[], maxPairs: number) {
+export function boundJudgeCandidatePairsWithCoverage(groups: CandidateGroup[], pinnedPairs: PinnedProductPair[], maxPairs: number) {
   const pinnedKeys = new Set(pinnedPairs.map((pair) => `${pair.primaryId}|${canonicalDomain(pair.rivalDomain)}|${pair.rivalId}`));
   const split = groups.map((group) => ({
     group,
@@ -399,11 +399,16 @@ export function boundJudgeCandidatePairs(groups: CandidateGroup[], pinnedPairs: 
   const pinnedCount = split.reduce((total, item) => total + item.pinned.length, 0);
   if (pinnedCount > maxPairs) throw new Error("The pinned product-pair universe exceeds the bounded judge capacity.");
   let ordinaryRemaining = maxPairs - pinnedCount;
-  return split.map(({ group, pinned, ordinary }) => {
+  const bounded = split.map(({ group, pinned, ordinary }) => {
     const retainedOrdinary = ordinary.slice(0, ordinaryRemaining);
     ordinaryRemaining -= retainedOrdinary.length;
     return { primary: group.primary, candidates: [...pinned, ...retainedOrdinary] };
   });
+  return { groups: bounded, truncated: bounded.reduce((total, group) => total + group.candidates.length, 0) < groups.reduce((total, group) => total + group.candidates.length, 0) };
+}
+
+export function boundJudgeCandidatePairs(groups: CandidateGroup[], pinnedPairs: PinnedProductPair[], maxPairs: number) {
+  return boundJudgeCandidatePairsWithCoverage(groups, pinnedPairs, maxPairs).groups;
 }
 
 function judgeSchema() {
@@ -611,7 +616,7 @@ function candidatePlanHash(primary: ProductRecord[], competitors: ProductCatalog
       || left.rivalDomain.localeCompare(right.rivalDomain)
       || left.rivalId.localeCompare(right.rivalId));
   return createHash("sha256").update(JSON.stringify({
-    candidatePlanVersion: 2,
+    candidatePlanVersion: 3,
     promptVersion: PROMPT_VERSION,
     embeddingModel: options.embeddingModel,
     embeddingDimensions: EMBEDDING_DIMENSIONS,
@@ -648,14 +653,14 @@ function candidatePlanProductKey(product: ProductRecord) {
   return createHash("sha256").update(JSON.stringify(candidatePlanProductIdentity(product))).digest("base64url");
 }
 
-function candidatePlanContentHash(groups: ProductCandidatePlan["groups"]) {
-  return createHash("sha256").update(JSON.stringify(groups)).digest("hex");
+function candidatePlanContentHash(groups: ProductCandidatePlan["groups"], candidatePairPoolTruncated: boolean) {
+  return createHash("sha256").update(JSON.stringify({ groups, candidatePairPoolTruncated })).digest("hex");
 }
 
 function restoreCandidatePlan(value: unknown, planHash: string, primary: ProductRecord[], competitors: ProductCatalog[], embeddings: Map<string, number[]>, expectedGroupCount: number) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const plan = value as ProductCandidatePlan;
-  if (plan.version !== 2
+  if (plan.version !== 3
     || plan.planHash !== planHash
     || !/^[a-f0-9]{64}$/.test(plan.contentHash)
     || plan.primaryCatalogCount !== primary.length
@@ -664,7 +669,8 @@ function restoreCandidatePlan(value: unknown, planHash: string, primary: Product
     || plan.groups.length !== expectedGroupCount
     || plan.candidatePairCount > MAX_JUDGE_CANDIDATE_PAIRS
     || plan.candidatePairCount !== plan.groups.reduce((sum, group) => sum + (Array.isArray(group?.candidateKeys) ? group.candidateKeys.length : 0), 0)
-    || plan.contentHash !== candidatePlanContentHash(plan.groups)) return null;
+    || typeof plan.candidatePairPoolTruncated !== "boolean"
+    || plan.contentHash !== candidatePlanContentHash(plan.groups, plan.candidatePairPoolTruncated)) return null;
   const primaryByKey = new Map(primary.map((product) => [candidatePlanProductKey(product), product]));
   const rivalByKey = new Map<string, ProductRecord>(competitors.flatMap((catalog) => catalog.products.map((product) => [candidatePlanProductKey(product), product] as [string, ProductRecord])));
   const groups: CandidateGroup[] = [];
@@ -678,7 +684,7 @@ function restoreCandidatePlan(value: unknown, planHash: string, primary: Product
     seenPrimary.add(item.primaryKey);
     groups.push({ primary: primaryProduct, candidates: candidates as Candidate[] });
   }
-  return groups;
+  return { groups, candidatePairPoolTruncated: plan.candidatePairPoolTruncated };
 }
 
 function exactObservedVariant(primary: ProductRecord, rival: ProductRecord) {
@@ -803,12 +809,15 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   });
   if (Boolean(options.loadCandidatePlan) !== Boolean(options.saveCandidatePlan)) return candidatePlanFailure("Durable candidate-plan storage was incomplete; no product pair was accepted from a non-replayable matching plan.");
   let groups: CandidateGroup[] | null = null;
+  let candidatePairPoolTruncated = false;
   if (options.loadCandidatePlan) {
     try {
       const loadedPlan = await options.loadCandidatePlan(planKey);
       if (loadedPlan !== null && loadedPlan !== undefined) {
-        groups = restoreCandidatePlan(loadedPlan, planHash, synchronizedPrimary, competitors, embeddings, Math.min(maxPrimary, synchronizedPrimary.length));
-        if (!groups) return candidatePlanFailure("The durable candidate plan was incomplete or invalid; no product pair was accepted from a truncated matching pool.");
+        const restored = restoreCandidatePlan(loadedPlan, planHash, synchronizedPrimary, competitors, embeddings, Math.min(maxPrimary, synchronizedPrimary.length));
+        if (!restored) return candidatePlanFailure("The durable candidate plan was incomplete or invalid; no product pair was accepted from a truncated matching pool.");
+        groups = restored.groups;
+        candidatePairPoolTruncated = restored.candidatePairPoolTruncated;
       }
     } catch { return candidatePlanFailure("Durable candidate-plan loading failed; no product pair was accepted from a non-replayable matching plan."); }
   }
@@ -822,17 +831,21 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
       gaps.push(error instanceof Error && error.name === "AbortError" ? "Semantic product retrieval timed out; bounded lexical retrieval was used before AI judging." : "Semantic product retrieval was unavailable; bounded lexical retrieval was used before AI judging.");
     }
     const retrievedGroups = retrieveGroups(synchronizedPrimary, competitors, embeddings, fallback, maxCandidates, maxPerDomain, maxRetrievalPool, pinnedPairs);
-    groups = boundJudgeCandidatePairs(
-      selectJudgeGroups(retrievedGroups.groups, maxPrimary, new Set(pinnedPairs.map((pair) => pair.primaryId)), referenceTimeMs, options.marketCountryCode || ""),
+    const selectedGroups = selectJudgeGroups(retrievedGroups.groups, maxPrimary, new Set(pinnedPairs.map((pair) => pair.primaryId)), referenceTimeMs, options.marketCountryCode || "");
+    const boundedGroups = boundJudgeCandidatePairsWithCoverage(
+      selectedGroups,
       pinnedPairs,
       MAX_JUDGE_CANDIDATE_PAIRS,
     );
+    groups = boundedGroups.groups;
+    candidatePairPoolTruncated = boundedGroups.truncated;
     if (options.saveCandidatePlan) {
       const planGroups = groups.map((group) => ({ primaryKey: candidatePlanProductKey(group.primary), candidateKeys: group.candidates.map((candidate) => candidatePlanProductKey(candidate.product)) }));
-      const plan: ProductCandidatePlan = { version: 2, planHash, contentHash: candidatePlanContentHash(planGroups), primaryCatalogCount: synchronizedPrimary.length, selectedPrimaryCount: groups.length, candidatePairCount: planGroups.reduce((sum, group) => sum + group.candidateKeys.length, 0), groups: planGroups };
+      const plan: ProductCandidatePlan = { version: 3, planHash, contentHash: candidatePlanContentHash(planGroups, candidatePairPoolTruncated), primaryCatalogCount: synchronizedPrimary.length, selectedPrimaryCount: groups.length, candidatePairCount: planGroups.reduce((sum, group) => sum + group.candidateKeys.length, 0), candidatePairPoolTruncated, groups: planGroups };
       try { await options.saveCandidatePlan(planKey, plan); } catch { return candidatePlanFailure("Durable candidate-plan persistence failed; no product pair was accepted from a non-replayable matching plan."); }
     }
   }
+  if (candidatePairPoolTruncated) gaps.push("The bounded 6,000-pair judge universe omitted additional ordinary backup candidates; a result shortfall cannot claim complete candidate-pool exhaustion.");
   matchingBase.selectedPrimaryIds = groups.map((group) => group.primary.id);
   matchingBase.primaryProductsScreened = groups.length;
   matchingBase.candidateSlotsByDomain = groups.flatMap((group) => group.candidates).reduce((counts, candidate) => {

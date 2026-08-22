@@ -1,7 +1,7 @@
 import { canonicalDomain, normalizeDomain } from "../../lib/domain.ts";
 import { applyPreMatchCatalogEnrichment, buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, hasValidObservedRivalPrice, planPreliminaryCatalogReconciliation, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity, type ProductComparison, type ProductRecord } from "../../lib/product-intelligence.ts";
 import { sharedRobotsPolicyResolver } from "../../lib/robots-policy.ts";
-import { discoverCompetitors, publicDiscoveryCandidate, publicDiscoverySnapshot, type DiscoveryCandidate, type DiscoveryResult } from "../../lib/competitor-discovery.ts";
+import { boundedPrimaryCatalogProducts, discoverCompetitors, publicDiscoveryCandidate, publicDiscoverySnapshot, type DiscoveryCandidate, type DiscoveryResult } from "../../lib/competitor-discovery.ts";
 import { attributableFacebookUrl, type AdIntelligenceResult } from "../../lib/ad-intelligence.ts";
 import { compareVerifiedCompetitors, resolveVerificationMarket, verifyCompetitorEntity, type CompetitorVerification, type FirstPartyRegionSource, type VerificationMarket } from "../../lib/competitor-verification.ts";
 import { inferBusinessProfile } from "../../lib/business-profile.ts";
@@ -1095,6 +1095,7 @@ export async function POST(request: Request) {
   if (!await hasValidAnalysisAuthorization(request.headers.get("authorization"))) return unauthorizedInternalResponse();
   try {
     const payload = await request.json() as { primary?: unknown; domains?: unknown; productLimit?: unknown; catalogProductLimit?: unknown; discoverySearchOffset?: unknown; discoveryPriorCoverageComplete?: unknown; discoveryExpectedAnchorSetHash?: unknown };
+    const catalogProductLimit = Number.isInteger(Number(payload.catalogProductLimit)) ? Math.max(1, Math.min(MAX_PRIMARY_CATALOG_PRODUCTS, Number(payload.catalogProductLimit))) : MAX_PRIMARY_CATALOG_PRODUCTS;
     const discoverySearchOffset = Number.isInteger(Number(payload.discoverySearchOffset)) ? Math.max(0, Math.min(MAX_PRIMARY_CATALOG_PRODUCTS, Number(payload.discoverySearchOffset))) : 0;
     const discoveryPriorCoverageComplete = payload.discoveryPriorCoverageComplete !== false;
     const discoveryExpectedAnchorSetHash = typeof payload.discoveryExpectedAnchorSetHash === "string" && /^[a-f0-9]{64}$/.test(payload.discoveryExpectedAnchorSetHash) ? payload.discoveryExpectedAnchorSetHash : "";
@@ -1171,6 +1172,7 @@ export async function POST(request: Request) {
       }, { status: 422 });
     }
     primary = await enrichPrimaryProductPrices(primary);
+    primary = { ...primary, products: boundedPrimaryCatalogProducts(primary.products, catalogProductLimit) };
     submittedResults = submittedResults.map((result) => result.domain === primaryDomain ? primary! : result);
     const discoveryPolicy = resolvePrimaryDiscoveryPolicy(primary);
     let discovery: DiscoveryResult;
