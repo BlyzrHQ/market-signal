@@ -44,8 +44,8 @@ function searchResponse(value, query = value.queries?.[0] || "bounded public web
     evidenceTitle: "", marketCategory: "", relationship: "adjacent", sharedOfferings: [],
     matchedPrimaryProductName: "", matchedProductUrl: "", ...candidate,
   }));
-  return Response.json({ output: [
-    { type: "web_search_call", action: { query, sources: [] } },
+  return Response.json({ status: "completed", output: [
+    { type: "web_search_call", status: "completed", action: { query, sources: [] } },
     { type: "message", content: [{ type: "output_text", text: JSON.stringify({ ...value, candidates }) }] },
   ] });
 }
@@ -101,8 +101,8 @@ test("recovers a search-source candidate when the AI structured candidate array 
   const previousKey = process.env.OPENAI_API_KEY;
   const previousFetch = globalThis.fetch;
   process.env.OPENAI_API_KEY = "test-only";
-  globalThis.fetch = async () => Response.json({ output: [
-    { type: "web_search_call", action: { query: "UK buy halal beef sirloin steak 500g", sources: [{ title: "Halal Beef Sirloin Steak 500g | Oasis Market UK", url: "https://oasismarket.co.uk/product/beef-sirloin-steak-halal-500g?utm_source=chatgpt.com" }] } },
+  globalThis.fetch = async () => Response.json({ status: "completed", output: [
+    { type: "web_search_call", status: "completed", action: { query: "UK buy halal beef sirloin steak 500g", sources: [{ title: "Halal Beef Sirloin Steak 500g | Oasis Market UK", url: "https://oasismarket.co.uk/product/beef-sirloin-steak-halal-500g?utm_source=chatgpt.com" }] } },
     { type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: ["UK buy halal beef sirloin steak 500g"], candidates: [] }) }] },
   ] });
   try {
@@ -733,8 +733,8 @@ test("runs company lanes even when a product-backed ecommerce candidate exists",
   globalThis.fetch = async (_url, init) => {
     const request = JSON.parse(init.body);
     const input = JSON.parse(request.input[1].content);
-    if (input.lane === "product") return Response.json({ output: [
-      { type: "web_search_call", action: { query: "Pistachio Baklava UK product", sources: [{ title: "Pistachio Baklava | Rival", url: "https://rival.example/products/pistachio-baklava" }] } },
+    if (input.lane === "product") return Response.json({ status: "completed", output: [
+      { type: "web_search_call", status: "completed", action: { query: "Pistachio Baklava UK product", sources: [{ title: "Pistachio Baklava | Rival", url: "https://rival.example/products/pistachio-baklava" }] } },
       { type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Baklava", region: "United Kingdom", queries: ["Pistachio Baklava UK product"], candidates: [] }) }] },
     ] });
     const candidate = { domain: "company.example", companyName: "Company Rival", reason: "Same bakery market", searchQuery: "baklava competitors UK", websiteUrl: "https://company.example/", evidenceUrl: "https://company.example/baklava", evidenceTitle: "Baklava shop and delivery", marketCategory: "Baklava", relationship: "direct", sharedOfferings: ["baklava"], matchedPrimaryProductName: "", matchedProductUrl: "" };
@@ -835,8 +835,8 @@ test("does not count a web-search response with malformed structured candidates 
   const previousKey = process.env.OPENAI_API_KEY;
   const previousFetch = globalThis.fetch;
   process.env.OPENAI_API_KEY = "test-only";
-  globalThis.fetch = async () => Response.json({ output: [
-    { type: "web_search_call", action: { query: "halal meat UK", sources: [] } },
+  globalThis.fetch = async () => Response.json({ status: "completed", output: [
+    { type: "web_search_call", status: "completed", action: { query: "halal meat UK", sources: [] } },
     { type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: ["halal meat UK"], candidates: [{}] }) }] },
   ] });
   try {
@@ -849,14 +849,14 @@ test("does not count a web-search response with malformed structured candidates 
   }
 });
 
-test("searches 20 distinct ecommerce anchors and reports the remaining catalog as unsearched", async () => {
+test("searches 100 distinct ecommerce anchors and reports the remaining catalog as unsearched", async () => {
   const previousKey = process.env.OPENAI_API_KEY;
   const previousFetch = globalThis.fetch;
   process.env.OPENAI_API_KEY = "test-only";
   const searchedProducts = [];
   const searchProfile = {
     ...profile,
-    products: Array.from({ length: 25 }, (_, index) => product(
+    products: Array.from({ length: 125 }, (_, index) => product(
       `Beef Sirloin Steak Halal ${500 + index}g`,
       `https://myjam.co.uk/products/beef-sirloin-steak-${index + 1}`,
     )),
@@ -869,15 +869,15 @@ test("searches 20 distinct ecommerce anchors and reports the remaining catalog a
   };
   try {
     const result = await discoverCompetitors(searchProfile);
-    assert.equal(searchedProducts.length, 20);
-    assert.equal(new Set(searchedProducts).size, 20);
+    assert.equal(searchedProducts.length, 100);
+    assert.equal(new Set(searchedProducts).size, 100);
     assert.match(result.productSearchCoverage.anchorSetHash, /^[a-f0-9]{64}$/);
     assert.deepEqual({ ...result.productSearchCoverage, anchorSetHash: undefined }, {
-      eligibleAnchors: 25,
+      eligibleAnchors: 125,
       anchorSetHash: undefined,
-      searchedAnchors: 20,
+      searchedAnchors: 100,
       startIndex: 0,
-      endIndex: 20,
+      endIndex: 100,
       truncated: true,
       searchesComplete: true,
       candidateDomainsFound: 0,
@@ -900,7 +900,7 @@ test("continues product discovery from the supplied completed-batch cursor", asy
   const searchedProducts = [];
   const searchProfile = {
     ...profile,
-    products: Array.from({ length: 25 }, (_, index) => product(
+    products: Array.from({ length: 125 }, (_, index) => product(
       `Lamb Shoulder Steak Halal ${700 + index}g`,
       `https://myjam.co.uk/products/lamb-shoulder-steak-${index + 1}`,
     )),
@@ -914,15 +914,15 @@ test("continues product discovery from the supplied completed-batch cursor", asy
   try {
     const first = await discoverCompetitors(searchProfile);
     searchedProducts.length = 0;
-    const result = await discoverCompetitors(searchProfile, { searchOffset: 20, priorCoverageComplete: true, expectedAnchorSetHash: first.productSearchCoverage.anchorSetHash });
-    assert.equal(searchedProducts.length, 5);
+    const result = await discoverCompetitors(searchProfile, { searchOffset: 100, priorCoverageComplete: true, expectedAnchorSetHash: first.productSearchCoverage.anchorSetHash });
+    assert.equal(searchedProducts.length, 25);
     assert.equal(result.productSearchCoverage.anchorSetHash, first.productSearchCoverage.anchorSetHash);
     assert.deepEqual({ ...result.productSearchCoverage, anchorSetHash: undefined }, {
-      eligibleAnchors: 25,
+      eligibleAnchors: 125,
       anchorSetHash: undefined,
-      searchedAnchors: 5,
-      startIndex: 20,
-      endIndex: 25,
+      searchedAnchors: 25,
+      startIndex: 100,
+      endIndex: 125,
       truncated: false,
       searchesComplete: true,
       candidateDomainsFound: 0,
@@ -943,10 +943,10 @@ test("resets a stale cursor when the ranked anchor set changes", async () => {
   const previousFetch = globalThis.fetch;
   process.env.OPENAI_API_KEY = "test-only";
   globalThis.fetch = async () => searchResponse({ category: "Halal grocery", region: "United Kingdom", queries: [], candidates: [] });
-  const firstProfile = { ...profile, products: Array.from({ length: 25 }, (_, index) => product(`Beef Sirloin Steak Halal ${500 + index}g`, `https://myjam.co.uk/products/beef-${index}`)) };
+  const firstProfile = { ...profile, products: Array.from({ length: 125 }, (_, index) => product(`Beef Sirloin Steak Halal ${500 + index}g`, `https://myjam.co.uk/products/beef-${index}`)) };
   try {
     const first = await discoverCompetitors(firstProfile);
-    const changed = await discoverCompetitors({ ...firstProfile, products: [...firstProfile.products].reverse() }, { searchOffset: 20, expectedAnchorSetHash: first.productSearchCoverage.anchorSetHash });
+    const changed = await discoverCompetitors({ ...firstProfile, products: [...firstProfile.products].reverse() }, { searchOffset: 100, expectedAnchorSetHash: first.productSearchCoverage.anchorSetHash });
     assert.equal(changed.productSearchCoverage.startIndex, 0);
     assert.notEqual(changed.productSearchCoverage.anchorSetHash, first.productSearchCoverage.anchorSetHash);
   } finally {
@@ -1098,8 +1098,8 @@ test("ranks product-backed sellers ahead of company-first results", async () => 
     if (input.lane === "product") {
       const name = input.profile.offerings[0].name;
       const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-      return Response.json({ output: [
-        { type: "web_search_call", action: { query: `UK buy ${name}`, sources: [{ title: `${name} | Seller`, url: `https://seller-${slug}.example/products/${slug}` }] } },
+      return Response.json({ status: "completed", output: [
+        { type: "web_search_call", status: "completed", action: { query: `UK buy ${name}`, sources: [{ title: `${name} | Seller`, url: `https://seller-${slug}.example/products/${slug}` }] } },
         { type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: [`UK buy ${name}`], candidates: [] }) }] },
       ] });
     }
@@ -1165,8 +1165,8 @@ test("groups several matched products under one seller and ranks broader overlap
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
     const sources = [{ title: `${name} | Broad Seller`, url: `https://broad.example/products/${slug}` }];
     if (name.includes("Pistachio")) sources.push({ title: `${name} | Narrow Seller`, url: `https://narrow.example/products/${slug}` });
-    return Response.json({ output: [
-      { type: "web_search_call", action: { query: `UK buy ${name}`, sources } },
+    return Response.json({ status: "completed", output: [
+      { type: "web_search_call", status: "completed", action: { query: `UK buy ${name}`, sources } },
       { type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Baklava", region: "United Kingdom", queries: [`UK buy ${name}`], candidates: [] }) }] },
     ] });
   };

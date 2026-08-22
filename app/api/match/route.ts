@@ -6,13 +6,14 @@ import { canonicalGtin, parseCanonicalQuantity, type ProductIdentifiers } from "
 import { publicHttpUrl } from "../../lib/public-url.ts";
 import { loadReportMatchBatchCheckpoints, loadReportProductEntitlement, saveReportMatchBatchCheckpoint } from "../../lib/report-store.ts";
 
-// One primary catalog plus the complete bounded discovery wave (132 fresh and
-// 152 remembered verified rivals). Never silently discard a rival.
-const MAX_CATALOGS = 285;
+// One primary catalog plus the complete bounded attempt wave: up to 600
+// product-lane sellers, 12 company-lane sellers, and 152 remembered rivals.
+// Never silently discard a rival.
+const MAX_CATALOGS = 765;
 const MAX_PRIMARY_PRODUCTS = 1_000;
-const MAX_RIVAL_PRODUCTS = 600;
+const MAX_RIVAL_PRODUCTS = 5_000;
 const MAX_SUBMITTED_PRODUCTS_PER_CATALOG = 5_000;
-export const MAX_MATCH_BODY_BYTES = 8 * 1_024 * 1_024;
+export const MAX_MATCH_BODY_BYTES = 64 * 1_024 * 1_024;
 const DEFAULT_PRODUCT_ANALYSIS_LIMIT = 20;
 const PLAN_PRODUCT_LIMITS = new Set([20, 50, 500, 1_000]);
 

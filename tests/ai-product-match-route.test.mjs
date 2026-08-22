@@ -27,7 +27,7 @@ test("AI matching input keeps a broad but bounded first-party catalog", () => {
   const catalogs = parseCatalogs([{ domain: "shop.test", products }]);
 
   assert.equal(catalogs.length, 1);
-  assert.equal(catalogs[0].products.length, 600);
+  assert.equal(catalogs[0].products.length, 605);
   assert.equal(catalogs[0].products[0].imageUrl, "https://cdn.shopify.com/public-product.jpg");
   assert.ok(catalogs[0].products.every((product) => new URL(product.sourceUrl).hostname === "shop.test"));
 });
@@ -42,7 +42,7 @@ test("AI matching keeps up to 1,000 first-party products while rival catalogs re
   ], "shop.test");
 
   assert.equal(catalogs[0].products.length, 1_000);
-  assert.equal(catalogs[1].products.length, 600);
+  assert.equal(catalogs[1].products.length, 700);
 });
 
 test("product analysis limits are server-controlled, clamped, and receive scaled budgets", () => {
@@ -76,7 +76,7 @@ test("catalog bounds retain valid pinned records beyond both ordinary limits", (
   ], "shop.test", [{ primaryId: "p1009", rivalDomain: "rival.test", rivalId: "r609" }]);
 
   assert.equal(catalogs[0].products.length, 1_000);
-  assert.equal(catalogs[1].products.length, 600);
+  assert.equal(catalogs[1].products.length, 610);
   assert.ok(catalogs[0].products.some((item) => item.id === "p1009"));
   assert.ok(catalogs[1].products.some((item) => item.id === "r609"));
   assert.deepEqual(parsePinnedPairs([{ primaryId: "p1009", rivalDomain: "rival.test", rivalId: "r609" }], catalogs, "shop.test"), [{ primaryId: "p1009", rivalDomain: "rival.test", rivalId: "r609" }]);
@@ -148,7 +148,7 @@ test("rejects duplicate canonical catalog domains", () => {
 });
 
 test("rejects an oversized rival catalog set instead of silently dropping later rivals", () => {
-  const catalogs = Array.from({ length: 286 }, (_, index) => ({
+  const catalogs = Array.from({ length: 766 }, (_, index) => ({
     domain: `rival-${index}.test`,
     products: [{ id: `r${index}`, name: `Product ${index}`, sourceUrl: `https://rival-${index}.test/products/${index}` }],
   }));

@@ -48,7 +48,7 @@ export const ENRICHMENT_CHECKPOINT_BATCH_INDEX_BASE = 300;
 
 function enrichmentPlanCheckpointIndex(taskAttemptNumber: number) {
   const index = ENRICHMENT_PLAN_CHECKPOINT_BATCH_INDEX - (taskAttemptNumber - 1);
-  if (!Number.isInteger(taskAttemptNumber) || taskAttemptNumber < 1 || index < 298) throw new PermanentOrchestrationError("Unsupported enrichment task attempt.");
+  if (!Number.isInteger(taskAttemptNumber) || taskAttemptNumber < 1 || index < 290) throw new PermanentOrchestrationError("Unsupported enrichment task attempt.");
   return index;
 }
 
@@ -315,19 +315,19 @@ export interface ReportOrchestrationPort {
 const MAX_PRIMARY_CATALOG_PRODUCTS = 1_000;
 
 function completedDiscoveryCursor(events: StoredReport["events"]) {
-  const batches = events.flatMap((item) => {
+  const batches = events.flatMap((item, eventIndex) => {
     const metadata = item.metadata;
     const startIndex = Number(metadata?.discoveryStartIndex);
     const endIndex = Number(metadata?.discoveryEndIndex);
     const anchorSetHash = typeof metadata?.discoveryAnchorSetHash === "string" && /^[a-f0-9]{64}$/.test(metadata.discoveryAnchorSetHash) ? metadata.discoveryAnchorSetHash : "";
     return metadata?.discoveryBatchComplete === true && anchorSetHash && Number.isInteger(startIndex) && Number.isInteger(endIndex) && startIndex >= 0 && endIndex > startIndex
-      ? [{ startIndex, endIndex, anchorSetHash }]
+      ? [{ startIndex, endIndex, anchorSetHash, eventIndex }]
       : [];
   });
   let cursor = 0;
   let anchorSetHash = "";
   for (;;) {
-    const next = batches.filter((batch) => batch.startIndex === cursor && (!anchorSetHash || batch.anchorSetHash === anchorSetHash)).sort((left, right) => right.endIndex - left.endIndex)[0];
+    const next = batches.filter((batch) => batch.startIndex === cursor && (!anchorSetHash || batch.anchorSetHash === anchorSetHash)).sort((left, right) => right.endIndex - left.endIndex || right.eventIndex - left.eventIndex)[0];
     if (!next) return { offset: cursor, anchorSetHash };
     anchorSetHash = next.anchorSetHash;
     cursor = next.endIndex;

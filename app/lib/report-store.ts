@@ -263,6 +263,7 @@ const STALE_RUN_MS = 15 * 60 * 1000;
 const QUEUED_DISPATCH_TIMEOUT_MS = 60 * 60 * 1000;
 export const MAX_REPORT_DOCUMENT_BYTES = REPORT_SNAPSHOT_HARD_BYTES;
 const MAX_REPORT_FACT_CHUNKS = 1_000;
+const MAX_REPORT_MATCH_CHECKPOINTS = 1_500;
 const MAX_REPORT_FACT_CHUNK_BYTES = 1_000_000;
 export const MAX_REPORT_MATCH_BATCH_RESULT_BYTES = 512_000;
 const INVALID_DOMAIN_MESSAGE = "A valid public domain is required.";
@@ -970,7 +971,7 @@ function rowMatchBatchCheckpoint(row: Record<string, unknown>): ReportMatchBatch
 
 function validateMatchBatchCheckpointIdentity(attemptNumber: number, batchIndex: number, inputHash?: string) {
   if (!Number.isInteger(attemptNumber) || attemptNumber < 1) throw new Error("Invalid report match batch checkpoint attempt.");
-  if (!Number.isInteger(batchIndex) || batchIndex < 0 || batchIndex >= MAX_REPORT_FACT_CHUNKS) throw new Error("Invalid report match batch checkpoint index.");
+  if (!Number.isInteger(batchIndex) || batchIndex < 0 || batchIndex >= MAX_REPORT_MATCH_CHECKPOINTS) throw new Error("Invalid report match batch checkpoint index.");
   if (inputHash !== undefined && !/^[a-f0-9]{64}$/.test(inputHash)) throw new Error("Invalid report match batch checkpoint input hash.");
 }
 

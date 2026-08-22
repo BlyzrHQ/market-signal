@@ -80,7 +80,7 @@ type SearchSource = { url: string; title: string; query: string; queries: string
 type LaneResult = { lane: SearchLane; category: string; region: string; queries: string[]; candidates: DiscoveryCandidate[]; completed: boolean; gap?: string };
 
 const MAX_CANDIDATES = 6;
-const MAX_PRODUCT_SEARCHES = 20;
+const MAX_PRODUCT_SEARCHES = 100;
 const MAX_PRODUCT_SEARCH_ANCHORS = 1_000;
 const MAX_SOURCE_FIRST_LEADS_PER_SEARCH = 2;
 const MAX_SOURCE_FIRST_CANDIDATES = 2;
@@ -636,8 +636,9 @@ export function mergeCandidates(candidates: DiscoveryCandidate[], maxCandidates 
 }
 
 function completedWebSearch(payload: Record<string, unknown>) {
+  if (payload.status !== "completed") return false;
   return (Array.isArray(payload.output) ? payload.output : []).some((item) => {
-    if (!item || typeof item !== "object" || (item as { type?: unknown }).type !== "web_search_call") return false;
+    if (!item || typeof item !== "object" || (item as { type?: unknown }).type !== "web_search_call" || (item as { status?: unknown }).status !== "completed") return false;
     const action = (item as { action?: unknown }).action;
     if (!action || typeof action !== "object" || Array.isArray(action)) return false;
     const query = (action as { query?: unknown }).query;
@@ -662,8 +663,16 @@ function structurallyValidDiscovery(value: Record<string, unknown>) {
   });
 }
 
-function discoveryAnchorSetHash(products: ProductRecord[]) {
-  return createHash("sha256").update(JSON.stringify(products.map((product) => ({ id: product.id, name: product.normalizedName || product.name, sourceUrl: product.sourceUrl })))).digest("hex");
+function discoveryAnchorSetHash(business: BusinessProfile, products: ProductRecord[]) {
+  return createHash("sha256").update(JSON.stringify({
+    domain: business.domain, brandName: business.brandName, businessType: business.businessType,
+    category: business.category, categoryTerms: business.categoryTerms, region: business.region, language: business.language,
+    products: products.map((product) => ({
+      id: product.id, name: product.name, normalizedName: product.normalizedName, sourceUrl: product.sourceUrl,
+      category: product.category, description: product.description, attributes: product.attributes,
+      aliases: product.aliases || [], identifiers: product.identifiers || null,
+    })),
+  })).digest("hex");
 }
 
 export function publicDiscoveryCandidate<T extends DiscoveryCandidate>(candidate: T): T {
@@ -745,7 +754,10 @@ async function runLane(endpoint: string, apiKey: string, model: string, lane: Se
             category: { type: "string" },
             region: { type: "string" },
             queries: { type: "array", items: { type: "string" } },
-            candidates: { type: "array", items: { type: "object", additionalProperties: false, properties: {
+            // Six attributable sellers per exact query is the declared bounded
+            // search policy. Across 100 product lanes this permits 600 fresh
+            // seller investigations without silently clipping parsed output.
+            candidates: { type: "array", maxItems: MAX_CANDIDATES, items: { type: "object", additionalProperties: false, properties: {
               domain: { type: "string" },
               companyName: { type: "string" },
               reason: { type: "string" },
@@ -827,7 +839,7 @@ export async function discoverCompetitors(profile: DiscoveryProfile, options: { 
   const model = process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini";
   const business = inferBusinessProfile(profile);
   const eligibleAnchors = business.businessType === "ecommerce" ? productSearchAnchors(business.offerings, MAX_PRODUCT_SEARCH_ANCHORS, business.brandName) : [];
-  const anchorSetHash = discoveryAnchorSetHash(eligibleAnchors);
+  const anchorSetHash = discoveryAnchorSetHash(business, eligibleAnchors);
   const requestedOffset = Math.max(0, Math.min(eligibleAnchors.length, Math.floor(options.searchOffset || 0)));
   const anchorSetMatches = requestedOffset === 0 || (Boolean(options.expectedAnchorSetHash) && options.expectedAnchorSetHash === anchorSetHash);
   const startIndex = anchorSetMatches ? requestedOffset : 0;

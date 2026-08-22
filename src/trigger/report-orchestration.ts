@@ -4,11 +4,12 @@ import { PermanentOrchestrationError, type ReportOrchestrationPayload } from "..
 import { orchestrateReport } from "./report-orchestration-core.ts";
 import { createReportOrchestrationHttpPort } from "./report-orchestration-http.ts";
 
-const MAX_ATTEMPTS = 2;
+// Ten 100-anchor attempts can truthfully cover the full 1,000-product catalog.
+const MAX_ATTEMPTS = 10;
 
 export const marketSignalReportOrchestration = task({
   id: "market-signal-report-orchestration",
-  maxDuration: 12_600,
+  maxDuration: 13_200,
   retry: {
     maxAttempts: MAX_ATTEMPTS,
     minTimeoutInMs: 2_000,

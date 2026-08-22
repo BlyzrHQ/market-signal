@@ -795,8 +795,8 @@ test("all operation deadlines keep a two-minute margin below the stale marker", 
   for (const timeout of Object.values(OPERATION_BUDGETS_MS)) assert.ok(timeout <= MAX_OPERATION_TIMEOUT_MS);
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS > OPERATION_BUDGETS_MS.match, "Undici must not preempt the match operation deadline");
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS < MAX_OPERATION_TIMEOUT_MS, "the worker deadline must remain inside the outer edge window");
-  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 12_445_000);
-  assert.ok(WORST_CASE_CRITICAL_PATH_MS <= 12_480_000, "critical path must preserve a two-minute task-ceiling margin");
+  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 12_895_000);
+  assert.ok(WORST_CASE_CRITICAL_PATH_MS <= 13_080_000, "critical path must preserve a two-minute task-ceiling margin");
 });
 
 test("the managed orchestration fetch controls the response-header deadline", async () => {

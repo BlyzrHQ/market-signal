@@ -9,8 +9,8 @@ type FetchLike = typeof fetch;
 const MAX_ACCEPTED_ERROR_BODY_BYTES = 1_000_000;
 
 // Node's built-in fetch gives up while waiting for response headers after five
-// minutes, independently of a longer AbortSignal. Agency matching is allowed
-// 12 minutes, so keep Undici above the 750-second operation deadline while
+// minutes, independently of a longer AbortSignal. Discovery and matching are
+// allowed 12 minutes, so keep Undici above their 750-second deadlines while
 // Caddy remains the outermost 780-second boundary.
 export const ORCHESTRATION_FETCH_TIMEOUT_MS = 760_000;
 
@@ -43,7 +43,7 @@ const PATHS = {
 export const OPERATION_BUDGETS_MS = {
   preflight: 10_000,
   report: 10_000,
-  crawl: 300_000,
+  crawl: 750_000,
   brief: 90_000,
   ads: 90_000,
   match: 750_000,

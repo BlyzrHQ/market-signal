@@ -101,7 +101,9 @@ type ReportBlock = Record<string, unknown> & { type: string; id: string };
 
 const MAX_DOMAINS = 4;
 const MAX_HTML_PAGES = 5;
-const MAX_DISCOVERED_HTML_PAGES = 3;
+// A merged rival can carry one exact seed for each of the 100 primary-product
+// anchors in a discovery attempt. Include the homepage plus every bounded seed.
+const MAX_DISCOVERED_HTML_PAGES = 101;
 const MAX_SITEMAP_DOCUMENTS = 4;
 const MAX_DISCOVERED_SITEMAP_DOCUMENTS = 2;
 const MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES = 16;
@@ -110,10 +112,10 @@ export const MAX_PRIMARY_CATALOG_PRODUCTS = 1_000;
 const MAX_CATALOG_RECONCILIATION_PAGES = 64;
 const MAX_DOCUMENT_BYTES = 1_500_000;
 const MAX_HTML_EXTRACTION_BYTES = 400_000;
-const COMPETITOR_CRAWL_CONCURRENCY = 6;
-// Twenty product lanes and two company lanes can each contribute six fresh
-// domains, plus up to 152 remembered rivals. Investigate the complete wave.
-const MAX_COMPETITOR_INVESTIGATIONS = 284;
+const COMPETITOR_CRAWL_CONCURRENCY = 24;
+// One hundred product lanes and two company lanes can each contribute six
+// fresh domains, plus up to 152 remembered rivals.
+const MAX_COMPETITOR_INVESTIGATIONS = 764;
 const REQUEST_TIMEOUT_MS = 6_000;
 const USER_AGENT = "MarketSignalPublicScanner/0.1";
 const PRIORITY_PATHS = ["/pricing", "/plans", "/products", "/features", "/compare", "/integrations", "/about", "/customers", "/blog"];
@@ -354,7 +356,7 @@ export async function verifyDiscoveredCompetitorWithInferredLeads(
 }
 
 export function rememberedReverificationFailures(candidates: MemoryCandidate[], results: Array<DomainCrawl | null>) {
-  return candidates.filter((candidate, index) => candidate.provenance === "remembered-reverified" && !results[index]?.discovery?.accepted);
+  return candidates.filter((candidate, index) => candidate.provenance === "remembered-reverified" && competitorInvestigationComplete(results[index]) && !results[index]?.discovery?.accepted);
 }
 
 export function competitorInvestigationComplete(result: Pick<DomainCrawl, "homepage" | "gaps" | "discovery"> | null) {
@@ -366,6 +368,7 @@ export function competitorInvestigationComplete(result: Pick<DomainCrawl, "homep
   ].flatMap((value) => {
     try { const url = new URL(value); return [`${canonicalDomain(url.hostname)}${url.pathname.replace(/\/$/, "")}`]; } catch { return []; }
   }));
+  if (seedUrls.size && result.gaps.some((gap) => /robots\.txt was unreachable/i.test(gap.reason))) return false;
   return !result.gaps.some((gap) => {
     let key = "";
     try { const url = new URL(gap.url); key = `${canonicalDomain(url.hostname)}${url.pathname.replace(/\/$/, "")}`; } catch { return false; }

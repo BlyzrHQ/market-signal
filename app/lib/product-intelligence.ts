@@ -1716,7 +1716,7 @@ export function productDecision(primary: ProductRecord, candidate: ProductRecord
 export function buildProductComparison(primaryDomain: string, catalogs: Array<{ domain: string; products: ProductRecord[] }>, requiredSourceUrls: Record<string, string[]> = {}): ProductComparison {
   const canonicalPrimary = canonicalHost(primaryDomain);
   const maxPrimaryProducts = 1_000;
-  const maxRivalProducts = 600;
+  const maxRivalProducts = 5_000;
   const rowLimit = 80;
   const minimumCoverageRows = 16;
   const maxUnmatchedProductsPerDomain = 24;

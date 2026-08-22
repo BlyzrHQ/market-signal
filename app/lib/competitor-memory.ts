@@ -122,7 +122,43 @@ export function mergeRememberedCandidates(fresh: DiscoveryCandidate[], remembere
   const freshCandidates = fresh.map((candidate): MemoryCandidate => ({ ...candidate, provenance: "discovered-this-run" }));
   const rememberedFirst = remembered.slice(0, Math.min(MAX_REMEMBERED_CANDIDATES, Math.max(0, limit - Math.min(MAX_REMEMBERED_CANDIDATES, freshCandidates.length))));
   for (const candidate of rememberedFirst) if (!selected.has(canonicalDomain(candidate.domain))) selected.set(canonicalDomain(candidate.domain), candidate);
-  for (const candidate of freshCandidates) if (selected.size < limit && !selected.has(canonicalDomain(candidate.domain))) selected.set(canonicalDomain(candidate.domain), candidate);
+  for (const candidate of freshCandidates) {
+    const domain = canonicalDomain(candidate.domain);
+    const current = selected.get(domain);
+    if (!current) {
+      if (selected.size < limit) selected.set(domain, candidate);
+      continue;
+    }
+    const evidence = [...current.evidence, ...candidate.evidence]
+      .filter((item, index, all) => all.findIndex((other) => other.url === item.url && other.method === item.method) === index);
+    const matchedPrimaryProductNames = [...new Set([
+      ...(current.matchedPrimaryProductNames || (current.matchedPrimaryProductName ? [current.matchedPrimaryProductName] : [])),
+      ...(candidate.matchedPrimaryProductNames || (candidate.matchedPrimaryProductName ? [candidate.matchedPrimaryProductName] : [])),
+    ])].slice(0, 100);
+    const matchedProductUrls = [...new Set([
+      ...(current.matchedProductUrls || (current.matchedProductUrl ? [current.matchedProductUrl] : [])),
+      ...(candidate.matchedProductUrls || (candidate.matchedProductUrl ? [candidate.matchedProductUrl] : [])),
+    ])].slice(0, 100);
+    const inferredProductLeads = [...(current.inferredProductLeads || []), ...(candidate.inferredProductLeads || [])]
+      .filter((lead, index, all) => all.findIndex((other) => other.primaryProductId === lead.primaryProductId
+        && other.primarySourceUrl === lead.primarySourceUrl
+        && other.candidateSourceUrl === lead.candidateSourceUrl
+        && other.admission === lead.admission) === index)
+      .slice(0, 100);
+    selected.set(domain, {
+      ...current,
+      ...candidate,
+      evidence,
+      mentionCount: Math.max(current.mentionCount, candidate.mentionCount),
+      matchedPrimaryProductName: candidate.matchedPrimaryProductName || current.matchedPrimaryProductName,
+      matchedProductUrl: candidate.matchedProductUrl || current.matchedProductUrl,
+      matchedPrimaryProductNames,
+      matchedProductUrls,
+      inferredProductLeads,
+      provenance: "discovered-this-run",
+      rememberedVerifiedAt: current.rememberedVerifiedAt,
+    });
+  }
   return [...selected.values()].slice(0, limit);
 }
 

@@ -67,6 +67,32 @@ test("remembered leads remain available when fresh discovery is sparse", () => {
   assert.equal(merged.filter((item) => item.provenance === "remembered-reverified").length, 5);
 });
 
+test("fresh same-domain product evidence is merged into remembered continuity", () => {
+  const domain = "same-rival.test";
+  const remembered = [{
+    ...candidate(domain, "remembered-reverified"),
+    matchedPrimaryProductName: "Old product",
+    matchedProductUrl: `https://${domain}/products/old`,
+    matchedPrimaryProductNames: ["Old product"],
+    matchedProductUrls: [`https://${domain}/products/old`],
+    rememberedVerifiedAt: "2026-07-14T00:00:00.000Z",
+  }];
+  const fresh = [{
+    ...candidate(domain),
+    matchedPrimaryProductName: "Fresh product",
+    matchedProductUrl: `https://${domain}/products/fresh`,
+    matchedPrimaryProductNames: ["Fresh product"],
+    matchedProductUrls: [`https://${domain}/products/fresh`],
+    evidence: [{ url: `https://${domain}/products/fresh`, title: "Fresh product", method: "product-search" }],
+  }];
+
+  const [merged] = mergeRememberedCandidates(fresh, remembered);
+  assert.equal(merged.provenance, "discovered-this-run");
+  assert.deepEqual(merged.matchedPrimaryProductNames, ["Old product", "Fresh product"]);
+  assert.deepEqual(merged.matchedProductUrls, [`https://${domain}/products/old`, `https://${domain}/products/fresh`]);
+  assert.equal(merged.evidence.length, 2);
+});
+
 test("memory is isolated, expires old rows, and ignores malformed records", async () => {
   const database = new FakeDatabase([
     record("myjam.co.uk", "current.test", "2026-07-14T00:00:00.000Z"),
