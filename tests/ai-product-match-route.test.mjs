@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { createMatchHandler, MAX_MATCH_BODY_BYTES, parseCatalogs, parsePinnedPairs, productAnalysisBudgetMs, productAnalysisConcurrency, productAnalysisLimit, productBackfillPoolSize } from "../app/api/match/route.ts";
 
 test("AI matching input keeps a broad but bounded first-party catalog", () => {
@@ -194,7 +195,7 @@ test("authenticated matching binds durable judge checkpoints to the active repor
       receivedOptions = options;
       const planKey = { batchIndex: 999, planHash: "c".repeat(64) };
       assert.equal(await options.loadCandidatePlan(planKey), null);
-      await options.saveCandidatePlan(planKey, { version: 2, planHash: planKey.planHash, primaryCatalogCount: 1_000, selectedPrimaryCount: 0, candidatePairCount: 0, groups: [] });
+      await options.saveCandidatePlan(planKey, { version: 2, planHash: planKey.planHash, contentHash: createHash("sha256").update("[]").digest("hex"), primaryCatalogCount: 1_000, selectedPrimaryCount: 0, candidatePairCount: 0, groups: [] });
       const key = { batchIndex: 3, batchCount: 5, batchHash: "a".repeat(64), model: "test", promptVersion: "v1", primaryIds: ["p1"], candidatePairCount: 1 };
       assert.deepEqual(await options.loadJudgeBatchCheckpoint(key), { version: 1 });
       await options.saveJudgeBatchCheckpoint(key, { version: 1 });

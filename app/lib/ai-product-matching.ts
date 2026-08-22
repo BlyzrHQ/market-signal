@@ -38,7 +38,7 @@ type Candidate = {
 type CandidateGroup = { primary: ProductRecord; candidates: Candidate[] };
 
 export type ProductCandidatePlanKey = { planHash: string; batchIndex: number };
-export type ProductCandidatePlan = { version: 2; planHash: string; primaryCatalogCount: number; selectedPrimaryCount: number; candidatePairCount: number; groups: Array<{ primaryKey: string; candidateKeys: string[] }> };
+export type ProductCandidatePlan = { version: 2; planHash: string; contentHash: string; primaryCatalogCount: number; selectedPrimaryCount: number; candidatePairCount: number; groups: Array<{ primaryKey: string; candidateKeys: string[] }> };
 export const PRODUCT_CANDIDATE_PLAN_BATCH_INDEX = 999;
 
 export type PinnedProductPair = {
@@ -412,9 +412,7 @@ function safeProduct(product: ProductRecord) {
     type: product.jsonLdType,
     description: clean(product.description, 500),
     attributes: product.attributes.map((item) => clean(item, 100)).filter(Boolean).slice(0, 8),
-    publicPriceSignals: product.priceSignals.map((item) => clean(item.raw, 100)).filter(Boolean).slice(0, 4),
     sourceUrl: product.sourceUrl,
-    imageAvailable: /^https?:\/\//i.test(product.imageUrl),
     observedIdentifiers: product.identifiers ? { gtins: product.identifiers.gtins, sku: product.identifiers.sku || "", mpn: product.identifiers.mpn || "", brand: product.identifiers.brand || "" } : null,
     canonicalQuantity: product.quantity || null,
   };
@@ -617,16 +615,22 @@ function candidatePlanProductKey(product: ProductRecord) {
   return createHash("sha256").update(JSON.stringify(candidatePlanProductIdentity(product))).digest("base64url");
 }
 
+function candidatePlanContentHash(groups: ProductCandidatePlan["groups"]) {
+  return createHash("sha256").update(JSON.stringify(groups)).digest("hex");
+}
+
 function restoreCandidatePlan(value: unknown, planHash: string, primary: ProductRecord[], competitors: ProductCatalog[], embeddings: Map<string, number[]>, expectedGroupCount: number) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const plan = value as ProductCandidatePlan;
   if (plan.version !== 2
     || plan.planHash !== planHash
+    || !/^[a-f0-9]{64}$/.test(plan.contentHash)
     || plan.primaryCatalogCount !== primary.length
     || plan.selectedPrimaryCount !== expectedGroupCount
     || !Array.isArray(plan.groups)
     || plan.groups.length !== expectedGroupCount
-    || plan.candidatePairCount !== plan.groups.reduce((sum, group) => sum + (Array.isArray(group?.candidateKeys) ? group.candidateKeys.length : 0), 0)) return null;
+    || plan.candidatePairCount !== plan.groups.reduce((sum, group) => sum + (Array.isArray(group?.candidateKeys) ? group.candidateKeys.length : 0), 0)
+    || plan.contentHash !== candidatePlanContentHash(plan.groups)) return null;
   const primaryByKey = new Map(primary.map((product) => [candidatePlanProductKey(product), product]));
   const rivalByKey = new Map<string, ProductRecord>(competitors.flatMap((catalog) => catalog.products.map((product) => [candidatePlanProductKey(product), product] as [string, ProductRecord])));
   const groups: CandidateGroup[] = [];
@@ -783,7 +787,7 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
     groups = selectJudgeGroups(retrievedGroups.groups, maxPrimary, new Set(pinnedPairs.map((pair) => pair.primaryId)), referenceTimeMs, options.marketCountryCode || "");
     if (options.saveCandidatePlan) {
       const planGroups = groups.map((group) => ({ primaryKey: candidatePlanProductKey(group.primary), candidateKeys: group.candidates.map((candidate) => candidatePlanProductKey(candidate.product)) }));
-      const plan: ProductCandidatePlan = { version: 2, planHash, primaryCatalogCount: synchronizedPrimary.length, selectedPrimaryCount: groups.length, candidatePairCount: planGroups.reduce((sum, group) => sum + group.candidateKeys.length, 0), groups: planGroups };
+      const plan: ProductCandidatePlan = { version: 2, planHash, contentHash: candidatePlanContentHash(planGroups), primaryCatalogCount: synchronizedPrimary.length, selectedPrimaryCount: groups.length, candidatePairCount: planGroups.reduce((sum, group) => sum + group.candidateKeys.length, 0), groups: planGroups };
       try { await options.saveCandidatePlan(planKey, plan); } catch { return candidatePlanFailure("Durable candidate-plan persistence failed; no product pair was accepted from a non-replayable matching plan."); }
     }
   }

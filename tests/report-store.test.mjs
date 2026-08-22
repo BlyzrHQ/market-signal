@@ -123,6 +123,8 @@ test("match batch checkpoints persist bounded canonical results and replay idemp
   const loaded = await loadReportMatchBatchCheckpoints(database.publicId, { attemptNumber: 1, batchIndex: 0 }, database);
   assert.equal(loaded.length, 1);
   assert.deepEqual(loaded[0].result, { matches: [{ id: "p-1", score: 0.9 }], usage: { input: 34, output: 12 } });
+  database.checkpoints[0].result_json = JSON.stringify({ matches: [{ id: "tampered" }] });
+  await assert.rejects(() => loadReportMatchBatchCheckpoints(database.publicId, { attemptNumber: 1, batchIndex: 0 }, database), /integrity validation/);
 });
 
 test("match batch checkpoints reject conflicts, invalid hashes, stale attempts, terminal reports, and oversized results", async () => {

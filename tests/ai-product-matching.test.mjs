@@ -945,7 +945,7 @@ test("a persisted candidate plan makes retries independent of embedding drift", 
   assert.ok(first.matching.embeddingCalls > 0);
   assert.equal(second.matching.embeddingCalls, 0);
 
-  savedPlan = { ...savedPlan, groups: [], selectedPrimaryCount: 1, candidatePairCount: 0 };
+  savedPlan = { ...savedPlan, groups: savedPlan.groups.map((group) => ({ ...group, candidateKeys: group.candidateKeys.slice(1) })), candidatePairCount: savedPlan.groups.reduce((sum, group) => sum + Math.max(0, group.candidateKeys.length - 1), 0) };
   const truncated = await run(true);
   assert.equal(truncated.matching.available, false);
   assert.match(truncated.matching.gaps.join(" "), /incomplete or invalid|truncated matching pool/i);
@@ -998,8 +998,8 @@ test("replays complete deterministic judge checkpoints without another judge cal
   ], {}, options);
   const callsAfterFirstRun = judgeCalls;
   const second = await buildAIProductComparison("shop.test", [
-    { domain: "shop.test", products: primaries },
-    { domain: "rival.test", products: rivals },
+    { domain: "shop.test", products: primaries.map((item) => ({ ...item, imageUrl: `https://shop.test/images/${item.id}-new.jpg`, priceSignals: [{ raw: "GBP 12", currency: "GBP", amount: 12 }], observedAt: "2026-08-02T00:00:00.000Z" })) },
+    { domain: "rival.test", products: rivals.map((item) => ({ ...item, imageUrl: `https://rival.test/images/${item.id}-new.jpg`, priceSignals: [{ raw: "GBP 10", currency: "GBP", amount: 10 }], observedAt: "2026-08-02T00:00:00.000Z" })) },
   ], {}, options);
 
   assert.equal(first.matching?.totalJudgeBatches, 2);

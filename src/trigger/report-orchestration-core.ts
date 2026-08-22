@@ -94,11 +94,16 @@ export function validEnrichmentCheckpoint(value: unknown, targets: ProductEnrich
     const url = new URL(value);
     return url.pathname.replace(/^\/[a-z]{2,3}-[a-z]{2}(?=\/)/i, "").replace(/\/+$/, "") || "/";
   };
+  const comparableSearch = (value: string) => {
+    const url = new URL(value);
+    return [...url.searchParams.entries()].sort(([leftKey, leftValue], [rightKey, rightValue]) => leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue));
+  };
   const sourceMatchesTarget = (sourceUrl: string, target: ProductEnrichmentTarget) => {
     try {
       const source = new URL(sourceUrl);
       const requested = new URL(target.sourceUrl);
       if (canonicalDomain(source.hostname) !== canonicalDomain(target.domain) || canonicalDomain(requested.hostname) !== canonicalDomain(target.domain)) return false;
+      if (JSON.stringify(comparableSearch(sourceUrl)) !== JSON.stringify(comparableSearch(target.sourceUrl))) return false;
       return target.allowCatalogReplacement === true || comparablePath(sourceUrl) === comparablePath(target.sourceUrl);
     } catch { return false; }
   };
@@ -134,6 +139,7 @@ export function validEnrichmentCheckpoint(value: unknown, targets: ProductEnrich
     || (coverage.pagesFetched || 0) > (coverage.pagesRequested || 0)
     || !Array.isArray(coverage.gaps)
     || coverage.gaps.length > FINAL_ENRICHMENT_BATCH_SIZE) return null;
+  const gapKeys: string[] = [];
   if (!coverage.gaps.every((gap) => {
     if (!gap || typeof gap !== "object") return false;
     const record = gap as { productId?: unknown; url?: unknown };
@@ -141,12 +147,15 @@ export function validEnrichmentCheckpoint(value: unknown, targets: ProductEnrich
     try {
       const key = `${canonicalDomain(new URL(record.url).hostname)}\n${String(record.productId || "")}`;
       const target = targetByProduct.get(key);
-      return Boolean(target) && sourceMatchesTarget(record.url, target as ProductEnrichmentTarget);
+      if (!target || !sourceMatchesTarget(record.url, target)) return false;
+      gapKeys.push(key);
+      return true;
     } catch { return false; }
   })) return null;
-  const represented = new Set(candidate.products.map((product) => `${canonicalDomain(product.domain)}\n${product.id}`));
-  for (const gap of coverage.gaps) represented.add(`${canonicalDomain(new URL(gap.url).hostname)}\n${gap.productId}`);
-  if ([...targetByProduct.keys()].some((key) => !represented.has(key))) return null;
+  const uniqueGapKeys = new Set(gapKeys);
+  if (uniqueGapKeys.size !== gapKeys.length || gapKeys.some((key) => productKeys.has(key))) return null;
+  const represented = new Set([...productKeys, ...uniqueGapKeys]);
+  if (represented.size !== targetByProduct.size || [...targetByProduct.keys()].some((key) => !represented.has(key))) return null;
   return candidate as EnrichmentResult;
 }
 

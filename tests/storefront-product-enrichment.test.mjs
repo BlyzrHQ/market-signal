@@ -1953,14 +1953,14 @@ test("a missing robots file permits only the existing bounded product enrichment
   try {
     const result = await enrichProductTargets([target()], 1);
     assert.equal(result.products[0].priceSignals[0].amount, 8.5);
-    assert.match(result.coverage.gaps[0].reason, /No robots\.txt was published \(HTTP 404\)/);
+    assert.deepEqual(result.coverage.gaps, []);
     assert.deepEqual(calls, ["https://shop.test/robots.txt", "https://shop.test/products/maamoul-pistachio"]);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("reports a missing robots policy once per domain instead of once per product", async () => {
+test("does not misclassify a missing robots policy as an unresolved product target", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
     const url = String(input);
@@ -1977,7 +1977,7 @@ test("reports a missing robots policy once per domain instead of once per produc
       target({ sourceUrl: "https://shop.test/products/second", productId: "second", expectedName: "Maamoul Walnut" }),
     ], 2);
     assert.equal(result.products.length, 2);
-    assert.equal(result.coverage.gaps.filter((gap) => /No robots\.txt was published/.test(gap.reason)).length, 1);
+    assert.deepEqual(result.coverage.gaps, []);
   } finally {
     globalThis.fetch = originalFetch;
   }

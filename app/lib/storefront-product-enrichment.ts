@@ -1112,12 +1112,10 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
   }));
 
   const products = entries.flatMap((entry) => entry.product ? [entry.product] : []);
-  const missingRobotsGaps = [...robotsByDomain.entries()].flatMap(([domain, result]) => {
-    if (result.availability !== "missing") return [];
-    const first = selected.find((item) => item.domain === domain);
-    return first ? [{ url: result.sourceUrl, productId: first.productId, role: first.role, reason: `No robots.txt was published (HTTP ${result.status}); bounded selected-product enrichment proceeded.` }] : [];
-  });
-  const gaps = [...entries.flatMap((entry) => entry.gap ? [entry.gap] : []), ...missingRobotsGaps];
+  // Coverage gaps describe unresolved targets only. A missing robots.txt is a
+  // diagnostic observation, not a second outcome for a successfully fetched
+  // product page.
+  const gaps = entries.flatMap((entry) => entry.gap ? [entry.gap] : []);
   return { products, coverage: { pagesRequested: selected.length, pagesFetched: products.length, maxPages: boundedMax, gaps } satisfies ProductEnrichmentCoverage };
 }
 

@@ -224,7 +224,14 @@ test("enrichment checkpoints require one exact source-bound outcome per target",
   assert.ok(validEnrichmentCheckpoint(complete, targets));
   assert.equal(validEnrichmentCheckpoint({ ...complete, products: [products[0], products[0]] }, targets), null);
   assert.equal(validEnrichmentCheckpoint({ ...complete, products: [products[0], { ...products[1], sourceUrl: "https://rival.example/products/wrong-page" }] }, targets), null);
+  assert.equal(validEnrichmentCheckpoint({ ...complete, products: [products[0], { ...products[1], sourceUrl: "https://rival.example/products/two?country=US" }] }, targets), null);
   assert.equal(validEnrichmentCheckpoint({ ...complete, products: [products[0]], coverage: { ...complete.coverage, pagesFetched: 1 } }, targets), null);
+  const gap = { url: targets[1].sourceUrl, productId: targets[1].productId, role: "rival", reason: "Unavailable." };
+  assert.ok(validEnrichmentCheckpoint({ ...complete, products: [products[0]], coverage: { ...complete.coverage, pagesFetched: 1, gaps: [gap] } }, targets));
+  assert.equal(validEnrichmentCheckpoint({ ...complete, coverage: { ...complete.coverage, gaps: [gap] } }, targets), null);
+  assert.equal(validEnrichmentCheckpoint({ ...complete, products: [products[0]], coverage: { ...complete.coverage, pagesFetched: 1, gaps: [gap, gap] } }, targets), null);
+  const allGaps = targets.map((target) => ({ url: target.sourceUrl, productId: target.productId, role: target.role, reason: "Unavailable." }));
+  assert.ok(validEnrichmentCheckpoint({ ...complete, products: [], coverage: { ...complete.coverage, pagesFetched: 0, gaps: allGaps } }, targets));
 });
 
 test("the priced table is capped while suppressed screened evidence remains in relational facts", async () => {

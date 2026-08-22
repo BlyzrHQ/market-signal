@@ -987,7 +987,13 @@ export async function loadReportMatchBatchCheckpoints(publicReportId: string, in
   const byBatch = input.batchIndex === undefined ? "" : " AND batch_index = ?";
   const bindings = input.batchIndex === undefined ? [run.id, input.attemptNumber] : [run.id, input.attemptNumber, input.batchIndex];
   const rows = await database.prepare(`SELECT attempt_number, batch_index, input_hash, result_json, result_hash, created_at, updated_at FROM report_match_batch_checkpoints WHERE run_id = ? AND attempt_number = ?${byBatch} ORDER BY batch_index ASC`).bind(...bindings).all<Record<string, unknown>>();
-  return (rows.results || []).map(rowMatchBatchCheckpoint);
+  return Promise.all((rows.results || []).map(async (row) => {
+    const checkpoint = rowMatchBatchCheckpoint(row);
+    const resultJson = boundedCheckpointResult(checkpoint.result);
+    const resultHash = await sha256Text(resultJson);
+    if (resultJson !== String(row.result_json) || resultHash !== checkpoint.resultHash) throw new Error("Persisted report match batch checkpoint failed integrity validation.");
+    return checkpoint;
+  }));
 }
 
 export async function loadReportProductEntitlement(publicReportId: string, attemptNumber: number, databaseOverride?: D1DatabaseLike | null): Promise<ProductEntitlement> {
