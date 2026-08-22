@@ -65,7 +65,7 @@ export const MAX_REPORT_FACT_CALLBACKS = MAX_REPORT_FACT_CHUNKS;
 // enrichment-complete + actions-start + actions + actions-complete +
 // matching-complete) + bounded relational-fact chunks, manifest, and final save.
 export const WORST_CASE_CRITICAL_PATH_MS = (OPERATION_BUDGETS_MS.report * (24 + MAX_FINAL_ENRICHMENT_BATCH_WAVES + (MAX_FINAL_ENRICHMENT_BATCHES * 2)))
-  + (OPERATION_BUDGETS_MS.factCallback * MAX_REPORT_FACT_CALLBACKS)
+  + (OPERATION_BUDGETS_MS.factCallback * (MAX_REPORT_FACT_CALLBACKS + 1))
   + OPERATION_BUDGETS_MS.preflight
   + OPERATION_BUDGETS_MS.crawl
   + (OPERATION_BUDGETS_MS.match * 2)
