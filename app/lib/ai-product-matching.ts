@@ -637,7 +637,7 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   const apiKey = options.apiKey ?? process.env.OPENAI_API_KEY ?? "";
   const model = options.model || process.env.MARKET_SIGNAL_MATCH_MODEL || DEFAULT_MODEL;
   const embeddingModel = options.embeddingModel || process.env.MARKET_SIGNAL_MATCH_EMBEDDING_MODEL || DEFAULT_EMBEDDING_MODEL;
-  const matchingBase = { model, embeddingModel, promptVersion: PROMPT_VERSION, primaryProductsAssessed: 0, candidatePairsAssessed: 0, retrievalPairsScored: 0, judgeCalls: 0, embeddingCalls: 0, totalJudgeBatches: 0, reusedJudgeCheckpoints: 0, savedJudgeCheckpoints: 0, durationMs: 0, gaps: [] as string[], selectedPrimaryIds: [] as string[], assessedPrimaryIds: [] as string[], attempts: 1, primaryProductsSynchronized: 0, competitorProductsSynchronized: 0, candidateSlotsByDomain: {} as Record<string, number> };
+  const matchingBase = { model, embeddingModel, promptVersion: PROMPT_VERSION, primaryProductsAssessed: 0, primaryProductsScreened: 0, candidatePairsAssessed: 0, retrievalPairsScored: 0, judgeCalls: 0, embeddingCalls: 0, totalJudgeBatches: 0, reusedJudgeCheckpoints: 0, savedJudgeCheckpoints: 0, durationMs: 0, gaps: [] as string[], selectedPrimaryIds: [] as string[], assessedPrimaryIds: [] as string[], attempts: 1, primaryProductsSynchronized: 0, competitorProductsSynchronized: 0, candidateSlotsByDomain: {} as Record<string, number> };
   if (!apiKey) return { ...withoutUnassessedMatches(fallback), matching: { ...matchingBase, method: "lexical-fallback", available: false, gaps: ["AI product matching is not configured; no product pair was accepted without AI assessment."] } };
 
   const fetcher = options.fetch || fetch;
@@ -685,6 +685,7 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   const retrieved = retrieveGroups(synchronizedPrimary, competitors, embeddings, fallback, maxCandidates, maxPerDomain, maxRetrievalPool, pinnedPairs);
   const groups = selectJudgeGroups(retrieved.groups, maxPrimary, new Set(pinnedPairs.map((pair) => pair.primaryId)));
   matchingBase.selectedPrimaryIds = groups.map((group) => group.primary.id);
+  matchingBase.primaryProductsScreened = matchingBase.selectedPrimaryIds.length;
   matchingBase.candidateSlotsByDomain = groups.flatMap((group) => group.candidates).reduce((counts, candidate) => {
     const domain = canonicalDomain(candidate.product.domain);
     counts[domain] = (counts[domain] || 0) + 1;
@@ -828,6 +829,7 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
       embeddingModel,
       promptVersion: PROMPT_VERSION,
       primaryProductsAssessed: successfulPrimaryIds.size,
+      primaryProductsScreened: matchingBase.primaryProductsScreened,
       candidatePairsAssessed: sanitized.length,
       retrievalPairsScored: retrieved.scoredPairs,
       judgeCalls,

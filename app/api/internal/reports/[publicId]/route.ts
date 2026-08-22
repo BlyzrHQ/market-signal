@@ -251,6 +251,7 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
             attemptNumber,
             status: body.status === "limited" ? "limited" : "complete",
             observedAt: typeof body.observedAt === "string" ? body.observedAt : undefined,
+            expectedFactManifestHash: typeof body.expectedFactManifestHash === "string" ? body.expectedFactManifestHash : undefined,
           });
           const persisted = await store.get(id);
           if (!persisted) throw new Error("The completed report was not persisted.");

@@ -1118,7 +1118,7 @@ export async function appendReportEvent(publicReportId: string, input: { attempt
   return { publicId: run.publicId, phase: input.phase, status: input.status, observedAt };
 }
 
-export async function saveReportDocument(publicReportId: string, document: unknown, options: { attemptNumber?: number; status?: "complete" | "limited"; observedAt?: string } = {}, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+export async function saveReportDocument(publicReportId: string, document: unknown, options: { attemptNumber?: number; status?: "complete" | "limited"; observedAt?: string; expectedFactManifestHash?: string } = {}, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
   const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
   if (!database) throw new Error("Persistent report storage is unavailable.");
   if (!PUBLIC_ID_PATTERN.test(publicReportId) || !document || typeof document !== "object" || Array.isArray(document)) throw new Error("Invalid report document.");
@@ -1134,6 +1134,16 @@ export async function saveReportDocument(publicReportId: string, document: unkno
   const manifestRows = await database.prepare(`SELECT manifest_hash, company_count, product_count, match_count, ad_count, status FROM report_fact_manifests WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>();
   const manifest = manifestRows.results?.[0];
   const completeManifest = manifest?.status === "complete" && /^[a-f0-9]{64}$/.test(String(manifest.manifest_hash || ""));
+  const expectedFactManifestHash = options.expectedFactManifestHash;
+  if (expectedFactManifestHash !== undefined && expectedFactManifestHash !== "" && !/^[a-f0-9]{64}$/.test(expectedFactManifestHash)) throw new Error("Invalid expected report fact manifest hash.");
+  const actualFactManifestHash = completeManifest ? String(manifest.manifest_hash) : "";
+  if (expectedFactManifestHash !== undefined && actualFactManifestHash !== expectedFactManifestHash) throw new Error("The report document fact manifest binding conflicts with the persisted evidence snapshot.");
+  const factManifestGuard = expectedFactManifestHash === undefined
+    ? "1 = 1"
+    : expectedFactManifestHash
+      ? "EXISTS (SELECT 1 FROM report_fact_manifests WHERE run_id = ? AND status = 'complete' AND manifest_hash = ?)"
+      : "NOT EXISTS (SELECT 1 FROM report_fact_manifests WHERE run_id = ? AND status = 'complete')";
+  const factManifestBindings = expectedFactManifestHash === undefined ? [] : expectedFactManifestHash ? [run.id, expectedFactManifestHash] : [run.id];
   const factCounts = completeManifest ? { companies: Number(manifest?.company_count || 0), products: Number(manifest?.product_count || 0), matches: Number(manifest?.match_count || 0), ads: Number(manifest?.ad_count || 0) } : null;
   const compactedDocument = compactTerminalReportDocument(document, undefined, { factsAuthoritative: completeManifest, factCounts });
   const documentJson = JSON.stringify(compactedDocument);
@@ -1144,12 +1154,12 @@ export async function saveReportDocument(publicReportId: string, document: unkno
   const evaluationBasis = "none";
   const evaluationCompletedAt = completeManifest ? "" : now.toISOString();
   const baseStatements = [
-    database.prepare(`INSERT INTO report_documents (run_id, schema_version, document_json, observed_at, updated_at) SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND attempt_count = ? AND status NOT IN ('complete', 'limited', 'failed', 'interrupted')) ON CONFLICT(run_id) DO UPDATE SET schema_version = excluded.schema_version, document_json = excluded.document_json, observed_at = excluded.observed_at, updated_at = excluded.updated_at`).bind(run.id, REPORT_SCHEMA_VERSION, documentJson, observedAt, now.toISOString(), run.id, attemptNumber),
-    database.prepare(`UPDATE report_runs SET status = ?, current_phase = 'complete', updated_at = ?, heartbeat_at = ?, error_code = '', error_message = '' WHERE id = ? AND attempt_count = ? AND status NOT IN ('complete', 'limited', 'failed', 'interrupted')`).bind(status, now.toISOString(), now.toISOString(), run.id, attemptNumber),
-    database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE((SELECT MAX(sequence) FROM report_events WHERE run_id = ?), 0) + 1, 'report-saved', 'complete', ?, 'Report saved from the completed public-source phases.', '{}', ? FROM report_runs WHERE id = ? AND attempt_count = ? AND status = ? ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, run.id, status, now.toISOString(), run.id, attemptNumber, status),
+    database.prepare(`INSERT INTO report_documents (run_id, schema_version, document_json, observed_at, updated_at) SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND attempt_count = ? AND status NOT IN ('complete', 'limited', 'failed', 'interrupted')) AND ${factManifestGuard} ON CONFLICT(run_id) DO UPDATE SET schema_version = excluded.schema_version, document_json = excluded.document_json, observed_at = excluded.observed_at, updated_at = excluded.updated_at`).bind(run.id, REPORT_SCHEMA_VERSION, documentJson, observedAt, now.toISOString(), run.id, attemptNumber, ...factManifestBindings),
+    database.prepare(`UPDATE report_runs SET status = ?, current_phase = 'complete', updated_at = ?, heartbeat_at = ?, error_code = '', error_message = '' WHERE id = ? AND attempt_count = ? AND status NOT IN ('complete', 'limited', 'failed', 'interrupted') AND ${factManifestGuard}`).bind(status, now.toISOString(), now.toISOString(), run.id, attemptNumber, ...factManifestBindings),
+    database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE((SELECT MAX(sequence) FROM report_events WHERE run_id = ?), 0) + 1, 'report-saved', 'complete', ?, 'Report saved from the completed public-source phases.', '{}', ? FROM report_runs WHERE id = ? AND attempt_count = ? AND status = ? AND ${factManifestGuard} ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, run.id, status, now.toISOString(), run.id, attemptNumber, status, ...factManifestBindings),
   ];
   const evaluationStatements = [
-    database.prepare(`INSERT INTO report_evaluations (id, run_id, evaluation_type, input_hash, fact_manifest_hash, evaluator_version, rubric_version, status, rating_basis, overall_score, user_value_score, evidence_integrity_score, evidence_yield_score, presentation_score, deterministic_score, grade, deterministic_json, agent_json, findings_json, proposals_json, model, prompt_version, pricing_version, cost_microusd, input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, usage_status, reserved_cost_microusd, error_code, dispatch_attempts, created_at, started_at, completed_at) SELECT ?, ?, 'report', ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', '{}', '[]', '[]', '', '', '', 0, 0, NULL, NULL, 0, 'not_called', 0, ?, 0, ?, '', ? WHERE EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND attempt_count = ? AND status = ?) ON CONFLICT(run_id, input_hash, evaluator_version, evaluation_type) DO NOTHING`).bind(evaluationId, run.id, documentHash, completeManifest ? String(manifest?.manifest_hash || "") : "", AGENT_EVALUATOR_VERSION, DETERMINISTIC_RUBRIC_VERSION, evaluationStatus, evaluationBasis, completeManifest ? "" : "incomplete-fact-manifest", now.toISOString(), evaluationCompletedAt, run.id, attemptNumber, status),
+    database.prepare(`INSERT INTO report_evaluations (id, run_id, evaluation_type, input_hash, fact_manifest_hash, evaluator_version, rubric_version, status, rating_basis, overall_score, user_value_score, evidence_integrity_score, evidence_yield_score, presentation_score, deterministic_score, grade, deterministic_json, agent_json, findings_json, proposals_json, model, prompt_version, pricing_version, cost_microusd, input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, usage_status, reserved_cost_microusd, error_code, dispatch_attempts, created_at, started_at, completed_at) SELECT ?, ?, 'report', ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}', '{}', '[]', '[]', '', '', '', 0, 0, NULL, NULL, 0, 'not_called', 0, ?, 0, ?, '', ? WHERE EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND attempt_count = ? AND status = ?) AND ${factManifestGuard} ON CONFLICT(run_id, input_hash, evaluator_version, evaluation_type) DO NOTHING`).bind(evaluationId, run.id, documentHash, completeManifest ? String(manifest?.manifest_hash || "") : "", AGENT_EVALUATOR_VERSION, DETERMINISTIC_RUBRIC_VERSION, evaluationStatus, evaluationBasis, completeManifest ? "" : "incomplete-fact-manifest", now.toISOString(), evaluationCompletedAt, run.id, attemptNumber, status, ...factManifestBindings),
     ...(!completeManifest ? [database.prepare(`INSERT INTO report_quality_signals (id, evaluation_id, run_id, primary_domain, stage, issue_key, severity, evidence_json, observed_at) SELECT ?, ?, ?, ?, 'persistence', 'incomplete-fact-manifest', 'critical', ?, ? WHERE EXISTS (SELECT 1 FROM report_evaluations WHERE id = ? AND status = 'insufficient_facts') ON CONFLICT(evaluation_id, issue_key) DO NOTHING`).bind(internalId(), evaluationId, run.id, run.primaryDomain, JSON.stringify({ manifestStatus: String(manifest?.status || "missing"), coverageMetricsComputed: false }), now.toISOString(), evaluationId)] : []),
   ];
   let evaluationCreated = true;
@@ -1162,6 +1172,11 @@ export async function saveReportDocument(publicReportId: string, document: unkno
   }
   const persistedRun = await findRun(database, publicReportId);
   if (!persistedRun || persistedRun.attemptCount !== attemptNumber || persistedRun.status !== status) throw new Error("Report callback attempt is stale or invalid.");
+  if (expectedFactManifestHash !== undefined) {
+    const persistedManifest = (await database.prepare(`SELECT manifest_hash, status FROM report_fact_manifests WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>()).results?.[0];
+    const persistedFactManifestHash = persistedManifest?.status === "complete" ? String(persistedManifest.manifest_hash || "") : "";
+    if (persistedFactManifestHash !== expectedFactManifestHash) throw new Error("The report document fact manifest binding conflicts with the persisted evidence snapshot.");
+  }
   if (evaluationCreated && completeManifest) {
     try {
       await evaluateStoredReport(publicReportId, { inputHash: documentHash, factManifestHash: String(manifest?.manifest_hash || ""), evaluatorVersion: AGENT_EVALUATOR_VERSION }, now, database);

@@ -651,6 +651,41 @@ test("manifest finalization rejects missing chunks and conflicting completed rep
   }
 });
 
+test("document persistence CAS rejects a fact manifest finalized after the worker snapshot", async () => {
+  const { directory, databasePath } = await fixture();
+  const first = await NodeSqliteDatabase.open(databasePath);
+  const second = await NodeSqliteDatabase.open(databasePath);
+  try {
+    const now = new Date("2026-08-22T01:00:00.000Z");
+    const created = await createReportRun({ primaryDomain: "manifest-race.example" }, now, first);
+    const bundle = await buildReportFactBundle({ publicId: created.publicId, crawlResults: [{ domain: "manifest-race.example", role: "primary", homepage: { sourceUrl: "https://manifest-race.example/" }, products: [] }], comparison: null, adBlock: null, observedAt: now.toISOString() });
+    for (const chunk of bundle.chunks) await saveReportFactChunk(created.publicId, chunk, now, first);
+    let armed = false;
+    let raced = false;
+    const racingDatabase = {
+      prepare: (query) => first.prepare(query),
+      batch: async (statements) => {
+        if (armed && !raced) {
+          raced = true;
+          await finalizeReportFactManifest(created.publicId, bundle.manifest, now, second);
+        }
+        return first.batch(statements);
+      },
+    };
+    await getStoredReport(created.publicId, now, racingDatabase);
+    armed = true;
+    await assert.rejects(saveReportDocument(created.publicId, { blocks: [] }, { status: "complete", expectedFactManifestHash: "" }, now, racingDatabase), /stale|binding conflicts/i);
+    assert.equal(raced, true);
+    assert.equal((await first.prepare("SELECT COUNT(*) AS count FROM report_documents").all()).results[0].count, 0);
+    assert.equal((await first.prepare("SELECT status FROM report_runs WHERE public_id = ?").bind(created.publicId).all()).results[0].status, "queued");
+    assert.equal((await first.prepare("SELECT status FROM report_fact_manifests").all()).results[0].status, "complete");
+  } finally {
+    first.close();
+    second.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("Node SQLite configures WAL and rolls back a failed batch atomically", async () => {
   const { directory, databasePath } = await fixture();
   const database = await NodeSqliteDatabase.open(databasePath);

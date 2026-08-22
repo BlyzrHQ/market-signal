@@ -100,6 +100,7 @@ export function composeProductMatchAttempts(baseline: ProductComparison | null, 
     matching: {
       ...preferred.matching!,
       primaryProductsAssessed: assessed.size,
+      primaryProductsScreened: selected.size,
       candidatePairsAssessed: sumMetric("candidatePairsAssessed"),
       retrievalPairsScored: sumMetric("retrievalPairsScored"),
       judgeCalls: sumMetric("judgeCalls"),

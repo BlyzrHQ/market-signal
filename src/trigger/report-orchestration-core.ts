@@ -100,7 +100,7 @@ export interface ReportOrchestrationPort {
   actions(input: { inputs: ProductActionInput[] }): Promise<{ ok: true; result: ProductActionPlanningResult }>;
   persistFactChunk(publicId: string, input: ReportFactChunkInput): Promise<void>;
   finalizeFactManifest(publicId: string, input: ReportFactManifestInput): Promise<void>;
-  saveDocument(publicId: string, input: { attemptNumber?: number; status: "complete" | "limited"; observedAt: string; document: unknown }): Promise<void>;
+  saveDocument(publicId: string, input: { attemptNumber?: number; status: "complete" | "limited"; observedAt: string; expectedFactManifestHash: string; document: unknown }): Promise<void>;
 }
 
 function event(idempotencyKey: string, phase: string, message: string, metadata?: Record<string, unknown>): ReportEvent {
@@ -211,6 +211,7 @@ export async function orchestrateReport(
     await port.saveDocument(payload.publicId, {
       status: "limited",
       observedAt: finishedAt,
+      expectedFactManifestHash: "",
       document: compactTerminalReportDocument({ primaryDomain: crawl.primaryDomain, document, marketBrief: null }, undefined, { factsAuthoritative: false, factCounts: null }),
     });
     return {
@@ -340,17 +341,21 @@ export async function orchestrateReport(
           }));
         }
         if (enrichmentPlan.truncated) gaps.push({ url: "", reason: `${enrichmentPlan.totalEligible - targets.length} eligible product pages were outside the plan-bounded enrichment budget.`, code: "plan_limit" });
+        const enrichmentIncomplete = failedBatchCount > 0
+          || enrichmentPlan.truncated
+          || pagesFetched < targets.length
+          || gaps.length > 0;
         comparison = applyFinalProductEnrichment(comparison, products, {
           pagesRequested: targets.length,
           pagesFetched,
           maxPages: targets.length,
           pagesEligible: enrichmentPlan.totalEligible,
-          pagesTruncated: enrichmentPlan.truncated,
+          pagesTruncated: enrichmentIncomplete,
           batchCount: batches.length,
           failedBatchCount,
           gaps,
         });
-        if (failedBatchCount || enrichmentPlan.truncated) {
+        if (enrichmentIncomplete) {
           limitedPhases.push("enrichment");
           await port.appendEvent(payload.publicId, event("enrichment-limited", "enrichment", "Selected product enrichment finished with explicit batch or plan coverage gaps.", {
             pagesRequested: targets.length,
@@ -405,6 +410,7 @@ export async function orchestrateReport(
   await Promise.all([adsWork, matchWork]);
   const finishedAt = now().toISOString();
   let persistedCounts: Record<"companies" | "products" | "matches" | "ads", number> | null = null;
+  let persistedFactManifestHash = "";
   try {
     let priorManifest = stored.factManifest || null;
     if (priorManifest?.status === "finalizing") {
@@ -427,8 +433,10 @@ export async function orchestrateReport(
       for (const chunk of facts.chunks) await port.persistFactChunk(payload.publicId, chunk);
       await port.finalizeFactManifest(payload.publicId, facts.manifest);
       persistedCounts = facts.manifest.counts;
+      persistedFactManifestHash = facts.manifest.manifestHash;
     } else {
       persistedCounts = priorManifest.counts;
+      persistedFactManifestHash = priorManifest.manifestHash;
     }
   } catch (error) {
     if (error instanceof CompletedFactManifestConflict) throw error;
@@ -440,6 +448,7 @@ export async function orchestrateReport(
   await port.saveDocument(payload.publicId, {
     status: reportStatus,
     observedAt: finishedAt,
+    expectedFactManifestHash: persistedFactManifestHash,
     document: compactTerminalReportDocument({ primaryDomain: crawl.primaryDomain, document, marketBrief: null }, undefined, { factsAuthoritative: Boolean(persistedCounts), factCounts: persistedCounts }),
   });
   completedPhases.push("persistence");

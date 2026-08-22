@@ -144,7 +144,7 @@ function mockPort(overrides = {}) {
     async brief() { return { ok: true, summary: "Observed market" }; },
     async ads() { return { ok: true, block: { type: "ad-intelligence", id: "ad-intelligence" } }; },
     async match() { return { ok: true, comparison: comparison({ withPair: true }) }; },
-    async enrich({ targets }) { return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: targets.length, gaps: [] } }; },
+    async enrich({ targets }) { return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: targets.length, gaps: [] } }; },
     async actions({ inputs }) { return { ok: true, result: deterministicProductActionResult(inputs) }; },
     async persistFactChunk(_publicId, value) { factChunks.push(value); },
     async finalizeFactManifest(_publicId, value) { factManifests.push(value); },
@@ -719,7 +719,7 @@ test("a second match attempt refreshes the report heartbeat before another long 
   assert.ok(port.events.some((item) => item.idempotencyKey === "matching-retry-started"));
 });
 
-test("selected enrichment is applied and an enrichment failure remains visibly limited", async () => {
+test("partial and failed selected enrichment remain visibly limited", async () => {
   let successfulCalls = 0;
   const success = mockPort({
     async match() { return { ok: true, comparison: comparison({ withPair: true }) }; },
@@ -730,7 +730,8 @@ test("selected enrichment is applied and an enrichment failure remains visibly l
   });
   const successResult = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, success);
   assert.equal(successfulCalls, 1);
-  assert.ok(successResult.completedPhases.includes("enrichment"));
+  assert.equal(successResult.reportStatus, "limited");
+  assert.ok(successResult.limitedPhases.includes("enrichment"));
 
   const failure = mockPort({
     async match() { return { ok: true, comparison: comparison({ withPair: true }) }; },
@@ -785,7 +786,7 @@ test("action planning runs after final enrichment and persists source-labelled p
           { ...product(), priceSignals: [{ raw: "GBP 9", currency: "GBP", amount: 9 }] },
           { ...product("rival.example", "r1"), priceSignals: [{ raw: "GBP 7", currency: "GBP", amount: 7 }] },
         ],
-        coverage: { pagesRequested: targets.length, pagesFetched: 2, maxPages: 64, gaps: [] },
+        coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: 64, gaps: [] },
       };
     },
     async actions({ inputs }) {
@@ -811,7 +812,7 @@ test("AI action transport failure retains deterministic moves without limiting t
       priced.rows[0].primary.priceSignals = [{ raw: "GBP 9", currency: "GBP", amount: 9 }];
       return { ok: true, comparison: priced };
     },
-    async enrich({ targets }) { return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: 64, gaps: [] } }; },
+    async enrich({ targets }) { return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: 64, gaps: [] } }; },
     async actions() { throw new Error("action provider timeout"); },
   });
   const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
@@ -960,7 +961,7 @@ test("the HTTP report adapter compacts a large terminal document before transpor
     callbackToken: "callback_secret_with_enough_entropy_123456",
     async fetchImpl(_url, init) { body = JSON.parse(init.body); return Response.json({ ok: true }); },
   });
-  await port.saveDocument(payload.publicId, { status: "limited", observedAt: "2026-08-03T00:00:00.000Z", document: source });
+  await port.saveDocument(payload.publicId, { status: "limited", observedAt: "2026-08-03T00:00:00.000Z", expectedFactManifestHash: "", document: source });
   assert.ok(originalBytes > REPORT_PRESENTATION_TARGET_BYTES);
   assert.ok(encodedJsonBytes(body.document) <= REPORT_PRESENTATION_TARGET_BYTES);
   assert.ok(encodedJsonBytes(body) < REPORT_CALLBACK_ENVELOPE_BYTES);
