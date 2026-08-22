@@ -2,6 +2,7 @@ import {
   composeProductMatchAttempts,
   hasProductMatchCoverageDefect,
   limitPublishedProductComparison,
+  mergePublishedProductComparisons,
   publishPricedProductComparison,
   shouldRetryProductMatch,
   upsertProductComparisonBlock,
@@ -45,11 +46,29 @@ export const MAX_FINAL_ENRICHMENT_BATCHES = Math.ceil(MAX_FINAL_ENRICHMENT_TARGE
 export const MAX_FINAL_ENRICHMENT_BATCH_WAVES = Math.ceil(MAX_FINAL_ENRICHMENT_TARGETS / FINAL_ENRICHMENT_BATCH_SIZE / FINAL_ENRICHMENT_BATCH_CONCURRENCY);
 export const ENRICHMENT_PLAN_CHECKPOINT_BATCH_INDEX = 299;
 export const ENRICHMENT_CHECKPOINT_BATCH_INDEX_BASE = 300;
+export const PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX = 279;
 
 function enrichmentPlanCheckpointIndex(taskAttemptNumber: number) {
   const index = ENRICHMENT_PLAN_CHECKPOINT_BATCH_INDEX - (taskAttemptNumber - 1);
   if (!Number.isInteger(taskAttemptNumber) || taskAttemptNumber < 1 || index < 290) throw new PermanentOrchestrationError("Unsupported enrichment task attempt.");
   return index;
+}
+
+function publishedResultCheckpointIndex(taskAttemptNumber: number) {
+  const index = PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX - (taskAttemptNumber - 1);
+  if (!Number.isInteger(taskAttemptNumber) || taskAttemptNumber < 1 || index < 270) throw new PermanentOrchestrationError("Unsupported published-result task attempt.");
+  return index;
+}
+
+function validPublishedResultCheckpoint(value: unknown, resultTarget: number, referenceTimeMs: number) {
+  try {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const checkpoint = value as { version?: unknown; comparison?: ProductComparison };
+    if (checkpoint.version !== 1 || !checkpoint.comparison || !Array.isArray(checkpoint.comparison.rows) || checkpoint.comparison.rows.length > resultTarget) return null;
+    if (new Set(checkpoint.comparison.rows.map((row) => row?.primary?.id)).size !== checkpoint.comparison.rows.length) return null;
+    const validated = limitPublishedProductComparison(publishPricedProductComparison(checkpoint.comparison, referenceTimeMs), resultTarget);
+    return validated.rows.length === checkpoint.comparison.rows.length ? validated : null;
+  } catch { return null; }
 }
 
 export function pricedResultEnrichmentBudget(resultTarget: number) {
@@ -85,8 +104,18 @@ function mergePublishedSelectionIntoScreenedComparison(screened: ProductComparis
   } satisfies ProductComparison;
 }
 
-function publishedPricedPrimaryCount(comparison: ProductComparison, referenceTimeMs: number) {
-  return publishPricedProductComparison(comparison, referenceTimeMs).rows.filter((row) => row.matches.some((match) => match.publication?.priceEligible === true)).length;
+function mergeAccumulatedPublishedIntoScreenedComparison(screened: ProductComparison, accumulated: ProductComparison | null) {
+  if (!accumulated) return screened;
+  const accumulatedRows = new Map(accumulated.rows.map((row) => [row.primary.id, row]));
+  const rows = screened.rows.map((row) => {
+    const prior = accumulatedRows.get(row.primary.id);
+    if (!prior) return row;
+    accumulatedRows.delete(row.primary.id);
+    const matchKey = (match: typeof row.matches[number]) => `${match.domain}\n${(match.product || match.excludedProduct)?.id || ""}`;
+    const currentKeys = new Set(row.matches.map(matchKey));
+    return { ...row, matches: [...row.matches, ...prior.matches.filter((match) => !currentKeys.has(matchKey(match)))] };
+  });
+  return { ...screened, rows: [...rows, ...accumulatedRows.values()] };
 }
 
 type EnrichmentResult = Awaited<ReturnType<ReportOrchestrationPort["enrich"]>>;
@@ -521,6 +550,18 @@ export async function orchestrateReport(
     const marketCountryCode = /^[A-Z]{2}$/.test(String(primaryHomepage.regionCountryCode || "").toUpperCase())
       ? String(primaryHomepage.regionCountryCode).toUpperCase()
       : "";
+    const taskAttemptNumber = attempt.taskAttemptNumber || 1;
+    const reportReferenceTimeMs = Date.parse(stored.run.createdAt);
+    const durableCheckpoints = new Map((await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber })).map((checkpoint) => [checkpoint.batchIndex, checkpoint]));
+    const publishedResultInputHash = createHash("sha256").update(JSON.stringify({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, reportObservedAt: stored.run.createdAt, marketCountryCode, resultTarget: payload.productLimit })).digest("hex");
+    let accumulatedPublished: ProductComparison | null = null;
+    for (let priorTaskAttempt = taskAttemptNumber; priorTaskAttempt >= 1; priorTaskAttempt -= 1) {
+      const saved = durableCheckpoints.get(publishedResultCheckpointIndex(priorTaskAttempt));
+      if (!saved || saved.inputHash !== publishedResultInputHash) continue;
+      accumulatedPublished = validPublishedResultCheckpoint(saved.result, payload.productLimit, reportReferenceTimeMs);
+      if (!accumulatedPublished) throw new Error("The durable published-result checkpoint is invalid.");
+      break;
+    }
     let requestCount = 0;
     let transportFailed = false;
     try {
@@ -541,16 +582,11 @@ export async function orchestrateReport(
     comparison = composeProductMatchAttempts(baseline, attempts, requestCount);
     if (comparison && marketCountryCode) comparison = { ...comparison, marketCountryCode };
     if (comparison) {
-      const reportReferenceTimeMs = Date.parse(stored.run.createdAt);
       const maxEnrichmentPages = pricedResultEnrichmentBudget(payload.productLimit);
       let enrichmentPlan = planFinalProductEnrichmentTargets(comparison, maxEnrichmentPages, reportReferenceTimeMs);
-      let targetSatisfied = publishedPricedPrimaryCount(comparison, reportReferenceTimeMs) >= payload.productLimit;
-      const durableCheckpoints = targetSatisfied
-        ? new Map<number, { batchIndex: number; inputHash: string; result: unknown }>()
-        : new Map((await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber })).map((checkpoint) => [checkpoint.batchIndex, checkpoint]));
+      let targetSatisfied = mergePublishedProductComparisons(comparison, accumulatedPublished, payload.productLimit, reportReferenceTimeMs).rows.length >= payload.productLimit;
       if (!targetSatisfied) {
         const inputHash = enrichmentPlanInputHash(comparison, maxEnrichmentPages, reportReferenceTimeMs);
-        const taskAttemptNumber = attempt.taskAttemptNumber || 1;
         const planCheckpointIndex = enrichmentPlanCheckpointIndex(taskAttemptNumber);
         const saved = durableCheckpoints.get(planCheckpointIndex);
         if (saved) {
@@ -691,7 +727,7 @@ export async function orchestrateReport(
             failedBatchCount,
             gaps,
           });
-          targetSatisfied = publishedPricedPrimaryCount(provisional, reportReferenceTimeMs) >= payload.productLimit;
+          targetSatisfied = mergePublishedProductComparisons(provisional, accumulatedPublished, payload.productLimit, reportReferenceTimeMs).rows.length >= payload.productLimit;
           if (targetSatisfied) break;
         }
         if (!targetSatisfied && enrichmentPlan.truncated) gaps.push({ url: "", reason: `${enrichmentPlan.totalEligible - targets.length} eligible product pages were outside the plan-bounded enrichment budget.`, code: "plan_limit" });
@@ -749,8 +785,22 @@ export async function orchestrateReport(
         }));
       }
       comparison = publishPricedProductComparison(comparison, Date.parse(stored.run.createdAt));
-      screenedComparison = comparison;
-      comparison = limitPublishedProductComparison(comparison, payload.productLimit);
+      screenedComparison = mergeAccumulatedPublishedIntoScreenedComparison(comparison, accumulatedPublished);
+      comparison = mergePublishedProductComparisons(comparison, accumulatedPublished, payload.productLimit, reportReferenceTimeMs);
+      const publishedCheckpointIndex = publishedResultCheckpointIndex(taskAttemptNumber);
+      const publishedCheckpoint = { version: 1, comparison };
+      const existingPublishedCheckpoint = durableCheckpoints.get(publishedCheckpointIndex);
+      if (!existingPublishedCheckpoint) {
+        try {
+          await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: publishedCheckpointIndex, inputHash: publishedResultInputHash, result: publishedCheckpoint });
+          durableCheckpoints.set(publishedCheckpointIndex, { batchIndex: publishedCheckpointIndex, inputHash: publishedResultInputHash, result: publishedCheckpoint });
+        } catch (saveError) {
+          const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: publishedCheckpointIndex }))[0];
+          const validated = committed?.inputHash === publishedResultInputHash ? validPublishedResultCheckpoint(committed.result, payload.productLimit, reportReferenceTimeMs) : null;
+          if (!validated) throw saveError;
+          comparison = validated;
+        }
+      }
       if ((comparison.matching?.resultShortfall || 0) > 0 && crawl.discovery?.productSearchCoverage?.complete !== true) {
         const coverage = crawl.discovery?.productSearchCoverage;
         comparison = {

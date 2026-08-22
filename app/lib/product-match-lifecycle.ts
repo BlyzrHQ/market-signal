@@ -291,7 +291,46 @@ export function limitPublishedProductComparison(comparison: ProductComparison, r
       publishedPrimaryProducts,
       resultShortfall,
       resultShortfallReason,
-      gaps: shortfallGap ? [...new Set([...priorMatching.gaps, shortfallGap])] : priorMatching.gaps,
+      gaps: shortfallGap
+        ? [...new Set([...priorMatching.gaps.filter((gap) => !/^Published \d+ of \d+ requested priced product comparisons/i.test(gap)), shortfallGap])]
+        : priorMatching.gaps.filter((gap) => !/^Published \d+ of \d+ requested priced product comparisons/i.test(gap)),
     } : priorMatching,
   };
+}
+
+export function mergePublishedProductComparisons(current: ProductComparison, prior: ProductComparison | null, resultTarget: number, referenceTimeMs = Date.now()) {
+  const evaluated = (comparison: ProductComparison) => comparison.rows.some((row) => row.matches.some((match) => match.publication !== undefined))
+    ? comparison
+    : publishPricedProductComparison(comparison, referenceTimeMs);
+  const publishedCurrent = evaluated(current);
+  if (!prior) return limitPublishedProductComparison(publishedCurrent, resultTarget);
+  const publishedPrior = evaluated(prior);
+  const publishable = (row: ProductComparison["rows"][number]) => row.matches.some((match) => match.product && match.publication?.priceEligible === true);
+  const currentRows = publishedCurrent.rows.filter(publishable);
+  const priorRows = publishedPrior.rows.filter(publishable);
+  const currentIds = new Set(currentRows.map((row) => row.primary.id));
+  const rows = [...currentRows, ...priorRows.filter((row) => !currentIds.has(row.primary.id))];
+  const currentMatching = publishedCurrent.matching;
+  const priorMatching = publishedPrior.matching;
+  const union = (left: string[] = [], right: string[] = []) => [...new Set([...left, ...right])];
+  const merged: ProductComparison = {
+    ...publishedCurrent,
+    rows,
+    coverage: {
+      ...publishedCurrent.coverage,
+      primaryProductFamiliesCompared: rows.length,
+      rowsReturned: rows.length,
+      assignedPairCount: rows.reduce((sum, row) => sum + row.matches.filter((match) => match.product).length, 0),
+      verifiedPairCount: rows.reduce((sum, row) => sum + row.matches.filter((match) => match.product && match.confidence === "Medium").length, 0),
+      truncated: Boolean(publishedCurrent.coverage.truncated || publishedPrior.coverage.truncated),
+    },
+    matching: currentMatching ? {
+      ...currentMatching,
+      primaryProductsScreened: Math.max(currentMatching.primaryProductsScreened || 0, priorMatching?.primaryProductsScreened || 0),
+      selectedPrimaryIds: union(currentMatching.selectedPrimaryIds, priorMatching?.selectedPrimaryIds),
+      assessedPrimaryIds: union(currentMatching.assessedPrimaryIds, priorMatching?.assessedPrimaryIds).sort(),
+      processedPrimaryIds: union(currentMatching.processedPrimaryIds, priorMatching?.processedPrimaryIds).sort(),
+    } : currentMatching,
+  };
+  return limitPublishedProductComparison(publishPricedProductComparison(merged, referenceTimeMs), resultTarget);
 }

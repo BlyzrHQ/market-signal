@@ -9,6 +9,7 @@ import {
 import {
   MAX_FINAL_ENRICHMENT_TARGETS,
   MAX_FINAL_ENRICHMENT_BATCHES,
+  PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX,
   MAX_OPERATION_TIMEOUT_MS,
   orchestrateReport,
   pricedResultEnrichmentBudget,
@@ -819,7 +820,7 @@ test("all operation deadlines keep a two-minute margin below the stale marker", 
   for (const timeout of Object.values(OPERATION_BUDGETS_MS)) assert.ok(timeout <= MAX_OPERATION_TIMEOUT_MS);
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS > OPERATION_BUDGETS_MS.match, "Undici must not preempt the match operation deadline");
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS < MAX_OPERATION_TIMEOUT_MS, "the worker deadline must remain inside the outer edge window");
-  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 13_655_000);
+  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 13_675_000);
   assert.ok(WORST_CASE_CRITICAL_PATH_MS <= 14_580_000, "critical path must preserve a two-minute task-ceiling margin");
 });
 
@@ -1025,6 +1026,45 @@ test("publication-ineligible pairs are re-read on both sides and successful batc
   assert.equal(checkpoints[0].metadata.pagesRequested, 140);
 });
 
+test("task retries accumulate distinct priced results from earlier discovery waves", async () => {
+  let matchCall = 0;
+  const waveComparison = (offset) => {
+    const value = comparison({ withPair: true, count: 10 });
+    value.rows.forEach((item, index) => {
+      const number = offset + index + 1;
+      item.primary.id = `wave-p${number}`;
+      item.primary.sourceUrl = `https://shop.example/products/wave-${number}?country=GB`;
+      item.matches[0].product.id = `wave-r${number}`;
+      item.matches[0].product.sourceUrl = `https://rival.example/products/wave-${number}?country=GB`;
+    });
+    value.matching.selectedPrimaryIds = value.rows.map((item) => item.primary.id);
+    value.matching.assessedPrimaryIds = [...value.matching.selectedPrimaryIds];
+    value.matching.processedPrimaryIds = [...value.matching.selectedPrimaryIds];
+    return value;
+  };
+  const port = mockPort({
+    async crawl() {
+      return {
+        ok: true,
+        primaryDomain: payload.primaryDomain,
+        results: [{ domain: payload.primaryDomain, homepage: { sourceUrl: "https://shop.example", regionCountryCode: "GB" }, products: [product()] }],
+        discovery: { productSearchCoverage: { eligibleAnchors: 1_000, searchedAnchors: 200, startIndex: 0, endIndex: 200, truncated: true, searchesComplete: true, candidateDomainsFound: 1, candidateDomainsInvestigated: 1, candidateTruncated: false, verificationComplete: true, batchComplete: true, complete: false } },
+        adRequest: { companies: [{ domain: payload.primaryDomain }], region: "GB" },
+        document: { version: "1", blocks: [] },
+      };
+    },
+    async match() { const value = waveComparison(matchCall * 10); matchCall += 1; return { ok: true, comparison: value }; },
+  });
+
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/i);
+  assert.ok(port.checkpoints.has(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX));
+  assert.equal(port.saves.length, 0);
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port);
+  assert.equal(result.reportStatus, "complete");
+  assert.equal(port.saves.at(-1).document.document.blocks.find((block) => block.type === "product-comparison").rows.length, 20);
+  assert.ok(port.checkpoints.has(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX - 1));
+});
+
 test("a task retry reuses durable enrichment batches instead of fetching product pages again", async () => {
   let enrichCalls = 0;
   let saveCalls = 0;
@@ -1056,8 +1096,10 @@ test("a task retry reuses durable enrichment batches instead of fetching product
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
   await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
   assert.equal(enrichCalls, 1);
-  assert.equal(port.checkpoints.size, 2);
+  assert.equal(port.checkpoints.size, 4);
   assert.ok(port.checkpoints.has(299));
+  assert.ok(port.checkpoints.has(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX));
+  assert.ok(port.checkpoints.has(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX - 1));
 });
 
 test("a task retry can persist an expanded enrichment plan after judge progress", async () => {

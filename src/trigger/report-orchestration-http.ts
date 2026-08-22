@@ -63,7 +63,7 @@ export const MAX_REPORT_FACT_CALLBACKS = MAX_REPORT_FACT_CHUNKS;
 // save/ambiguous-save recovery callbacks +
 // enrichment-complete + actions-start + actions + actions-complete +
 // matching-complete) + bounded relational-fact chunks, manifest, and final save.
-export const WORST_CASE_CRITICAL_PATH_MS = (OPERATION_BUDGETS_MS.report * (20 + MAX_FINAL_ENRICHMENT_BATCH_WAVES + (MAX_FINAL_ENRICHMENT_BATCHES * 2) + MAX_REPORT_FACT_CALLBACKS))
+export const WORST_CASE_CRITICAL_PATH_MS = (OPERATION_BUDGETS_MS.report * (22 + MAX_FINAL_ENRICHMENT_BATCH_WAVES + (MAX_FINAL_ENRICHMENT_BATCHES * 2) + MAX_REPORT_FACT_CALLBACKS))
   + OPERATION_BUDGETS_MS.preflight
   + OPERATION_BUDGETS_MS.crawl
   + (OPERATION_BUDGETS_MS.match * 2)

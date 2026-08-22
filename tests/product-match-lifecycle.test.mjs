@@ -4,6 +4,7 @@ import {
   composeProductMatchAttempts,
   hasProductMatchCoverageDefect,
   limitPublishedProductComparison,
+  mergePublishedProductComparisons,
   publishPricedProductComparison,
   shouldRetryProductMatch,
   upsertProductComparisonBlock,
@@ -351,6 +352,34 @@ test("priced result backfill exposes exactly the requested number of publishable
   assert.equal(result.matching.resultShortfall, 0);
   assert.equal(result.matching.gaps.length, 0);
   assert.deepEqual(result.matching.assessedPrimaryIds, rows.map((item) => item.primary.id));
+});
+
+test("priced result backfill accumulates distinct publishable products across discovery waves", () => {
+  const pricedRow = (primaryId, rivalId) => {
+    const item = row(primaryId, rivalId);
+    item.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+    item.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+    return item;
+  };
+  const prior = comparison({ selected: ["p1"], assessed: ["p1"], rows: [pricedRow("p1", "r1")], accepted: 1 });
+  const current = comparison({ selected: ["p2"], assessed: ["p2"], rows: [pricedRow("p2", "r2")], accepted: 1 });
+  const result = mergePublishedProductComparisons(current, limitPublishedProductComparison(publishPricedProductComparison(prior), 2), 2);
+
+  assert.deepEqual(result.rows.map((item) => item.primary.id).sort(), ["p1", "p2"]);
+  assert.equal(result.matching.publishedPrimaryProducts, 2);
+  assert.equal(result.matching.resultShortfall, 0);
+});
+
+test("a later unpriced observation does not evict an earlier valid priced comparison", () => {
+  const priorRow = row("p1", "r1");
+  priorRow.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+  priorRow.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+  const prior = limitPublishedProductComparison(publishPricedProductComparison(comparison({ selected: ["p1"], assessed: ["p1"], rows: [priorRow], accepted: 1 })), 1);
+  const current = publishPricedProductComparison(comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "new-unpriced")], accepted: 1 }));
+  const result = mergePublishedProductComparisons(current, prior, 1);
+
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].matches.find((match) => match.product)?.product.id, "r1");
 });
 
 test("priced result backfill records an explicit bounded-pool shortfall", () => {
