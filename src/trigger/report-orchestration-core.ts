@@ -278,6 +278,10 @@ export function comparisonWithinPrimaryCatalog(comparison: ProductComparison | n
 type EnrichmentResult = Awaited<ReturnType<ReportOrchestrationPort["enrich"]>>;
 
 function isRetryableEnrichmentGap(gap: NonNullable<ProductComparison["enrichment"]>["gaps"][number]) {
+  // Adapter gaps are terminal for this report even when the adapter transport
+  // was transient. Retrying them in a later task can repeat paid matcher work
+  // after a crash; the user can explicitly start a fresh report instead.
+  if (gap.code === "adapter_limited") return false;
   return gap.failureKind === "network"
     || gap.code === "robots_unreachable"
     || gap.httpStatus === 0
@@ -419,12 +423,18 @@ export function validEnrichmentCheckpoint(value: unknown, targets: ProductEnrich
   const gapKeys: string[] = [];
   if (!coverage.gaps.every((gap) => {
     if (!gap || typeof gap !== "object") return false;
-    const record = gap as { productId?: unknown; url?: unknown };
-    if (typeof record.url !== "string") return false;
+    const record = gap as { productId?: unknown; url?: unknown; role?: unknown; reason?: unknown; code?: unknown; failureKind?: unknown; httpStatus?: unknown };
+    const validCodes = new Set(["robots_unreachable", "robots_disallowed", "fetch_failed", "identity_mismatch", "adapter_limited"]);
+    const validFailureKinds = new Set(["robots", "network", "http", "content", "identity", "adapter", "redirect"]);
+    if (typeof record.url !== "string"
+      || typeof record.reason !== "string" || !record.reason.trim() || record.reason.length > 2_000
+      || (record.code !== undefined && !validCodes.has(String(record.code)))
+      || (record.failureKind !== undefined && !validFailureKinds.has(String(record.failureKind)))
+      || (record.httpStatus !== undefined && (!Number.isInteger(record.httpStatus) || Number(record.httpStatus) < 0 || Number(record.httpStatus) > 599))) return false;
     try {
       const key = `${canonicalDomain(new URL(record.url).hostname)}\n${String(record.productId || "")}`;
       const target = targetByProduct.get(key);
-      if (!target || !sourceMatchesTarget(record.url, target)) return false;
+      if (!target || record.role !== target.role || !sourceMatchesTarget(record.url, target)) return false;
       gapKeys.push(key);
       return true;
     } catch { return false; }

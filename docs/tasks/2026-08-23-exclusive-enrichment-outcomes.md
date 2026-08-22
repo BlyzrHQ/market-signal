@@ -9,9 +9,9 @@ Production report `4d5bce140f124478b951ed1846ef2edf` found valid judged product 
 - Treat a product with an unresolved adapter price gap as a gap-only outcome so it can be retried safely.
 - Preserve successful products from other targets in the same batch.
 - Reject non-HTTP(S) enrichment sources before they can become durable or suppress a valid product.
-- Preserve adapter failure metadata and re-fetch only transient network, throttling, timeout, and 5xx targets on a later bounded task attempt.
+- Preserve adapter failure metadata, but treat adapter failures as terminal for the current report so a task crash cannot repeat paid matcher/API work. A user may explicitly start a fresh report.
 - Treat permanent adapter limitations (robots denial, 4xx/non-JSON output, unsupported or missing currency evidence) as terminal gaps so they cannot multiply paid matching or action-planning calls.
-- Permit at most one retry for a transient adapter failure and defer action planning while enrichment remains retryable.
+- Validate every durable gap's role, reason, code, failure kind, and HTTP status before it can influence retry classification.
 - Add regression coverage for the mutually exclusive product/gap contract, invalid source schemes, and adapter recovery.
 
 ## Validation
@@ -22,7 +22,7 @@ Production report `4d5bce140f124478b951ed1846ef2edf` found valid judged product 
 
 ## Review
 
-Two independent fallback reviewers found blockers on the first head: invalid URL schemes could suppress valid products, and adapter-limited gaps were not retryable. Later exact-head reviews found that broad or repeated adapter retries could multiply paid API calls. The implementation now preserves transient metadata, terminalizes permanent adapter limitations, caps transient adapter recovery at one retry, and defers action planning until processing is no longer retryable. Fresh exact-head reviews are required before merge.
+Two independent fallback reviewers found blockers on earlier heads: invalid URL schemes could suppress valid products; cross-task adapter recovery could repeat paid calls across crash windows; and durable gap metadata was not fully validated. The implementation now preserves valid independent products, treats adapter failures as terminal for the current report, and validates all retry-relevant gap metadata. Fresh exact-head reviews are required before merge.
 
 ## Data boundary
 

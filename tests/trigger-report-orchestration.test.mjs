@@ -231,6 +231,19 @@ test("enrichment checkpoint validation rejects an outcome from a different expli
   assert.equal(validEnrichmentCheckpoint(checkpoint, [target]), null);
 });
 
+test("enrichment checkpoint validation rejects forged retry metadata", () => {
+  const target = { domain: "rival.example", productId: "r1", sourceUrl: "https://rival.example/products/honey", expectedName: "Honey", role: "rival" };
+  const base = { ok: true, products: [], coverage: { pagesRequested: 1, pagesFetched: 0, maxPages: 1, gaps: [{ url: target.sourceUrl, productId: target.productId, role: target.role, reason: "Temporary network failure.", code: "fetch_failed", failureKind: "network", httpStatus: 0 }] } };
+  assert.ok(validEnrichmentCheckpoint(base, [target]));
+  for (const gap of [
+    { ...base.coverage.gaps[0], role: "primary" },
+    { ...base.coverage.gaps[0], reason: 42 },
+    { ...base.coverage.gaps[0], code: "paid_retry_please" },
+    { ...base.coverage.gaps[0], failureKind: "forged" },
+    { ...base.coverage.gaps[0], httpStatus: 999 },
+  ]) assert.equal(validEnrichmentCheckpoint({ ...base, coverage: { ...base.coverage, gaps: [gap] } }, [target]), null);
+});
+
 function mockPort(overrides = {}) {
   const events = [];
   const saves = [];
@@ -2151,7 +2164,7 @@ test("a task retry preserves successful pages, re-fetches only transient gaps, a
   assert.equal(block.matching.publishedPrimaryProducts, 1);
 });
 
-test("a task retry re-fetches a temporary adapter-limited price gap and publishes the recovered pair", async () => {
+test("a temporary adapter-limited price gap is terminal for the report and does not trigger another paid task", async () => {
   let enrichCalls = 0;
   const fetchedRoles = [];
   const port = mockPort({
@@ -2181,14 +2194,13 @@ test("a task retry re-fetches a temporary adapter-limited price gap and publishe
     },
   });
 
-  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/);
-  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port);
-  assert.equal(enrichCalls, 2);
-  assert.deepEqual(fetchedRoles[1], ["rival"]);
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port);
+  assert.equal(enrichCalls, 1);
+  assert.deepEqual(fetchedRoles[0].sort(), ["primary", "rival"]);
   assert.equal(result.reportStatus, "limited");
   const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
-  assert.equal(block.rows.length, 1);
-  assert.equal(block.rows[0].matches[0].product.priceSignals[0].amount, 7);
+  assert.equal(block.rows.length, 0);
+  assert.equal(block.enrichment.gaps[0].code, "adapter_limited");
 });
 
 test("a permanent adapter limitation terminalizes without a task retry or paid action planning", async () => {
@@ -2224,7 +2236,7 @@ test("a permanent adapter limitation terminalizes without a task retry or paid a
   assert.equal(port.events.some((item) => item.idempotencyKey === "report-1-task-1-matching-task-retry"), false);
 });
 
-test("a transient adapter failure gets one retry and never repeats paid action planning while incomplete", async () => {
+test("a transient adapter failure does not retry or invoke paid action planning", async () => {
   let enrichCalls = 0;
   let actionCalls = 0;
   const port = mockPort({
@@ -2250,14 +2262,11 @@ test("a transient adapter failure gets one retry and never repeats paid action p
     async actions() { actionCalls += 1; throw new Error("must not plan actions without a published pair"); },
   });
 
-  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/);
-  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port);
   assert.equal(result.reportStatus, "limited");
-  assert.equal(enrichCalls, 2);
+  assert.equal(enrichCalls, 1);
   assert.equal(actionCalls, 0);
-  const lastCheckpoint = [...port.checkpoints.values()].find((checkpoint) => checkpoint.batchIndex === 300 + MAX_FINAL_ENRICHMENT_BATCHES);
-  assert.equal(lastCheckpoint.result.coverage.gaps[0].failureKind, "adapter");
-  assert.match(lastCheckpoint.result.coverage.gaps[0].reason, /single bounded adapter retry was exhausted/i);
+  assert.equal(port.events.some((item) => item.idempotencyKey === "report-1-task-1-matching-task-retry"), false);
 });
 
 test("a failed transient retry preserves prior successful pages and published pairs", async () => {
