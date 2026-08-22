@@ -2151,6 +2151,46 @@ test("a task retry preserves successful pages, re-fetches only transient gaps, a
   assert.equal(block.matching.publishedPrimaryProducts, 1);
 });
 
+test("a task retry re-fetches a temporary adapter-limited price gap and publishes the recovered pair", async () => {
+  let enrichCalls = 0;
+  const fetchedRoles = [];
+  const port = mockPort({
+    async match() {
+      const value = comparison({ withPair: true, count: 1 });
+      value.rows[0].primary.priceSignals = [];
+      value.rows[0].matches[0].product.priceSignals = [];
+      return { ok: true, comparison: value };
+    },
+    async enrich({ targets }) {
+      enrichCalls += 1;
+      fetchedRoles.push(targets.map((target) => target.role));
+      if (enrichCalls === 1) {
+        const primaryTarget = targets.find((target) => target.role === "primary");
+        const rivalTarget = targets.find((target) => target.role === "rival");
+        return {
+          ok: true,
+          products: [{ ...product(primaryTarget.domain, primaryTarget.productId), name: primaryTarget.expectedName, normalizedName: primaryTarget.expectedName.toLowerCase(), sourceUrl: primaryTarget.sourceUrl, priceSignals: [{ raw: "GBP 9", currency: "GBP", amount: 9 }] }],
+          coverage: { pagesRequested: targets.length, pagesFetched: 1, maxPages: 64, gaps: [{ url: rivalTarget.sourceUrl, productId: rivalTarget.productId, role: rivalTarget.role, reason: "Price adapter was temporarily unavailable.", code: "adapter_limited", failureKind: "adapter" }] },
+        };
+      }
+      return {
+        ok: true,
+        products: targets.map((target) => ({ ...product(target.domain, target.productId), name: target.expectedName, normalizedName: target.expectedName.toLowerCase(), sourceUrl: target.sourceUrl, priceSignals: [{ raw: "GBP 7", currency: "GBP", amount: 7 }] })),
+        coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: 64, gaps: [] },
+      };
+    },
+  });
+
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/);
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port);
+  assert.equal(enrichCalls, 2);
+  assert.deepEqual(fetchedRoles[1], ["rival"]);
+  assert.equal(result.reportStatus, "limited");
+  const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
+  assert.equal(block.rows.length, 1);
+  assert.equal(block.rows[0].matches[0].product.priceSignals[0].amount, 7);
+});
+
 test("a failed transient retry preserves prior successful pages and published pairs", async () => {
   let enrichCalls = 0;
   const port = mockPort({

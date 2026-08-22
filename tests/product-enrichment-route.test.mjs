@@ -43,3 +43,18 @@ test("the worker endpoint makes product and gap outcomes exclusive before durabl
   assert.equal(result.coverage.pagesFetched, 1);
   assert.ok(validEnrichmentCheckpoint({ ok: true, ...result }, [target("unresolved"), target("priced")]));
 });
+
+test("a non-HTTP gap cannot erase a valid product or pass durable validation", () => {
+  const result = exclusiveDurableEnrichmentResult({
+    products: [product("priced", [{ raw: "USD 9.99", currency: "USD", amount: 9.99 }])],
+    coverage: {
+      pagesRequested: 1,
+      pagesFetched: 1,
+      maxPages: 1,
+      gaps: [{ url: "ftp://shop.test/products/priced", productId: "priced", role: "rival", reason: "Invalid adapter source.", code: "adapter_limited", failureKind: "adapter" }],
+    },
+  });
+  assert.deepEqual(result.products.map((item) => item.id), ["priced"]);
+  assert.equal(result.coverage.pagesFetched, 1);
+  assert.equal(validEnrichmentCheckpoint({ ok: true, ...result }, [target("priced")]), null);
+});

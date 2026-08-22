@@ -6,7 +6,11 @@ const MAX_TARGETS = 64;
 
 export function exclusiveDurableEnrichmentResult(result: Awaited<ReturnType<typeof enrichProductTargets>>) {
   const gapKeys = new Set(result.coverage.gaps.flatMap((gap) => {
-    try { return [`${canonicalDomain(new URL(gap.url).hostname)}\n${gap.productId}`]; } catch { return []; }
+    try {
+      const url = new URL(gap.url);
+      if (url.protocol !== "http:" && url.protocol !== "https:") return [];
+      return [`${canonicalDomain(url.hostname)}\n${gap.productId}`];
+    } catch { return []; }
   }));
   const products = result.products.filter((product) => !gapKeys.has(`${canonicalDomain(product.domain)}\n${product.id}`));
   return { products, coverage: { ...result.coverage, pagesFetched: products.length } };

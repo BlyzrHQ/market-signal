@@ -279,6 +279,7 @@ type EnrichmentResult = Awaited<ReturnType<ReportOrchestrationPort["enrich"]>>;
 
 function isRetryableEnrichmentGap(gap: NonNullable<ProductComparison["enrichment"]>["gaps"][number]) {
   return gap.failureKind === "network"
+    || gap.code === "adapter_limited"
     || gap.code === "robots_unreachable"
     || gap.httpStatus === 0
     || gap.httpStatus === 408
@@ -351,6 +352,7 @@ export function validEnrichmentCheckpoint(value: unknown, targets: ProductEnrich
     try {
       const source = new URL(sourceUrl);
       const requested = new URL(target.sourceUrl);
+      if (!(["http:", "https:"].includes(source.protocol) && ["http:", "https:"].includes(requested.protocol))) return false;
       if (canonicalDomain(source.hostname) !== canonicalDomain(target.domain) || canonicalDomain(requested.hostname) !== canonicalDomain(target.domain)) return false;
       const sourceMarket = publicSourceMarketContext(sourceUrl);
       const requestedMarket = publicSourceMarketContext(target.sourceUrl);
