@@ -98,6 +98,7 @@ export type AIProductMatchingOptions = {
   saveJudgeBatchCheckpoint?: (key: JudgeBatchCheckpointKey, checkpoint: JudgeBatchCheckpoint) => Promise<void>;
   loadCandidatePlan?: (key: ProductCandidatePlanKey) => Promise<unknown>;
   saveCandidatePlan?: (key: ProductCandidatePlanKey, plan: ProductCandidatePlan) => Promise<void>;
+  priorCandidatePairKeys?: string[];
 };
 
 const PROMPT_VERSION = "ai-product-match-v4-useful-identity";
@@ -631,7 +632,7 @@ function selectJudgeGroups(groups: CandidateGroup[], maxPrimary: number, pinnedP
     .slice(0, maxPrimary);
 }
 
-function candidatePlanHash(primary: ProductRecord[], competitors: ProductCatalog[], options: { maxPrimary: number; maxCandidates: number; maxPerDomain: number; maxRetrievalPool: number; referenceTimeMs: number; marketCountryCode: string; pinnedPairs: PinnedProductPair[]; embeddingModel: string; requiredSourceUrls: Record<string, string[]> }) {
+function candidatePlanHash(primary: ProductRecord[], competitors: ProductCatalog[], options: { maxPrimary: number; maxCandidates: number; maxPerDomain: number; maxRetrievalPool: number; referenceTimeMs: number; marketCountryCode: string; pinnedPairs: PinnedProductPair[]; embeddingModel: string; requiredSourceUrls: Record<string, string[]>; priorCandidatePairKeys: string[] }) {
   const requiredSourceUrls = Object.fromEntries(Object.entries(options.requiredSourceUrls)
     .map(([domain, urls]) => [canonicalDomain(domain), [...new Set(urls)].sort()] as const)
     .sort(([left], [right]) => left.localeCompare(right)));
@@ -654,6 +655,7 @@ function candidatePlanHash(primary: ProductRecord[], competitors: ProductCatalog
     referenceTimeMs: options.referenceTimeMs,
     marketCountryCode: options.marketCountryCode,
     pinnedPairs,
+    ...(options.priorCandidatePairKeys.length ? { priorCandidatePairKeys: options.priorCandidatePairKeys } : {}),
   })).digest("hex");
 }
 
@@ -681,10 +683,40 @@ function candidatePlanContentHash(groups: ProductCandidatePlan["groups"], candid
   return createHash("sha256").update(JSON.stringify({ groups, candidatePairPoolTruncated })).digest("hex");
 }
 
-function restoreCandidatePlan(value: unknown, planHash: string, primary: ProductRecord[], competitors: ProductCatalog[], embeddings: Map<string, number[]>, expectedGroupCount: number) {
+export function candidatePairKeysFromPlan(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const plan = value as ProductCandidatePlan;
   if (plan.version !== 3
+    || !/^[a-f0-9]{64}$/.test(String(plan.planHash || ""))
+    || !/^[a-f0-9]{64}$/.test(String(plan.contentHash || ""))
+    || !Number.isInteger(plan.primaryCatalogCount) || plan.primaryCatalogCount < 0 || plan.primaryCatalogCount > MAX_PRIMARY_PRODUCTS
+    || !Number.isInteger(plan.selectedPrimaryCount) || plan.selectedPrimaryCount < 0 || plan.selectedPrimaryCount > MAX_PRIMARY_PRODUCTS
+    || !Number.isInteger(plan.candidatePairCount) || plan.candidatePairCount < 0 || plan.candidatePairCount > MAX_JUDGE_CANDIDATE_PAIRS
+    || !Array.isArray(plan.groups) || plan.groups.length !== plan.selectedPrimaryCount
+    || typeof plan.candidatePairPoolTruncated !== "boolean"
+    || plan.contentHash !== candidatePlanContentHash(plan.groups, plan.candidatePairPoolTruncated)) return null;
+  const keys: string[] = [];
+  const seenPrimary = new Set<string>();
+  const seenPairs = new Set<string>();
+  for (const group of plan.groups) {
+    if (!group || !/^[A-Za-z0-9_-]{43}$/.test(String(group.primaryKey || "")) || seenPrimary.has(group.primaryKey) || !Array.isArray(group.candidateKeys)) return null;
+    seenPrimary.add(group.primaryKey);
+    for (const candidateKey of group.candidateKeys) {
+      if (!/^[A-Za-z0-9_-]{43}$/.test(String(candidateKey || ""))) return null;
+      const key = `${group.primaryKey}\n${candidateKey}`;
+      if (seenPairs.has(key)) return null;
+      seenPairs.add(key);
+      keys.push(key);
+    }
+  }
+  return keys.length === plan.candidatePairCount ? keys : null;
+}
+
+function restoreCandidatePlan(value: unknown, planHash: string, primary: ProductRecord[], competitors: ProductCatalog[], embeddings: Map<string, number[]>, expectedGroupCount: number) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const plan = value as ProductCandidatePlan;
+  if (!candidatePairKeysFromPlan(plan)
+    || plan.version !== 3
     || plan.planHash !== planHash
     || !/^[a-f0-9]{64}$/.test(plan.contentHash)
     || plan.primaryCatalogCount !== primary.length
@@ -835,7 +867,7 @@ function withoutUnassessedMatches(comparison: ProductComparison) {
 export function buildAIProductComparison(primaryDomain: string, catalogs: ProductCatalog[], options?: AIProductMatchingOptions): Promise<ProductComparison>;
 export function buildAIProductComparison(primaryDomain: string, catalogs: ProductCatalog[], requiredSourceUrls?: Record<string, string[]>, options?: AIProductMatchingOptions): Promise<ProductComparison>;
 export async function buildAIProductComparison(primaryDomain: string, catalogs: ProductCatalog[], requiredSourceUrlsOrOptions: Record<string, string[]> | AIProductMatchingOptions = {}, providedOptions?: AIProductMatchingOptions): Promise<ProductComparison> {
-  const optionKeys = new Set<keyof AIProductMatchingOptions>(["apiKey", "fetch", "baseUrl", "model", "embeddingModel", "maxPrimaryProducts", "maxCandidatesPerPrimary", "maxCandidatesPerDomain", "maxProductsPerCompetitor", "maxRetrievalPoolPerDomain", "primaryProductsPerJudgeCall", "maxPairsPerJudgeCall", "concurrency", "timeoutMs", "totalBudgetMs", "referenceTimeMs", "marketCountryCode", "pinnedPairs", "loadJudgeBatchCheckpoint", "saveJudgeBatchCheckpoint", "loadCandidatePlan", "saveCandidatePlan"]);
+  const optionKeys = new Set<keyof AIProductMatchingOptions>(["apiKey", "fetch", "baseUrl", "model", "embeddingModel", "maxPrimaryProducts", "maxCandidatesPerPrimary", "maxCandidatesPerDomain", "maxProductsPerCompetitor", "maxRetrievalPoolPerDomain", "primaryProductsPerJudgeCall", "maxPairsPerJudgeCall", "concurrency", "timeoutMs", "totalBudgetMs", "referenceTimeMs", "marketCountryCode", "pinnedPairs", "loadJudgeBatchCheckpoint", "saveJudgeBatchCheckpoint", "loadCandidatePlan", "saveCandidatePlan", "priorCandidatePairKeys"]);
   const thirdArgumentIsOptions = providedOptions === undefined && Object.keys(requiredSourceUrlsOrOptions).some((key) => optionKeys.has(key as keyof AIProductMatchingOptions));
   const requiredSourceUrls = thirdArgumentIsOptions ? {} : requiredSourceUrlsOrOptions as Record<string, string[]>;
   const options = providedOptions || (thirdArgumentIsOptions ? requiredSourceUrlsOrOptions as AIProductMatchingOptions : {});
@@ -884,14 +916,17 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   let embeddingCalls = 0;
   const gaps: string[] = [];
   const pinnedPairs = requestedPins;
+  const providedPriorPairKeys = options.priorCandidatePairKeys || [];
+  const priorCandidatePairKeys = [...new Set(providedPriorPairKeys.filter((key) => /^[A-Za-z0-9_-]{43}\n[A-Za-z0-9_-]{43}$/.test(key)))].sort();
   const referenceTimeMs = Number.isFinite(options.referenceTimeMs) ? Number(options.referenceTimeMs) : Date.now();
-  const planHash = candidatePlanHash(synchronizedPrimary, competitors, { maxPrimary, maxCandidates, maxPerDomain, maxRetrievalPool, referenceTimeMs, marketCountryCode: options.marketCountryCode || "", pinnedPairs, embeddingModel, requiredSourceUrls });
+  const planHash = candidatePlanHash(synchronizedPrimary, competitors, { maxPrimary, maxCandidates, maxPerDomain, maxRetrievalPool, referenceTimeMs, marketCountryCode: options.marketCountryCode || "", pinnedPairs, embeddingModel, requiredSourceUrls, priorCandidatePairKeys });
   const planKey = { planHash, batchIndex: PRODUCT_CANDIDATE_PLAN_BATCH_INDEX };
   const retrievalPairsScored = synchronizedPrimary.length * competitors.reduce((sum, catalog) => sum + catalog.products.length, 0);
   const candidatePlanFailure = (reason: string) => ({
     ...withoutUnassessedMatches(fallback),
     matching: { ...matchingBase, method: "lexical-fallback" as const, available: false, retrievalPairsScored, durationMs: Date.now() - startedAt, gaps: [reason] },
   });
+  if (priorCandidatePairKeys.length !== providedPriorPairKeys.length || priorCandidatePairKeys.length > MAX_JUDGE_CANDIDATE_PAIRS) return candidatePlanFailure("The report-global candidate-pair frontier was invalid; no additional product pair was judged.");
   if (Boolean(options.loadCandidatePlan) !== Boolean(options.saveCandidatePlan)) return candidatePlanFailure("Durable candidate-plan storage was incomplete; no product pair was accepted from a non-replayable matching plan.");
   let groups: CandidateGroup[] | null = null;
   let candidatePairPoolTruncated = false;
@@ -917,10 +952,15 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
     }
     const retrievedGroups = retrieveGroups(synchronizedPrimary, competitors, embeddings, fallback, maxCandidates, maxPerDomain, maxRetrievalPool, pinnedPairs);
     const selectedGroups = selectJudgeGroups(retrievedGroups.groups, maxPrimary, new Set(pinnedPairs.map((pair) => pair.primaryId)), referenceTimeMs, options.marketCountryCode || "");
+    const priorPairSet = new Set(priorCandidatePairKeys);
+    const unscreenedGroups = selectedGroups.map((group) => ({
+      ...group,
+      candidates: group.candidates.filter((candidate) => !priorPairSet.has(`${candidatePlanProductKey(group.primary)}\n${candidatePlanProductKey(candidate.product)}`)),
+    }));
     const boundedGroups = boundJudgeCandidatePairsWithCoverage(
-      selectedGroups,
-      pinnedPairs,
-      MAX_JUDGE_CANDIDATE_PAIRS,
+      unscreenedGroups,
+      priorCandidatePairKeys.length ? [] : pinnedPairs,
+      MAX_JUDGE_CANDIDATE_PAIRS - priorCandidatePairKeys.length,
     );
     groups = boundedGroups.groups;
     candidatePairPoolTruncated = boundedGroups.truncated;

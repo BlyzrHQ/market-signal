@@ -1206,6 +1206,10 @@ test("successful enrichment batches can satisfy the twenty-row target despite a 
   assert.deepEqual(batchSizes, [64, 64, 12]);
   assert.equal(result.reportStatus, "limited");
   assert.equal(port.saves.at(-1).document.document.blocks.find((item) => item.type === "product-comparison").rows.length, 20);
+  const durablePlan = port.checkpoints.get(299)?.result;
+  assert.equal(durablePlan?.version, 2);
+  assert.equal(Array.isArray(durablePlan?.targets), false);
+  assert.equal(durablePlan?.targetHashes.length, 140);
   const checkpoints = port.events.filter((event) => /^enrichment-report-\d+-task-\d+-wave-\d+-checkpoint$/.test(event.idempotencyKey));
   assert.equal(checkpoints.length, 1);
   assert.equal(checkpoints[0].metadata.pagesRequested, 140);

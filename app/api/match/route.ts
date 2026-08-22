@@ -1,4 +1,4 @@
-import { buildAIProductComparison, PRODUCT_CANDIDATE_PLAN_BATCH_INDEX, type JudgeBatchCheckpoint, type JudgeBatchCheckpointKey, type PinnedProductPair, type ProductCandidatePlan, type ProductCandidatePlanKey } from "../../lib/ai-product-matching.ts";
+import { buildAIProductComparison, candidatePairKeysFromPlan, MAX_JUDGE_CANDIDATE_PAIRS, PRODUCT_CANDIDATE_PLAN_BATCH_INDEX, type JudgeBatchCheckpoint, type JudgeBatchCheckpointKey, type PinnedProductPair, type ProductCandidatePlan, type ProductCandidatePlanKey } from "../../lib/ai-product-matching.ts";
 import { canonicalDomain, normalizeDomain } from "../../lib/domain.ts";
 import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../lib/internal-auth.ts";
 import type { ProductRecord } from "../../lib/product-intelligence.ts";
@@ -298,6 +298,20 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
       if (body.marketCountryCode !== undefined && !/^[A-Z]{2}$/.test(marketCountryCode)) return Response.json({ ok: false, error: "The report market country code must be a two-letter country code." }, { status: 400 });
       const primaryCatalogSize = catalogs.find((catalog) => catalog.domain === primaryDomain)?.products.length || 0;
       const maxPrimaryProducts = Math.min(productBackfillPoolSize(resultTarget), primaryCatalogSize);
+      const priorCandidatePairKeys = hasReportAttempt ? await (async () => {
+        const currentPlanIndex = persistedCheckpointIndex(taskAttemptNumber, PRODUCT_CANDIDATE_PLAN_BATCH_INDEX);
+        const checkpoints = await services.loadCheckpoints(publicId, { attemptNumber: reportAttempt, batchIndexStart: PLAN_CHECKPOINT_BASE, batchIndexEnd: PLAN_CHECKPOINT_BASE + MAX_TASK_ATTEMPTS - 1, latestPerBatch: true });
+        const keys = new Set<string>();
+        for (const checkpoint of checkpoints) {
+          if (checkpoint.batchIndex === currentPlanIndex) continue;
+          const planKeys = candidatePairKeysFromPlan(checkpoint.result);
+          const plan = checkpoint.result as Partial<ProductCandidatePlan>;
+          if (checkpoint.attemptNumber !== reportAttempt || !planKeys || checkpoint.inputHash !== plan.planHash) throw new Error("A durable report-global candidate plan is invalid.");
+          for (const key of planKeys) keys.add(key);
+        }
+        if (keys.size > MAX_JUDGE_CANDIDATE_PAIRS) throw new Error("Legacy candidate plans exceed the report-global 6,000-pair frontier.");
+        return [...keys].sort();
+      })() : [];
       const checkpointOptions = hasReportAttempt ? {
         loadCandidatePlan: async (key: ProductCandidatePlanKey) => {
           const checkpoints = await services.loadCheckpoints(publicId, { attemptNumber: reportAttempt, batchIndex: persistedCheckpointIndex(taskAttemptNumber, key.batchIndex) });
@@ -328,6 +342,7 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
         referenceTimeMs: Date.parse(reportObservedAt) || Date.now(),
         marketCountryCode,
         pinnedPairs,
+        priorCandidatePairKeys,
         ...checkpointOptions,
       });
       return Response.json({ ok: true, comparison: comparison.matching ? { ...comparison, matching: { ...comparison.matching, resultTarget } } : comparison });

@@ -399,14 +399,50 @@ export function validEnrichmentCheckpoint(value: unknown, targets: ProductEnrich
   return candidate as EnrichmentResult;
 }
 
+function recoveredEnrichmentProducts(values: unknown[], comparison: ProductComparison) {
+  const bases = comparison.rows.flatMap((row) => [
+    { product: row.primary, role: "primary" as const },
+    ...row.matches.flatMap((match) => match.product ? [{ product: match.product, role: "rival" as const }] : []),
+  ]);
+  const recovered = new Map<string, ProductRecord>();
+  for (const value of values) {
+    if (!value || typeof value !== "object" || Array.isArray(value) || !Array.isArray((value as Partial<EnrichmentResult>).products)) continue;
+    for (const product of (value as Partial<EnrichmentResult>).products || []) {
+      if (!product || typeof product !== "object") continue;
+      const base = bases.find((item) => canonicalDomain(item.product.domain) === canonicalDomain(product.domain) && item.product.id === product.id);
+      if (!base) continue;
+      const target: ProductEnrichmentTarget = { domain: base.product.domain, productId: base.product.id, sourceUrl: base.product.sourceUrl, expectedName: base.product.name, expectedType: base.product.jsonLdType, pairScore: 0, role: base.role };
+      const single = validEnrichmentCheckpoint({ ok: true, products: [product], coverage: { pagesRequested: 1, pagesFetched: 1, maxPages: 1, gaps: [] } }, [target]);
+      if (!single) continue;
+      const key = `${canonicalDomain(product.domain)}\n${product.id}`;
+      const previous = recovered.get(key);
+      if (!previous || Date.parse(product.observedAt) > Date.parse(previous.observedAt)) recovered.set(key, product);
+    }
+  }
+  return [...recovered.values()];
+}
+
 function enrichmentBatchHash(targets: unknown[]) {
   return createHash("sha256").update(JSON.stringify({ version: 2, targets })).digest("hex");
 }
 
-type DurableEnrichmentPlan = { version: 1; contentHash: string; targets: ProductEnrichmentTarget[]; totalEligible: number; truncated: boolean };
+type EnrichmentPlanShape = { targets: ProductEnrichmentTarget[]; totalEligible: number; truncated: boolean };
+type DurableEnrichmentPlanV1 = { version: 1; contentHash: string } & EnrichmentPlanShape;
+type DurableEnrichmentPlanV2 = { version: 2; contentHash: string; targetHashes: string[]; totalEligible: number; truncated: boolean };
+type DurableEnrichmentPlan = DurableEnrichmentPlanV1 | DurableEnrichmentPlanV2;
 
-function enrichmentPlanContentHash(plan: Pick<DurableEnrichmentPlan, "targets" | "totalEligible" | "truncated">) {
+function enrichmentPlanContentHash(plan: EnrichmentPlanShape) {
   return createHash("sha256").update(JSON.stringify({ targets: plan.targets, totalEligible: plan.totalEligible, truncated: plan.truncated })).digest("hex");
+}
+
+function enrichmentTargetHash(target: ProductEnrichmentTarget) {
+  return createHash("sha256").update(JSON.stringify(stableCheckpointValue(target))).digest("hex");
+}
+
+function compactEnrichmentPlan(plan: EnrichmentPlanShape): DurableEnrichmentPlanV2 {
+  const targetHashes = plan.targets.map(enrichmentTargetHash);
+  const compact = { targetHashes, totalEligible: plan.totalEligible, truncated: plan.truncated };
+  return { version: 2, contentHash: createHash("sha256").update(JSON.stringify(compact)).digest("hex"), ...compact };
 }
 
 function enrichmentPlanInputHash(comparison: ProductComparison, maxPages: number) {
@@ -427,18 +463,27 @@ function enrichmentPlanInputHash(comparison: ProductComparison, maxPages: number
   return createHash("sha256").update(JSON.stringify({ version: 2, maxPages, marketCountryCode: comparison.marketCountryCode || "", rows })).digest("hex");
 }
 
-function validEnrichmentPlanCheckpoint(value: unknown): DurableEnrichmentPlan | null {
+function validEnrichmentPlanCheckpoint(value: unknown, expectedPlan: EnrichmentPlanShape): EnrichmentPlanShape | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const plan = value as Partial<DurableEnrichmentPlan>;
-  if (plan.version !== 1
+  if ((plan.version !== 1 && plan.version !== 2)
     || !/^[a-f0-9]{64}$/.test(String(plan.contentHash || ""))
-    || !Array.isArray(plan.targets)
-    || plan.targets.length > MAX_FINAL_ENRICHMENT_TARGETS
-    || !Number.isInteger(plan.totalEligible) || Number(plan.totalEligible) < plan.targets.length || Number(plan.totalEligible) > MAX_FINAL_ENRICHMENT_TARGETS * 2
+    || !Number.isInteger(plan.totalEligible) || Number(plan.totalEligible) < expectedPlan.targets.length || Number(plan.totalEligible) > MAX_FINAL_ENRICHMENT_TARGETS * 2
     || typeof plan.truncated !== "boolean"
-    || plan.truncated !== (Number(plan.totalEligible) > plan.targets.length)) return null;
+    || plan.truncated !== (Number(plan.totalEligible) > expectedPlan.targets.length)) return null;
+  if (plan.version === 2) {
+    const compact = plan as Partial<DurableEnrichmentPlanV2>;
+    if (!Array.isArray(compact.targetHashes) || compact.targetHashes.length !== expectedPlan.targets.length || compact.targetHashes.length > MAX_FINAL_ENRICHMENT_TARGETS
+      || compact.targetHashes.some((hash) => !/^[a-f0-9]{64}$/.test(String(hash || "")))
+      || JSON.stringify(compact.targetHashes) !== JSON.stringify(expectedPlan.targets.map(enrichmentTargetHash))) return null;
+    const hashValue = { targetHashes: compact.targetHashes, totalEligible: Number(plan.totalEligible), truncated: plan.truncated };
+    if (plan.contentHash !== createHash("sha256").update(JSON.stringify(hashValue)).digest("hex")) return null;
+    return { targets: expectedPlan.targets, totalEligible: Number(plan.totalEligible), truncated: plan.truncated };
+  }
+  const legacy = plan as Partial<DurableEnrichmentPlanV1>;
+  if (!Array.isArray(legacy.targets) || legacy.targets.length > MAX_FINAL_ENRICHMENT_TARGETS || JSON.stringify(stableCheckpointValue(legacy.targets)) !== JSON.stringify(stableCheckpointValue(expectedPlan.targets))) return null;
   const seen = new Set<string>();
-  for (const target of plan.targets) {
+  for (const target of legacy.targets) {
     if (!target || typeof target !== "object" || (target.role !== "primary" && target.role !== "rival") || typeof target.productId !== "string" || !target.productId) return null;
     try {
       const source = new URL(target.sourceUrl);
@@ -449,9 +494,9 @@ function validEnrichmentPlanCheckpoint(value: unknown): DurableEnrichmentPlan | 
       seen.add(key);
     } catch { return null; }
   }
-  const complete = { targets: plan.targets, totalEligible: Number(plan.totalEligible), truncated: plan.truncated };
+  const complete = { targets: legacy.targets, totalEligible: Number(plan.totalEligible), truncated: plan.truncated };
   if (plan.contentHash !== enrichmentPlanContentHash(complete)) return null;
-  return { version: 1, contentHash: plan.contentHash, ...complete };
+  return complete;
 }
 
 type RunStatus = "queued" | "running" | "complete" | "limited" | "failed" | "interrupted";
@@ -811,6 +856,19 @@ export async function orchestrateReport(
       comparison = mergeAccumulatedPublishedIntoScreenedComparison(comparison, adoptedJudgeEvidence);
       const maxEnrichmentPages = pricedResultEnrichmentBudget(payload.productLimit);
       let enrichmentPlan = planFinalProductEnrichmentTargets(comparison, maxEnrichmentPages, reportReferenceTimeMs);
+      const recoveredProducts = recoveredEnrichmentProducts([...allDurableCheckpoints.values()]
+        .filter((checkpoint) => checkpoint.batchIndex >= ENRICHMENT_CHECKPOINT_BATCH_INDEX_BASE && checkpoint.batchIndex < MATCH_JUDGE_CHECKPOINT_BATCH_INDEX_BASE)
+        .map((checkpoint) => checkpoint.result), comparison);
+      if (recoveredProducts.length) comparison = applyFinalProductEnrichment(comparison, recoveredProducts, {
+        pagesRequested: recoveredProducts.length,
+        pagesFetched: recoveredProducts.length,
+        maxPages: recoveredProducts.length,
+        pagesEligible: recoveredProducts.length,
+        pagesTruncated: false,
+        batchCount: 0,
+        failedBatchCount: 0,
+        gaps: [],
+      });
       let targetSatisfied = mergePublishedProductComparisons(comparison, accumulatedPublished, payload.productLimit, reportReferenceTimeMs).rows.length >= payload.productLimit;
       if (!targetSatisfied) {
         const inputHash = enrichmentPlanInputHash(comparison, maxEnrichmentPages);
@@ -818,7 +876,7 @@ export async function orchestrateReport(
         const saved = durableCheckpoints.get(planCheckpointIndex);
         if (saved) {
           if (saved.inputHash !== inputHash) throw new Error("The durable enrichment plan conflicts with the current accepted product identities.");
-          const checkpoint = validEnrichmentPlanCheckpoint(saved.result);
+          const checkpoint = validEnrichmentPlanCheckpoint(saved.result, enrichmentPlan);
           if (!checkpoint) throw new Error("The durable enrichment plan is invalid.");
           enrichmentPlan = checkpoint;
         } else {
@@ -828,14 +886,14 @@ export async function orchestrateReport(
             const priorIndex = enrichmentPlanCheckpointIndex(priorTaskAttempt);
             const prior = durableCheckpoints.get(priorIndex);
             if (!prior || prior.inputHash !== inputHash) continue;
-            const checkpoint = validEnrichmentPlanCheckpoint(prior.result);
+            const checkpoint = validEnrichmentPlanCheckpoint(prior.result, enrichmentPlan);
             if (!checkpoint) throw new Error("The durable enrichment plan is invalid.");
             enrichmentPlan = checkpoint;
             reusedPriorPlan = true;
             break;
           }
           if (!reusedPriorPlan) {
-            const durablePlan: DurableEnrichmentPlan = { version: 1, contentHash: enrichmentPlanContentHash(enrichmentPlan), ...enrichmentPlan };
+            const durablePlan = compactEnrichmentPlan(enrichmentPlan);
             try {
               await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: planCheckpointIndex, inputHash, result: durablePlan });
               const savedCheckpoint = { attemptNumber: attempt.attemptNumber, batchIndex: planCheckpointIndex, inputHash, result: durablePlan };
@@ -845,7 +903,7 @@ export async function orchestrateReport(
               const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: planCheckpointIndex }))[0];
               if (!committed || committed.attemptNumber !== attempt.attemptNumber || committed.inputHash !== inputHash) throw saveError;
               if (JSON.stringify(stableCheckpointValue(committed.result)) !== JSON.stringify(stableCheckpointValue(durablePlan))) throw saveError;
-              const checkpoint = validEnrichmentPlanCheckpoint(committed.result);
+              const checkpoint = validEnrichmentPlanCheckpoint(committed.result, enrichmentPlan);
               if (!checkpoint) throw saveError;
               enrichmentPlan = checkpoint;
             }
