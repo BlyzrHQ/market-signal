@@ -13,6 +13,7 @@ const MAX_CATALOGS = 1_713;
 const MAX_PRIMARY_PRODUCTS = 1_000;
 const MAX_RIVAL_PRODUCTS = 5_000;
 const MAX_SUBMITTED_PRODUCTS_PER_CATALOG = 5_000;
+const MAX_PINNED_PAIRS = 6_000;
 export const MAX_MATCH_BODY_BYTES = 64 * 1_024 * 1_024;
 const DEFAULT_PRODUCT_ANALYSIS_LIMIT = 20;
 const PLAN_PRODUCT_LIMITS = new Set([20, 50, 500, 1_000]);
@@ -231,7 +232,7 @@ export function productBackfillPoolSize(resultTarget: number) {
 
 export function parsePinnedPairs(value: unknown, catalogs: Array<{ domain: string; products: ProductRecord[] }>, primaryDomain: string): PinnedProductPair[] {
   if (!Array.isArray(value)) return [];
-  if (value.length > 12) return [];
+  if (value.length > MAX_PINNED_PAIRS) return [];
   const primaryIds = new Set(catalogs.find((catalog) => canonicalDomain(catalog.domain) === canonicalDomain(primaryDomain))?.products.map((product) => product.id) || []);
   const rivalIds = new Map(catalogs.filter((catalog) => canonicalDomain(catalog.domain) !== canonicalDomain(primaryDomain)).map((catalog) => [canonicalDomain(catalog.domain), new Set(catalog.products.map((product) => product.id))]));
   const pairs: PinnedProductPair[] = [];

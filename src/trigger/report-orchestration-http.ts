@@ -11,9 +11,10 @@ export const MAX_SUCCESS_BODY_BYTES = 64 * 1_024 * 1_024;
 
 // Node's built-in fetch gives up while waiting for response headers after five
 // minutes, independently of a longer AbortSignal. Discovery and matching are
-// allowed 12 minutes, so keep Undici above their 750-second deadlines while
-// Caddy remains the outermost 780-second boundary.
-export const ORCHESTRATION_FETCH_TIMEOUT_MS = 760_000;
+// The crawl can search 200 products and verify the complete bounded seller
+// evidence set. Keep Undici above its 2,400-second deadline while Caddy remains
+// the outermost 2,460-second boundary.
+export const ORCHESTRATION_FETCH_TIMEOUT_MS = 2_410_000;
 
 export function createOrchestrationFetch(timeoutMs = ORCHESTRATION_FETCH_TIMEOUT_MS) {
   const boundedTimeout = Math.max(1_000, Math.floor(timeoutMs));
@@ -44,7 +45,7 @@ const PATHS = {
 export const OPERATION_BUDGETS_MS = {
   preflight: 10_000,
   report: 10_000,
-  crawl: 750_000,
+  crawl: 2_400_000,
   brief: 90_000,
   ads: 90_000,
   match: 750_000,

@@ -98,8 +98,8 @@ test("fresh same-domain product evidence is merged into remembered continuity", 
 
   const [merged] = mergeRememberedCandidates(fresh, remembered);
   assert.equal(merged.provenance, "discovered-this-run");
-  assert.deepEqual(merged.matchedPrimaryProductNames, ["Old product", "Fresh product"]);
-  assert.deepEqual(merged.matchedProductUrls, [`https://${domain}/products/old`, `https://${domain}/products/fresh`]);
+  assert.deepEqual(merged.matchedPrimaryProductNames, ["Fresh product", "Old product"]);
+  assert.deepEqual(merged.matchedProductUrls, [`https://${domain}/products/fresh`, `https://${domain}/products/old`]);
   assert.equal(merged.evidence.length, 2);
 });
 
@@ -124,6 +124,19 @@ test("aggregate remembered product evidence exposes overflow beyond the declared
   const merged = mergeRememberedCandidateCoverage([], remembered);
   assert.equal(merged.candidates.reduce((total, item) => total + item.matchedProductUrls.length, 0), 6_000);
   assert.equal(merged.truncated, true);
+});
+
+test("fresh-wave seller evidence takes priority over a full historical evidence budget", () => {
+  const remembered = [{
+    ...candidate("historical.test", "remembered-reverified"),
+    matchedProductUrls: Array.from({ length: 6_000 }, (_, index) => `https://historical.test/products/${index}`),
+  }];
+  const freshUrl = "https://fresh.test/products/new";
+  const merged = mergeRememberedCandidateCoverage([{ ...candidate("fresh.test"), matchedProductUrls: [freshUrl] }], remembered);
+  assert.equal(merged.candidates[0].domain, "fresh.test");
+  assert.deepEqual(merged.candidates[0].matchedProductUrls, [freshUrl]);
+  assert.equal(merged.freshTruncated, false);
+  assert.equal(merged.rememberedTruncated, true);
 });
 
 test("memory is isolated, expires old rows, and ignores malformed records", async () => {

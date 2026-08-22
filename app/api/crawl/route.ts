@@ -15,7 +15,7 @@ import { fetchPublicText } from "../../lib/public-fetch.ts";
 import { claimablePagePricePatterns, enrichProductTargets, selectPrimaryProductPriceTargets, type EnrichmentDependencies } from "../../lib/storefront-product-enrichment.ts";
 import { buildExperienceBenchmark } from "../../lib/experience-benchmark.ts";
 import { hasObservedAddToCartControl } from "../../lib/experience-signals.ts";
-import { buildAIProductComparison } from "../../lib/ai-product-matching.ts";
+import { buildAIProductComparison, type AIProductMatchingOptions } from "../../lib/ai-product-matching.ts";
 import { isSallaCatalogRecoveryEligible, recoverSallaStorefrontCatalog, type SallaStorefrontRecovery } from "../../lib/salla-mcp-catalog-recovery.ts";
 import { redirectedMarketRetryUrl } from "../../lib/market-localization.ts";
 
@@ -266,6 +266,7 @@ export async function verifyInferredProductLead(
   discovery: DiscoveryCandidate,
   judge: ExactPairJudge = buildAIProductComparison,
 ) {
+  const eligiblePairs: Array<{ primary: ProductRecord; rival: ProductRecord; lead: NonNullable<DiscoveryCandidate["inferredProductLeads"]>[number] }> = [];
   for (const lead of discovery.inferredProductLeads || []) {
     if (canonicalDomain(lead.candidateDomain) !== canonicalDomain(candidate.domain)) continue;
     const primaryProduct = primary.products.find((product) => product.id === lead.primaryProductId
@@ -289,21 +290,25 @@ export async function verifyInferredProductLead(
     const identities = new Set(eligiblePageProducts.map((product) => exactPageProductFingerprint(product, candidate.domain)));
     if (!primaryProduct || exactPageProducts.length !== 1 || identities.size !== 1) continue;
     const rivalProduct = exactPageProducts[0];
-    const comparison = await judge(primary.domain, [
-      { domain: primary.domain, products: [primaryProduct] },
-      { domain: candidate.domain, products: [rivalProduct] },
-    ], {
-      maxPrimaryProducts: 1,
-      maxCandidatesPerPrimary: 1,
-      maxCandidatesPerDomain: 1,
-      maxProductsPerCompetitor: 1,
-      maxRetrievalPoolPerDomain: 1,
-      primaryProductsPerJudgeCall: 1,
-      maxPairsPerJudgeCall: 1,
-      concurrency: 1,
-      totalBudgetMs: 35_000,
-      pinnedPairs: [{ primaryId: primaryProduct.id, rivalDomain: candidate.domain, rivalId: rivalProduct.id }],
-    });
+    if (!eligiblePairs.some((pair) => pair.primary.id === primaryProduct.id && pair.rival.id === rivalProduct.id)) eligiblePairs.push({ primary: primaryProduct, rival: rivalProduct, lead });
+  }
+  if (!eligiblePairs.length) return undefined;
+  const comparison = await judge(primary.domain, [
+    { domain: primary.domain, products: selectPreferredProducts(eligiblePairs.map((pair) => pair.primary)) },
+    { domain: candidate.domain, products: selectPreferredProducts(eligiblePairs.map((pair) => pair.rival)) },
+  ], {
+    maxPrimaryProducts: Math.min(1_000, eligiblePairs.length),
+    maxCandidatesPerPrimary: 6_000,
+    maxCandidatesPerDomain: 6_000,
+    maxProductsPerCompetitor: 6_000,
+    maxRetrievalPoolPerDomain: 6_000,
+    primaryProductsPerJudgeCall: 25,
+    maxPairsPerJudgeCall: 25,
+    concurrency: 12,
+    totalBudgetMs: 720_000,
+    pinnedPairs: eligiblePairs.map((pair) => ({ primaryId: pair.primary.id, rivalDomain: candidate.domain, rivalId: pair.rival.id })),
+  });
+  for (const { primary: primaryProduct, rival: rivalProduct, lead } of eligiblePairs) {
     const match = comparison.rows.find((row) => row.primary.id === primaryProduct.id)?.matches
       .find((item) => item.product?.id === rivalProduct.id && canonicalDomain(item.domain) === canonicalDomain(candidate.domain));
     if (!match?.product || match.confidence !== "Medium" || !match.assessment
@@ -325,18 +330,25 @@ export async function verifyDiscoveredCompetitorWithInferredLeads(
   const verifiedExactProductPair = discovery.inferredProductLeads?.length
     ? await verifyInferredProductLead(primary, candidate, discovery, judge)
     : undefined;
+  const attributableDiscoveryEvidence = discovery.evidence.filter((item) => {
+    try { return canonicalDomain(new URL(item.url).hostname) === canonicalDomain(discovery.domain); } catch { return false; }
+  });
+  const attributableMatchedUrls = (discovery.matchedProductUrls || (discovery.matchedProductUrl ? [discovery.matchedProductUrl] : [])).filter((value) => {
+    try { return canonicalDomain(new URL(value).hostname) === canonicalDomain(discovery.domain); } catch { return false; }
+  });
   const verificationDiscovery = verifiedExactProductPair ? {
     ...discovery,
     reason: `The exact seeded product page exposed a priced first-party Product and the targeted semantic judge verified it against “${verifiedExactProductPair.primary.name}”.`,
     searchQuery: verifiedExactProductPair.lead.laneQuery,
     sourceUrl: verifiedExactProductPair.lead.candidateSourceUrl,
     sharedOfferings: [verifiedExactProductPair.primary.name],
-    evidence: [{ url: verifiedExactProductPair.lead.candidateSourceUrl, title: verifiedExactProductPair.rival.name, method: "product-search" as const }],
-    mentionCount: 1,
+    evidence: [...attributableDiscoveryEvidence, { url: verifiedExactProductPair.lead.candidateSourceUrl, title: verifiedExactProductPair.rival.name, method: "product-search" as const }]
+      .filter((item, index, all) => all.findIndex((other) => other.url === item.url && other.method === item.method) === index),
+    mentionCount: Math.max(discovery.mentionCount, discovery.evidence.length + 1),
     matchedPrimaryProductName: verifiedExactProductPair.primary.name,
     matchedProductUrl: verifiedExactProductPair.rival.sourceUrl,
-    matchedPrimaryProductNames: [verifiedExactProductPair.primary.name],
-    matchedProductUrls: [verifiedExactProductPair.rival.sourceUrl],
+    matchedPrimaryProductNames: [...new Set([verifiedExactProductPair.primary.name, ...(discovery.matchedPrimaryProductNames || (discovery.matchedPrimaryProductName ? [discovery.matchedPrimaryProductName] : []))])],
+    matchedProductUrls: [...new Set([verifiedExactProductPair.rival.sourceUrl, ...attributableMatchedUrls])],
   } : discovery;
   const verified = verifyDiscoveredCompetitor(primary, candidate, verificationDiscovery, targetMarket, requireProductOverlap, verifiedExactProductPair);
   if (discovery.inferredProductLeads?.length && !discovery.observedAdmission && !verifiedExactProductPair) return {
@@ -686,7 +698,7 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
   let sitemapPaths: string[] = [];
   let sitemapProducts: ProductRecord[] = [];
   const sitemapUrl = (() => { try { const candidate = new URL(robots.sitemaps[0] || "/sitemap.xml", base); return canonicalDomain(candidate.hostname) === canonicalDomain(domain) && /^https?:$/.test(candidate.protocol) ? candidate.toString() : new URL("/sitemap.xml", base).toString(); } catch { return new URL("/sitemap.xml", base).toString(); } })();
-  if (robotsState !== "unreachable") {
+  if (robotsState !== "unreachable" && role !== "discovered-competitor") {
     const sitemapEvidence = await collectSitemapEvidence(sitemapUrl, domain, startedAt, maxSitemapDocuments, fetchPage);
     sitemapPaths = sitemapEvidence.paths;
     sitemapProducts = sitemapEvidence.products;
@@ -694,7 +706,7 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
   const candidates = discovered.candidates.slice(0, 12).map((candidate, index) => ({ domain: candidate.domain, reason: `A public page linked to this domain with “${candidate.text.slice(0, 120)}”. This is a possible match, not a confirmed competitor.`, sourceUrl: candidate.sourceUrl, claimIds: [`${domain}-candidate-${index}`] }));
   candidates.forEach((candidate, index) => homepage.claims.push(makeClaim(domain, `candidate-${index}`, `${domain} linked to possible market candidate ${candidate.domain}; anchor context supports investigation only.`, candidate.sourceUrl, startedAt, "Inferred", "Low")));
   const seededPaths = seededCrawlPaths(seededProductUrls, domain);
-  const observedPaths = robotsState !== "unreachable" ? unique([...discovered.paths, ...sitemapPaths], 500) : [];
+  const observedPaths = robotsState !== "unreachable" && role !== "discovered-competitor" ? unique([...discovered.paths, ...sitemapPaths], 500) : [];
   const sortedObservedPaths = observedPaths.sort((left, right) => {
     return productPathPriority(left) - productPathPriority(right) || left.localeCompare(right);
   });
@@ -1149,31 +1161,41 @@ export async function POST(request: Request) {
     );
     const allInvestigationCandidates = mergedInvestigationCoverage.candidates;
     const investigationCandidates = allInvestigationCandidates.slice(0, MAX_COMPETITOR_INVESTIGATIONS);
+    const mergedCoverageGaps = [
+      ...(mergedInvestigationCoverage.freshTruncated ? ["Fresh competitor product evidence exceeded the declared 6,000-lead universe; this discovery batch remains retryable."] : []),
+      ...(mergedInvestigationCoverage.rememberedTruncated ? ["Historical competitor product evidence exceeded the 6,000-lead carry-forward window; current discovery may advance, but a result shortfall cannot claim full exhaustion."] : []),
+    ];
     discovery = {
       ...discovery,
       candidates: investigationCandidates,
-      gaps: memory.gap ? [...discovery.gaps, memory.gap] : discovery.gaps,
+      gaps: [...discovery.gaps, ...(memory.gap ? [memory.gap] : []), ...mergedCoverageGaps],
     };
     const verificationMarket = resolveVerificationMarket(discovery.region, primary.homepage.region, firstPartyRegionSource(primary.homepage));
     const scheduleCompetitorRequest = createRequestLimiter(COMPETITOR_PAGE_CONCURRENCY);
+    const scheduleCompetitorJudge = createRequestLimiter(COMPETITOR_CRAWL_CONCURRENCY);
+    const scheduledJudge = ((primaryDomain: string, catalogs: Array<{ domain: string; products: ProductRecord[] }>, requiredSourceUrlsOrOptions: Record<string, string[]> | AIProductMatchingOptions = {}, providedOptions?: AIProductMatchingOptions) => scheduleCompetitorJudge(() => providedOptions
+      ? buildAIProductComparison(primaryDomain, catalogs, requiredSourceUrlsOrOptions as Record<string, string[]>, providedOptions)
+      : buildAIProductComparison(primaryDomain, catalogs, requiredSourceUrlsOrOptions as AIProductMatchingOptions))) as ExactPairJudge;
     const investigatedSettled = await settleWithConcurrency(investigationCandidates, COMPETITOR_CRAWL_CONCURRENCY, async (candidate) => {
       const seedUrls = [...new Set([
         ...(candidate.matchedProductUrls || (candidate.matchedProductUrl ? [candidate.matchedProductUrl] : [])),
         ...(candidate.inferredProductLeads || []).map((lead) => lead.candidateSourceUrl),
       ])];
-      return verifyDiscoveredCompetitorWithInferredLeads(primary, await crawlDomain(candidate.domain, "discovered-competitor", seedUrls.length ? seedUrls : [candidate.websiteUrl], { schedule: scheduleCompetitorRequest }), candidate, verificationMarket, discoveryPolicy.requireProductOverlap);
+      return verifyDiscoveredCompetitorWithInferredLeads(primary, await crawlDomain(candidate.domain, "discovered-competitor", seedUrls.length ? seedUrls : [candidate.websiteUrl], { schedule: scheduleCompetitorRequest }), candidate, verificationMarket, discoveryPolicy.requireProductOverlap, scheduledJudge);
     });
     const discoveredResults = investigatedSettled.map((result) => result.status === "fulfilled" ? result.value : null);
+    const continuityIncomplete = memory.truncated || mergedInvestigationCoverage.rememberedTruncated;
+    const finalizedCoverage = finalizedDiscoveryCoverage(
+      discovery.productSearchCoverage,
+      allInvestigationCandidates.length + Number(mergedInvestigationCoverage.freshTruncated),
+      investigationCandidates.length,
+      investigatedSettled.map((result) => result.status),
+      discoveredResults,
+      discoveryPriorCoverageComplete,
+    );
     discovery = {
       ...discovery,
-      productSearchCoverage: finalizedDiscoveryCoverage(
-        discovery.productSearchCoverage,
-        allInvestigationCandidates.length + Number(memory.truncated || mergedInvestigationCoverage.truncated),
-        investigationCandidates.length,
-        investigatedSettled.map((result) => result.status),
-        discoveredResults,
-        discoveryPriorCoverageComplete,
-      ),
+      productSearchCoverage: { ...finalizedCoverage, complete: finalizedCoverage.complete && !continuityIncomplete },
     };
     const confirmed: DomainCrawl[] = discoveredResults.filter((result): result is NonNullable<typeof result> => Boolean(result?.homepage && result.discovery?.accepted)).sort((left, right) => compareVerifiedCompetitors(left.discovery!, right.discovery!));
     const rememberedFailures = rememberedReverificationFailures(investigationCandidates, discoveredResults);

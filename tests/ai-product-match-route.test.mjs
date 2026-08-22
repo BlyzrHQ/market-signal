@@ -199,6 +199,18 @@ test("pinned pairs reject mixed valid and invalid records without partial admiss
   ], catalogs, "shop.test"), [{ primaryId: "p1", rivalDomain: "rival.test", rivalId: "r1" }]);
 });
 
+test("the match boundary accepts more than twelve bounded exact-pair pins", () => {
+  const primaryProducts = Array.from({ length: 13 }, (_, index) => ({ id: `p${index}`, name: `Product ${index}`, sourceUrl: `https://shop.test/products/${index}` }));
+  const rivalProducts = Array.from({ length: 13 }, (_, index) => ({ id: `r${index}`, name: `Product ${index}`, sourceUrl: `https://rival.test/products/${index}` }));
+  const catalogs = parseCatalogs([
+    { domain: "shop.test", products: primaryProducts },
+    { domain: "rival.test", products: rivalProducts },
+  ], "shop.test");
+  const pins = primaryProducts.map((primary, index) => ({ primaryId: primary.id, rivalDomain: "rival.test", rivalId: rivalProducts[index].id }));
+
+  assert.equal(parsePinnedPairs(pins, catalogs, "shop.test").length, 13);
+});
+
 test("authenticated matching binds durable judge checkpoints to the active report attempt", async () => {
   const token = "test-callback-token-that-is-at-least-32-characters";
   const saved = [];

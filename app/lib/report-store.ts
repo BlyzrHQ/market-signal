@@ -256,10 +256,10 @@ export type ReportCreateDiagnostic =
 
 const REPORT_SCHEMA_VERSION = 1;
 const REPORT_RETENTION_DAYS = 90;
-// The largest authenticated worker operation is a 12.5-minute deep-catalog
-// match. Keep the stale guard above that deadline so report polling cannot
-// interrupt a healthy matcher between phase heartbeats.
-const STALE_RUN_MS = 15 * 60 * 1000;
+// The largest authenticated worker operation is the 40-minute complete bounded
+// crawl. Keep two minutes of headroom so polling cannot interrupt healthy work
+// between phase heartbeats.
+const STALE_RUN_MS = 42 * 60 * 1000;
 const QUEUED_DISPATCH_TIMEOUT_MS = 60 * 60 * 1000;
 export const MAX_REPORT_DOCUMENT_BYTES = REPORT_SNAPSHOT_HARD_BYTES;
 const MAX_REPORT_FACT_CHUNKS = 1_000;
@@ -2378,7 +2378,7 @@ export async function recoverInterruptedReport(publicReportId: string, now = new
     database.prepare(`DELETE FROM report_fact_manifests WHERE run_id = ? AND status = 'finalizing' AND attempt_number = ? AND EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND status = 'interrupted' AND attempt_count = ?)`).bind(run.id, run.attemptCount, run.id, run.attemptCount),
     database.prepare(`UPDATE report_fact_chunks SET attempt_number = ? WHERE run_id = ? AND attempt_number = ? AND EXISTS (SELECT 1 FROM report_fact_manifests WHERE run_id = ? AND status = 'complete' AND attempt_number = ?) AND NOT EXISTS (SELECT 1 FROM report_documents WHERE run_id = ?) AND EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND status = 'interrupted' AND attempt_count = ?)`).bind(attemptCount, run.id, run.attemptCount, run.id, run.attemptCount, run.id, run.id, run.attemptCount),
     database.prepare(`UPDATE report_fact_manifests SET attempt_number = ? WHERE run_id = ? AND status = 'complete' AND attempt_number = ? AND NOT EXISTS (SELECT 1 FROM report_documents WHERE run_id = ?) AND EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND status = 'interrupted' AND attempt_count = ?)`).bind(attemptCount, run.id, run.attemptCount, run.id, run.id, run.attemptCount),
-    database.prepare(`UPDATE report_match_batch_checkpoints SET attempt_number = ? WHERE run_id = ? AND attempt_number = ? AND (batch_index < 200 OR batch_index = 999) AND NOT EXISTS (SELECT 1 FROM report_documents WHERE run_id = ?) AND EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND status = 'interrupted' AND attempt_count = ?)`).bind(attemptCount, run.id, run.attemptCount, run.id, run.id, run.attemptCount),
+    database.prepare(`UPDATE report_match_batch_checkpoints SET attempt_number = ? WHERE run_id = ? AND attempt_number = ? AND (batch_index < 200 OR batch_index = 999 OR batch_index BETWEEN 1400 AND 3409) AND NOT EXISTS (SELECT 1 FROM report_documents WHERE run_id = ?) AND EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND status = 'interrupted' AND attempt_count = ?)`).bind(attemptCount, run.id, run.attemptCount, run.id, run.id, run.attemptCount),
     database.prepare(`UPDATE report_runs SET status = 'queued', current_phase = 'queued', attempt_count = ?, updated_at = ?, heartbeat_at = ?, error_code = '', error_message = '' WHERE id = ? AND status = 'interrupted' AND attempt_count = ?`).bind(attemptCount, observedAt, observedAt, run.id, run.attemptCount),
     database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE((SELECT MAX(sequence) FROM report_events WHERE run_id = ?), 0) + 1, ?, 'queued', 'queued', 'The interrupted background report was authorized for another attempt.', ?, ? FROM report_runs WHERE id = ? AND status = 'queued' AND attempt_count = ? ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, run.id, eventKey, JSON.stringify({ attempt: attemptCount }), observedAt, run.id, attemptCount),
   ]);

@@ -28,7 +28,7 @@ test("VPS image and compose keep the app private and persistent", () => {
   assert.doesNotMatch(compose, /MARKET_SIGNAL_EDGE_|chatgpt\.site/);
   assert.doesNotMatch(compose, /app:[\s\S]*?ports:\s*\n\s*-\s*["']?\d+:3000/);
   const caddyfile = read("deploy/vps/Caddyfile");
-  assert.match(caddyfile, /response_header_timeout 780s/);
+  assert.match(caddyfile, /response_header_timeout 2460s/);
   const caddyService = compose.split(/\r?\n  caddy:\r?\n/)[1];
   assert.ok(caddyService);
   assert.doesNotMatch(caddyService, /env_file:/);

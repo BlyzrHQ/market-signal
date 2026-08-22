@@ -352,7 +352,7 @@ test("recoverable interrupted reports do not create permanent failure evaluation
     const started = new Date("2026-08-16T10:00:00.000Z");
     const created = await createReportRun({ primaryDomain: "recoverable.example" }, started, database);
     await appendReportEvent(created.publicId, { attemptNumber: 1, idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Collecting public pages." }, started, database);
-    const interrupted = await getStoredReport(created.publicId, new Date("2026-08-16T10:20:00.000Z"), database);
+    const interrupted = await getStoredReport(created.publicId, new Date("2026-08-16T10:45:00.000Z"), database);
     assert.equal(interrupted.run.status, "interrupted");
     assert.equal(await getReportEvaluation(created.publicId, database), null);
   } finally {
@@ -561,7 +561,7 @@ test("a replayed recovery cannot delete the new attempt's finalization lock", as
     const createdAt = new Date("2026-07-31T10:00:00.000Z");
     const created = await createReportRun({ primaryDomain: "recovery-race.example" }, createdAt, first);
     await appendReportEvent(created.publicId, { attemptNumber: 1, idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "running" }, new Date("2026-07-31T10:01:00.000Z"), first);
-    await getStoredReport(created.publicId, new Date("2026-07-31T10:20:00.000Z"), first);
+    await getStoredReport(created.publicId, new Date("2026-07-31T10:45:00.000Z"), first);
     const runId = (await first.prepare("SELECT id FROM report_runs WHERE public_id = ?").bind(created.publicId).all()).results[0].id;
     await first.prepare("INSERT INTO report_fact_manifests (run_id, manifest_id, attempt_number, manifest_hash, company_count, product_count, match_count, ad_count, status, lock_owner, locked_at, completed_at) VALUES (?, ?, 1, ?, 0, 0, 0, 0, 'finalizing', 'old', ?, '')").bind(runId, "1".repeat(64), "2".repeat(64), createdAt.toISOString()).run();
     let raced = false;
@@ -570,14 +570,14 @@ test("a replayed recovery cannot delete the new attempt's finalization lock", as
       batch: async (statements) => {
         if (!raced) {
           raced = true;
-          await recoverInterruptedReport(created.publicId, new Date("2026-07-31T10:21:00.000Z"), second);
+          await recoverInterruptedReport(created.publicId, new Date("2026-07-31T10:46:00.000Z"), second);
           await second.prepare("INSERT INTO report_fact_manifests (run_id, manifest_id, attempt_number, manifest_hash, company_count, product_count, match_count, ad_count, status, lock_owner, locked_at, completed_at) VALUES (?, ?, 2, ?, 0, 0, 0, 0, 'finalizing', 'new', ?, '')").bind(runId, "3".repeat(64), "4".repeat(64), createdAt.toISOString()).run();
           await second.prepare("UPDATE report_runs SET status = 'interrupted', current_phase = 'interrupted' WHERE id = ? AND attempt_count = 2").bind(runId).run();
         }
         return first.batch(statements);
       },
     };
-    await assert.rejects(recoverInterruptedReport(created.publicId, new Date("2026-07-31T10:21:01.000Z"), staleRecovery), /recovery attempt is stale/);
+    await assert.rejects(recoverInterruptedReport(created.publicId, new Date("2026-07-31T10:46:01.000Z"), staleRecovery), /recovery attempt is stale/);
     const manifest = (await first.prepare("SELECT attempt_number, lock_owner FROM report_fact_manifests WHERE run_id = ?").bind(runId).all()).results[0];
     assert.deepEqual(manifest, { attempt_number: 2, lock_owner: "new" });
   } finally {
@@ -660,21 +660,23 @@ test("recovery adopts an immutable completed fact snapshot for the new attempt",
     await appendReportEvent(created.publicId, { attemptNumber: 1, idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Collecting public pages." }, started, database);
     const bundle = await buildReportFactBundle({ publicId: created.publicId, crawlResults: [{ domain: "recoverable.example", role: "primary", homepage: { sourceUrl: "https://recoverable.example/" }, products: [], fetchedAt: started.toISOString() }], comparison: null, adBlock: null, observedAt: started.toISOString(), attemptNumber: 1 });
     await saveReportMatchBatchCheckpoint(created.publicId, { attemptNumber: 1, batchIndex: 0, inputHash: "a".repeat(64), result: { assessments: [] } }, started, database);
+    await saveReportMatchBatchCheckpoint(created.publicId, { attemptNumber: 1, batchIndex: 1400, inputHash: "c".repeat(64), result: { assessments: [] } }, started, database);
+    await saveReportMatchBatchCheckpoint(created.publicId, { attemptNumber: 1, batchIndex: 3400, inputHash: "d".repeat(64), result: { candidatePlan: [] } }, started, database);
     await saveReportMatchBatchCheckpoint(created.publicId, { attemptNumber: 1, batchIndex: 299, inputHash: "b".repeat(64), result: { enrichmentPlan: [] } }, started, database);
     for (const chunk of bundle.chunks) await saveReportFactChunk(created.publicId, chunk, started, database);
     await finalizeReportFactManifest(created.publicId, bundle.manifest, started, database);
-    const interrupted = await getStoredReport(created.publicId, new Date("2026-08-16T10:20:00.000Z"), database);
+    const interrupted = await getStoredReport(created.publicId, new Date("2026-08-16T10:45:00.000Z"), database);
     assert.equal(interrupted.run.status, "interrupted");
 
-    const recovered = await recoverInterruptedReport(created.publicId, new Date("2026-08-16T10:21:00.000Z"), database);
+    const recovered = await recoverInterruptedReport(created.publicId, new Date("2026-08-16T10:46:00.000Z"), database);
     assert.equal(recovered.attemptCount, 2);
-    await appendReportEvent(created.publicId, { attemptNumber: 2, idempotencyKey: "report-2-task-1-crawl-started", phase: "crawl", status: "running", message: "Collecting public pages after recovery." }, new Date("2026-08-16T10:22:00.000Z"), database);
-    await appendReportEvent(created.publicId, { attemptNumber: 2, idempotencyKey: "report-2-task-2-matching-started", phase: "matching", status: "running", message: "Resuming matching in the second task attempt." }, new Date("2026-08-16T10:23:00.000Z"), database);
+    await appendReportEvent(created.publicId, { attemptNumber: 2, idempotencyKey: "report-2-task-1-crawl-started", phase: "crawl", status: "running", message: "Collecting public pages after recovery." }, new Date("2026-08-16T10:47:00.000Z"), database);
+    await appendReportEvent(created.publicId, { attemptNumber: 2, idempotencyKey: "report-2-task-2-matching-started", phase: "matching", status: "running", message: "Resuming matching in the second task attempt." }, new Date("2026-08-16T10:48:00.000Z"), database);
     const heartbeat = await database.prepare("SELECT heartbeat_at FROM report_runs WHERE id = ?").bind(recovered.id).all();
-    assert.equal(heartbeat.results[0].heartbeat_at, "2026-08-16T10:23:00.000Z");
+    assert.equal(heartbeat.results[0].heartbeat_at, "2026-08-16T10:48:00.000Z");
     assert.deepEqual((await database.prepare("SELECT DISTINCT attempt_number FROM report_fact_chunks WHERE run_id = ?").bind(recovered.id).all()).results, [{ attempt_number: 2 }]);
     assert.deepEqual((await database.prepare("SELECT attempt_number, status FROM report_fact_manifests WHERE run_id = ?").bind(recovered.id).all()).results, [{ attempt_number: 2, status: "complete" }]);
-    assert.deepEqual((await database.prepare("SELECT attempt_number, batch_index FROM report_match_batch_checkpoints WHERE run_id = ? ORDER BY batch_index").bind(recovered.id).all()).results, [{ attempt_number: 2, batch_index: 0 }, { attempt_number: 1, batch_index: 299 }]);
+    assert.deepEqual((await database.prepare("SELECT attempt_number, batch_index FROM report_match_batch_checkpoints WHERE run_id = ? ORDER BY batch_index").bind(recovered.id).all()).results, [{ attempt_number: 2, batch_index: 0 }, { attempt_number: 1, batch_index: 299 }, { attempt_number: 2, batch_index: 1400 }, { attempt_number: 2, batch_index: 3400 }]);
   } finally {
     database.close();
     await rm(value.directory, { recursive: true, force: true });
@@ -695,10 +697,10 @@ test("final task-attempt processing incompleteness remains recoverable instead o
       message: "Product matching remained incomplete after the final bounded task attempt; no terminal report was published.",
     }, new Date("2026-08-22T04:01:00.000Z"), database);
 
-    const interrupted = await getStoredReport(created.publicId, new Date("2026-08-22T04:20:00.000Z"), database);
+    const interrupted = await getStoredReport(created.publicId, new Date("2026-08-22T04:45:00.000Z"), database);
     assert.equal(interrupted.run.status, "interrupted");
     assert.equal(interrupted.events.some((event) => event.status === "failed"), false);
-    const recovered = await recoverInterruptedReport(created.publicId, new Date("2026-08-22T04:21:00.000Z"), database);
+    const recovered = await recoverInterruptedReport(created.publicId, new Date("2026-08-22T04:46:00.000Z"), database);
     assert.equal(recovered.status, "queued");
     assert.equal(recovered.attemptCount, 2);
   } finally {

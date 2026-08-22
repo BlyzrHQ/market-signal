@@ -186,7 +186,7 @@ test("stale active report becomes interrupted with a visible event", async () =>
   const database = new FakeDatabase();
   const created = await createReportRun({ primaryDomain: "myjam.co.uk" }, new Date("2026-07-16T00:00:00.000Z"), database);
   await appendReportEvent(created.publicId, { idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Collecting public pages." }, new Date("2026-07-16T00:01:00.000Z"), database);
-  const report = await getStoredReport(created.publicId, new Date("2026-07-16T00:20:00.000Z"), database);
+  const report = await getStoredReport(created.publicId, new Date("2026-07-16T00:45:00.000Z"), database);
   assert.equal(report.run.status, "interrupted");
   assert.equal(report.events.at(-1).idempotencyKey, "stale-worker-interrupted");
   assert.match(report.run.errorMessage, /background worker/i);
@@ -222,11 +222,11 @@ test("interrupted jobs require an explicit recovery that increments the dispatch
   const database = new FakeDatabase();
   const created = await createReportRun({ primaryDomain: "myjam.co.uk" }, new Date("2026-07-16T00:00:00.000Z"), database);
   await appendReportEvent(created.publicId, { idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Collecting public pages." }, new Date("2026-07-16T00:01:00.000Z"), database);
-  await getStoredReport(created.publicId, new Date("2026-07-16T00:20:00.000Z"), database);
-  const recovered = await recoverInterruptedReport(created.publicId, new Date("2026-07-16T00:21:00.000Z"), database);
+  await getStoredReport(created.publicId, new Date("2026-07-16T00:45:00.000Z"), database);
+  const recovered = await recoverInterruptedReport(created.publicId, new Date("2026-07-16T00:46:00.000Z"), database);
   assert.equal(recovered.status, "queued");
   assert.equal(recovered.attemptCount, 2);
-  const report = await getStoredReport(created.publicId, new Date("2026-07-16T00:22:00.000Z"), database);
+  const report = await getStoredReport(created.publicId, new Date("2026-07-16T00:47:00.000Z"), database);
   assert.equal(report.events.at(-1).idempotencyKey, "recovery-attempt-2");
   await assert.rejects(() => recoverInterruptedReport(created.publicId, new Date(), database), /Only an interrupted report/);
 });

@@ -133,14 +133,14 @@ export function mergeRememberedCandidateCoverage(fresh: DiscoveryCandidate[], re
     const evidence = [...current.evidence, ...candidate.evidence]
       .filter((item, index, all) => all.findIndex((other) => other.url === item.url && other.method === item.method) === index);
     const matchedPrimaryProductNames = [...new Set([
-      ...(current.matchedPrimaryProductNames || (current.matchedPrimaryProductName ? [current.matchedPrimaryProductName] : [])),
       ...(candidate.matchedPrimaryProductNames || (candidate.matchedPrimaryProductName ? [candidate.matchedPrimaryProductName] : [])),
+      ...(current.matchedPrimaryProductNames || (current.matchedPrimaryProductName ? [current.matchedPrimaryProductName] : [])),
     ])].slice(0, MAX_REMEMBERED_PRODUCT_EVIDENCE);
     const matchedProductUrls = [...new Set([
-      ...(current.matchedProductUrls || (current.matchedProductUrl ? [current.matchedProductUrl] : [])),
       ...(candidate.matchedProductUrls || (candidate.matchedProductUrl ? [candidate.matchedProductUrl] : [])),
+      ...(current.matchedProductUrls || (current.matchedProductUrl ? [current.matchedProductUrl] : [])),
     ])].slice(0, MAX_REMEMBERED_PRODUCT_EVIDENCE);
-    const inferredProductLeads = [...(current.inferredProductLeads || []), ...(candidate.inferredProductLeads || [])]
+    const inferredProductLeads = [...(candidate.inferredProductLeads || []), ...(current.inferredProductLeads || [])]
       .filter((lead, index, all) => all.findIndex((other) => other.primaryProductId === lead.primaryProductId
         && other.primarySourceUrl === lead.primarySourceUrl
         && other.candidateSourceUrl === lead.candidateSourceUrl
@@ -160,23 +160,30 @@ export function mergeRememberedCandidateCoverage(fresh: DiscoveryCandidate[], re
       rememberedVerifiedAt: current.rememberedVerifiedAt,
     });
   }
-  const candidates = [...selected.values()].slice(0, limit);
+  const freshDomains = new Set(freshCandidates.map((candidate) => canonicalDomain(candidate.domain)));
+  const candidates = [...selected.values()]
+    .sort((left, right) => Number(freshDomains.has(canonicalDomain(right.domain))) - Number(freshDomains.has(canonicalDomain(left.domain))))
+    .slice(0, limit);
   let remaining = MAX_REMEMBERED_PRODUCT_EVIDENCE;
-  let truncated = false;
+  let freshTruncated = false;
+  let rememberedTruncated = false;
   const bounded = candidates.map((candidate) => {
     const urls = candidate.matchedProductUrls || (candidate.matchedProductUrl ? [candidate.matchedProductUrl] : []);
     const leads = candidate.inferredProductLeads || [];
     const seedUrls = [...new Set([...urls, ...leads.map((lead) => lead.candidateSourceUrl)])];
     const allowed = new Set(seedUrls.slice(0, Math.max(0, remaining)));
     remaining -= allowed.size;
-    if (allowed.size < seedUrls.length) truncated = true;
+    if (allowed.size < seedUrls.length) {
+      if (freshDomains.has(canonicalDomain(candidate.domain))) freshTruncated = true;
+      else rememberedTruncated = true;
+    }
     return {
       ...candidate,
       matchedProductUrls: urls.filter((url) => allowed.has(url)),
       inferredProductLeads: leads.filter((lead) => allowed.has(lead.candidateSourceUrl)),
     };
   });
-  return { candidates: bounded, truncated };
+  return { candidates: bounded, truncated: freshTruncated || rememberedTruncated, freshTruncated, rememberedTruncated };
 }
 
 export function mergeRememberedCandidates(fresh: DiscoveryCandidate[], remembered: MemoryCandidate[], limit = MAX_INVESTIGATIONS) {

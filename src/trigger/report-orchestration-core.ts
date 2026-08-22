@@ -37,7 +37,7 @@ import { createHash } from "node:crypto";
 class CompletedFactManifestConflict extends Error {}
 class RecoverableProcessingIncompleteError extends Error {}
 
-export const MAX_OPERATION_TIMEOUT_MS = 13 * 60 * 1000;
+export const MAX_OPERATION_TIMEOUT_MS = 41 * 60 * 1000;
 export const FINAL_ENRICHMENT_BATCH_SIZE = 64;
 export const FINAL_ENRICHMENT_BATCH_CONCURRENCY = 2;
 export const MAX_FINAL_ENRICHMENT_TARGETS = 6_000;

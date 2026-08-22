@@ -17,10 +17,10 @@
 
 		transport http {
 			dial_timeout 10s
-			# Agency matching has a 12-minute application budget and the worker
-			# allows 12.5 minutes for transport. Keep the edge above both so Caddy
-			# does not turn a still-valid match response into a retryable 504.
-			response_header_timeout 780s
+			# Complete bounded crawling has a 40-minute application budget. Keep
+			# the edge above it so Caddy does not turn a still-valid crawl response
+			# into a retryable 504.
+			response_header_timeout 2460s
 		}
 	}
 

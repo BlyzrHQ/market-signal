@@ -104,6 +104,7 @@ const DEFAULT_MODEL = "gpt-5.4-mini";
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
 const DEFAULT_MAX_PRIMARY = 60;
 const MAX_PRIMARY_PRODUCTS = 1_000;
+const MAX_PINNED_PAIRS = 6_000;
 const DEFAULT_MAX_CANDIDATES = 5;
 const DEFAULT_MAX_PER_DOMAIN = 5;
 const DEFAULT_MAX_COMPETITOR_PRODUCTS = 5_000;
@@ -736,7 +737,7 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   const totalBudgetMs = Math.max(1_000, options.totalBudgetMs || DEFAULT_TOTAL_BUDGET_MS);
   const deadlineAt = startedAt + totalBudgetMs;
   const synchronizedPrimary = synchronizedPrimaryProducts(primaryDomain, catalogs);
-  const requestedPins = (options.pinnedPairs || []).slice(0, 12);
+  const requestedPins = (options.pinnedPairs || []).slice(0, MAX_PINNED_PAIRS);
   const competitors = catalogs.filter((catalog) => canonicalDomain(catalog.domain) !== canonicalDomain(primaryDomain)).map((catalog) => {
     const domain = canonicalDomain(catalog.domain);
     const preferred = selectPreferredProducts(catalog.products);

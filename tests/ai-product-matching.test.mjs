@@ -177,6 +177,28 @@ test("a validated exact-pair pin survives primary and rival catalog limits", asy
   assert.equal(comparison.rows[0].matches[0].product?.id, pinnedRival.id);
 });
 
+test("exact-pair backfill preserves more than twelve bounded pins", async () => {
+  const primaries = Array.from({ length: 13 }, (_, index) => product(`p-pin-${index}`, "shop.test", `Pinned Product ${index} 500g`));
+  const rivals = Array.from({ length: 13 }, (_, index) => product(`r-pin-${index}`, "rival.test", `Pinned Product ${index} 500g`, { price: { raw: `GBP ${index + 1}`, currency: "GBP", amount: index + 1 } }));
+  const judged = [];
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [0, 0] })) });
+    const request = JSON.parse(body.input[1].content);
+    judged.push(...request.groups.flatMap((group) => group.candidates.map((candidate) => `${group.primary.id}|${candidate.id}`)));
+    return response({ output_text: JSON.stringify({ assessments: request.groups.flatMap((group) => group.candidates.map((candidate) => ({ primaryId: group.primary.id, candidateId: candidate.id, verdict: "same_product", confidence: 0.95, reason: "Exact bounded backfill pair.", contradiction: "" }))) }) });
+  };
+  const pinnedPairs = primaries.map((primary, index) => ({ primaryId: primary.id, rivalDomain: "rival.test", rivalId: rivals[index].id }));
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: primaries },
+    { domain: "rival.test", products: rivals },
+  ], {}, { apiKey: "test", fetch, maxPrimaryProducts: 13, maxCandidatesPerPrimary: 13, maxCandidatesPerDomain: 13, maxProductsPerCompetitor: 13, pinnedPairs });
+
+  assert.equal(judged.length, 13);
+  assert.equal(comparison.rows.filter((row) => row.matches[0]?.product).length, 13);
+  assert.ok(judged.includes("p-pin-12|r-pin-12"));
+});
+
 test("an eligible pin wins global rival contention over a higher-confidence unpinned proposal", async () => {
   const unpinnedPrimary = product("p-unpinned", "shop.test", "Sidr Honey 500g");
   const pinnedPrimary = product("p-pinned", "shop.test", "عسل سدر ٥٠٠ جرام");
