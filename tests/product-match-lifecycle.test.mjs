@@ -13,6 +13,7 @@ import {
   upsertProductComparisonBlock,
 } from "../app/lib/product-match-lifecycle.ts";
 import { applyFinalProductEnrichment } from "../app/lib/product-intelligence.ts";
+import { REPORT_CALLBACK_ENVELOPE_BYTES } from "../src/shared/report-document-compaction.ts";
 
 const TEST_NOW = new Date().toISOString();
 
@@ -572,6 +573,11 @@ test("maximum legal compact fields preserve twenty alternatives for every target
       match.product.sourceUrl = legalUrl(`${primaryIndex}-${rivalIndex}`);
       match.product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
       match.product.identifiers = { gtins: Array.from({ length: 8 }, (_, gtinIndex) => validGtin(1 + (primaryIndex * 160) + (rivalIndex * 8) + gtinIndex)) };
+      match.product.identifiers.sku = "s".repeat(100);
+      match.product.identifiers.mpn = "m".repeat(100);
+      match.product.identifiers.brand = "b".repeat(100);
+      match.product.quantity = { kind: "mass", amount: 500, unit: "g" };
+      match.product.assignmentComponentHash = String(primaryIndex * 20 + rivalIndex).padStart(64, "a").slice(-64);
       match.score = 1 - (rivalIndex / 1_000);
       return match;
     });
@@ -583,7 +589,7 @@ test("maximum legal compact fields preserve twenty alternatives for every target
 
   assert.equal(state.comparison.rows.length, 20);
   assert.deepEqual(state.evidence.rows.map((item) => item.matches.length), Array(20).fill(20));
-  assert.ok(Buffer.byteLength(JSON.stringify(checkpoint), "utf8") < 1_400_000);
+  assert.ok(Buffer.byteLength(JSON.stringify(checkpoint), "utf8") < REPORT_CALLBACK_ENVELOPE_BYTES - 100_000);
 });
 
 test("global assignment counts a merchant product id only once when its URL and name drift", () => {
@@ -696,7 +702,7 @@ test("durable priced evidence stays below the checkpoint limit for a legal 6000-
   assert.ok(state.evidence.rows.every((item) => item.matches.some((match) => match.product?.sourceUrl.startsWith("https://rival.test/rival/"))));
   assert.ok(checkpoint.evidence.rows.every((item) => item.matches.length === MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY));
   assert.equal(checkpoint.evidence.enrichment.gaps.length, 20);
-  assert.ok(Buffer.byteLength(JSON.stringify(checkpoint), "utf8") < 1_400_000);
+  assert.ok(Buffer.byteLength(JSON.stringify(checkpoint), "utf8") < REPORT_CALLBACK_ENVELOPE_BYTES - 100_000);
 });
 
 test("a later unpriced observation does not evict an earlier valid priced comparison", () => {

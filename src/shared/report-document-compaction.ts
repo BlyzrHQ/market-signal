@@ -1,6 +1,6 @@
 export const REPORT_PRESENTATION_TARGET_BYTES = 700_000;
 export const REPORT_SNAPSHOT_HARD_BYTES = 750_000;
-export const REPORT_CALLBACK_ENVELOPE_BYTES = 1_500_000;
+export const REPORT_CALLBACK_ENVELOPE_BYTES = 2_100_000;
 
 type JsonRecord = Record<string, unknown>;
 

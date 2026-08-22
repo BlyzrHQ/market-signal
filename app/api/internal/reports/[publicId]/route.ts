@@ -24,9 +24,10 @@ import { dispatchReportJob } from "../../../../lib/report-dispatch.ts";
 import { dispatchReportEvaluation, reportEvaluationPilotEnabled } from "../../../../lib/report-evaluation-dispatch.ts";
 import { dispatchReportSearchChallenge, reportSearchChallengeEnabled } from "../../../../lib/report-search-challenge-dispatch.ts";
 import { settleTerminalReportReservation } from "../../../../lib/report-terminal-billing.ts";
+import { REPORT_CALLBACK_ENVELOPE_BYTES } from "../../../../../src/shared/report-document-compaction.ts";
 
 type RouteContext = { params: Promise<{ publicId: string }> | { publicId: string } };
-const MAX_INTERNAL_CALLBACK_BODY_BYTES = 1_500_000;
+const MAX_INTERNAL_CALLBACK_BODY_BYTES = REPORT_CALLBACK_ENVELOPE_BYTES;
 type StoredReport = NonNullable<Awaited<ReturnType<typeof getStoredReport>>>;
 type InternalReportStore = {
   get(publicId: string): Promise<StoredReport | null>;

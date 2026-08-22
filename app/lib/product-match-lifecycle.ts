@@ -6,7 +6,7 @@ import { publicHttpUrl } from "./public-url.ts";
 
 export type ProductMatchLifecycle = "idle" | "matching" | "retrying" | "complete" | "limited";
 export const MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY = 20;
-const MAX_DURABLE_EVIDENCE_ROWS_BYTES = 1_300_000;
+const MAX_DURABLE_EVIDENCE_ROWS_BYTES = 1_800_000;
 
 function compactEvidenceText(value: unknown, maxLength: number) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);

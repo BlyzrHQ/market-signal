@@ -6,7 +6,7 @@ import { createPersistentReport, POST as createReportRoute } from "../app/api/re
 import { createInternalReportHandlers } from "../app/api/internal/reports/[publicId]/route.ts";
 import { hasValidInternalAuthorization } from "../app/lib/internal-auth.ts";
 import { dispatchReportJob, reportDispatchIdempotencyKey, ReportDispatchError } from "../app/lib/report-dispatch.ts";
-import { compactTerminalReportDocument } from "../src/shared/report-document-compaction.ts";
+import { compactTerminalReportDocument, REPORT_CALLBACK_ENVELOPE_BYTES } from "../src/shared/report-document-compaction.ts";
 import { babanujScaleDocument } from "./fixtures/babanuj-report-document.mjs";
 
 const TOKEN = "callback-test-token-with-sufficient-entropy";
@@ -351,7 +351,7 @@ test("internal callbacks reject oversized bodies before JSON parsing", async () 
   const handlers = createInternalReportHandlers({ get: async () => { reads += 1; return report(); }, append: async () => {}, save: async () => {} }, TOKEN);
   const response = await handlers.post(new Request(`https://market.example/api/internal/reports/${PUBLIC_ID}`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json", "Content-Length": "1500001" },
+    headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json", "Content-Length": String(REPORT_CALLBACK_ENVELOPE_BYTES + 1) },
     body: "{}",
   }), { params: { publicId: PUBLIC_ID } });
   assert.equal(response.status, 400);
