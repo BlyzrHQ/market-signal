@@ -2170,7 +2170,7 @@ test("a task retry re-fetches a temporary adapter-limited price gap and publishe
         return {
           ok: true,
           products: [{ ...product(primaryTarget.domain, primaryTarget.productId), name: primaryTarget.expectedName, normalizedName: primaryTarget.expectedName.toLowerCase(), sourceUrl: primaryTarget.sourceUrl, priceSignals: [{ raw: "GBP 9", currency: "GBP", amount: 9 }] }],
-          coverage: { pagesRequested: targets.length, pagesFetched: 1, maxPages: 64, gaps: [{ url: rivalTarget.sourceUrl, productId: rivalTarget.productId, role: rivalTarget.role, reason: "Price adapter was temporarily unavailable.", code: "adapter_limited", failureKind: "adapter" }] },
+          coverage: { pagesRequested: targets.length, pagesFetched: 1, maxPages: 64, gaps: [{ url: rivalTarget.sourceUrl, productId: rivalTarget.productId, role: rivalTarget.role, reason: "Price adapter was temporarily unavailable.", code: "adapter_limited", failureKind: "network", httpStatus: 0 }] },
         };
       }
       return {
@@ -2189,6 +2189,39 @@ test("a task retry re-fetches a temporary adapter-limited price gap and publishe
   const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
   assert.equal(block.rows.length, 1);
   assert.equal(block.rows[0].matches[0].product.priceSignals[0].amount, 7);
+});
+
+test("a permanent adapter limitation terminalizes without a task retry or paid action planning", async () => {
+  let matchCalls = 0;
+  let enrichCalls = 0;
+  let actionCalls = 0;
+  const port = mockPort({
+    async match() {
+      matchCalls += 1;
+      const value = comparison({ withPair: true, count: 1 });
+      value.rows[0].primary.priceSignals = [];
+      value.rows[0].matches[0].product.priceSignals = [];
+      return { ok: true, comparison: value };
+    },
+    async enrich({ targets }) {
+      enrichCalls += 1;
+      const primaryTarget = targets.find((target) => target.role === "primary");
+      const rivalTarget = targets.find((target) => target.role === "rival");
+      return {
+        ok: true,
+        products: [{ ...product(primaryTarget.domain, primaryTarget.productId), name: primaryTarget.expectedName, normalizedName: primaryTarget.expectedName.toLowerCase(), sourceUrl: primaryTarget.sourceUrl, priceSignals: [{ raw: "GBP 9", currency: "GBP", amount: 9 }] }],
+        coverage: { pagesRequested: targets.length, pagesFetched: 1, maxPages: 64, gaps: [{ url: rivalTarget.sourceUrl, productId: rivalTarget.productId, role: rivalTarget.role, reason: "No same-page currency was confirmed.", code: "adapter_limited", failureKind: "adapter" }] },
+      };
+    },
+    async actions() { actionCalls += 1; throw new Error("must not plan actions without a published pair"); },
+  });
+
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port);
+  assert.equal(result.reportStatus, "limited");
+  assert.equal(matchCalls, 1);
+  assert.equal(enrichCalls, 1);
+  assert.equal(actionCalls, 0);
+  assert.equal(port.events.some((item) => item.idempotencyKey === "report-1-task-1-matching-task-retry"), false);
 });
 
 test("a failed transient retry preserves prior successful pages and published pairs", async () => {

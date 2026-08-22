@@ -1591,6 +1591,26 @@ test("retains product evidence but no price when Shopify currency is not confirm
     assert.equal(result.coverage.pagesFetched, 1);
     assert.deepEqual(result.products[0].priceSignals, []);
     assert.match(result.coverage.gaps[0].reason, /no same-page currency/i);
+    assert.equal(result.coverage.gaps[0].failureKind, "adapter");
+    assert.equal(result.coverage.gaps[0].httpStatus, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("preserves a transient adapter network failure for bounded orchestration retry", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith(".js")) throw new Error("temporary connection failure");
+    return new Response(`<html><head><title>Maamoul Pistachio</title><script type="application/ld+json">${JSON.stringify({ "@context": "https://schema.org", "@type": "Product", name: "Maamoul Pistachio" })}</script></head><body><h1>Maamoul Pistachio</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target()], 1);
+    assert.equal(result.coverage.gaps[0].code, "adapter_limited");
+    assert.equal(result.coverage.gaps[0].failureKind, "network");
+    assert.equal(result.coverage.gaps[0].httpStatus, 0);
   } finally {
     globalThis.fetch = originalFetch;
   }

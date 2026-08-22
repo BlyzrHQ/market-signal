@@ -9,7 +9,8 @@ Production report `4d5bce140f124478b951ed1846ef2edf` found valid judged product 
 - Treat a product with an unresolved adapter price gap as a gap-only outcome so it can be retried safely.
 - Preserve successful products from other targets in the same batch.
 - Reject non-HTTP(S) enrichment sources before they can become durable or suppress a valid product.
-- Re-fetch adapter-limited targets on a later bounded task attempt so a temporary adapter outage is not made permanent.
+- Preserve adapter failure metadata and re-fetch only transient network, throttling, timeout, and 5xx targets on a later bounded task attempt.
+- Treat permanent adapter limitations (robots denial, 4xx/non-JSON output, unsupported or missing currency evidence) as terminal gaps so they cannot multiply paid matching or action-planning calls.
 - Add regression coverage for the mutually exclusive product/gap contract, invalid source schemes, and adapter recovery.
 
 ## Validation
@@ -20,7 +21,7 @@ Production report `4d5bce140f124478b951ed1846ef2edf` found valid judged product 
 
 ## Review
 
-Two independent fallback reviewers found blockers on the first head: invalid URL schemes could suppress valid products, and adapter-limited gaps were not retryable. Both are addressed by the protocol validation and bounded retry behavior above. Fresh exact-head reviews are required before merge.
+Two independent fallback reviewers found blockers on the first head: invalid URL schemes could suppress valid products, and adapter-limited gaps were not retryable. Two fresh reviewers then found that retrying every adapter limitation could multiply paid API calls across permanent gaps. The implementation now preserves transient metadata and terminalizes permanent adapter limitations. Fresh exact-head reviews are required before merge.
 
 ## Data boundary
 

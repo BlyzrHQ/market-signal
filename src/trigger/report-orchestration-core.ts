@@ -279,7 +279,6 @@ type EnrichmentResult = Awaited<ReturnType<ReportOrchestrationPort["enrich"]>>;
 
 function isRetryableEnrichmentGap(gap: NonNullable<ProductComparison["enrichment"]>["gaps"][number]) {
   return gap.failureKind === "network"
-    || gap.code === "adapter_limited"
     || gap.code === "robots_unreachable"
     || gap.httpStatus === 0
     || gap.httpStatus === 408
@@ -294,6 +293,7 @@ function hasRetryableEnrichmentGap(result: EnrichmentResult) {
 
 function isTerminalEnrichmentRejection(gap: NonNullable<ProductComparison["enrichment"]>["gaps"][number]) {
   return gap.code === "identity_mismatch"
+    || (gap.code === "adapter_limited" && !isRetryableEnrichmentGap(gap))
     || gap.failureKind === "identity"
     || gap.failureKind === "redirect"
     || gap.httpStatus === 404
