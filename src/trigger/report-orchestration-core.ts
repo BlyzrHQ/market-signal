@@ -715,8 +715,7 @@ export async function orchestrateReport(
     // but publication freshness follows the newest real observation in this
     // crawl. A report recovered days later must not reject freshly refetched
     // prices as being "future" relative to its original creation timestamp.
-    const updatedAtMs = Date.parse(stored.run.updatedAt);
-    const reportReferenceTimeMs = productEvidenceReferenceTimeMs(catalogs, stored.run.createdAt, Number.isFinite(updatedAtMs) ? updatedAtMs : Date.now());
+    const reportReferenceTimeMs = productEvidenceReferenceTimeMs(catalogs, stored.run.createdAt, Date.now());
     const judgeCheckpointRanges = Array.from({ length: MAX_ORCHESTRATION_TASK_ATTEMPTS }, (_, taskAttemptOffset) => {
       const start = MATCH_JUDGE_CHECKPOINT_BATCH_INDEX_BASE + (taskAttemptOffset * MAX_MATCH_JUDGE_CHECKPOINTS_PER_TASK_ATTEMPT);
       return { start, end: start + MAX_MATCH_JUDGE_CHECKPOINTS_PER_TASK_ATTEMPT - 1 };
@@ -1028,7 +1027,10 @@ export async function orchestrateReport(
           allDurableCheckpoints.set(`${attempt.attemptNumber}:${publishedCheckpointIndex}`, savedCheckpoint);
         } catch (saveError) {
           const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: publishedCheckpointIndex }))[0];
-          const validated = committed?.attemptNumber === attempt.attemptNumber && committed.inputHash === publishedResultInputHash ? validPublishedResultCheckpoint(committed.result, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys, allowedPrimaryRecoveryIdentities) : null;
+          const exactCommittedResult = committed && JSON.stringify(committed.result) === JSON.stringify(publishedCheckpoint);
+          const validated = committed?.attemptNumber === attempt.attemptNumber && committed.inputHash === publishedResultInputHash && exactCommittedResult
+            ? validPublishedResultCheckpoint(committed.result, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys, allowedPrimaryRecoveryIdentities)
+            : null;
           if (!validated) throw saveError;
           // The committed compact graph is proof that this exact save reached
           // durable storage. Keep the already validated rich in-memory result;

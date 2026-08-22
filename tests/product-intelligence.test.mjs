@@ -832,7 +832,8 @@ test("catalog deduplication keeps nested country-path GTIN observations separate
 });
 
 test("market parsing prioritizes country selectors and recognizes all ISO countries", () => {
-  assert.equal(publicSourceMarketCountryCode("https://shop.example/products/item?locale=en-GB&country=US"), "US");
+  assert.equal(publicSourceMarketContext("https://shop.example/products/item?locale=en-GB&country=US").conflict, true);
+  assert.equal(publicSourceMarketCountryCode("https://shop.example/products/item?locale=en-US&country=US"), "US");
   assert.equal(publicSourceMarketCountryCode("https://shop.example/tr/products/item"), "TR");
   assert.equal(publicSourceMarketCountryCode("https://shop.example/store/gb/products/item"), "GB");
   assert.equal(publicSourceMarketCountryCode("https://shop.gr/products/item"), "GR");

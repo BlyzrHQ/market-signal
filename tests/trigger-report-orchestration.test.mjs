@@ -78,6 +78,16 @@ test("a late recovery reference never advances beyond its production wall clock"
   ) <= wallClock);
 });
 
+test("a late recovery does not use a stale stored heartbeat as its wall clock", () => {
+  const fresh = product("shop.example", "fresh-after-stale-heartbeat");
+  fresh.observedAt = "2026-08-22T12:00:00.000Z";
+  assert.equal(productEvidenceReferenceTimeMs(
+    [{ products: [fresh] }],
+    "2026-08-20T11:00:00.000Z",
+    Date.parse("2026-08-22T12:05:00.000Z"),
+  ), Date.parse(fresh.observedAt));
+});
+
 test("orchestration recovers judge checkpoints from every task-attempt namespace", async () => {
   const reads = [];
   const port = mockPort({
@@ -1286,6 +1296,26 @@ test("a committed publication checkpoint with a lost response retains rich decis
   assert.ok(selected.length > 0);
   assert.ok(selected.every((match) => match.decision?.recommendedMove));
   assert.ok(selected.every((match) => match.decision?.actionPlan));
+});
+
+test("an ambiguous publication save rejects different same-slot content with the same input hash", async () => {
+  const port = mockPort();
+  port.saveCheckpoint = async (_publicId, input) => {
+    if (input.batchIndex !== PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX) {
+      port.checkpoints.set(input.batchIndex, { attemptNumber: input.attemptNumber, batchIndex: input.batchIndex, inputHash: input.inputHash, result: input.result });
+      return;
+    }
+    const conflicting = structuredClone(input.result);
+    conflicting.comparison.matching.gaps = ["different committed result"];
+    port.checkpoints.set(input.batchIndex, { attemptNumber: input.attemptNumber, batchIndex: input.batchIndex, inputHash: input.inputHash, result: conflicting });
+    throw new Error("publication checkpoint conflict");
+  };
+
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: true }, port),
+    /publication checkpoint conflict/,
+  );
+  assert.equal(port.saves.length, 0);
 });
 
 test("an ambiguous publication save cannot adopt an older report attempt checkpoint", async () => {

@@ -15,7 +15,7 @@ function durablePrimaryIdentity(product: ProductRecord) {
   return JSON.stringify({
     id: product.id,
     domain: canonicalDomain(product.domain),
-    name: compactEvidenceText(product.name, 220),
+    name: compactEvidenceText(product.name, 120),
     normalizedName: product.normalizedName,
     category: compactEvidenceText(product.category, 160),
     type: product.jsonLdType,
@@ -80,7 +80,7 @@ function compactPricedEvidenceMatch(primary: ProductRecord, match: ProductMatch 
     // is restored only for the globally selected edge, instead of being
     // duplicated across every durable backup edge.
     decision: null,
-    ...(match.assessment ? { assessment: {
+    ...(match.assessment?.verdict === "close_substitute" ? { assessment: {
       method: match.assessment.method,
       claimType: match.assessment.claimType,
       verdict: match.assessment.verdict,

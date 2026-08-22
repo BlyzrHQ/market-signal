@@ -1224,7 +1224,6 @@ function sourceMarketContext(value: string): PublicSourceMarketContext {
         if (country) countries.add(country);
         else unresolvedCountrySelector = true;
       }
-      break;
     }
     for (const [key, queryValue] of url.searchParams.entries()) {
       const normalizedKey = key.toLowerCase();

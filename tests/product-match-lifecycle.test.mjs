@@ -285,6 +285,16 @@ test("the final publication gate rejects conflicting repeated market selectors",
   assert.equal(publishPricedProductComparison(candidate).rows[0].matches[0].publication.reason, "incompatible-market");
 });
 
+test("the final publication gate rejects conflicting country selectors across query keys", () => {
+  const candidate = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "r1")], accepted: 1 });
+  candidate.marketCountryCode = "US";
+  candidate.rows[0].primary.sourceUrl = "https://shop.test/products/p1?country=US&currency=USD";
+  candidate.rows[0].primary.priceSignals = [{ raw: "USD 90", currency: "USD", amount: 90 }];
+  candidate.rows[0].matches[0].product.sourceUrl = "https://rival.test/products/r1?country=US&locale=en-GB&currency=USD";
+  candidate.rows[0].matches[0].product.priceSignals = [{ raw: "USD 80", currency: "USD", amount: 80 }];
+  assert.equal(publishPricedProductComparison(candidate).rows[0].matches[0].publication.reason, "incompatible-market");
+});
+
 test("the final publication gate excludes a country-path rival outside the report market", () => {
   const candidate = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "r1")], accepted: 1 });
   candidate.marketCountryCode = "US";
@@ -498,6 +508,37 @@ test("checkpoint compaction preserves the late edge required by a 20-row augment
   assert.equal(checkpoint.rows.find((item) => item.primary.id === legalId("p00")).matches.length, 20);
   assert.equal(recovered.comparison.rows.length, 20);
   assert.ok(recovered.comparison.rows.some((item) => item.matches.some((match) => match.product?.id === legalId("r19"))));
+});
+
+test("maximum-size durable evidence preserves the rival needed when the twentieth row arrives", () => {
+  const legalId = (prefix) => `${prefix}-${"i".repeat(Math.max(0, 299 - prefix.length))}`.slice(0, 300);
+  const legalUrl = (domain, prefix) => {
+    const head = `https://${domain}/products/${prefix}/`;
+    const tail = "?country=US";
+    return `${head}${"x".repeat(2_000 - head.length - tail.length)}${tail}`;
+  };
+  const priced = (primaryIndex, rivalIndex) => {
+    const item = row(legalId(`p${primaryIndex}`), legalId(`r${rivalIndex}`));
+    item.primary.sourceUrl = legalUrl("shop.test", `p${primaryIndex}`);
+    item.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+    item.matches[0].product.sourceUrl = legalUrl("rival.test", `r${rivalIndex}`);
+    item.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+    item.matches[0].score = 1 - (rivalIndex / 1_000);
+    return item;
+  };
+  const firstRows = Array.from({ length: 19 }, (_, primaryIndex) => {
+    const item = priced(primaryIndex, 0);
+    item.matches = Array.from({ length: 20 }, (_, rivalIndex) => priced(primaryIndex, rivalIndex).matches[0]);
+    return item;
+  });
+  const firstIds = firstRows.map((item) => item.primary.id);
+  const first = mergePublishedProductComparisonState(comparison({ selected: firstIds, assessed: firstIds, rows: firstRows, accepted: 380 }), null, 20);
+  const checkpoint = compactPublishedProductComparisonCheckpoint(first.evidence);
+  const twentieth = priced(19, 0);
+  const second = mergePublishedProductComparisonState(comparison({ selected: [twentieth.primary.id], assessed: [twentieth.primary.id], rows: [twentieth], accepted: 1 }), checkpoint, 20);
+
+  assert.ok(checkpoint.rows.some((item) => item.matches.some((match) => match.product?.id === legalId("r19"))), JSON.stringify(checkpoint.rows.map((item) => item.matches.length)));
+  assert.equal(second.comparison.rows.length, 20);
 });
 
 test("global assignment counts a merchant product id only once when its URL and name drift", () => {
