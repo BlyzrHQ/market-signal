@@ -84,7 +84,7 @@ type DomainCrawl = {
   candidates: Candidate[];
   gaps: Gap[];
   coverage: { pagesRequested: number; pagesFetched: number; maxPages: number; robotsChecked: boolean; attempts?: number };
-  productCoverage: { scannedPages: number; catalogProductsDiscovered: number; thirdPartyReferenced: number };
+  productCoverage: { scannedPages: number; catalogProductsDiscovered: number; thirdPartyReferenced: number; sitemapTruncated?: boolean };
   fetchedAt: string;
   discovery?: DiscoveryCandidate & CompetitorVerification;
   enrichmentPages?: CrawlPage[];
@@ -563,13 +563,19 @@ function parseSitemapUrls(text: string, domain: string) {
 
 async function collectSitemapEvidence(sitemapUrl: string, domain: string, observedAt: string, maxDocuments = MAX_SITEMAP_DOCUMENTS, fetchPage = fetchText) {
   const root = await fetchPage(sitemapUrl, "application/xml,text/xml,text/plain", domain);
-  if (!root.ok) return { paths: [] as string[], products: [] as ProductRecord[] };
+  if (!root.ok) return { paths: [] as string[], products: [] as ProductRecord[], truncated: false };
   const rootUrls = parseSitemapUrls(root.text, domain);
-  const childSitemaps = rootUrls.filter((value) => /sitemap[^/]*\.xml/i.test(new URL(value).pathname)).sort((left, right) => Number(!/products?/i.test(left)) - Number(!/products?/i.test(right))).slice(0, maxDocuments);
+  const eligibleChildSitemaps = rootUrls.filter((value) => /sitemap[^/]*\.xml/i.test(new URL(value).pathname)).sort((left, right) => Number(!/products?/i.test(left)) - Number(!/products?/i.test(right)) || left.localeCompare(right));
+  const childSitemaps = eligibleChildSitemaps.slice(0, maxDocuments);
   const documents = childSitemaps.length ? await Promise.all(childSitemaps.map(async (url) => ({ url, result: await fetchPage(url, "application/xml,text/xml,text/plain", domain) }))) : [{ url: sitemapUrl, result: root }];
   const urls = documents.flatMap(({ result }) => result.ok ? parseSitemapUrls(result.text, domain) : []);
   const products = documents.flatMap(({ result }) => result.ok ? extractProductsFromSitemap(result.text, domain, observedAt) : []);
-  return { paths: unique(urls.flatMap((value) => { try { return [new URL(value).pathname]; } catch { return []; } }), 500), products: selectPreferredProducts(products) };
+  const selectedProducts = selectPreferredProducts(products);
+  return {
+    paths: unique(urls.flatMap((value) => { try { return [new URL(value).pathname]; } catch { return []; } }), 500),
+    products: selectedProducts,
+    truncated: eligibleChildSitemaps.length > childSitemaps.length && selectedProducts.length < MAX_PRIMARY_CATALOG_PRODUCTS,
+  };
 }
 
 function makeClaim(domain: string, suffix: string, text: string, sourceUrl: string, observedAt: string, claimType: ClaimType = "Observed", confidence: Confidence = "High"): Claim {
@@ -719,11 +725,13 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
   const discovered = extractLinks(homepageExtractionDocument, new URL(homepageResult.url), domain);
   let sitemapPaths: string[] = [];
   let sitemapProducts: ProductRecord[] = [];
+  let sitemapTruncated = false;
   const sitemapUrl = (() => { try { const candidate = new URL(robots.sitemaps[0] || "/sitemap.xml", base); return canonicalDomain(candidate.hostname) === canonicalDomain(domain) && /^https?:$/.test(candidate.protocol) ? candidate.toString() : new URL("/sitemap.xml", base).toString(); } catch { return new URL("/sitemap.xml", base).toString(); } })();
   if (robotsState !== "unreachable" && role !== "discovered-competitor") {
     const sitemapEvidence = await collectSitemapEvidence(sitemapUrl, domain, startedAt, maxSitemapDocuments, fetchPage);
     sitemapPaths = sitemapEvidence.paths;
     sitemapProducts = sitemapEvidence.products;
+    sitemapTruncated = sitemapEvidence.truncated;
   }
   const candidates = discovered.candidates.slice(0, 12).map((candidate, index) => ({ domain: candidate.domain, reason: `A public page linked to this domain with “${candidate.text.slice(0, 120)}”. This is a possible match, not a confirmed competitor.`, sourceUrl: candidate.sourceUrl, claimIds: [`${domain}-candidate-${index}`] }));
   candidates.forEach((candidate, index) => homepage.claims.push(makeClaim(domain, `candidate-${index}`, `${domain} linked to possible market candidate ${candidate.domain}; anchor context supports investigation only.`, candidate.sourceUrl, startedAt, "Inferred", "Low")));
@@ -787,7 +795,7 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
     if (page && !page.claims.some((claim) => claim.id === offering.claimIds[0])) page.claims.push({ id: offering.claimIds[0], claimType: "Observed", text: `${domain} presents “${offering.name}” as a first-party ${business.businessType === "ecommerce" ? "subscription or product option" : "service or capability"}.`, sourceUrl: offering.sourceUrl, observedAt: offering.observedAt, confidence: "Medium" });
   }
   const products = selectPreferredProducts([...observedProducts, ...fallbackOfferings]);
-  return { domain, role, homepage, pages, products, candidates, gaps, coverage: { pagesRequested: homepageRequests + paths.length, pagesFetched: pages.length, maxPages: maxHtmlPages, robotsChecked: robotsState === "available" }, productCoverage: { scannedPages: pages.length, catalogProductsDiscovered: sitemapProducts.length, thirdPartyReferenced: pages.reduce((sum, page) => sum + page.thirdPartyProductCount, 0) }, fetchedAt: startedAt };
+  return { domain, role, homepage, pages, products, candidates, gaps, coverage: { pagesRequested: homepageRequests + paths.length, pagesFetched: pages.length, maxPages: maxHtmlPages, robotsChecked: robotsState === "available" }, productCoverage: { scannedPages: pages.length, catalogProductsDiscovered: sitemapProducts.length, thirdPartyReferenced: pages.reduce((sum, page) => sum + page.thirdPartyProductCount, 0), sitemapTruncated }, fetchedAt: startedAt };
 }
 
 function comparisonSourceUrls(results: DomainCrawl[], primaryDomain: string) {
@@ -1193,6 +1201,7 @@ export async function POST(request: Request) {
     const mergedCoverageGaps = [
       ...(mergedInvestigationCoverage.freshTruncated ? ["Fresh competitor product evidence exceeded the declared 6,000-lead universe; this discovery batch remains retryable."] : []),
       ...(mergedInvestigationCoverage.rememberedTruncated ? ["Historical competitor product evidence exceeded the 6,000-lead carry-forward window; current discovery may advance, but a result shortfall cannot claim full exhaustion."] : []),
+      ...(primary.productCoverage.sitemapTruncated ? ["The primary sitemap index contained additional child sitemaps beyond the bounded crawl before 1,000 products were collected; a result shortfall cannot claim full catalog exhaustion."] : []),
     ];
     discovery = {
       ...discovery,
@@ -1213,7 +1222,9 @@ export async function POST(request: Request) {
       return verifyDiscoveredCompetitorWithInferredLeads(primary, await crawlDomain(candidate.domain, "discovered-competitor", seedUrls.length ? seedUrls : [candidate.websiteUrl], { schedule: scheduleCompetitorRequest }), candidate, verificationMarket, discoveryPolicy.requireProductOverlap, scheduledJudge);
     });
     const discoveredResults = investigatedSettled.map((result) => result.status === "fulfilled" ? result.value : null);
-    const continuityIncomplete = memory.truncated || mergedInvestigationCoverage.rememberedTruncated;
+    const continuityIncomplete = memory.truncated
+      || mergedInvestigationCoverage.rememberedTruncated
+      || primary.productCoverage.sitemapTruncated === true;
     const finalizedCoverage = finalizedDiscoveryCoverage(
       discovery.productSearchCoverage,
       allInvestigationCandidates.length + Number(mergedInvestigationCoverage.freshTruncated),

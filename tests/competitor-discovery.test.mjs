@@ -707,19 +707,19 @@ test("removes repeated brand words before family grouping", () => {
     product("Al Hamdani Maamoul Walnut", "https://sweets.example/products/maamoul-walnut"),
   ];
   assert.deepEqual(productSearchAnchors(products, 3, "Al Hamdani").map((item) => item.name), [
+    "Al Hamdani Maamoul Pistachio",
     "Al Hamdani Pistachio Baklava",
     "Al Hamdani Walnut Baklava",
-    "Al Hamdani Maamoul Pistachio",
   ]);
 });
 
-test("keeps deterministic source order when a small catalog has no recurring family terms", () => {
+test("keeps deterministic stable-identity order when a small catalog has no recurring family terms", () => {
   const products = [
     product("Apricot Preserve", "https://grocer.example/products/apricot-preserve"),
     product("Sesame Crackers", "https://grocer.example/products/sesame-crackers"),
     product("Mint Tea", "https://grocer.example/products/mint-tea"),
   ];
-  assert.deepEqual(productSearchAnchors(products, 3).map((item) => item.name), products.map((item) => item.name));
+  assert.deepEqual(productSearchAnchors(products, 3).map((item) => item.name), ["Apricot Preserve", "Mint Tea", "Sesame Crackers"]);
 });
 
 test("runs company lanes even when a product-backed ecommerce candidate exists", async () => {
@@ -825,6 +825,8 @@ test("freezes the same bounded primary catalog used by product discovery", () =>
   assert.equal(bounded.length, 1_000);
   assert.equal(boundedIds.has(products[1_000].id), true);
   assert.equal(productSearchAnchors(products, 1_000).every((anchor) => boundedIds.has(anchor.id)), true);
+  const drifted = boundedPrimaryCatalogProducts([...products].reverse().map((item, index) => ({ ...item, priceSignals: index % 2 ? [{ raw: "GBP 1", currency: "GBP", amount: 1 }] : [] })), 1_000);
+  assert.deepEqual(drifted.map((item) => item.id), bounded.map((item) => item.id));
 });
 
 test("rejects an oversized successful provider body before parsing it", async () => {
@@ -1000,7 +1002,7 @@ test("continues product discovery from the supplied completed-batch cursor", asy
   }
 });
 
-test("resets a stale cursor when the ranked anchor set changes", async () => {
+test("keeps a cursor across input-order drift and resets it only when stable anchor identity changes", async () => {
   const previousKey = process.env.OPENAI_API_KEY;
   const previousFetch = globalThis.fetch;
   process.env.OPENAI_API_KEY = "test-only";
@@ -1008,7 +1010,12 @@ test("resets a stale cursor when the ranked anchor set changes", async () => {
   const firstProfile = { ...profile, products: Array.from({ length: 225 }, (_, index) => product(`Beef Sirloin Steak Halal ${500 + index}g`, `https://myjam.co.uk/products/beef-${index}`)) };
   try {
     const first = await discoverCompetitors(firstProfile);
-    const changed = await discoverCompetitors({ ...firstProfile, products: [...firstProfile.products].reverse() }, { searchOffset: 200, expectedAnchorSetHash: first.productSearchCoverage.anchorSetHash });
+    const reordered = await discoverCompetitors({ ...firstProfile, products: [...firstProfile.products].reverse() }, { searchOffset: 200, expectedAnchorSetHash: first.productSearchCoverage.anchorSetHash });
+    assert.equal(reordered.productSearchCoverage.startIndex, 200);
+    assert.equal(reordered.productSearchCoverage.anchorSetHash, first.productSearchCoverage.anchorSetHash);
+    const changedProducts = [...firstProfile.products];
+    changedProducts[0] = { ...changedProducts[0], sourceUrl: "https://myjam.co.uk/products/replaced-product" };
+    const changed = await discoverCompetitors({ ...firstProfile, products: changedProducts }, { searchOffset: 200, expectedAnchorSetHash: first.productSearchCoverage.anchorSetHash });
     assert.equal(changed.productSearchCoverage.startIndex, 0);
     assert.notEqual(changed.productSearchCoverage.anchorSetHash, first.productSearchCoverage.anchorSetHash);
   } finally {

@@ -367,17 +367,18 @@ function rankedProductSearchCandidates(products: ProductRecord[], brandName = ""
   for (const product of products) {
     for (const token of new Set(meaningfulTokens(product))) recurrence.set(token, (recurrence.get(token) || 0) + 1);
   }
-  const quality = (product: ProductRecord) => Number(product.ownership === "self-declared-brand") * 4 + Number(product.priceSignals.length > 0) * 2 + Number(product.extraction === "json-ld");
-  return products.map((product, index) => {
+  const quality = (product: ProductRecord) => Number(product.ownership === "self-declared-brand") * 4 + Number(product.extraction === "json-ld");
+  const stableIdentity = (product: ProductRecord) => `${canonicalDomain(product.domain)}|${product.sourceUrl}|${product.id}`;
+  return products.map((product) => {
     const tokens = meaningfulTokens(product);
     const recurringScore = tokens.reduce((sum, token) => sum + ((recurrence.get(token) || 0) >= 2 ? recurrence.get(token) || 0 : 0), 0) / Math.max(1, tokens.length);
     const family = [...tokens].sort((left, right) => (recurrence.get(right) || 0) - (recurrence.get(left) || 0) || tokens.indexOf(left) - tokens.indexOf(right))[0] || "uncategorized";
-    return { product, index, tokens, recurringScore, family };
+    return { product, tokens, recurringScore, family };
   }).filter(({ product, tokens }) => product.jsonLdType === "Product" && tokens.length >= 2 && !ACCESSORY_ANCHOR.test(productSearchLabel(product))).sort((left, right) =>
     right.recurringScore - left.recurringScore
       || left.tokens.length - right.tokens.length
       || quality(right.product) - quality(left.product)
-      || left.index - right.index,
+      || stableIdentity(left.product).localeCompare(stableIdentity(right.product)),
   );
 }
 
@@ -386,7 +387,9 @@ export function boundedPrimaryCatalogProducts(products: ProductRecord[], maxProd
   if (!limit) return [];
   const anchors = productSearchAnchors(products, limit);
   const anchorIds = new Set(anchors.map((product) => `${canonicalDomain(product.domain)}|${product.id}`));
-  return [...anchors, ...products.filter((product) => !anchorIds.has(`${canonicalDomain(product.domain)}|${product.id}`))].slice(0, limit);
+  const remainder = products.filter((product) => !anchorIds.has(`${canonicalDomain(product.domain)}|${product.id}`))
+    .sort((left, right) => `${canonicalDomain(left.domain)}|${left.sourceUrl}|${left.id}`.localeCompare(`${canonicalDomain(right.domain)}|${right.sourceUrl}|${right.id}`));
+  return [...anchors, ...remainder].slice(0, limit);
 }
 
 export function productSearchAnchors(products: ProductRecord[], maxSearches = MAX_PRODUCT_SEARCHES, brandName = "") {

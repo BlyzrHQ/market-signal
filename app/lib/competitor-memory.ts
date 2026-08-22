@@ -218,7 +218,7 @@ export function mergeRememberedCandidates(fresh: DiscoveryCandidate[], remembere
 
 export async function loadRememberedCompetitors(primaryDomain: string, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
   const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
-  if (!database) return { available: false, candidates: [] as MemoryCandidate[], truncated: false, gap: "Competitor memory is not configured; fresh discovery was used." };
+  if (!database) return { available: false, candidates: [] as MemoryCandidate[], truncated: true, gap: "Competitor memory is not configured; fresh discovery was used, and a result shortfall cannot claim full market exhaustion." };
   try {
     await ensureSchema(database);
     const cutoff = new Date(now.getTime() - MEMORY_TTL_MS).toISOString();
@@ -245,7 +245,7 @@ export async function loadRememberedCompetitors(primaryDomain: string, now = new
     const coverageTruncated = truncated || bounded.truncated;
     return { available: true, candidates: bounded.candidates, truncated: coverageTruncated, gap: coverageTruncated ? "Verified competitor memory exceeded the bounded 500-domain / 6,000-product-evidence carry-forward window; a result shortfall cannot claim full market exhaustion." : "" };
   } catch {
-    return { available: false, candidates: [] as MemoryCandidate[], truncated: false, gap: "Competitor memory was temporarily unavailable; fresh discovery was used." };
+    return { available: false, candidates: [] as MemoryCandidate[], truncated: true, gap: "Competitor memory was temporarily unavailable; fresh discovery was used, and a result shortfall cannot claim full market exhaustion." };
   }
 }
 

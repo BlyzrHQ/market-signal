@@ -209,6 +209,7 @@ test("unavailable persistence is a visible non-fatal coverage gap", async () => 
   const loaded = await loadRememberedCompetitors("myjam.co.uk", new Date(), null);
   const stored = await rememberVerifiedCompetitors("myjam.co.uk", [{ candidate: candidate("rival.test"), verificationScore: 80 }], undefined, null);
   assert.equal(loaded.available, false);
+  assert.equal(loaded.truncated, true);
   assert.match(loaded.gap, /not configured/);
   assert.deepEqual(stored, { available: false, stored: 0 });
 });
