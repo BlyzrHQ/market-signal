@@ -34,3 +34,44 @@ test("a 404 robots response permits sitemap discovery and bounded page expansion
     globalThis.fetch = originalFetch;
   }
 });
+
+test("a bounded child-sitemap crawl exposes incomplete catalog coverage", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /\nSitemap: https://shop.test/sitemap.xml");
+    if (url.endsWith("/sitemap.xml")) return new Response(`<?xml version="1.0"?><sitemapindex>${Array.from({ length: 5 }, (_, index) => `<sitemap><loc>https://shop.test/product-sitemap-${index}.xml</loc></sitemap>`).join("")}</sitemapindex>`, { headers: { "content-type": "application/xml" } });
+    const child = url.match(/product-sitemap-(\d+)\.xml$/)?.[1];
+    if (child) return new Response(`<?xml version="1.0"?><urlset xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"><url><loc>https://shop.test/products/sidr-honey-${child}-500g</loc><image:image><image:title>Sidr Honey ${child} 500g</image:title></image:image></url></urlset>`, { headers: { "content-type": "application/xml" } });
+    if (url === "https://shop.test/") return new Response("<html><head><title>Shop</title></head><body></body></html>", { headers: { "content-type": "text/html" } });
+    return new Response(`<html><head><title>Item</title></head><body><h1>Item</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await crawlWithMock("shop.test", "primary");
+    assert.equal(result.productCoverage.catalogProductsDiscovered, 4);
+    assert.equal(result.productCoverage.sitemapTruncated, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a failed child sitemap exposes incomplete catalog coverage", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /\nSitemap: https://shop.test/sitemap.xml");
+    if (url.endsWith("/sitemap.xml")) return new Response(`<?xml version="1.0"?><sitemapindex>${Array.from({ length: 4 }, (_, index) => `<sitemap><loc>https://shop.test/product-sitemap-${index}.xml</loc></sitemap>`).join("")}</sitemapindex>`, { headers: { "content-type": "application/xml" } });
+    if (url.endsWith("/product-sitemap-2.xml")) return new Response("unavailable", { status: 503 });
+    const child = url.match(/product-sitemap-(\d+)\.xml$/)?.[1];
+    if (child) return new Response(`<urlset><url><loc>https://shop.test/products/sidr-honey-${child}-500g</loc></url></urlset>`, { headers: { "content-type": "application/xml" } });
+    if (url === "https://shop.test/") return new Response("<html><head><title>Shop</title></head><body></body></html>", { headers: { "content-type": "text/html" } });
+    return new Response("<html><head><title>Item</title></head><body><h1>Item</h1></body></html>", { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await crawlWithMock("shop.test", "primary");
+    assert.equal(result.productCoverage.catalogProductsDiscovered, 3);
+    assert.equal(result.productCoverage.sitemapTruncated, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

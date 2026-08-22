@@ -161,25 +161,36 @@ function adEvidence(value: unknown) {
 }
 
 export function canonicalReportFact(kind: ReportFactKind, item: JsonRecord) {
+  const snapshotCandidate = text(item.snapshotObservedAt, 40);
+  const snapshotObservedAt = snapshotCandidate ? observedAt(snapshotCandidate, "") : "";
+  const snapshot = snapshotObservedAt ? { snapshotObservedAt } : {};
   if (kind === "companies") return {
     domain: canonicalDomain(text(item.domain, 253)), role: text(item.role, 40), companyName: text(item.companyName, 240),
-    evidenceUrl: safeUrl(item.evidenceUrl), evidence: companyEvidence(item.evidence), observedAt: observedAt(item.observedAt, ""),
+    evidenceUrl: safeUrl(item.evidenceUrl), evidence: companyEvidence(item.evidence), observedAt: observedAt(item.observedAt, ""), ...snapshot,
   };
   if (kind === "products") return {
-    domain: canonicalDomain(text(item.domain, 253)), productId: text(item.productId, 240), name: text(item.name, 500),
+    domain: canonicalDomain(text(item.domain, 253)), productId: text(item.productId, 300), name: text(item.name, 500),
     normalizedName: text(item.normalizedName, 500), sourceUrl: safeUrl(item.sourceUrl, false), imageUrl: safeUrl(item.imageUrl),
-    prices: productPrices(item.prices), metadata: productMetadata(item.metadata, canonicalDomain(text(item.domain, 253))), observedAt: observedAt(item.observedAt, ""),
+    prices: productPrices(item.prices), metadata: productMetadata(item.metadata, canonicalDomain(text(item.domain, 253))), observedAt: observedAt(item.observedAt, ""), ...snapshot,
   };
   if (kind === "matches") return {
-    id: text(item.id, 500), primaryProductId: text(item.primaryProductId, 240), rivalProductId: text(item.rivalProductId, 240),
+    id: text(item.id, 500), primaryProductId: text(item.primaryProductId, 300), rivalProductId: text(item.rivalProductId, 300),
     rivalDomain: canonicalDomain(text(item.rivalDomain, 253)), verdict: text(item.verdict, 40), confidence: text(item.confidence, 40),
     claimType: text(item.claimType, 40), model: text(item.model, 160), promptVersion: text(item.promptVersion, 160),
-    evidence: matchEvidence(item.evidence), observedAt: observedAt(item.observedAt, ""),
+    evidence: matchEvidence(item.evidence), observedAt: observedAt(item.observedAt, ""), ...snapshot,
   };
   return {
     id: text(item.id, 500), domain: canonicalDomain(text(item.domain, 253)), platform: text(item.platform, 80), status: text(item.status, 80),
-    evidence: adEvidence(item.evidence), observedAt: observedAt(item.observedAt, ""),
+    evidence: adEvidence(item.evidence), observedAt: observedAt(item.observedAt, ""), ...snapshot,
   };
+}
+
+export async function reportFactContentHash(kind: ReportFactKind, items: JsonRecord[]) {
+  const stableItems = items.map((raw) => {
+    const item = canonicalReportFact(kind, raw) as JsonRecord;
+    return item.snapshotObservedAt ? { ...item, observedAt: item.snapshotObservedAt } : item;
+  });
+  return reportFactHash(stableItems);
 }
 
 function uniqueFacts(kind: ReportFactKind, items: JsonRecord[]) {
@@ -234,11 +245,13 @@ function companyFacts(results: CrawlFactResult[], comparison: ProductComparison 
 
 function productFact(product: ProductRecord, fallbackObservedAt: string) {
   const parsedObservedAt = Date.parse(product.observedAt);
-  const age = Date.now() - parsedObservedAt;
+  const reportObservedAt = Date.parse(fallbackObservedAt);
+  const age = reportObservedAt - parsedObservedAt;
   const priceObservationIsFresh = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(product.observedAt)
     && Number.isFinite(parsedObservedAt)
     && new Date(parsedObservedAt).toISOString() === product.observedAt
-    && age >= -(5 * 60 * 1000)
+    && Number.isFinite(reportObservedAt)
+    && age >= -(24 * 60 * 60 * 1000)
     && age <= 366 * 24 * 60 * 60 * 1000;
   const pricesAreValid = product.priceSignals.every((price) => typeof price.amount === "number"
     && Number.isFinite(price.amount)
@@ -371,6 +384,10 @@ async function adFacts(publicId: string, adBlock: JsonRecord | null, fallbackObs
 }
 
 const MAX_FACT_CHUNK_BYTES = 250_000;
+// 1,000 primary products + 6,000 bounded rival products + 6,000 match facts
+// can require 488 callbacks with production-sized records; verified companies
+// and ads keep the complete legal universe below this callback ceiling.
+export const MAX_REPORT_FACT_CHUNKS = 512;
 
 function chunkEnvelopeBytes(kind: ReportFactKind, manifestId: string, attemptNumber: number, items: Array<Record<string, unknown>>) {
   return new TextEncoder().encode(JSON.stringify({ manifestId, attemptNumber, kind, chunkIndex: 999, chunkCount: 1_000, contentHash: "f".repeat(64), items })).byteLength;
@@ -391,7 +408,7 @@ async function chunksFor(kind: ReportFactKind, manifestId: string, attemptNumber
     kind,
     chunkIndex,
     chunkCount: groups.length,
-    contentHash: await reportFactHash(group),
+    contentHash: await reportFactContentHash(kind, group),
     items: group,
   })));
 }
@@ -404,15 +421,19 @@ export async function buildReportFactBundle(input: {
   observedAt: string;
   attemptNumber?: number;
 }): Promise<ReportFactBundle> {
+  const reportObservedAt = observedAt(input.observedAt, "");
+  const withStableReportObservation = (items: Array<Record<string, unknown>>) => items.map((item) => ({ ...item, snapshotObservedAt: reportObservedAt }));
   const facts: Record<ReportFactKind, Array<Record<string, unknown>>> = {
-    companies: uniqueFacts("companies", companyFacts(input.crawlResults, input.comparison, input.observedAt)),
-    products: uniqueFacts("products", productFacts(input.crawlResults, input.comparison, input.observedAt)),
-    matches: uniqueFacts("matches", await matchFacts(input.publicId, input.comparison, input.observedAt)),
-    ads: uniqueFacts("ads", await adFacts(input.publicId, input.adBlock, input.observedAt)),
+    companies: uniqueFacts("companies", withStableReportObservation(companyFacts(input.crawlResults, input.comparison, reportObservedAt))),
+    products: uniqueFacts("products", withStableReportObservation(productFacts(input.crawlResults, input.comparison, reportObservedAt))),
+    matches: uniqueFacts("matches", withStableReportObservation(await matchFacts(input.publicId, input.comparison, reportObservedAt))),
+    ads: uniqueFacts("ads", withStableReportObservation(await adFacts(input.publicId, input.adBlock, reportObservedAt))),
   };
-  const manifestId = await reportFactHash({ publicId: input.publicId, facts });
+  const stableFacts = Object.fromEntries(await Promise.all((Object.keys(facts) as ReportFactKind[]).map(async (kind) => [kind, facts[kind].map((item) => item.snapshotObservedAt ? { ...item, observedAt: item.snapshotObservedAt } : item)])));
+  const manifestId = await reportFactHash({ publicId: input.publicId, facts: stableFacts });
   const attemptNumber = Number.isInteger(input.attemptNumber) && Number(input.attemptNumber) > 0 ? Number(input.attemptNumber) : 1;
   const chunks = (await Promise.all((Object.keys(facts) as ReportFactKind[]).map((kind) => chunksFor(kind, manifestId, attemptNumber, facts[kind])))).flat();
+  if (chunks.length > MAX_REPORT_FACT_CHUNKS) throw new Error(`Report facts require ${chunks.length} callbacks, above the ${MAX_REPORT_FACT_CHUNKS}-callback orchestration budget.`);
   const manifestHash = await reportFactHash(chunks.map((chunk) => ({ kind: chunk.kind, chunkIndex: chunk.chunkIndex, contentHash: chunk.contentHash })).sort((left, right) => left.kind.localeCompare(right.kind) || left.chunkIndex - right.chunkIndex));
   return {
     chunks,

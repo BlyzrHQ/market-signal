@@ -1,4 +1,4 @@
-import { buildAIProductComparison, type JudgeBatchCheckpoint, type JudgeBatchCheckpointKey, type PinnedProductPair } from "../../lib/ai-product-matching.ts";
+import { buildAIProductComparison, candidatePairKeysFromPlan, MAX_JUDGE_CANDIDATE_PAIRS, PRODUCT_CANDIDATE_PLAN_BATCH_INDEX, type JudgeBatchCheckpoint, type JudgeBatchCheckpointKey, type PinnedProductPair, type ProductCandidatePlan, type ProductCandidatePlanKey } from "../../lib/ai-product-matching.ts";
 import { canonicalDomain, normalizeDomain } from "../../lib/domain.ts";
 import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../lib/internal-auth.ts";
 import type { ProductRecord } from "../../lib/product-intelligence.ts";
@@ -6,13 +6,27 @@ import { canonicalGtin, parseCanonicalQuantity, type ProductIdentifiers } from "
 import { publicHttpUrl } from "../../lib/public-url.ts";
 import { loadReportMatchBatchCheckpoints, loadReportProductEntitlement, saveReportMatchBatchCheckpoint } from "../../lib/report-store.ts";
 
-const MAX_CATALOGS = 7;
+// One primary catalog plus the complete bounded attempt wave: up to 1,200
+// product-lane sellers, 12 company-lane sellers, and 500 remembered rivals.
+// Never silently discard a rival.
+const MAX_CATALOGS = 1_713;
 const MAX_PRIMARY_PRODUCTS = 1_000;
-const MAX_RIVAL_PRODUCTS = 600;
-const MAX_SUBMITTED_PRODUCTS_PER_CATALOG = 5_000;
-export const MAX_MATCH_BODY_BYTES = 8 * 1_024 * 1_024;
+const MAX_RIVAL_PRODUCTS = 6_000;
+const MAX_SUBMITTED_PRODUCTS_PER_CATALOG = 6_000;
+const MAX_PINNED_PAIRS = 6_000;
+export const MAX_MATCH_BODY_BYTES = 64 * 1_024 * 1_024;
 const DEFAULT_PRODUCT_ANALYSIS_LIMIT = 20;
 const PLAN_PRODUCT_LIMITS = new Set([20, 50, 500, 1_000]);
+const MAX_TASK_ATTEMPTS = 10;
+const MAX_JUDGE_BATCHES_PER_TASK_ATTEMPT = 250;
+const JUDGE_CHECKPOINT_BASE = 1_400;
+const PLAN_CHECKPOINT_BASE = 3_900;
+
+export function persistedCheckpointIndex(taskAttemptNumber: number, batchIndex: number) {
+  if (batchIndex === PRODUCT_CANDIDATE_PLAN_BATCH_INDEX) return PLAN_CHECKPOINT_BASE + taskAttemptNumber - 1;
+  if (!Number.isInteger(batchIndex) || batchIndex < 0 || batchIndex >= MAX_JUDGE_BATCHES_PER_TASK_ATTEMPT) throw new Error("The product judge checkpoint index exceeds its bounded task-attempt namespace.");
+  return JUDGE_CHECKPOINT_BASE + ((taskAttemptNumber - 1) * MAX_JUDGE_BATCHES_PER_TASK_ATTEMPT) + batchIndex;
+}
 
 function text(value: unknown, limit: number) {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
@@ -24,7 +38,7 @@ function strings(value: unknown, limit: number, itemLimit: number) {
 
 function publicUrl(value: unknown, domain: string) {
   try {
-    const url = new URL(publicHttpUrl(text(value, 1_000), false, 1_000));
+    const url = new URL(publicHttpUrl(value, false, 1_000));
     return canonicalDomain(url.hostname) === canonicalDomain(domain) ? url.toString() : "";
   } catch {
     return "";
@@ -33,7 +47,7 @@ function publicUrl(value: unknown, domain: string) {
 
 function publicImageUrl(value: unknown) {
   try {
-    const url = new URL(text(value, 1_000));
+    const url = new URL(publicHttpUrl(value, true, 1_000));
     normalizeDomain(url.hostname);
     return url.protocol === "https:" && !url.username && !url.password ? url.toString() : "";
   } catch {
@@ -41,10 +55,10 @@ function publicImageUrl(value: unknown) {
   }
 }
 
-function identifiers(value: unknown): ProductIdentifiers | undefined {
+export function identifiers(value: unknown): ProductIdentifiers | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const item = value as Record<string, unknown>;
-  const gtins = [...new Set((Array.isArray(item.gtins) ? item.gtins.slice(0, 8) : []).map(canonicalGtin).filter((gtin): gtin is string => Boolean(gtin)))];
+  const gtins = [...new Set((Array.isArray(item.gtins) ? item.gtins : []).map(canonicalGtin).filter((gtin): gtin is string => Boolean(gtin)))].slice(0, 20);
   const sku = text(item.sku, 120) || undefined;
   const mpn = text(item.mpn, 120) || undefined;
   const brand = text(item.brand, 120) || undefined;
@@ -93,7 +107,7 @@ function product(value: unknown, catalogDomain: string): ProductRecord | null {
 function requestedPinIds(value: unknown) {
   const ids = new Map<string, Set<string>>();
   if (!Array.isArray(value)) return ids;
-  for (const entry of value.slice(0, 12)) {
+  for (const entry of value.slice(0, MAX_PINNED_PAIRS)) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
     const item = entry as Record<string, unknown>;
     const primaryId = text(item.primaryId, 300);
@@ -128,12 +142,12 @@ async function boundedJsonBody(request: Request) {
 }
 
 export function parseCatalogs(value: unknown, primaryDomain = "", requestedPins?: unknown) {
-  if (!Array.isArray(value)) return [];
+  if (!Array.isArray(value) || value.length > MAX_CATALOGS) return [];
   const pinIds = requestedPinIds(requestedPins);
   const rawProductDomains = new Map<string, string>();
   const catalogDomains = new Set<string>();
   let invalidIdentity = false;
-  const catalogs = value.slice(0, MAX_CATALOGS).flatMap((entry) => {
+  const catalogs = value.flatMap((entry) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
     const item = entry as Record<string, unknown>;
     const domain = canonicalDomain(text(item.domain, 300));
@@ -169,24 +183,22 @@ export function parseCatalogs(value: unknown, primaryDomain = "", requestedPins?
     }
     const catalogLimit = domain === canonicalDomain(primaryDomain) ? MAX_PRIMARY_PRODUCTS : MAX_RIVAL_PRODUCTS;
     const wanted = pinIds.get(domain === canonicalDomain(primaryDomain) ? "$primary" : domain) || new Set<string>();
-    const pinned: unknown[] = [];
-    const ordinary: unknown[] = [];
+    const pinned: ProductRecord[] = [];
+    const ordinary: ProductRecord[] = [];
     const retainedPinnedIds = new Set<string>();
     for (const value of deduplicatedValues) {
       if (!value) continue;
+      const parsed = product(value, domain);
+      if (!parsed) continue;
       const id = value && typeof value === "object" && !Array.isArray(value) ? text((value as Record<string, unknown>).id, 300) : "";
       if (id && wanted.has(id)) {
         if (!retainedPinnedIds.has(id)) {
           retainedPinnedIds.add(id);
-          pinned.push(value);
+          pinned.push(parsed);
         }
-      } else if (ordinary.length < catalogLimit) ordinary.push(value);
+      } else if (ordinary.length < catalogLimit) ordinary.push(parsed);
     }
-    const selected = [...pinned, ...ordinary].slice(0, catalogLimit);
-    const products = selected.flatMap((value) => {
-      const parsed = product(value, domain);
-      return parsed ? [parsed] : [];
-    });
+    const products = [...pinned, ...ordinary].slice(0, catalogLimit);
     return [{ domain, products }];
   });
   if (invalidIdentity) return [];
@@ -195,6 +207,10 @@ export function parseCatalogs(value: unknown, primaryDomain = "", requestedPins?
     if (productIds.has(item.id)) return [];
     productIds.add(item.id);
   }
+  const rivalProductCount = catalogs
+    .filter((catalog) => catalog.domain !== canonicalDomain(primaryDomain))
+    .reduce((total, catalog) => total + catalog.products.length, 0);
+  if (rivalProductCount > MAX_RIVAL_PRODUCTS) return [];
   return catalogs;
 }
 
@@ -207,9 +223,18 @@ export function productAnalysisBudgetMs(limit: number) {
   return limit <= 60 ? 90_000 : limit <= 500 ? 360_000 : 720_000;
 }
 
+export function productAnalysisConcurrency(limit: number) {
+  return limit <= 60 ? 3 : limit <= 500 ? 6 : 12;
+}
+
+export function productBackfillPoolSize(resultTarget: number) {
+  void resultTarget;
+  return MAX_PRIMARY_PRODUCTS;
+}
+
 export function parsePinnedPairs(value: unknown, catalogs: Array<{ domain: string; products: ProductRecord[] }>, primaryDomain: string): PinnedProductPair[] {
   if (!Array.isArray(value)) return [];
-  if (value.length > 12) return [];
+  if (value.length > MAX_PINNED_PAIRS) return [];
   const primaryIds = new Set(catalogs.find((catalog) => canonicalDomain(catalog.domain) === canonicalDomain(primaryDomain))?.products.map((product) => product.id) || []);
   const rivalIds = new Map(catalogs.filter((catalog) => canonicalDomain(catalog.domain) !== canonicalDomain(primaryDomain)).map((catalog) => [canonicalDomain(catalog.domain), new Set(catalog.products.map((product) => product.id))]));
   const pairs: PinnedProductPair[] = [];
@@ -252,30 +277,59 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
   return async function matchHandler(request: Request) {
     if (!await hasValidInternalAuthorization(request.headers.get("authorization"), expectedToken)) return unauthorizedInternalResponse();
     try {
-      const body = await boundedJsonBody(request) as { publicId?: unknown; reportAttempt?: unknown; primaryDomain?: unknown; productLimit?: unknown; catalogs?: unknown; pinnedPairs?: unknown };
+      const body = await boundedJsonBody(request) as { publicId?: unknown; reportAttempt?: unknown; taskAttemptNumber?: unknown; reportObservedAt?: unknown; primaryDomain?: unknown; marketCountryCode?: unknown; productLimit?: unknown; catalogs?: unknown; pinnedPairs?: unknown };
       const publicId = text(body.publicId, 32);
       const reportAttempt = Number(body.reportAttempt);
+      const taskAttemptNumber = Number(body.taskAttemptNumber);
       const primaryDomain = canonicalDomain(text(body.primaryDomain, 300));
+      const reportObservedAt = text(body.reportObservedAt, 40);
+      const marketCountryCode = text(body.marketCountryCode, 2).toUpperCase();
       if (body.pinnedPairs !== undefined && !Array.isArray(body.pinnedPairs)) return Response.json({ ok: false, error: "Pinned product pairs must be an array." }, { status: 400 });
       const catalogs = parseCatalogs(body.catalogs, primaryDomain, body.pinnedPairs);
       const pinnedPairs = parsePinnedPairs(body.pinnedPairs, catalogs, primaryDomain);
       if (Array.isArray(body.pinnedPairs) && body.pinnedPairs.length && !pinnedPairs.length) return Response.json({ ok: false, error: "Pinned product pairs must reference unique catalog records and form one-to-one assignments." }, { status: 400 });
       const hasReportAttempt = Boolean(publicId || body.reportAttempt !== undefined);
-      if (hasReportAttempt && (!/^[a-f0-9]{32}$/.test(publicId) || !Number.isInteger(reportAttempt) || reportAttempt < 1)) return Response.json({ ok: false, error: "A complete active report attempt is required for checkpointed matching." }, { status: 400 });
+      if (hasReportAttempt && (!/^[a-f0-9]{32}$/.test(publicId) || !Number.isInteger(reportAttempt) || reportAttempt < 1 || !Number.isInteger(taskAttemptNumber) || taskAttemptNumber < 1 || taskAttemptNumber > MAX_TASK_ATTEMPTS)) return Response.json({ ok: false, error: "A complete active report and task attempt are required for checkpointed matching." }, { status: 400 });
       if (!primaryDomain || !catalogs.some((catalog) => catalog.domain === primaryDomain && catalog.products.length)) return Response.json({ ok: false, error: "A crawled primary product catalog is required." }, { status: 400 });
       const entitlement = hasReportAttempt ? await services.loadEntitlement(publicId, reportAttempt) : null;
-      const maxPrimaryProducts = entitlement?.productLimit || DEFAULT_PRODUCT_ANALYSIS_LIMIT;
-      if (hasReportAttempt && Number(body.productLimit) !== maxPrimaryProducts) return Response.json({ ok: false, error: "The report product limit does not match its persisted entitlement." }, { status: 409 });
+      const resultTarget = entitlement?.productLimit || DEFAULT_PRODUCT_ANALYSIS_LIMIT;
+      if (hasReportAttempt && Number(body.productLimit) !== resultTarget) return Response.json({ ok: false, error: "The report product limit does not match its persisted entitlement." }, { status: 409 });
+      if (hasReportAttempt && reportObservedAt !== entitlement?.reportObservedAt) return Response.json({ ok: false, error: "The report observation timestamp does not match its persisted identity." }, { status: 409 });
+      if (body.marketCountryCode !== undefined && !/^[A-Z]{2}$/.test(marketCountryCode)) return Response.json({ ok: false, error: "The report market country code must be a two-letter country code." }, { status: 400 });
+      const primaryCatalogSize = catalogs.find((catalog) => catalog.domain === primaryDomain)?.products.length || 0;
+      const maxPrimaryProducts = Math.min(productBackfillPoolSize(resultTarget), primaryCatalogSize);
+      const priorCandidatePairKeys = hasReportAttempt ? await (async () => {
+        const currentPlanIndex = persistedCheckpointIndex(taskAttemptNumber, PRODUCT_CANDIDATE_PLAN_BATCH_INDEX);
+        const checkpoints = await services.loadCheckpoints(publicId, { attemptNumber: reportAttempt, batchIndexStart: PLAN_CHECKPOINT_BASE, batchIndexEnd: PLAN_CHECKPOINT_BASE + MAX_TASK_ATTEMPTS - 1 });
+        const keys = new Set<string>();
+        for (const checkpoint of checkpoints) {
+          if (checkpoint.batchIndex === currentPlanIndex && checkpoint.attemptNumber === reportAttempt) continue;
+          const planKeys = candidatePairKeysFromPlan(checkpoint.result);
+          const plan = checkpoint.result as Partial<ProductCandidatePlan>;
+          if (!planKeys || checkpoint.inputHash !== plan.planHash) throw new Error("A durable report-global candidate plan is invalid.");
+          for (const key of planKeys) keys.add(key);
+        }
+        if (keys.size > MAX_JUDGE_CANDIDATE_PAIRS) throw new Error("Legacy candidate plans exceed the report-global 6,000-pair frontier.");
+        return [...keys].sort();
+      })() : [];
       const checkpointOptions = hasReportAttempt ? {
+        loadCandidatePlan: async (key: ProductCandidatePlanKey) => {
+          const checkpoints = await services.loadCheckpoints(publicId, { attemptNumber: reportAttempt, batchIndex: persistedCheckpointIndex(taskAttemptNumber, key.batchIndex) });
+          const checkpoint = checkpoints[0];
+          return checkpoint?.inputHash === key.planHash ? checkpoint.result : null;
+        },
+        saveCandidatePlan: async (key: ProductCandidatePlanKey, plan: ProductCandidatePlan) => {
+          await services.saveCheckpoint(publicId, { attemptNumber: reportAttempt, batchIndex: persistedCheckpointIndex(taskAttemptNumber, key.batchIndex), inputHash: key.planHash, result: plan });
+        },
         loadJudgeBatchCheckpoint: async (key: JudgeBatchCheckpointKey) => {
-          const checkpoints = await services.loadCheckpoints(publicId, { attemptNumber: reportAttempt, batchIndex: key.batchIndex });
+          const checkpoints = await services.loadCheckpoints(publicId, { attemptNumber: reportAttempt, batchIndex: persistedCheckpointIndex(taskAttemptNumber, key.batchIndex) });
           const checkpoint = checkpoints[0];
           return checkpoint?.inputHash === key.batchHash ? checkpoint.result : null;
         },
         saveJudgeBatchCheckpoint: async (key: JudgeBatchCheckpointKey, checkpoint: JudgeBatchCheckpoint) => {
           await services.saveCheckpoint(publicId, {
             attemptNumber: reportAttempt,
-            batchIndex: key.batchIndex,
+            batchIndex: persistedCheckpointIndex(taskAttemptNumber, key.batchIndex),
             inputHash: key.batchHash,
             result: checkpoint,
           });
@@ -284,10 +338,14 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
       const comparison = await services.build(primaryDomain, catalogs, {
         maxPrimaryProducts,
         totalBudgetMs: productAnalysisBudgetMs(maxPrimaryProducts),
+        concurrency: productAnalysisConcurrency(maxPrimaryProducts),
+        referenceTimeMs: Date.parse(reportObservedAt) || Date.now(),
+        marketCountryCode,
         pinnedPairs,
+        priorCandidatePairKeys,
         ...checkpointOptions,
       });
-      return Response.json({ ok: true, comparison });
+      return Response.json({ ok: true, comparison: comparison.matching ? { ...comparison, matching: { ...comparison.matching, resultTarget } } : comparison });
     } catch (error) {
       return Response.json({ ok: false, error: error instanceof Error ? error.message : "AI product matching was unavailable." }, { status: 400 });
     }

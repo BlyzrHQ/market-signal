@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { appendReportEvent, compactReportDocument, createReportRun, createReportRunResult, getStoredReport, loadReportMatchBatchCheckpoints, markReportDispatched, MAX_REPORT_DOCUMENT_BYTES, MAX_REPORT_MATCH_BATCH_RESULT_BYTES, recoverInterruptedReport, reportStorageDiagnosticCode, ReportStorageError, saveReportDocument, saveReportMatchBatchCheckpoint } from "../app/lib/report-store.ts";
+import { MAX_REPORT_ATTEMPTS } from "../src/shared/report-orchestration-contract.ts";
+import { encodedJsonBytes, REPORT_CALLBACK_ENVELOPE_BYTES } from "../src/shared/report-document-compaction.ts";
 
 class FakeStatement {
   constructor(database, query) { this.database = database; this.query = query; this.values = []; }
@@ -14,7 +16,7 @@ class FakeStatement {
       return { results: this.database.runs.filter((run) => run.public_id === key || run.id === key).slice(0, 1) };
     }
     if (this.query.startsWith("SELECT sequence")) {
-      return { results: this.database.events.filter((event) => event.run_id === this.values[0]).sort((a, b) => a.sequence - b.sequence).slice(0, 100) };
+      return { results: this.database.events.filter((event) => event.run_id === this.values[0]).sort((a, b) => a.sequence - b.sequence).slice(0, 1_000) };
     }
     if (this.query.startsWith("SELECT schema_version")) {
       return { results: this.database.documents.filter((document) => document.run_id === this.values[0]).slice(0, 1) };
@@ -123,6 +125,8 @@ test("match batch checkpoints persist bounded canonical results and replay idemp
   const loaded = await loadReportMatchBatchCheckpoints(database.publicId, { attemptNumber: 1, batchIndex: 0 }, database);
   assert.equal(loaded.length, 1);
   assert.deepEqual(loaded[0].result, { matches: [{ id: "p-1", score: 0.9 }], usage: { input: 34, output: 12 } });
+  database.checkpoints[0].result_json = JSON.stringify({ matches: [{ id: "tampered" }] });
+  await assert.rejects(() => loadReportMatchBatchCheckpoints(database.publicId, { attemptNumber: 1, batchIndex: 0 }, database), /integrity validation/);
 });
 
 test("match batch checkpoints reject conflicts, invalid hashes, stale attempts, terminal reports, and oversized results", async () => {
@@ -133,6 +137,8 @@ test("match batch checkpoints reject conflicts, invalid hashes, stale attempts, 
   await assert.rejects(() => saveReportMatchBatchCheckpoint(database.publicId, { attemptNumber: 1, batchIndex: 4, inputHash: "3".repeat(64), result: { accepted: ["p-1"] } }, new Date(), database), /conflicts/);
   await assert.rejects(() => saveReportMatchBatchCheckpoint(database.publicId, { attemptNumber: 1, batchIndex: 5, inputHash, result: {}, resultHash: "4".repeat(64) }, new Date(), database), /does not match/);
   await assert.rejects(() => saveReportMatchBatchCheckpoint(database.publicId, { attemptNumber: 1, batchIndex: 5, inputHash, result: { value: "x".repeat(MAX_REPORT_MATCH_BATCH_RESULT_BYTES) } }, new Date(), database), /too large/);
+  const legalEnvelope = { action: "match-batch-checkpoint-save", attemptNumber: 20, batchIndex: 3_999, inputHash, result: { value: "x".repeat(MAX_REPORT_MATCH_BATCH_RESULT_BYTES - 1_000) } };
+  assert.ok(encodedJsonBytes(legalEnvelope) < REPORT_CALLBACK_ENVELOPE_BYTES);
 
   database.runs[0].attempt_count = 2;
   await assert.rejects(() => loadReportMatchBatchCheckpoints(database.publicId, { attemptNumber: 1 }, database), /stale/);
@@ -153,7 +159,7 @@ test("report runs persist ordered idempotent events and a reloadable document", 
   await appendReportEvent(created.publicId, { idempotencyKey: "ads-started", phase: "ads", status: "running", message: "Checking attributable ads." }, new Date("2026-07-16T00:01:02.000Z"), database);
   await appendReportEvent(created.publicId, { idempotencyKey: "actions-started", phase: "actions", status: "running", message: "Drafting evidence-grounded next moves." }, new Date("2026-07-16T00:01:02.500Z"), database);
   await appendReportEvent(created.publicId, { idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Late duplicate transport retry." }, new Date("2026-07-16T00:01:03.000Z"), database);
-  await saveReportDocument(created.publicId, { blocks: [{ type: "market-profile", id: "profile" }, { type: "presentation-compaction", id: "presentation-compaction", relationalFactsAuthoritative: true, factCounts: { companies: 99, products: 99, matches: 99, ads: 99 } }] }, { status: "complete" }, new Date("2026-07-16T00:02:00.000Z"), database);
+  await saveReportDocument(created.publicId, { blocks: [{ type: "market-profile", id: "profile" }, { type: "presentation-compaction", id: "presentation-compaction", relationalFactsAuthoritative: true, factCounts: { companies: 99, products: 99, matches: 99, ads: 99 } }] }, { status: "complete", expectedFactManifestHash: "" }, new Date("2026-07-16T00:02:00.000Z"), database);
   const reloaded = await getStoredReport(created.publicId, new Date("2026-07-16T00:03:00.000Z"), database);
   assert.equal(reloaded.run.status, "complete");
   assert.deepEqual(reloaded.events.map((event) => event.idempotencyKey), ["run-created", "crawl-started", "ads-started", "actions-started", "report-saved"]);
@@ -166,6 +172,26 @@ test("report runs persist ordered idempotent events and a reloadable document", 
   assert.equal(reloaded.documentSchemaVersion, 1);
 });
 
+test("stored reports retain cursor checkpoints beyond the former 100-event window", async () => {
+  const database = new FakeDatabase();
+  const observedAt = "2026-07-16T00:00:00.000Z";
+  const created = await createReportRun({ primaryDomain: "myjam.co.uk" }, new Date(observedAt), database);
+  for (let sequence = 2; sequence <= 151; sequence += 1) database.events.push({
+    run_id: created.id,
+    sequence,
+    idempotency_key: `event-${sequence}`,
+    phase: "competitors",
+    status: "running",
+    message: "Bounded progress event.",
+    metadata_json: sequence === 151 ? JSON.stringify({ discoveryStartIndex: 800, discoveryEndIndex: 1_000, discoveryBatchComplete: true, discoveryAnchorSetHash: "a".repeat(64) }) : "{}",
+    observed_at: observedAt,
+  });
+
+  const reloaded = await getStoredReport(created.publicId, new Date("2026-07-16T00:01:00.000Z"), database);
+  assert.equal(reloaded.events.length, 151);
+  assert.equal(reloaded.events.at(-1)?.metadata.discoveryEndIndex, 1_000);
+});
+
 test("limited phase events remain visible without making the run terminal before document persistence", async () => {
   const database = new FakeDatabase();
   const created = await createReportRun({ primaryDomain: "parked.example" }, new Date("2026-07-20T10:00:00.000Z"), database);
@@ -175,7 +201,7 @@ test("limited phase events remain visible without making the run terminal before
   assert.equal(progressing.run.status, "running");
   assert.equal(progressing.events.find((event) => event.idempotencyKey === "crawl-limited").status, "limited");
   assert.equal(progressing.events.find((event) => event.idempotencyKey === "ads-limited").status, "limited");
-  await saveReportDocument(created.publicId, { primaryDomain: "parked.example", document: { version: "1", blocks: [] } }, { status: "limited" }, new Date("2026-07-20T10:02:00.000Z"), database);
+  await saveReportDocument(created.publicId, { primaryDomain: "parked.example", document: { version: "1", blocks: [] } }, { status: "limited", expectedFactManifestHash: "" }, new Date("2026-07-20T10:02:00.000Z"), database);
   const saved = await getStoredReport(created.publicId, new Date("2026-07-20T10:02:01.000Z"), database);
   assert.equal(saved.run.status, "limited");
 });
@@ -184,7 +210,7 @@ test("stale active report becomes interrupted with a visible event", async () =>
   const database = new FakeDatabase();
   const created = await createReportRun({ primaryDomain: "myjam.co.uk" }, new Date("2026-07-16T00:00:00.000Z"), database);
   await appendReportEvent(created.publicId, { idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Collecting public pages." }, new Date("2026-07-16T00:01:00.000Z"), database);
-  const report = await getStoredReport(created.publicId, new Date("2026-07-16T00:20:00.000Z"), database);
+  const report = await getStoredReport(created.publicId, new Date("2026-07-16T00:45:00.000Z"), database);
   assert.equal(report.run.status, "interrupted");
   assert.equal(report.events.at(-1).idempotencyKey, "stale-worker-interrupted");
   assert.match(report.run.errorMessage, /background worker/i);
@@ -220,13 +246,17 @@ test("interrupted jobs require an explicit recovery that increments the dispatch
   const database = new FakeDatabase();
   const created = await createReportRun({ primaryDomain: "myjam.co.uk" }, new Date("2026-07-16T00:00:00.000Z"), database);
   await appendReportEvent(created.publicId, { idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Collecting public pages." }, new Date("2026-07-16T00:01:00.000Z"), database);
-  await getStoredReport(created.publicId, new Date("2026-07-16T00:20:00.000Z"), database);
-  const recovered = await recoverInterruptedReport(created.publicId, new Date("2026-07-16T00:21:00.000Z"), database);
+  await getStoredReport(created.publicId, new Date("2026-07-16T00:45:00.000Z"), database);
+  const recovered = await recoverInterruptedReport(created.publicId, new Date("2026-07-16T00:46:00.000Z"), database);
   assert.equal(recovered.status, "queued");
   assert.equal(recovered.attemptCount, 2);
-  const report = await getStoredReport(created.publicId, new Date("2026-07-16T00:22:00.000Z"), database);
+  const report = await getStoredReport(created.publicId, new Date("2026-07-16T00:47:00.000Z"), database);
   assert.equal(report.events.at(-1).idempotencyKey, "recovery-attempt-2");
   await assert.rejects(() => recoverInterruptedReport(created.publicId, new Date(), database), /Only an interrupted report/);
+
+  database.runs[0].status = "interrupted";
+  database.runs[0].attempt_count = MAX_REPORT_ATTEMPTS;
+  await assert.rejects(() => recoverInterruptedReport(created.publicId, new Date(), database), /recovery-attempt limit/);
 });
 
 test("report persistence rejects missing databases, invalid ids, and oversized documents", async () => {
@@ -235,15 +265,15 @@ test("report persistence rejects missing databases, invalid ids, and oversized d
   await assert.rejects(() => getStoredReport("enumerate-me", new Date(), new FakeDatabase()), /Invalid report id/);
   const database = new FakeDatabase();
   const created = await createReportRun({ primaryDomain: "example.com" }, new Date(), database);
-  await assert.rejects(() => saveReportDocument(created.publicId, { value: "x".repeat(MAX_REPORT_DOCUMENT_BYTES) }, {}, new Date(), database), /budget|too large/);
+  await assert.rejects(() => saveReportDocument(created.publicId, { value: "x".repeat(MAX_REPORT_DOCUMENT_BYTES) }, { expectedFactManifestHash: "" }, new Date(), database), /budget|too large/);
 });
 
 test("terminal reports cannot regress or be overwritten", async () => {
   const database = new FakeDatabase();
   const created = await createReportRun({ primaryDomain: "example.com" }, new Date("2026-07-16T00:00:00.000Z"), database);
-  await saveReportDocument(created.publicId, { blocks: [] }, {}, new Date("2026-07-16T00:01:00.000Z"), database);
+  await saveReportDocument(created.publicId, { blocks: [] }, { expectedFactManifestHash: "" }, new Date("2026-07-16T00:01:00.000Z"), database);
   await assert.rejects(() => appendReportEvent(created.publicId, { idempotencyKey: "late", phase: "crawl", status: "running", message: "Late event." }, new Date(), database), /terminal report/);
-  await assert.rejects(() => saveReportDocument(created.publicId, { blocks: [{ id: "replacement" }] }, {}, new Date(), database), /terminal report/);
+  await assert.rejects(() => saveReportDocument(created.publicId, { blocks: [{ id: "replacement" }] }, { expectedFactManifestHash: "" }, new Date(), database), /terminal report/);
 });
 
 test("only a persisted document can declare a report complete", async () => {

@@ -24,9 +24,10 @@ import { dispatchReportJob } from "../../../../lib/report-dispatch.ts";
 import { dispatchReportEvaluation, reportEvaluationPilotEnabled } from "../../../../lib/report-evaluation-dispatch.ts";
 import { dispatchReportSearchChallenge, reportSearchChallengeEnabled } from "../../../../lib/report-search-challenge-dispatch.ts";
 import { settleTerminalReportReservation } from "../../../../lib/report-terminal-billing.ts";
+import { REPORT_CALLBACK_ENVELOPE_BYTES } from "../../../../../src/shared/report-document-compaction.ts";
 
 type RouteContext = { params: Promise<{ publicId: string }> | { publicId: string } };
-const MAX_INTERNAL_CALLBACK_BODY_BYTES = 1_500_000;
+const MAX_INTERNAL_CALLBACK_BODY_BYTES = REPORT_CALLBACK_ENVELOPE_BYTES;
 type StoredReport = NonNullable<Awaited<ReturnType<typeof getStoredReport>>>;
 type InternalReportStore = {
   get(publicId: string): Promise<StoredReport | null>;
@@ -125,6 +126,8 @@ function reportDocumentDomain(value: unknown) {
 function documentReplayMatches(report: StoredReport, body: Record<string, unknown>) {
   const requestedStatus = body.status === "limited" ? "limited" : "complete";
   if (!report.document || report.run.status !== requestedStatus) return false;
+  const persistedFactManifestHash = report.factManifest?.status === "complete" ? report.factManifest.manifestHash : "";
+  if (body.expectedFactManifestHash !== persistedFactManifestHash) return false;
   if (reportDocumentDomain(report.document) !== report.run.primaryDomain || reportDocumentDomain(body.document) !== report.run.primaryDomain) return false;
   return sameJson(compactReportDocument(report.document), compactReportDocument(body.document));
 }
@@ -178,7 +181,16 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
         if (body.action === "match-batch-checkpoints-load") {
           if (["complete", "limited", "failed", "interrupted"].includes(report.run.status)) return Response.json({ ok: false, error: "A terminal report cannot load report match batch checkpoints." }, { status: 409 });
           const batchIndex = body.batchIndex === undefined ? undefined : Number(body.batchIndex);
-          const checkpoints = await store.loadMatchBatchCheckpoints(id, { attemptNumber, batchIndex });
+          const batchIndexStart = body.batchIndexStart === undefined ? undefined : Number(body.batchIndexStart);
+          const batchIndexEnd = body.batchIndexEnd === undefined ? undefined : Number(body.batchIndexEnd);
+          const latestPerBatch = body.latestPerBatch === undefined ? undefined : body.latestPerBatch === true;
+          const afterAttemptNumber = body.afterAttemptNumber === undefined ? undefined : Number(body.afterAttemptNumber);
+          const afterBatchIndex = body.afterBatchIndex === undefined ? undefined : Number(body.afterBatchIndex);
+          const limit = body.limit === undefined ? undefined : Number(body.limit);
+          if ((afterAttemptNumber === undefined) !== (afterBatchIndex === undefined)) return Response.json({ ok: false, error: "Invalid report checkpoint cursor." }, { status: 400 });
+          if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 20)) return Response.json({ ok: false, error: "Invalid report checkpoint page limit." }, { status: 400 });
+          if (body.latestPerBatch !== undefined && typeof body.latestPerBatch !== "boolean") return Response.json({ ok: false, error: "Invalid report checkpoint projection." }, { status: 400 });
+          const checkpoints = await store.loadMatchBatchCheckpoints(id, { attemptNumber, batchIndex, batchIndexStart, batchIndexEnd, latestPerBatch, afterAttemptNumber, afterBatchIndex, limit });
           return Response.json({ ok: true, checkpoints }, { headers: { "Cache-Control": "no-store" } });
         }
         if (body.action === "match-batch-checkpoint-save") {
@@ -239,6 +251,8 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
           return Response.json({ ok: true, saved });
         }
         if (body.action === "document") {
+          if (typeof body.expectedFactManifestHash !== "string") return Response.json({ ok: false, error: "The expected report fact manifest hash is required." }, { status: 400 });
+          if (body.expectedFactManifestHash !== "" && !/^[a-f0-9]{64}$/.test(body.expectedFactManifestHash)) return Response.json({ ok: false, error: "The expected report fact manifest hash is invalid." }, { status: 400 });
           if (["complete", "limited"].includes(report.run.status)) {
             if (!documentReplayMatches(report, body)) return Response.json({ ok: false, error: "The completed report callback conflicts with the saved document." }, { status: 409 });
             await terminal.settle(report.run);
@@ -251,6 +265,7 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
             attemptNumber,
             status: body.status === "limited" ? "limited" : "complete",
             observedAt: typeof body.observedAt === "string" ? body.observedAt : undefined,
+            expectedFactManifestHash: body.expectedFactManifestHash,
           });
           const persisted = await store.get(id);
           if (!persisted) throw new Error("The completed report was not persisted.");

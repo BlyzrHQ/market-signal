@@ -137,7 +137,7 @@ async function preparedEvaluation(database, suffix, now = new Date("2026-08-09T1
       { type: "summary", id: "summary", title: "Observed market comparison", body: "A concise public-source report." },
       { type: "product-comparison", id: "products", title: "Products" },
     ],
-  }, { status: "complete" }, now, database);
+  }, { status: "complete", expectedFactManifestHash: bundle.manifest.manifestHash }, now, database);
   const evaluation = await getReportEvaluation(created.publicId, database);
   assert.equal(evaluation.status, "deterministic");
   return { created, evaluation };

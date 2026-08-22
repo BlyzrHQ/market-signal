@@ -6,7 +6,7 @@ import { createPersistentReport, POST as createReportRoute } from "../app/api/re
 import { createInternalReportHandlers } from "../app/api/internal/reports/[publicId]/route.ts";
 import { hasValidInternalAuthorization } from "../app/lib/internal-auth.ts";
 import { dispatchReportJob, reportDispatchIdempotencyKey, ReportDispatchError } from "../app/lib/report-dispatch.ts";
-import { compactTerminalReportDocument } from "../src/shared/report-document-compaction.ts";
+import { compactTerminalReportDocument, REPORT_CALLBACK_ENVELOPE_BYTES } from "../src/shared/report-document-compaction.ts";
 import { babanujScaleDocument } from "./fixtures/babanuj-report-document.mjs";
 
 const TOKEN = "callback-test-token-with-sufficient-entropy";
@@ -351,7 +351,7 @@ test("internal callbacks reject oversized bodies before JSON parsing", async () 
   const handlers = createInternalReportHandlers({ get: async () => { reads += 1; return report(); }, append: async () => {}, save: async () => {} }, TOKEN);
   const response = await handlers.post(new Request(`https://market.example/api/internal/reports/${PUBLIC_ID}`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json", "Content-Length": "1500001" },
+    headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json", "Content-Length": String(REPORT_CALLBACK_ENVELOPE_BYTES + 1) },
     body: "{}",
   }), { params: { publicId: PUBLIC_ID } });
   assert.equal(response.status, 400);
@@ -373,11 +373,15 @@ test("a lost final callback response replays only for the exact persisted docume
   const stored = { ...report({ status: "limited", currentPhase: "complete" }), document, documentSchemaVersion: 1 };
   let saves = 0;
   const handlers = createInternalReportHandlers({ get: async () => stored, append: async () => {}, save: async () => { saves += 1; } }, TOKEN);
-  const replay = await handlers.post(request({ action: "document", status: "limited", observedAt: "2026-07-20T00:02:00.000Z", document }), { params: { publicId: PUBLIC_ID } });
+  const replay = await handlers.post(request({ action: "document", status: "limited", expectedFactManifestHash: "", observedAt: "2026-07-20T00:02:00.000Z", document }), { params: { publicId: PUBLIC_ID } });
   assert.equal(replay.status, 200);
   assert.equal((await replay.json()).replayed, true);
   assert.equal(saves, 0);
-  const conflict = await handlers.post(request({ action: "document", status: "limited", document: { ...document, marketBrief: { changed: true } } }), { params: { publicId: PUBLIC_ID } });
+  const wrongManifest = await handlers.post(request({ action: "document", status: "limited", expectedFactManifestHash: "f".repeat(64), document }), { params: { publicId: PUBLIC_ID } });
+  assert.equal(wrongManifest.status, 409);
+  const malformedManifest = await handlers.post(request({ action: "document", status: "limited", expectedFactManifestHash: "not-a-hash", document }), { params: { publicId: PUBLIC_ID } });
+  assert.equal(malformedManifest.status, 400);
+  const conflict = await handlers.post(request({ action: "document", status: "limited", expectedFactManifestHash: "", document: { ...document, marketBrief: { changed: true } } }), { params: { publicId: PUBLIC_ID } });
   assert.equal(conflict.status, 409);
 });
 
@@ -388,14 +392,14 @@ test("a lost large callback response replays its exact compacted snapshot and re
   let saves = 0;
   const handlers = createInternalReportHandlers({ get: async () => stored, append: async () => {}, save: async () => { saves += 1; } }, TOKEN);
 
-  const replay = await handlers.post(request({ action: "document", status: "limited", observedAt: "2026-08-03T00:02:00.000Z", document }), { params: { publicId: PUBLIC_ID } });
+  const replay = await handlers.post(request({ action: "document", status: "limited", expectedFactManifestHash: "", observedAt: "2026-08-03T00:02:00.000Z", document }), { params: { publicId: PUBLIC_ID } });
   assert.equal(replay.status, 200);
   assert.equal((await replay.json()).replayed, true);
   assert.equal(saves, 0);
 
   const changed = structuredClone(document);
   changed.document.blocks.find((block) => block.type === "summary").body = "Changed useful result";
-  const conflict = await handlers.post(request({ action: "document", status: "limited", document: changed }), { params: { publicId: PUBLIC_ID } });
+  const conflict = await handlers.post(request({ action: "document", status: "limited", expectedFactManifestHash: "", document: changed }), { params: { publicId: PUBLIC_ID } });
   assert.equal(conflict.status, 409);
   assert.equal(saves, 0);
 });
@@ -409,7 +413,7 @@ test("terminal failures refuse new events and documents", async () => {
     save: async () => { writes += 1; },
   }, TOKEN);
   const event = await handlers.post(request({ action: "event", idempotencyKey: "late-event", phase: "crawl", status: "running", message: "Late callback." }), { params: { publicId: PUBLIC_ID } });
-  const document = await handlers.post(request({ action: "document", status: "complete", document: { primaryDomain: "myjam.co.uk", document: { blocks: [] } } }), { params: { publicId: PUBLIC_ID } });
+  const document = await handlers.post(request({ action: "document", status: "complete", expectedFactManifestHash: "", document: { primaryDomain: "myjam.co.uk", document: { blocks: [] } } }), { params: { publicId: PUBLIC_ID } });
   assert.equal(event.status, 409);
   assert.equal(document.status, 409);
   assert.equal(writes, 0);

@@ -1,5 +1,5 @@
 import { canonicalDomain } from "./domain.ts";
-import type { DiscoveryCandidate, DiscoveryProvenance } from "./competitor-discovery.ts";
+import type { DiscoveryCandidate, DiscoveryProvenance, InferredProductLead } from "./competitor-discovery.ts";
 import type { ApplicationDatabase, DatabasePreparedStatement } from "./database-contract.ts";
 import { runtimeDatabase } from "./runtime-database.ts";
 
@@ -23,8 +23,9 @@ export type D1PreparedStatementLike = DatabasePreparedStatement;
 export type D1DatabaseLike = ApplicationDatabase;
 
 const MEMORY_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
-const MAX_INVESTIGATIONS = 6;
-const MAX_REMEMBERED_CANDIDATES = 3;
+const MAX_INVESTIGATIONS = 1_712;
+const MAX_REMEMBERED_CANDIDATES = 500;
+export const MAX_REMEMBERED_PRODUCT_EVIDENCE = 6_000;
 const schemaReady = new WeakMap<object, Promise<void>>();
 
 function clean(value: unknown, limit = 1_000) {
@@ -62,7 +63,7 @@ function candidateFromRecord(record: VerifiedCompetitorMemory): MemoryCandidate 
     const method = evidenceItem.method;
     if (!url || !["entity-search", "category-search", "product-search", "search-source"].includes(String(method))) return [];
     return [{ url, title: clean(evidenceItem.title, 300), method: method as "entity-search" | "category-search" | "product-search" | "search-source" }];
-  }).slice(0, 12) : [];
+  }).slice(0, MAX_REMEMBERED_PRODUCT_EVIDENCE) : [];
   return {
     domain,
     companyName: clean(item.companyName, 200) || domain,
@@ -74,11 +75,12 @@ function candidateFromRecord(record: VerifiedCompetitorMemory): MemoryCandidate 
     relationship: item.relationship === "adjacent" ? "adjacent" : "direct",
     sharedOfferings: strings(item.sharedOfferings),
     evidence,
-    mentionCount: Math.max(1, Math.min(20, Number(item.mentionCount) || evidence.length || 1)),
+    mentionCount: Math.max(1, Math.min(MAX_REMEMBERED_PRODUCT_EVIDENCE, Number(item.mentionCount) || evidence.length || 1)),
     matchedPrimaryProductName: clean(item.matchedPrimaryProductName, 200) || undefined,
     matchedProductUrl: safeUrl(item.matchedProductUrl) || undefined,
-    matchedPrimaryProductNames: strings(item.matchedPrimaryProductNames) || undefined,
-    matchedProductUrls: Array.isArray(item.matchedProductUrls) ? item.matchedProductUrls.map(safeUrl).filter(Boolean).slice(0, 12) : undefined,
+    matchedPrimaryProductNames: strings(item.matchedPrimaryProductNames, MAX_REMEMBERED_PRODUCT_EVIDENCE) || undefined,
+    matchedProductUrls: Array.isArray(item.matchedProductUrls) ? item.matchedProductUrls.map(safeUrl).filter(Boolean).slice(0, MAX_REMEMBERED_PRODUCT_EVIDENCE) : undefined,
+    inferredProductLeads: inferredProductLeads(item.inferredProductLeads, record.primaryDomain, domain),
     evidenceMethod: item.evidenceMethod === "search-source" ? "search-source" : "model-summarized",
     provenance: "remembered-reverified",
     rememberedVerifiedAt: record.lastVerifiedAt,
@@ -117,18 +119,106 @@ async function ensureSchema(database: D1DatabaseLike) {
   return pending;
 }
 
-export function mergeRememberedCandidates(fresh: DiscoveryCandidate[], remembered: MemoryCandidate[], limit = MAX_INVESTIGATIONS) {
+export function mergeRememberedCandidateCoverage(fresh: DiscoveryCandidate[], remembered: MemoryCandidate[], limit = MAX_INVESTIGATIONS) {
   const selected = new Map<string, MemoryCandidate>();
   const freshCandidates = fresh.map((candidate): MemoryCandidate => ({ ...candidate, provenance: "discovered-this-run" }));
   const rememberedFirst = remembered.slice(0, Math.min(MAX_REMEMBERED_CANDIDATES, Math.max(0, limit - Math.min(MAX_REMEMBERED_CANDIDATES, freshCandidates.length))));
   for (const candidate of rememberedFirst) if (!selected.has(canonicalDomain(candidate.domain))) selected.set(canonicalDomain(candidate.domain), candidate);
-  for (const candidate of freshCandidates) if (selected.size < limit && !selected.has(canonicalDomain(candidate.domain))) selected.set(canonicalDomain(candidate.domain), candidate);
-  return [...selected.values()].slice(0, limit);
+  for (const candidate of freshCandidates) {
+    const domain = canonicalDomain(candidate.domain);
+    const current = selected.get(domain);
+    if (!current) {
+      if (selected.size < limit) selected.set(domain, candidate);
+      continue;
+    }
+    const evidence = [...current.evidence, ...candidate.evidence]
+      .filter((item, index, all) => all.findIndex((other) => other.url === item.url && other.method === item.method) === index);
+    const matchedPrimaryProductNames = [...new Set([
+      ...(candidate.matchedPrimaryProductNames || (candidate.matchedPrimaryProductName ? [candidate.matchedPrimaryProductName] : [])),
+      ...(current.matchedPrimaryProductNames || (current.matchedPrimaryProductName ? [current.matchedPrimaryProductName] : [])),
+    ])].slice(0, MAX_REMEMBERED_PRODUCT_EVIDENCE);
+    const matchedProductUrls = [...new Set([
+      ...(candidate.matchedProductUrls || (candidate.matchedProductUrl ? [candidate.matchedProductUrl] : [])),
+      ...(current.matchedProductUrls || (current.matchedProductUrl ? [current.matchedProductUrl] : [])),
+    ])].slice(0, MAX_REMEMBERED_PRODUCT_EVIDENCE);
+    const inferredProductLeads = [...(candidate.inferredProductLeads || []), ...(current.inferredProductLeads || [])]
+      .filter((lead, index, all) => all.findIndex((other) => other.primaryProductId === lead.primaryProductId
+        && other.primarySourceUrl === lead.primarySourceUrl
+        && other.candidateSourceUrl === lead.candidateSourceUrl
+        && other.admission === lead.admission) === index)
+      .slice(0, MAX_REMEMBERED_PRODUCT_EVIDENCE);
+    selected.set(domain, {
+      ...current,
+      ...candidate,
+      evidence,
+      mentionCount: Math.max(current.mentionCount, candidate.mentionCount),
+      matchedPrimaryProductName: candidate.matchedPrimaryProductName || current.matchedPrimaryProductName,
+      matchedProductUrl: candidate.matchedProductUrl || current.matchedProductUrl,
+      matchedPrimaryProductNames,
+      matchedProductUrls,
+      inferredProductLeads,
+      provenance: "discovered-this-run",
+      rememberedVerifiedAt: current.rememberedVerifiedAt,
+    });
+  }
+  const freshDomains = new Set(freshCandidates.map((candidate) => canonicalDomain(candidate.domain)));
+  const candidates = [...selected.values()]
+    .sort((left, right) => Number(freshDomains.has(canonicalDomain(right.domain))) - Number(freshDomains.has(canonicalDomain(left.domain))))
+    .slice(0, limit);
+  let remaining = MAX_REMEMBERED_PRODUCT_EVIDENCE;
+  let freshTruncated = false;
+  let rememberedTruncated = false;
+  const bounded = candidates.map((candidate) => {
+    const urls = candidate.matchedProductUrls || (candidate.matchedProductUrl ? [candidate.matchedProductUrl] : []);
+    const leads = candidate.inferredProductLeads || [];
+    const seedUrls = [...new Set([...urls, ...leads.map((lead) => lead.candidateSourceUrl)])];
+    const allowed = new Set(seedUrls.slice(0, Math.max(0, remaining)));
+    remaining -= allowed.size;
+    if (allowed.size < seedUrls.length) {
+      if (freshDomains.has(canonicalDomain(candidate.domain))) freshTruncated = true;
+      else rememberedTruncated = true;
+    }
+    return {
+      ...candidate,
+      matchedProductUrls: urls.filter((url) => allowed.has(url)),
+      inferredProductLeads: leads.filter((lead) => allowed.has(lead.candidateSourceUrl)),
+    };
+  });
+  return { candidates: bounded, truncated: freshTruncated || rememberedTruncated, freshTruncated, rememberedTruncated };
+}
+
+function inferredProductLeads(value: unknown, primaryDomain: string, candidateDomain: string): InferredProductLead[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, MAX_REMEMBERED_PRODUCT_EVIDENCE).flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const item = entry as Record<string, unknown>;
+    const primaryProductId = clean(item.primaryProductId, 300);
+    const primarySourceUrl = safeUrl(item.primarySourceUrl);
+    const laneQuery = clean(item.laneQuery, 300);
+    const leadCandidateDomain = canonicalDomain(clean(item.candidateDomain, 300));
+    const candidateSourceUrl = safeUrl(item.candidateSourceUrl);
+    const admission = item.admission;
+    let primaryUrlDomain = "";
+    let candidateUrlDomain = "";
+    try { primaryUrlDomain = canonicalDomain(new URL(primarySourceUrl).hostname); } catch { return []; }
+    try { candidateUrlDomain = canonicalDomain(new URL(candidateSourceUrl).hostname); } catch { return []; }
+    if (!primaryProductId || !laneQuery || primaryUrlDomain !== canonicalDomain(primaryDomain)
+      || leadCandidateDomain !== canonicalDomain(candidateDomain) || candidateUrlDomain !== canonicalDomain(candidateDomain)
+      || !["inferred-cross-language", "source-first-cross-language", "model-structured-cross-language"].includes(String(admission))) return [];
+    return [{ primaryProductId, primarySourceUrl, laneQuery, candidateDomain: leadCandidateDomain, candidateSourceUrl, admission: admission as InferredProductLead["admission"] }];
+  }).filter((lead, index, all) => all.findIndex((other) => other.primaryProductId === lead.primaryProductId
+    && other.primarySourceUrl === lead.primarySourceUrl
+    && other.candidateSourceUrl === lead.candidateSourceUrl
+    && other.admission === lead.admission) === index);
+}
+
+export function mergeRememberedCandidates(fresh: DiscoveryCandidate[], remembered: MemoryCandidate[], limit = MAX_INVESTIGATIONS) {
+  return mergeRememberedCandidateCoverage(fresh, remembered, limit).candidates;
 }
 
 export async function loadRememberedCompetitors(primaryDomain: string, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
   const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
-  if (!database) return { available: false, candidates: [] as MemoryCandidate[], gap: "Competitor memory is not configured; fresh discovery was used." };
+  if (!database) return { available: false, candidates: [] as MemoryCandidate[], truncated: true, gap: "Competitor memory is not configured; fresh discovery was used, and a result shortfall cannot claim full market exhaustion." };
   try {
     await ensureSchema(database);
     const cutoff = new Date(now.getTime() - MEMORY_TTL_MS).toISOString();
@@ -144,14 +234,18 @@ export async function loadRememberedCompetitors(primaryDomain: string, now = new
       FROM verified_competitors
       WHERE primary_domain = ? AND last_verified_at >= ?
       ORDER BY last_verification_score DESC, last_verified_at DESC
-      LIMIT 3`).bind(canonicalDomain(primaryDomain), cutoff).all<VerifiedCompetitorMemory>();
-    const candidates = (response.results || []).flatMap((record) => {
+      LIMIT 501`).bind(canonicalDomain(primaryDomain), cutoff).all<VerifiedCompetitorMemory>();
+    const records = response.results || [];
+    const truncated = records.length > MAX_REMEMBERED_CANDIDATES;
+    const parsedCandidates = records.slice(0, MAX_REMEMBERED_CANDIDATES).flatMap((record) => {
       const candidate = candidateFromRecord(record);
       return candidate ? [candidate] : [];
     });
-    return { available: true, candidates, gap: "" };
+    const bounded = mergeRememberedCandidateCoverage([], parsedCandidates, MAX_REMEMBERED_CANDIDATES);
+    const coverageTruncated = truncated || bounded.truncated;
+    return { available: true, candidates: bounded.candidates, truncated: coverageTruncated, gap: coverageTruncated ? "Verified competitor memory exceeded the bounded 500-domain / 6,000-product-evidence carry-forward window; a result shortfall cannot claim full market exhaustion." : "" };
   } catch {
-    return { available: false, candidates: [] as MemoryCandidate[], gap: "Competitor memory was temporarily unavailable; fresh discovery was used." };
+    return { available: false, candidates: [] as MemoryCandidate[], truncated: true, gap: "Competitor memory was temporarily unavailable; fresh discovery was used, and a result shortfall cannot claim full market exhaustion." };
   }
 }
 
@@ -176,12 +270,13 @@ export async function rememberVerifiedCompetitors(primaryDomain: string, verifie
         evidence: candidate.evidence.flatMap((entry) => {
           const url = safeUrl(entry.url);
           return url ? [{ url, title: clean(entry.title, 300), method: entry.method }] : [];
-        }).slice(0, 12),
-        mentionCount: Math.max(1, Math.min(20, Number(candidate.mentionCount) || 1)),
+        }).slice(0, MAX_REMEMBERED_PRODUCT_EVIDENCE),
+        mentionCount: Math.max(1, Math.min(MAX_REMEMBERED_PRODUCT_EVIDENCE, Number(candidate.mentionCount) || 1)),
         matchedPrimaryProductName: clean(candidate.matchedPrimaryProductName, 200) || undefined,
         matchedProductUrl: safeUrl(candidate.matchedProductUrl) || undefined,
-        matchedPrimaryProductNames: strings(candidate.matchedPrimaryProductNames),
-        matchedProductUrls: Array.isArray(candidate.matchedProductUrls) ? candidate.matchedProductUrls.map(safeUrl).filter(Boolean).slice(0, 12) : undefined,
+        matchedPrimaryProductNames: strings(candidate.matchedPrimaryProductNames, MAX_REMEMBERED_PRODUCT_EVIDENCE),
+        matchedProductUrls: Array.isArray(candidate.matchedProductUrls) ? candidate.matchedProductUrls.map(safeUrl).filter(Boolean).slice(0, MAX_REMEMBERED_PRODUCT_EVIDENCE) : undefined,
+        inferredProductLeads: inferredProductLeads(candidate.inferredProductLeads, primary, candidate.domain),
         evidenceMethod: candidate.evidenceMethod === "search-source" ? "search-source" : "model-summarized",
       };
       return database.prepare(`INSERT INTO verified_competitors (

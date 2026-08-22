@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { investigationGapSourceUrl, rememberedReverificationFailures, resolvePrimaryDiscoveryPolicy, verifiedExactMatchHints, verifyDiscoveredCompetitor, verifyDiscoveredCompetitorWithInferredLeads, verifyInferredProductLead } from "../app/api/crawl/route.ts";
+import { competitorInvestigationComplete, finalizedDiscoveryCoverage, investigationGapSourceUrl, MAX_PRIMARY_CATALOG_PRODUCTS, rememberedReverificationFailures, resolvePrimaryDiscoveryPolicy, verifiedExactMatchHints, verifyDiscoveredCompetitor, verifyDiscoveredCompetitorWithInferredLeads, verifyInferredProductLead, verifyInferredProductLeads } from "../app/api/crawl/route.ts";
 import { resolveVerificationMarket } from "../app/lib/competitor-verification.ts";
 
 function product(domain, name) {
@@ -87,6 +87,10 @@ function rememberedCandidate() {
   };
 }
 
+test("the primary catalog screening bound is independent of the 20-result publication target", () => {
+  assert.equal(MAX_PRIMARY_CATALOG_PRODUCTS, 1_000);
+});
+
 test("route policy keeps ecommerce overlap mandatory when discovery is unavailable", () => {
   const primary = crawl("myjam.co.uk", [
     product("myjam.co.uk", "Halal Lamb Chops 500g"),
@@ -132,6 +136,22 @@ test("promotes only the exact structured, priced inferred product page after sem
   const unpriced = crawl("health.example", [{ ...rivalProduct, priceSignals: [] }]);
   const rejected = await verifyInferredProductLead(primary, unpriced, discovery, async () => { throw new Error("judge must not run"); });
   assert.equal(rejected, undefined);
+});
+
+test("one seller preserves more than twelve verified exact pairs as match hints", async () => {
+  const primaryProducts = Array.from({ length: 13 }, (_, index) => ({ ...product("myjam.co.uk", `Halal Product ${index} 500g`), id: `primary-${index}` }));
+  const rivalProducts = Array.from({ length: 13 }, (_, index) => ({ ...product("rival.example", `Halal Product ${index} 500g`), id: `rival-${index}`, extraction: "json-ld", ownership: "self-declared-brand", priceSignals: [{ raw: `GBP ${index + 1}`, currency: "GBP", amount: index + 1 }] }));
+  const discovery = {
+    ...rememberedCandidate(),
+    inferredProductLeads: primaryProducts.map((primary, index) => ({ primaryProductId: primary.id, primarySourceUrl: primary.sourceUrl, laneQuery: `halal product ${index}`, candidateDomain: "rival.example", candidateSourceUrl: rivalProducts[index].sourceUrl, admission: "inferred-cross-language" })),
+  };
+  const judge = async () => ({ rows: primaryProducts.map((primary, index) => ({ primary, matches: [{ domain: "rival.example", product: rivalProducts[index], confidence: "Medium", assessment: { verdict: "same_product", confidence: 0.95, contradictions: [] } }] })) });
+
+  assert.equal((await verifyInferredProductLeads(crawl("myjam.co.uk", primaryProducts), crawl("rival.example", rivalProducts), discovery, judge)).length, 13);
+  const verified = await verifyDiscoveredCompetitorWithInferredLeads(crawl("myjam.co.uk", primaryProducts), crawl("rival.example", rivalProducts), discovery, resolveVerificationMarket("United Kingdom", "United Kingdom"), true, judge);
+  const hints = verifiedExactMatchHints([verified]);
+  assert.equal(hints.length, 13);
+  assert.ok(hints.some((hint) => hint.primaryId === "primary-12" && hint.rivalDomain === "rival.example" && hint.rivalId === "rival-12"));
 });
 
 test("rejects inferred leads when the exact page is absent or the one-pair judge declines", async () => {
@@ -268,4 +288,45 @@ test("failed inference-only investigations never publish provisional search-resu
   assert.equal(investigationGapSourceUrl(candidate), "");
   candidate.discovery.observedAdmission = true;
   assert.equal(investigationGapSourceUrl(candidate), "https://health.example/products/unverified-honey");
+});
+
+test("discovery exhaustion fails closed on candidate truncation or nonterminal verification failure", () => {
+  const coverage = {
+    eligibleAnchors: 20, searchedAnchors: 20, startIndex: 0, endIndex: 20, truncated: false,
+    searchesComplete: true, candidateDomainsFound: 0, candidateDomainsInvestigated: 0,
+    candidateTruncated: false, verificationComplete: false, batchComplete: false, complete: false,
+  };
+  const verified = crawl("verified.example", []);
+  const timedOut = { ...crawl("timeout.example", []), homepage: null, gaps: [{ url: "https://timeout.example/", reason: "request timed out", observedAt: "2026-08-07T00:00:00.000Z" }] };
+  const terminal404 = { ...timedOut, gaps: [{ ...timedOut.gaps[0], reason: "homepage returned HTTP 404." }] };
+
+  const truncated = finalizedDiscoveryCoverage(coverage, 21, 20, Array(20).fill("fulfilled"), Array(20).fill(verified), true);
+  assert.equal(truncated.candidateTruncated, true);
+  assert.equal(truncated.complete, false);
+
+  const transient = finalizedDiscoveryCoverage(coverage, 2, 2, ["fulfilled", "fulfilled"], [verified, timedOut], true);
+  assert.equal(transient.verificationComplete, false);
+  assert.equal(transient.complete, false);
+  assert.equal(competitorInvestigationComplete(timedOut), false);
+
+  const terminal = finalizedDiscoveryCoverage(coverage, 2, 2, ["fulfilled", "fulfilled"], [verified, terminal404], true);
+  assert.equal(terminal.verificationComplete, true);
+  assert.equal(terminal.complete, true);
+  assert.equal(competitorInvestigationComplete(terminal404), true);
+
+  const seededTimeout = {
+    ...verified,
+    discovery: { matchedProductUrl: "https://verified.example/products/beef-cubes" },
+    gaps: [{ url: "https://verified.example/products/beef-cubes", reason: "request timed out", observedAt: "2026-08-07T00:00:00.000Z" }],
+  };
+  assert.equal(competitorInvestigationComplete(seededTimeout), false);
+  const seededProcessingFailure = {
+    ...verified,
+    discovery: { matchedProductUrl: "https://verified.example/products/beef-cubes" },
+    gaps: [{ url: "https://verified.example/products/beef-cubes", reason: "page processing failed before verification completed.", observedAt: "2026-08-07T00:00:00.000Z" }],
+  };
+  assert.equal(competitorInvestigationComplete(seededProcessingFailure), false);
+  const persistenceFailed = finalizedDiscoveryCoverage(coverage, 1, 1, ["fulfilled"], [verified], true, false);
+  assert.equal(persistenceFailed.batchComplete, false);
+  assert.equal(persistenceFailed.complete, false);
 });

@@ -11,6 +11,7 @@ import {
   type ProductIdentifiers,
 } from "./product-normalization.ts";
 import { stripInactiveHtmlMarkup } from "./active-html-markup.ts";
+import { publicHttpUrl } from "./public-url.ts";
 
 export type ProductPriceSignal = {
   raw: string;
@@ -47,6 +48,8 @@ export type ProductRecord = {
   aliases?: ProductAlias[];
   identifiers?: ProductIdentifiers;
   quantity?: CanonicalProductQuantity;
+  recoveryIdentityHash?: string;
+  assignmentComponentHash?: string;
 };
 
 const ISO_CURRENCIES = new Set<string>((() => {
@@ -124,7 +127,7 @@ export type ProductMatch = {
   };
   publication?: {
     priceEligible: boolean;
-    reason?: "insufficient-match-confidence" | "missing-valid-primary-price" | "missing-valid-rival-price" | "incompatible-price-currency" | "incompatible-market";
+    reason?: "insufficient-match-confidence" | "missing-valid-primary-price" | "missing-valid-rival-price" | "incompatible-price-currency" | "incompatible-market" | "outside-result-target";
   };
   excludedProduct?: ProductRecord;
 };
@@ -154,6 +157,11 @@ export type ProductComparison = {
     embeddingModel: string;
     promptVersion: string;
     primaryProductsAssessed: number;
+    primaryProductsScreened?: number;
+    resultTarget?: number;
+    publishedPrimaryProducts?: number;
+    resultShortfall?: number;
+    resultShortfallReason?: "bounded-candidate-pool-exhausted" | "processing-incomplete";
     candidatePairsAssessed: number;
     retrievalPairsScored: number;
     judgeCalls: number;
@@ -165,6 +173,7 @@ export type ProductComparison = {
     gaps: string[];
     selectedPrimaryIds?: string[];
     assessedPrimaryIds?: string[];
+    processedPrimaryIds?: string[];
     attempts?: number;
     primaryProductsSynchronized?: number;
     competitorProductsSynchronized?: number;
@@ -182,7 +191,15 @@ export type ProductComparison = {
     pagesTruncated?: boolean;
     batchCount?: number;
     failedBatchCount?: number;
-    gaps: Array<{ url: string; reason: string; productId?: string; role?: "primary" | "rival"; code?: string }>;
+    gaps: Array<{
+      url: string;
+      reason: string;
+      productId?: string;
+      role?: "primary" | "rival";
+      code?: string;
+      httpStatus?: number;
+      failureKind?: "robots" | "network" | "http" | "content" | "identity" | "adapter" | "redirect";
+    }>;
   };
   actionPlanning?: {
     method: "ai-grounded" | "deterministic-fallback";
@@ -239,6 +256,7 @@ const GENERIC_PRODUCT_IDENTITY_TOKENS = new Set([
   "\u0645\u062c\u0645\u0648\u0639\u0629", "\u062d\u0632\u0645\u0629", "\u0639\u0644\u0628\u0629", "\u0628\u0627\u0642\u0629", "\u0637\u0642\u0645", "\u0639\u0628\u0648\u0629",
 ].map((token) => bilingualNormalize(token)));
 const PRODUCT_ROUTE_SEGMENTS = new Set(["product", "products"]);
+const PRODUCT_SOURCE_ROUTE_SEGMENTS = new Set([...PRODUCT_ROUTE_SEGMENTS, "shop", "store"]);
 const LOCALE_PATH_PREFIX = /^[a-z]{2}(?:-[a-z]{2})?$/i;
 const BUSINESS_TYPE_ONLY_OFFERING = /^(?:content creation|mobile app|social media)$/i;
 const GENERIC_PAGE_NAME = /^(?:features?|platform|pricing|products?|services?|solutions?|plans?)$/i;
@@ -1011,7 +1029,7 @@ export function extractFirstPartyOfferings(input: FirstPartyOfferingInput) {
   return [...selected.values()];
 }
 
-export function extractProductsFromSitemap(document: string, domain: string, observedAt: string) {
+export function extractProductsFromSitemapWithCoverage(document: string, domain: string, observedAt: string) {
   const products: ProductRecord[] = [];
   for (const match of document.matchAll(/<url>([\s\S]*?)<\/url>/gi)) {
     const entry = match[1] || "";
@@ -1053,9 +1071,14 @@ export function extractProductsFromSitemap(document: string, domain: string, obs
       aliases: locale === "und" ? undefined : [{ name: boundedName, normalizedName: normalized(boundedName), locale, sourceUrl, extraction: "sitemap" }],
       quantity: parseCanonicalQuantity(name) || undefined,
     });
-    if (products.length >= 1_000) break;
+    if (products.length > 1_000) break;
   }
-  return selectPreferredProducts(products);
+  const selected = selectPreferredProducts(products);
+  return { products: selected.slice(0, 1_000), truncated: products.length > 1_000 || selected.length > 1_000 };
+}
+
+export function extractProductsFromSitemap(document: string, domain: string, observedAt: string) {
+  return extractProductsFromSitemapWithCoverage(document, domain, observedAt).products;
 }
 
 export function selectPreferredProducts(items: ProductRecord[]) {
@@ -1203,7 +1226,6 @@ function sourceMarketContext(value: string): PublicSourceMarketContext {
         if (country) countries.add(country);
         else unresolvedCountrySelector = true;
       }
-      break;
     }
     for (const [key, queryValue] of url.searchParams.entries()) {
       const normalizedKey = key.toLowerCase();
@@ -1215,7 +1237,10 @@ function sourceMarketContext(value: string): PublicSourceMarketContext {
       }
     }
     const pathSegments = url.pathname.split("/").filter(Boolean);
-    const productRouteIndex = pathSegments.findIndex((segment) => PRODUCT_ROUTE_SEGMENTS.has(segment.toLowerCase()));
+    const strictProductRouteIndex = pathSegments.findIndex((segment) => PRODUCT_ROUTE_SEGMENTS.has(segment.toLowerCase()));
+    const productRouteIndex = strictProductRouteIndex >= 0
+      ? strictProductRouteIndex
+      : pathSegments.findIndex((segment) => PRODUCT_SOURCE_ROUTE_SEGMENTS.has(segment.toLowerCase()));
     const selectorSegments = pathSegments.slice(0, productRouteIndex >= 0 ? productRouteIndex : Math.min(pathSegments.length, 1));
     for (const segment of selectorSegments) {
       const normalizedSegment = clean(segment).replace(/_/g, "-").toUpperCase();
@@ -1267,17 +1292,22 @@ export function publicSourceMarketCountryCode(value: string) {
   return publicSourceMarketEvidence(value).countryCode;
 }
 
-function canonicalProductSourceKey(product: ProductRecord) {
+export function canonicalProductSourceKey(product: ProductRecord) {
   try {
     const url = new URL(product.sourceUrl);
     const segments = url.pathname.split("/").filter(Boolean).map((segment) => {
       try { return decodeURIComponent(segment).toLowerCase(); } catch { return segment.toLowerCase(); }
     });
     const sourceMarket = publicSourceMarketContext(product.sourceUrl).contextKey;
-    if (segments.length > 2 && /^[a-z]{2}$/i.test(segments[0]) && PRODUCT_ROUTE_SEGMENTS.has(segments[1])) segments.shift();
-    const productIndex = segments.findIndex((segment) => PRODUCT_ROUTE_SEGMENTS.has(segment));
-    if (productIndex < 0 || !segments[productIndex + 1]) return "";
-    return `${canonicalHost(product.domain)}|${sourceMarket ? `@${sourceMarket}` : ""}/${segments.slice(productIndex).join("/")}`;
+    if (segments.length > 2 && /^[a-z]{2}$/i.test(segments[0]) && PRODUCT_SOURCE_ROUTE_SEGMENTS.has(segments[1])) segments.shift();
+    const strictProductIndex = segments.findIndex((segment) => PRODUCT_ROUTE_SEGMENTS.has(segment));
+    const productIndex = strictProductIndex >= 0
+      ? strictProductIndex
+      : segments.findIndex((segment) => segment === "shop" || segment === "store");
+    if (productIndex < 0) return "";
+    const productPath = segments.slice(productIndex + 1);
+    if (!productPath.length) return "";
+    return `${canonicalHost(product.domain)}|${sourceMarket ? `@${sourceMarket}` : ""}/product/${productPath.join("/")}`;
   } catch {
     return "";
   }
@@ -1701,7 +1731,7 @@ export function productDecision(primary: ProductRecord, candidate: ProductRecord
 export function buildProductComparison(primaryDomain: string, catalogs: Array<{ domain: string; products: ProductRecord[] }>, requiredSourceUrls: Record<string, string[]> = {}): ProductComparison {
   const canonicalPrimary = canonicalHost(primaryDomain);
   const maxPrimaryProducts = 1_000;
-  const maxRivalProducts = 600;
+  const maxRivalProducts = 5_000;
   const rowLimit = 80;
   const minimumCoverageRows = 16;
   const maxUnmatchedProductsPerDomain = 24;
@@ -1775,14 +1805,58 @@ export function buildProductComparison(primaryDomain: string, catalogs: Array<{ 
   };
 }
 
-function hasComparablePublicPrice(product: ProductRecord) {
+export function hasComparablePublicPrice(product: ProductRecord, now = Date.now()) {
   if (!product.priceSignals.length) return false;
+  try {
+    const source = new URL(publicHttpUrl(product.sourceUrl, false));
+    if (canonicalHost(source.hostname) !== canonicalHost(product.domain)) return false;
+  } catch {
+    return false;
+  }
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(product.observedAt)) return false;
+  const observedAt = Date.parse(product.observedAt);
+  if (!Number.isFinite(observedAt) || new Date(observedAt).toISOString() !== product.observedAt) return false;
+  const age = now - observedAt;
+  if (age < -(24 * 60 * 60 * 1_000) || age > (366 * 24 * 60 * 60 * 1_000)) return false;
+  return hasPriceCurrencyIntegrity(product);
+}
+
+export function hasPriceCurrencyIntegrity(product: ProductRecord) {
   const currencies = new Set<string>();
   for (const signal of product.priceSignals) {
     if (typeof signal.amount !== "number" || !Number.isFinite(signal.amount) || signal.amount <= 0 || !String(signal.raw || "").trim() || !isSupportedCurrency(signal.currency)) return false;
-    currencies.add(String(signal.currency).trim().toUpperCase());
+    const currency = String(signal.currency).trim().toUpperCase();
+    const parsed = priceSignal(signal.raw, currency);
+    const amountTolerance = Number.EPSILON * Math.max(1, Math.abs(signal.amount), Math.abs(parsed?.amount ?? 0)) * 16;
+    if (!parsed || parsed.currency !== currency || typeof parsed.amount !== "number" || Math.abs(parsed.amount - signal.amount) > amountTolerance) return false;
+    currencies.add(currency);
   }
-  return currencies.size === 1;
+  if (currencies.size !== 1) return false;
+  try {
+    const source = new URL(product.sourceUrl);
+    const selectors = [...source.searchParams.entries()]
+      .filter(([key]) => CURRENCY_QUERY_KEYS.has(key.toLowerCase()))
+      .map(([, value]) => clean(value).toUpperCase());
+    if (selectors.some((currency) => !isSupportedCurrency(currency))) return false;
+    const selectedCurrencies = new Set(selectors);
+    return selectedCurrencies.size <= 1 && (!selectedCurrencies.size || selectedCurrencies.has([...currencies][0]));
+  } catch {
+    return false;
+  }
+}
+
+export function hasComparablePublicPricePair(primary: ProductRecord, rival: ProductRecord, now = Date.now(), targetMarket = "") {
+  if (!hasComparablePublicPrice(primary, now) || !hasComparablePublicPrice(rival, now)) return false;
+  const primaryCurrency = String(primary.priceSignals[0]?.currency || "").trim().toUpperCase();
+  const rivalCurrency = String(rival.priceSignals[0]?.currency || "").trim().toUpperCase();
+  if (!primaryCurrency || primaryCurrency !== rivalCurrency) return false;
+  const primaryMarket = publicSourceMarketEvidence(primary.sourceUrl);
+  const rivalMarket = publicSourceMarketEvidence(rival.sourceUrl);
+  if (primaryMarket.conflict || rivalMarket.conflict) return false;
+  if ((primaryMarket.explicit && !primaryMarket.countryCode) || (rivalMarket.explicit && !rivalMarket.countryCode)) return false;
+  const normalizedTarget = /^[A-Z]{2}$/.test(targetMarket.toUpperCase()) ? targetMarket.toUpperCase() : "";
+  if (!normalizedTarget) return false;
+  return primaryMarket.countryCode === normalizedTarget && rivalMarket.countryCode === normalizedTarget;
 }
 
 function localeNeutralProductPageUrl(value: string) {
@@ -1806,6 +1880,13 @@ function compatibleFinalEnrichmentSource(left: ProductRecord, right: ProductReco
   if (leftMarket.contextKey && rightMarket.contextKey) return false;
   const leftRoute = localeNeutralProductPageUrl(left.sourceUrl);
   return Boolean(leftRoute && leftRoute === localeNeutralProductPageUrl(right.sourceUrl));
+}
+
+function compatibleFinalEnrichmentMarket(left: ProductRecord, right: ProductRecord) {
+  const leftMarket = publicSourceMarketContext(left.sourceUrl);
+  const rightMarket = publicSourceMarketContext(right.sourceUrl);
+  return !leftMarket.conflict && !rightMarket.conflict
+    && !(leftMarket.contextKey && rightMarket.contextKey && leftMarket.contextKey !== rightMarket.contextKey);
 }
 
 function safeProductSource(product: ProductRecord) {
@@ -1889,22 +1970,23 @@ export function planPreliminaryCatalogReconciliation(comparison: ProductComparis
   return { targets, totalEligible: eligible.length, truncated: eligible.length > targets.length };
 }
 
-export function planFinalProductEnrichmentTargets(comparison: ProductComparison, maxPages = 24) {
-  const boundedMax = Math.max(0, Math.min(1_000, Math.floor(maxPages)));
+export function planFinalProductEnrichmentTargets(comparison: ProductComparison, maxPages = 24, referenceTimeMs = Date.now()) {
+  const boundedMax = Math.max(0, Math.min(7_000, Math.floor(maxPages)));
   const marketCountryCode = /^[A-Z]{2}$/.test(String(comparison.marketCountryCode || "").toUpperCase())
     ? String(comparison.marketCountryCode).toUpperCase()
     : "";
   const eligible: ProductEnrichmentTarget[] = [];
   const seenTargets = new Set<string>();
   const deferredPriceTargets = new Set<string>();
+  const unschedulablePriceTargets = new Set<string>();
   const targetKey = (product: ProductRecord, sourceUrl: string) => `${canonicalHost(product.domain)}\n${product.id}\n${sourceUrl}`;
-  const add = (product: ProductRecord, role: ProductEnrichmentTarget["role"], pairScore: number, need: "price" | "image") => {
+  const add = (product: ProductRecord, role: ProductEnrichmentTarget["role"], pairScore: number, need: "price" | "image" | "comparison") => {
     if (product.jsonLdType !== "Product") return;
     const sourceUrl = safeProductSource(product);
-    const needsPrice = !hasComparablePublicPrice(product);
+    const needsPrice = !hasComparablePublicPrice(product, referenceTimeMs);
     const needsSecureImage = !/^https:\/\//i.test(product.imageUrl);
     const key = targetKey(product, sourceUrl);
-    if (!sourceUrl || (need === "price" ? !needsPrice : !needsSecureImage) || seenTargets.has(key)) return;
+    if (!sourceUrl || (need === "price" ? !needsPrice : need === "image" ? !needsSecureImage : false) || seenTargets.has(key)) return;
     seenTargets.add(key);
     deferredPriceTargets.delete(key);
     eligible.push({ domain: product.domain, sourceUrl, productId: product.id, expectedName: product.name, expectedType: product.jsonLdType, pairScore, role, ...(marketCountryCode ? { marketCountryCode } : {}) });
@@ -1921,44 +2003,67 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
       || left.domain.localeCompare(right.domain)
       || (left.product?.id || "").localeCompare(right.product?.id || "")),
   }));
-  const pairs = acceptedByRow.flatMap(({ row, rowIndex, accepted }) => accepted.map((match, matchIndex) => ({ row, rowIndex, match, matchIndex })))
-    .filter((pair): pair is typeof pair & { match: ProductMatch & { product: ProductRecord } } => Boolean(pair.match.product))
-    .sort((left, right) => right.match.score - left.match.score
-      || left.rowIndex - right.rowIndex
-      || left.match.domain.localeCompare(right.match.domain)
-      || left.match.product.id.localeCompare(right.match.product.id));
-  const strongest = pairs.filter((pair) => pair.matchIndex === 0);
-  const secondary = pairs.filter((pair) => pair.matchIndex > 0);
-  const schedulePair = (pair: (typeof pairs)[number]) => {
+  const rowGroups = acceptedByRow
+    .filter((group): group is typeof group & { accepted: Array<ProductMatch & { product: ProductRecord }> } => group.accepted.some((match) => Boolean(match.product)))
+    .sort((left, right) => (right.accepted[0]?.score || 0) - (left.accepted[0]?.score || 0) || left.rowIndex - right.rowIndex);
+  const missingForPair = (pair: { row: ProductComparison["rows"][number]; match: ProductMatch & { product: ProductRecord } }) => {
+    if (marketCountryCode && hasComparablePublicPricePair(pair.row.primary, pair.match.product, referenceTimeMs, marketCountryCode)) return { targets: [], blocked: false };
+    let blocked = false;
     const missing = [
       { product: pair.match.product, role: "rival" as const },
       { product: pair.row.primary, role: "primary" as const },
     ].flatMap((candidate) => {
-      if (hasComparablePublicPrice(candidate.product)) return [];
+      if (!marketCountryCode && hasComparablePublicPrice(candidate.product, referenceTimeMs)) return [];
       const sourceUrl = safeProductSource(candidate.product);
-      return sourceUrl && !seenTargets.has(targetKey(candidate.product, sourceUrl)) ? [{ ...candidate, sourceUrl }] : [];
+      if (candidate.product.jsonLdType !== "Product" || !sourceUrl) {
+        blocked = true;
+        unschedulablePriceTargets.add(`${canonicalHost(candidate.product.domain)}\n${candidate.product.id}\n${sourceUrl || "unsafe-source"}`);
+        return [];
+      }
+      return !seenTargets.has(targetKey(candidate.product, sourceUrl)) ? [{ ...candidate, sourceUrl }] : [];
     });
-    const uniqueMissing = missing.filter((candidate, index) => missing.findIndex((other) => targetKey(other.product, other.sourceUrl) === targetKey(candidate.product, candidate.sourceUrl)) === index);
-    if (eligible.length + uniqueMissing.length > boundedMax) {
-      uniqueMissing.forEach((candidate) => deferredPriceTargets.add(targetKey(candidate.product, candidate.sourceUrl)));
-      return;
-    }
-    uniqueMissing.forEach((candidate) => add(candidate.product, candidate.role, pair.match.score, "price"));
+    return { targets: missing.filter((candidate, index) => missing.findIndex((other) => targetKey(other.product, other.sourceUrl) === targetKey(candidate.product, candidate.sourceUrl)) === index), blocked };
   };
-  // Schedule each pair as an atomic, globally score-ranked unit. This never
-  // spends the last page on half of a two-page comparison and gives every
-  // row's strongest match priority over secondary matches.
-  pairs.forEach(schedulePair);
+  const schedulePair = (pair: { row: ProductComparison["rows"][number]; match: ProductMatch & { product: ProductRecord } }) => {
+    const { targets: uniqueMissing, blocked } = missingForPair(pair);
+    if (blocked) return false;
+    if (eligible.length + uniqueMissing.length > boundedMax) return false;
+    const before = eligible.length;
+    uniqueMissing.forEach((candidate) => add(candidate.product, candidate.role, pair.match.score, "comparison"));
+    return eligible.length - before === uniqueMissing.length;
+  };
+  // First give every primary row one completable candidate. Then spend the
+  // remaining price budget on secondary accepted rivals so a failed strongest
+  // page does not strand a row that has another independently priced option.
+  const selectedPairs: Array<{ row: ProductComparison["rows"][number]; match: ProductMatch & { product: ProductRecord } }> = [];
+  for (const group of rowGroups) {
+    const candidates = group.accepted
+      .filter((match): match is ProductMatch & { product: ProductRecord } => Boolean(match.product))
+      .map((match) => ({ row: group.row, match }));
+    const selected = candidates.find((pair) => schedulePair(pair));
+    if (selected) selectedPairs.push(selected);
+    else missingForPair(candidates[0]).targets.forEach((candidate) => deferredPriceTargets.add(targetKey(candidate.product, candidate.sourceUrl)));
+  }
+  const selectedKeys = new Set(selectedPairs.map((pair) => `${pair.row.primary.id}\n${pair.match.domain}\n${pair.match.product.id}`));
+  const secondaryPairs = rowGroups.flatMap((group) => group.accepted
+    .filter((match): match is ProductMatch & { product: ProductRecord } => Boolean(match.product))
+    .map((match) => ({ row: group.row, match })))
+    .filter((pair) => !selectedKeys.has(`${pair.row.primary.id}\n${pair.match.domain}\n${pair.match.product.id}`))
+    .sort((left, right) => right.match.score - left.match.score
+      || left.row.primary.id.localeCompare(right.row.primary.id)
+      || left.match.domain.localeCompare(right.match.domain));
+  for (const pair of secondaryPairs) {
+    if (!schedulePair(pair)) missingForPair(pair).targets.forEach((candidate) => deferredPriceTargets.add(targetKey(candidate.product, candidate.sourceUrl)));
+  }
   if (deferredPriceTargets.size === 0) {
-    for (const pair of strongest) {
+    for (const pair of selectedPairs) {
       add(pair.match.product, "rival", pair.match.score, "image");
       add(pair.row.primary, "primary", pair.match.score, "image");
     }
-    for (const pair of secondary) add(pair.match.product, "rival", pair.match.score, "image");
   }
 
   const targets = eligible.slice(0, boundedMax);
-  const totalEligible = eligible.length + deferredPriceTargets.size;
+  const totalEligible = eligible.length + deferredPriceTargets.size + unschedulablePriceTargets.size;
   return { targets, totalEligible, truncated: totalEligible > targets.length };
 }
 
@@ -1973,8 +2078,13 @@ function sameProductMarketContext(left: ProductRecord, right: ProductRecord) {
 }
 
 function sameProductIdentity(left: ProductRecord, right: ProductRecord) {
+  const comparableName = (value: string) => value.normalize("NFKC").toLowerCase()
+    .replace(/&|\band\b/gu, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .replace(/\s+/g, " ");
   return Boolean(sharedValidGtin(left.identifiers, right.identifiers))
-    || (left.normalizedName === right.normalizedName
+    || (comparableName(left.normalizedName) === comparableName(right.normalizedName)
       && (quantitiesEqual(left.quantity, right.quantity) || (!left.quantity && !right.quantity)));
 }
 
@@ -2059,10 +2169,10 @@ export function applyFinalProductEnrichment(
     } satisfies ProductIdentifiers;
   };
   const merge = (base: ProductRecord) => {
-    const fresh = products.find((product) => (product.id === base.id && sameProductMarketContext(product, base))
-      || (canonicalHost(product.domain) === canonicalHost(base.domain)
-        && compatibleFinalEnrichmentSource(product, base)
-        && sameProductIdentity(product, base)));
+    const fresh = products.find((product) => canonicalHost(product.domain) === canonicalHost(base.domain)
+      && sameProductIdentity(product, base)
+      && (compatibleFinalEnrichmentSource(product, base)
+        || (product.id === base.id && compatibleFinalEnrichmentMarket(product, base))));
     if (!fresh || isCatalogReplacementProduct(fresh)) return base;
     const secureImage = [fresh.imageUrl, base.imageUrl].find((value) => /^https:\/\//i.test(value));
     return {

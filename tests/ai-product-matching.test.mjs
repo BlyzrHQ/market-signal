@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildAIProductComparison, judgeBatchKey } from "../app/lib/ai-product-matching.ts";
+import { createHash } from "node:crypto";
+import { boundJudgeCandidatePairs, boundJudgeCandidatePairsWithCoverage, buildAIProductComparison, judgeBatchKey, MAX_COMPETITOR_PRODUCTS_PER_CATALOG, MAX_JUDGE_CANDIDATE_PAIRS, screenedComparisonFromJudgeCheckpoints } from "../app/lib/ai-product-matching.ts";
 import { hasValidObservedRivalPrice } from "../app/lib/product-intelligence.ts";
 import { publishPricedProductComparison } from "../app/lib/product-match-lifecycle.ts";
 
@@ -20,7 +21,7 @@ function product(id, domain, name, options = {}) {
     confidence: "High",
     sourceUrl: options.sourceUrl || `https://${domain}/products/${id}`,
     imageUrl: options.imageUrl || "",
-    observedAt: "2026-07-15T00:00:00.000Z",
+    observedAt: options.observedAt || "2026-07-15T00:00:00.000Z",
     claimIds: [`claim-${id}`],
     identifiers: options.identifiers,
     quantity: options.quantity,
@@ -177,7 +178,84 @@ test("a validated exact-pair pin survives primary and rival catalog limits", asy
   assert.equal(comparison.rows[0].matches[0].product?.id, pinnedRival.id);
 });
 
-test("an eligible pin wins global rival contention over a higher-confidence unpinned proposal", async () => {
+test("a fully screened catalog with no rival products is a completed empty match pool", async () => {
+  const primary = product("p-empty-rivals", "shop.test", "Sidr Honey 500g");
+  const comparison = await buildAIProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }], {}, {
+    apiKey: "",
+    fetch: async () => { throw new Error("an empty rival pool must not call the model"); },
+  });
+
+  assert.equal(comparison.matching?.method, "ai-hybrid");
+  assert.equal(comparison.matching?.available, true);
+  assert.deepEqual(comparison.matching?.selectedPrimaryIds, [primary.id]);
+  assert.deepEqual(comparison.matching?.processedPrimaryIds, [primary.id]);
+  assert.deepEqual(comparison.matching?.gaps, []);
+});
+
+test("candidate judging retains every pin while staying inside the global 6000-pair bound", () => {
+  const groups = Array.from({ length: 1_000 }, (_, primaryIndex) => {
+    const primary = product(`bounded-p-${primaryIndex}`, "shop.test", `Primary ${primaryIndex}`);
+    const count = primaryIndex < 750 ? 7 : 5;
+    return {
+      primary,
+      candidates: Array.from({ length: count }, (_, candidateIndex) => ({
+        product: product(`bounded-r-${primaryIndex}-${candidateIndex}`, `rival-${candidateIndex}.test`, `Rival ${primaryIndex} ${candidateIndex}`),
+        retrievalScore: 1,
+        lexicalScore: 1,
+        lexicalEligible: true,
+        semanticScore: 1,
+        identitySignal: true,
+      })),
+    };
+  });
+  const pins = groups.slice(0, 750).flatMap((group) => group.candidates.map((candidate) => ({ primaryId: group.primary.id, rivalDomain: candidate.product.domain, rivalId: candidate.product.id })));
+  const bounded = boundJudgeCandidatePairs(groups, pins, MAX_JUDGE_CANDIDATE_PAIRS);
+
+  assert.equal(pins.length, 5_250);
+  assert.equal(bounded.reduce((total, group) => total + group.candidates.length, 0), 6_000);
+  assert.equal(bounded.slice(0, 750).every((group) => group.candidates.length === 7), true);
+});
+
+test("candidate judging reports when pins consume capacity needed by ordinary backups", () => {
+  const primary = product("p-budget", "shop.test", "Primary");
+  const candidates = Array.from({ length: 7 }, (_, index) => ({
+    product: product(`r-budget-${index}`, "rival.test", `Rival ${index}`),
+    retrievalScore: 1,
+    lexicalScore: 1,
+    lexicalEligible: true,
+    semanticScore: 1,
+    identitySignal: true,
+  }));
+  const pins = candidates.slice(0, 6).map((candidate) => ({ primaryId: primary.id, rivalDomain: candidate.product.domain, rivalId: candidate.product.id }));
+  const bounded = boundJudgeCandidatePairsWithCoverage([{ primary, candidates }], pins, 6);
+
+  assert.equal(bounded.groups[0].candidates.length, 6);
+  assert.equal(bounded.truncated, true);
+});
+
+test("exact-pair backfill preserves more than twelve bounded pins", async () => {
+  const primaries = Array.from({ length: 13 }, (_, index) => product(`p-pin-${index}`, "shop.test", `Pinned Product ${index} 500g`));
+  const rivals = Array.from({ length: 13 }, (_, index) => product(`r-pin-${index}`, "rival.test", `Pinned Product ${index} 500g`, { price: { raw: `GBP ${index + 1}`, currency: "GBP", amount: index + 1 } }));
+  const judged = [];
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [0, 0] })) });
+    const request = JSON.parse(body.input[1].content);
+    judged.push(...request.groups.flatMap((group) => group.candidates.map((candidate) => `${group.primary.id}|${candidate.id}`)));
+    return response({ output_text: JSON.stringify({ assessments: request.groups.flatMap((group) => group.candidates.map((candidate) => ({ primaryId: group.primary.id, candidateId: candidate.id, verdict: "same_product", confidence: 0.95, reason: "Exact bounded backfill pair.", contradiction: "" }))) }) });
+  };
+  const pinnedPairs = primaries.map((primary, index) => ({ primaryId: primary.id, rivalDomain: "rival.test", rivalId: rivals[index].id }));
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: primaries },
+    { domain: "rival.test", products: rivals },
+  ], {}, { apiKey: "test", fetch, maxPrimaryProducts: 13, maxCandidatesPerPrimary: 13, maxCandidatesPerDomain: 13, maxProductsPerCompetitor: 13, pinnedPairs });
+
+  assert.equal(judged.length, 13);
+  assert.equal(comparison.rows.filter((row) => row.matches[0]?.product).length, 13);
+  assert.ok(judged.includes("p-pin-12|r-pin-12"));
+});
+
+test("an eligible pin is prioritized while the contended semantic backup remains available", async () => {
   const unpinnedPrimary = product("p-unpinned", "shop.test", "Sidr Honey 500g");
   const pinnedPrimary = product("p-pinned", "shop.test", "عسل سدر ٥٠٠ جرام");
   const rival = product("r-shared", "rival.test", "Sidr Honey 500g", { price: { raw: "GBP 8", currency: "GBP", amount: 8 } });
@@ -200,7 +278,7 @@ test("an eligible pin wins global rival contention over a higher-confidence unpi
   ], {}, { apiKey: "test", fetch, maxPrimaryProducts: 2, pinnedPairs: [{ primaryId: pinnedPrimary.id, rivalDomain: "rival.test", rivalId: rival.id }] });
 
   assert.equal(comparison.rows.find((row) => row.primary.id === pinnedPrimary.id)?.matches[0].product?.id, rival.id);
-  assert.equal(comparison.rows.find((row) => row.primary.id === unpinnedPrimary.id)?.matches[0].product, null);
+  assert.equal(comparison.rows.find((row) => row.primary.id === unpinnedPrimary.id)?.matches[0].product?.id, rival.id);
 });
 
 test("a pinned deterministic pair still requires semantic confidence of at least 0.80", async () => {
@@ -303,7 +381,7 @@ test("low-confidence close substitutes are not assigned without deterministic id
   assert.equal(comparison.coverage.assignedPairCount, 0);
 });
 
-test("localized rival URLs collapse to one physical product and one assignment", async () => {
+test("localized rival URLs collapse to one physical product while semantic backup edges remain available", async () => {
   const primaries = [
     product("p-vinegar-original", "shop.test", "Organic Apple Vinegar 500ml Original"),
     product("p-vinegar-unfiltered", "shop.test", "Organic Apple Vinegar 500ml Unfiltered"),
@@ -332,8 +410,8 @@ test("localized rival URLs collapse to one physical product and one assignment",
   ], {}, { apiKey: "test", fetch });
 
   assert.equal(comparison.matching?.competitorProductsSynchronized, 1);
-  assert.equal(comparison.coverage.assignedPairCount, 1);
-  assert.equal(comparison.rows.flatMap((row) => row.matches).filter((match) => match.product).length, 1);
+  assert.equal(comparison.coverage.assignedPairCount, 2);
+  assert.equal(comparison.rows.flatMap((row) => row.matches).filter((match) => match.product).length, 2);
 });
 
 test("validated GTIN retrieval is guaranteed without semantic or lexical overlap", async () => {
@@ -527,6 +605,123 @@ test("AI coverage is not limited to the lexical fallback's sixteen visible rows"
   assert.equal(comparison.rows.length, 20);
 });
 
+test("accepted proposals preserve contended backup edges for publication-time maximum matching", async () => {
+  const primaries = [
+    product("p-flexible", "shop.test", "Organic Apple Juice 1L"),
+    product("p-constrained", "shop.test", "Organic Apple Juice 1L Family Pack"),
+  ];
+  const rivals = [
+    product("r-shared", "rival.test", "Organic Apple Juice 1L"),
+    product("r-alternative", "rival.test", "Organic Apple Juice 1L Premium"),
+  ];
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, 0] })) });
+    const request = JSON.parse(body.input[1].content);
+    return response({ output_text: JSON.stringify({ assessments: request.groups.flatMap((group) => group.candidates.map((candidate) => ({
+      primaryId: group.primary.id,
+      candidateId: candidate.id,
+      verdict: group.primary.id === "p-constrained" && candidate.id === "r-alternative" ? "different_product" : "same_product",
+      confidence: candidate.id === "r-shared" ? 0.99 : 0.95,
+      reason: "Compatible observed product identity.",
+      contradiction: "",
+    }))) }) });
+  };
+
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: primaries },
+    { domain: "rival.test", products: rivals },
+  ], {}, { apiKey: "test", fetch });
+
+  assert.equal(comparison.rows.filter((row) => row.matches.some((match) => match.product)).length, 2);
+  assert.equal(comparison.coverage.assignedPairCount, 3);
+  assert.deepEqual(new Set(comparison.rows.flatMap((row) => row.matches.flatMap((match) => match.product ? [match.product.id] : []))), new Set(["r-shared", "r-alternative"]));
+});
+
+test("an ineligible contended edge cannot displace an eligible priced edge before publication", async () => {
+  const primaries = [
+    product("p-us", "shop.test", "Sidr Honey 500g", { price: { raw: "USD 10", currency: "USD", amount: 10 }, sourceUrl: "https://shop.test/products/sidr-honey?country=US" }),
+    product("p-ca", "shop.test", "Sidr Honey 500g Gift", { price: { raw: "CAD 12", currency: "CAD", amount: 12 }, sourceUrl: "https://shop.test/products/sidr-honey-gift?country=CA" }),
+  ];
+  const rivals = [
+    product("r-us", "rival.test", "Sidr Honey 500g", { price: { raw: "USD 8", currency: "USD", amount: 8 }, sourceUrl: "https://rival.test/products/sidr-honey?country=US" }),
+    product("r-ca", "rival.test", "Sidr Honey 500g Premium", { price: { raw: "CAD 9", currency: "CAD", amount: 9 }, sourceUrl: "https://rival.test/products/sidr-honey-premium?country=CA" }),
+  ];
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, 0] })) });
+    const request = JSON.parse(body.input[1].content);
+    return response({ output_text: JSON.stringify({ assessments: request.groups.flatMap((group) => group.candidates.map((candidate) => ({
+      primaryId: group.primary.id,
+      candidateId: candidate.id,
+      verdict: group.primary.id === "p-ca" && candidate.id === "r-ca" ? "different_product" : "same_product",
+      confidence: candidate.id === "r-us" ? 0.99 : 0.95,
+      reason: "Compatible observed identity.",
+      contradiction: "",
+    }))) }) });
+  };
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: primaries },
+    { domain: "rival.test", products: rivals },
+  ], {}, { apiKey: "test", fetch, marketCountryCode: "US", referenceTimeMs: Date.parse("2026-08-22T00:00:00.000Z") });
+
+  const usEdges = comparison.rows.find((row) => row.primary.id === "p-us").matches.flatMap((match) => match.product ? [match.product.id] : []);
+  const caEdges = comparison.rows.find((row) => row.primary.id === "p-ca").matches.flatMap((match) => match.product ? [match.product.id] : []);
+  assert.deepEqual(new Set(usEdges), new Set(["r-us", "r-ca"]));
+  assert.deepEqual(caEdges, ["r-us"]);
+});
+
+test("the bounded backfill pool judges already-priced product pairs before unpriced ties", async () => {
+  const pricedPrimary = product("z-priced", "shop.test", "Sidr Honey 500g", { price: { raw: "GBP 10", currency: "GBP", amount: 10 } });
+  const unpricedPrimary = product("a-unpriced", "shop.test", "Sidr Honey 500g");
+  const pricedRival = product("r-priced", "rival.test", "Sidr Honey 500g", { price: { raw: "GBP 8", currency: "GBP", amount: 8 } });
+  let judgedPrimaryId = "";
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, 0] })) });
+    const request = JSON.parse(body.input[1].content);
+    judgedPrimaryId = request.groups[0].primary.id;
+    return response({ output_text: JSON.stringify({ assessments: request.groups[0].candidates.map((candidate) => ({
+      primaryId: judgedPrimaryId,
+      candidateId: candidate.id,
+      verdict: "same_product",
+      confidence: 0.99,
+      reason: "Same observed offer.",
+      contradiction: "",
+    })) }) });
+  };
+
+  await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [unpricedPrimary, pricedPrimary] },
+    { domain: "rival.test", products: [pricedRival] },
+  ], {}, { apiKey: "test", fetch, maxPrimaryProducts: 1, maxCandidatesPerPrimary: 1 });
+
+  assert.equal(judgedPrimaryId, "z-priced");
+});
+
+test("the bounded backfill pool prioritizes fresh target-market priced pairs", async () => {
+  const viablePrimary = product("z-viable", "shop.test", "Sidr Honey 500g", { price: { raw: "GBP 10", currency: "GBP", amount: 10 }, sourceUrl: "https://shop.test/en-gb/products/viable" });
+  const stalePrimary = product("a-stale", "shop.test", "Sidr Honey 500g", { price: { raw: "GBP 10", currency: "GBP", amount: 10 }, observedAt: "2020-01-01T00:00:00.000Z" });
+  const ukRival = product("r-uk", "rival.test", "Sidr Honey 500g", { price: { raw: "GBP 8", currency: "GBP", amount: 8 }, sourceUrl: "https://rival.test/en-gb/products/honey" });
+  const usRival = product("r-us", "other.test", "Sidr Honey 500g", { price: { raw: "USD 8", currency: "USD", amount: 8 }, sourceUrl: "https://other.test/en-us/products/honey" });
+  let judgedPrimaryId = "";
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, 0] })) });
+    const request = JSON.parse(body.input[1].content);
+    judgedPrimaryId = request.groups[0].primary.id;
+    return response({ output_text: JSON.stringify({ assessments: request.groups[0].candidates.map((candidate) => ({ primaryId: judgedPrimaryId, candidateId: candidate.id, verdict: "no_match", confidence: 0.99, reason: "Test selection.", contradiction: "" })) }) });
+  };
+
+  await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [stalePrimary, viablePrimary] },
+    { domain: "rival.test", products: [ukRival] },
+    { domain: "other.test", products: [usRival] },
+  ], {}, { apiKey: "test", fetch, maxPrimaryProducts: 1, maxCandidatesPerPrimary: 2, referenceTimeMs: Date.parse("2026-07-20T00:00:00.000Z"), marketCountryCode: "GB" });
+
+  assert.equal(judgedPrimaryId, "z-viable");
+});
+
 test("candidate retrieval performs an exact semantic scan across the bounded catalogs", async () => {
   const primaryProducts = Array.from({ length: 10 }, (_, index) => product(`p${index}`, "shop.test", `Primary ${index}`));
   const rivalProducts = Array.from({ length: 500 }, (_, index) => product(`r${index}`, "rival.test", `Rival ${index}`));
@@ -612,7 +807,167 @@ test("judge batches are bounded by candidate-pair count across many competitor d
   assert.ok(pairCounts.every((count) => count <= 25));
 });
 
-test("the fixed two-slot budget follows the strongest candidates instead of forcing domain diversity", async () => {
+test("one primary with more than 25 pins is split into complete bounded judge batches", async () => {
+  const primary = product("p-many-pins", "shop.test", "Beef Cubes Halal 500g");
+  const rivals = Array.from({ length: 26 }, (_, index) => product(`r-many-${index}`, "rival.test", `Beef Cubes Halal 500g option ${index}`, { price: { raw: `GBP ${index + 1}`, currency: "GBP", amount: index + 1 } }));
+  const pairCounts = [];
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, index / 100] })) });
+    const request = JSON.parse(body.input[1].content);
+    pairCounts.push(request.groups.reduce((sum, group) => sum + group.candidates.length, 0));
+    return response({ output_text: JSON.stringify({ assessments: request.groups.flatMap((group) => group.candidates.map((candidate) => ({ primaryId: group.primary.id, candidateId: candidate.id, verdict: "no_match", confidence: 0.99, reason: "Bounded split test.", contradiction: "" }))) }) });
+  };
+
+  const comparison = await buildAIProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "rival.test", products: rivals }], {}, {
+    apiKey: "test",
+    fetch,
+    maxPrimaryProducts: 1,
+    maxCandidatesPerPrimary: 26,
+    maxCandidatesPerDomain: 26,
+    maxProductsPerCompetitor: 26,
+    maxRetrievalPoolPerDomain: 26,
+    maxPairsPerJudgeCall: 25,
+    pinnedPairs: rivals.map((rival) => ({ primaryId: primary.id, rivalDomain: "rival.test", rivalId: rival.id })),
+  });
+
+  assert.deepEqual(pairCounts, [25, 1]);
+  assert.equal(comparison.matching?.primaryProductsAssessed, 1);
+  assert.equal(comparison.matching?.totalJudgeBatches, 2);
+});
+
+test("the default retrieval budget judges five viable candidates for one primary product", async () => {
+  const primary = product("five-p", "shop.test", "Beef Cubes Halal 500g");
+  const rivals = Array.from({ length: 5 }, (_, index) => product(
+    `five-r${index}`,
+    "rival.test",
+    `Beef Cubes Halal 500g option ${index}`,
+  ));
+  let judgedCandidateIds = [];
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, index / 100] })) });
+    const request = JSON.parse(body.input[1].content);
+    judgedCandidateIds = request.groups[0].candidates.map((candidate) => candidate.id);
+    return response({ output_text: JSON.stringify({ assessments: request.groups[0].candidates.map((candidate) => ({
+      primaryId: primary.id,
+      candidateId: candidate.id,
+      verdict: "no_match",
+      confidence: 0.99,
+      reason: "Test assessment.",
+      contradiction: "",
+    })) }) });
+  };
+
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [primary] },
+    { domain: "rival.test", products: rivals },
+  ], {}, { apiKey: "test", fetch });
+
+  assert.equal(judgedCandidateIds.length, 5);
+  assert.equal(new Set(judgedCandidateIds).size, 5);
+  assert.equal(comparison.matching?.candidatePairsAssessed, 5);
+});
+
+test("one exact pin supplements rather than displaces the five ordinary candidates", async () => {
+  const primary = product("pin-plus-five-p", "shop.test", "Beef Cubes Halal 500g");
+  const rivals = Array.from({ length: 6 }, (_, index) => product(`pin-plus-five-r${index}`, "rival.test", `Beef Cubes Halal 500g option ${index}`));
+  let judgedCandidateIds = [];
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, index / 100] })) });
+    const request = JSON.parse(body.input[1].content);
+    judgedCandidateIds = request.groups[0].candidates.map((candidate) => candidate.id);
+    return response({ output_text: JSON.stringify({ assessments: request.groups[0].candidates.map((candidate) => ({ primaryId: primary.id, candidateId: candidate.id, verdict: "no_match", confidence: 0.99, reason: "Test assessment.", contradiction: "" })) }) });
+  };
+
+  const comparison = await buildAIProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "rival.test", products: rivals }], {}, {
+    apiKey: "test",
+    fetch,
+    pinnedPairs: [{ primaryId: primary.id, rivalDomain: "rival.test", rivalId: rivals[5].id }],
+  });
+
+  assert.equal(judgedCandidateIds.length, 6);
+  assert.equal(new Set(judgedCandidateIds).size, 6);
+  assert.equal(comparison.matching?.candidatePairsAssessed, 6);
+});
+
+test("the matcher default admits the complete single-seller 6000-product universe", () => {
+  assert.equal(MAX_COMPETITOR_PRODUCTS_PER_CATALOG, 6_000);
+});
+
+test("accepted backup candidates survive matching until the final priced-result selection", async () => {
+  const primary = product("backup-p", "shop.example", "Beef Cubes Halal 500g", { price: { raw: "GBP 10", currency: "GBP", amount: 10 }, sourceUrl: "https://shop.example/products/beef?country=GB" });
+  const unpriced = product("backup-r1", "rival.example", "Beef Cubes Halal 500g", { sourceUrl: "https://rival.example/products/beef-one?country=GB" });
+  const priced = product("backup-r2", "rival.example", "Beef Cubes Halal 500g", { price: { raw: "GBP 8", currency: "GBP", amount: 8 }, sourceUrl: "https://rival.example/products/beef-two?country=GB" });
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, index / 100] })) });
+    const request = JSON.parse(body.input[1].content);
+    return response({ output_text: JSON.stringify({ assessments: request.groups[0].candidates.map((candidate) => ({ primaryId: primary.id, candidateId: candidate.id, verdict: "same_product", confidence: candidate.id === unpriced.id ? 0.99 : 0.98, reason: "Same observed product identity.", contradiction: "" })) }) });
+  };
+
+  const screened = await buildAIProductComparison("shop.example", [
+    { domain: "shop.example", products: [primary] },
+    { domain: "rival.example", products: [unpriced, priced] },
+  ], {}, { apiKey: "test", fetch, maxCandidatesPerPrimary: 2, maxCandidatesPerDomain: 2, marketCountryCode: "GB" });
+  assert.deepEqual(screened.rows[0].matches.flatMap((match) => match.product?.id || []), [unpriced.id, priced.id]);
+
+  screened.marketCountryCode = "GB";
+  const published = publishPricedProductComparison(screened, Date.parse("2026-08-01T00:00:00.000Z"));
+  assert.equal(published.rows[0].matches.find((match) => match.product?.id === priced.id)?.publication?.priceEligible, true);
+  assert.equal(published.rows[0].matches.find((match) => match.excludedProduct?.id === unpriced.id)?.publication?.reason, "missing-valid-rival-price");
+});
+
+test("products with no viable candidates still count as screened for honest exhaustion", async () => {
+  const primaries = Array.from({ length: 4 }, (_, index) => product(`empty-p${index}`, "shop.test", `Unique local item ${index}`));
+  const rival = product("empty-r", "rival.test", "Unrelated imported service");
+  let judgeCalls = 0;
+  const comparison = await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: primaries },
+    { domain: "rival.test", products: [rival] },
+  ], {}, {
+    apiKey: "test",
+    fetch: async (url, init) => {
+      const body = JSON.parse(init.body);
+      if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [0, 0] })) });
+      judgeCalls += 1;
+      return response({ output_text: JSON.stringify({ assessments: [] }) });
+    },
+    maxPrimaryProducts: 4,
+  });
+
+  assert.equal(judgeCalls, 0);
+  assert.equal(comparison.matching?.primaryProductsScreened, 4);
+  assert.deepEqual(comparison.matching?.selectedPrimaryIds, primaries.map((item) => item.id));
+  assert.equal(comparison.matching?.primaryProductsAssessed, 0);
+  assert.deepEqual(comparison.matching?.processedPrimaryIds, primaries.map((item) => item.id));
+  assert.equal(comparison.matching?.method, "ai-hybrid");
+});
+
+test("durable candidate-plan failures stop matching before any judge call", async () => {
+  const primary = product("durable-p", "shop.test", "Sidr Honey 500g");
+  const rival = product("durable-r", "rival.test", "Sidr Honey 500g");
+  for (const failure of ["load", "save"]) {
+    let judgeCalls = 0;
+    const comparison = await buildAIProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "rival.test", products: [rival] }], {}, {
+      apiKey: "test",
+      loadCandidatePlan: async () => { if (failure === "load") throw new Error("storage unavailable"); return null; },
+      saveCandidatePlan: async () => { if (failure === "save") throw new Error("storage unavailable"); },
+      fetch: async (url, init) => {
+        const body = JSON.parse(init.body);
+        if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, 0] })) });
+        judgeCalls += 1;
+        return response({ output_text: JSON.stringify({ assessments: [] }) });
+      },
+    });
+    assert.equal(judgeCalls, 0);
+    assert.equal(comparison.matching?.available, false);
+    assert.match(comparison.matching?.gaps.join(" ") || "", /candidate-plan/i);
+  }
+});
+
+test("the candidate budget follows the strongest candidates instead of forcing domain diversity", async () => {
   const primary = product("p1", "shop.test", "Organic Honey");
   const strong = [product("a1", "strong.test", "Organic Honey 500g"), product("a2", "strong.test", "Raw Organic Honey")];
   const weak = [product("b1", "weak.test", "Unrelated Soup"), product("b2", "weak.test", "Kitchen Towels")];
@@ -749,6 +1104,61 @@ test("checkpoint identity ignores nondeterministic retrieval-score drift", () =>
   assert.equal(retry.batchHash, first.batchHash);
 });
 
+test("a persisted candidate plan makes retries independent of embedding drift", async () => {
+  const primary = product("plan-p", "shop.test", "Organic Sidr Honey 500g");
+  const rivals = [
+    product("plan-r1", "rival.test", "Organic Sidr Honey 500g"),
+    product("plan-r2", "rival.test", "Raw Honey 500g"),
+    product("plan-r3", "rival.test", "Olive Oil 500ml"),
+  ];
+  let savedPlan;
+  let savedPlanKey;
+  const judged = [];
+  const run = async (retry) => buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [{ ...primary, observedAt: retry ? "2026-08-02T00:00:00.000Z" : primary.observedAt, imageUrl: retry ? "https://shop.test/new-image.jpg" : "", priceSignals: retry ? [{ raw: "GBP 12", currency: "GBP", amount: 12 }] : [] }] },
+    { domain: "rival.test", products: rivals.map((rival, index) => ({ ...rival, observedAt: retry ? "2026-08-02T00:00:00.000Z" : rival.observedAt, imageUrl: retry ? `https://rival.test/new-${index}.jpg` : "", priceSignals: retry ? [{ raw: `GBP ${8 + index}`, currency: "GBP", amount: 8 + index }] : [] })) },
+  ], {}, {
+    apiKey: "test",
+    maxCandidatesPerPrimary: 2,
+    referenceTimeMs: Date.parse("2026-08-01T00:00:00.000Z"),
+    loadCandidatePlan: async (key) => {
+      if (retry) assert.deepEqual(key, savedPlanKey);
+      return retry ? savedPlan : null;
+    },
+    saveCandidatePlan: async (key, plan) => { savedPlanKey = key; savedPlan = plan; },
+    fetch: async (url, init) => {
+      const body = JSON.parse(init.body);
+      if (String(url).endsWith("/embeddings")) {
+        if (retry) throw new Error("retry must reuse the persisted candidate plan");
+        return response({ data: body.input.map((_, index) => ({ index, embedding: index === 0 ? [1, 0] : [1, index / 10] })) });
+      }
+      const request = JSON.parse(body.input[1].content);
+      judged.push(request.groups.flatMap((group) => group.candidates.map((candidate) => candidate.id)));
+      return response({ output_text: JSON.stringify({ assessments: request.groups.flatMap((group) => group.candidates.map((candidate) => ({ primaryId: group.primary.id, candidateId: candidate.id, verdict: "no_match", confidence: 0.99, reason: "Different product.", contradiction: "" }))) }) });
+    },
+  });
+
+  const first = await run(false);
+  const second = await run(true);
+  assert.ok(savedPlan);
+  assert.deepEqual(judged[1], judged[0]);
+  assert.ok(first.matching.embeddingCalls > 0);
+  assert.equal(second.matching.embeddingCalls, 0);
+
+  const completePlan = savedPlan;
+  savedPlan = { ...savedPlan, candidatePairPoolTruncated: true };
+  savedPlan.contentHash = createHash("sha256").update(JSON.stringify({ groups: savedPlan.groups, candidatePairPoolTruncated: true })).digest("hex");
+  const poolTruncated = await run(true);
+  assert.match(poolTruncated.matching.gaps.join(" "), /omitted additional ordinary backup candidates/i);
+
+  savedPlan = completePlan;
+  savedPlan = { ...savedPlan, groups: savedPlan.groups.map((group) => ({ ...group, candidateKeys: group.candidateKeys.slice(1) })), candidatePairCount: savedPlan.groups.reduce((sum, group) => sum + Math.max(0, group.candidateKeys.length - 1), 0) };
+  const truncated = await run(true);
+  assert.equal(truncated.matching.available, false);
+  assert.match(truncated.matching.gaps.join(" "), /incomplete or invalid|truncated matching pool/i);
+  assert.equal(judged.length, 3);
+});
+
 test("replays complete deterministic judge checkpoints without another judge call", async () => {
   const primaries = Array.from({ length: 4 }, (_, index) => product(`checkpoint-p${index}`, "shop.test", `Checkpoint Item ${index}`));
   const rivals = primaries.map((_, index) => product(`checkpoint-r${index}`, "rival.test", `Checkpoint Item ${index}`));
@@ -794,9 +1204,14 @@ test("replays complete deterministic judge checkpoints without another judge cal
     { domain: "rival.test", products: rivals },
   ], {}, options);
   const callsAfterFirstRun = judgeCalls;
+  for (const [hash, checkpoint] of checkpoints) {
+    const legacy = structuredClone(checkpoint);
+    delete legacy.evidenceGroups;
+    checkpoints.set(hash, { ...legacy, version: 1 });
+  }
   const second = await buildAIProductComparison("shop.test", [
-    { domain: "shop.test", products: primaries },
-    { domain: "rival.test", products: rivals },
+    { domain: "shop.test", products: primaries.map((item) => ({ ...item, imageUrl: `https://shop.test/images/${item.id}-new.jpg`, priceSignals: [{ raw: "GBP 12", currency: "GBP", amount: 12 }], observedAt: "2026-08-02T00:00:00.000Z" })) },
+    { domain: "rival.test", products: rivals.map((item) => ({ ...item, imageUrl: `https://rival.test/images/${item.id}-new.jpg`, priceSignals: [{ raw: "GBP 10", currency: "GBP", amount: 10 }], observedAt: "2026-08-02T00:00:00.000Z" })) },
   ], {}, options);
 
   assert.equal(first.matching?.totalJudgeBatches, 2);
@@ -811,6 +1226,67 @@ test("replays complete deterministic judge checkpoints without another judge cal
   const firstLoadByIndex = new Map(loadedKeys.slice(0, 2).map((key) => [key.batchIndex, key.batchHash]));
   const replayLoadByIndex = new Map(loadedKeys.slice(2).map((key) => [key.batchIndex, key.batchHash]));
   assert.deepEqual(replayLoadByIndex, firstLoadByIndex);
+});
+
+test("durable judge evidence preserves accepted backup pairs within the checkpoint size bound", async () => {
+  const primary = product("evidence-p1", "shop.test", "Beef Cubes Halal 500g", {
+    price: { raw: "GBP 9", currency: "GBP", amount: 9 },
+    imageUrl: "https://shop.test/images/beef-cubes.jpg",
+  });
+  const rivals = Array.from({ length: 5 }, (_, index) => product(`evidence-r${index + 1}`, "rival.test", "Beef Cubes Halal 500g", {
+    price: { raw: `GBP ${8 - index / 10}`, currency: "GBP", amount: 8 - index / 10 },
+    imageUrl: `https://rival.test/images/beef-cubes-${index + 1}.jpg`,
+  }));
+  let savedCheckpoint = null;
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, index % 2] })) });
+    const request = JSON.parse(body.input[1].content);
+    return response({ output_text: JSON.stringify({ assessments: request.groups.flatMap((group) => group.candidates.map((candidate) => ({
+      primaryId: group.primary.id,
+      candidateId: candidate.id,
+      verdict: "same_product",
+      confidence: 0.98,
+      reason: "Same observed product and pack size.",
+      contradiction: "",
+    }))) }) });
+  };
+
+  await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [primary] },
+    { domain: "rival.test", products: rivals },
+  ], {}, {
+    apiKey: "test",
+    fetch,
+    maxPrimaryProducts: 1,
+    maxCandidatesPerPrimary: 5,
+    saveJudgeBatchCheckpoint: async (_key, checkpoint) => { savedCheckpoint = checkpoint; },
+  });
+
+  assert.ok(savedCheckpoint);
+  assert.ok(Buffer.byteLength(JSON.stringify(savedCheckpoint), "utf8") < 512 * 1024);
+  const screened = screenedComparisonFromJudgeCheckpoints("shop.test", [savedCheckpoint], "GB");
+  assert.equal(screened?.rows.length, 1);
+  assert.equal(screened?.rows[0].matches.length, 5);
+  assert.deepEqual(screened?.rows[0].matches.map((match) => match.product?.id).sort(), rivals.map((item) => item.id).sort());
+  assert.ok(screened?.rows[0].matches.every((match) => match.product && match.publication === undefined));
+
+  const historicalPrimary = { ...primary, name: "Beef Cubes Halal 1kg", normalizedName: "beef cubes halal 1kg", sourceUrl: "https://shop.test/products/beef-cubes-1kg", quantity: { value: 1_000, unit: "g", normalized: "1000g" } };
+  const historicalRival = product("evidence-old-rival", "rival.test", "Beef Cubes Halal 1kg", { price: { raw: "GBP 12", currency: "GBP", amount: 12 } });
+  let historicalCheckpoint = null;
+  await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [historicalPrimary] },
+    { domain: "rival.test", products: [historicalRival] },
+  ], {}, {
+    apiKey: "test",
+    fetch,
+    maxPrimaryProducts: 1,
+    maxCandidatesPerPrimary: 5,
+    saveJudgeBatchCheckpoint: async (_key, checkpoint) => { historicalCheckpoint = checkpoint; },
+  });
+  const separated = screenedComparisonFromJudgeCheckpoints("shop.test", [savedCheckpoint, historicalCheckpoint], "GB");
+  assert.equal(separated?.rows.length, 2);
+  assert.deepEqual(new Set(separated?.rows.map((item) => item.primary.sourceUrl)), new Set([primary.sourceUrl, historicalPrimary.sourceUrl]));
 });
 
 test("rejects malformed judge checkpoints and replaces them only with a complete live result", async () => {

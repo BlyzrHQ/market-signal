@@ -8,7 +8,7 @@ import { Worker } from "node:worker_threads";
 
 import { loadRememberedCompetitors, rememberVerifiedCompetitors } from "../app/lib/competitor-memory.ts";
 import { NodeSqliteDatabase } from "../app/lib/node-sqlite-database.ts";
-import { appendReportEvent, createReportRun, evaluateStoredReport, finalizeReportFactManifest, getReportEvaluation, getStoredReport, recoverInterruptedReport, saveReportDocument, saveReportFactChunk } from "../app/lib/report-store.ts";
+import { appendReportEvent, createReportRun, evaluateStoredReport, finalizeReportFactManifest, getReportEvaluation, getStoredReport, loadReportMatchBatchCheckpoints, recoverInterruptedReport, saveReportDocument, saveReportFactChunk, saveReportMatchBatchCheckpoint } from "../app/lib/report-store.ts";
 import { buildReportFactBundle, canonicalReportFact, reportFactHash } from "../src/shared/report-facts.ts";
 import { closeRuntimeDatabases, runtimeDatabase } from "../app/lib/runtime-database.ts";
 import { publicHttpUrl } from "../app/lib/public-url.ts";
@@ -26,6 +26,9 @@ test("report fact URLs reject intranet and non-global address variants", () => {
     assert.throws(() => publicHttpUrl(value), /Invalid report fact URL/);
   }
   assert.equal(publicHttpUrl("https://shop.example/product"), "https://shop.example/product");
+  assert.throws(() => publicHttpUrl(`https://shop.example/products/${"x".repeat(2_100)}`), /Invalid report fact URL/);
+  assert.throws(() => publicHttpUrl(`https://shop.example/products/a${" ".repeat(2_100)}b`), /Invalid report fact URL/);
+  assert.throws(() => publicHttpUrl((`https://shop.example/products/` + "界".repeat(1_000)).slice(0, 1_000), false, 1_000), /Invalid report fact URL/);
   for (const address of ["2606:4700:4700::1111", "2001:4860:4860::8888", "2410::1", "2610::1", "2620::1", "2630::1", "2a10::1", "2001:4860:4860:1:0:0:a00:1", "2001:4860:4860:1:0:5efe:a00:1"]) {
     assert.throws(() => publicHttpUrl(`https://[${address}]/`), /Invalid report fact URL/);
   }
@@ -90,6 +93,37 @@ test("report facts retain fresh prices observed after report creation", async ()
   assert.equal(fact.prices[0].currency, "USD");
 });
 
+test("authoritative facts preserve distinct legal 300-character product ids", async () => {
+  const observedAt = "2026-08-22T08:00:00.000Z";
+  const prefix = "x".repeat(299);
+  const ids = [`${prefix}a`, `${prefix}b`];
+  const products = ids.map((id, index) => ({
+    id, domain: "long-id.example", name: `Product ${index}`, normalizedName: `product ${index}`, description: "", category: "test", jsonLdType: "Product",
+    priceSignals: [], attributes: [], ownership: "path-inferred", extraction: "json-ld", confidence: "High",
+    sourceUrl: `https://long-id.example/products/${index}`, imageUrl: "", observedAt, claimIds: [],
+  }));
+  const bundle = await buildReportFactBundle({ publicId: "e".repeat(32), crawlResults: [{ domain: "long-id.example", role: "primary", homepage: { sourceUrl: "https://long-id.example/" }, products, fetchedAt: observedAt }], comparison: null, adBlock: null, observedAt });
+  const productFacts = bundle.chunks.filter((chunk) => chunk.kind === "products").flatMap((chunk) => chunk.items);
+
+  assert.equal(bundle.manifest.counts.products, 2);
+  assert.deepEqual(productFacts.map((item) => item.productId).sort(), ids.sort());
+  const matchFact = canonicalReportFact("matches", {
+    id: "long-id-match",
+    primaryProductId: ids[0],
+    rivalProductId: ids[1],
+    rivalDomain: "rival.example",
+    verdict: "same_product",
+    confidence: "High",
+    claimType: "inference",
+    model: "test",
+    promptVersion: "test",
+    evidence: {},
+    observedAt,
+  });
+  assert.equal(matchFact.primaryProductId, ids[0]);
+  assert.equal(matchFact.rivalProductId, ids[1]);
+});
+
 test("Node SQLite preserves reports and competitor memory after reopening", async () => {
   const { directory, databasePath } = await fixture();
   let database;
@@ -109,7 +143,7 @@ test("Node SQLite preserves reports and competitor memory after reopening", asyn
       status: "running",
       message: "Duplicate transport retry.",
     }, new Date("2026-07-27T00:01:01.000Z"), database);
-    await saveReportDocument(created.publicId, { blocks: [{ type: "summary", id: "summary", title: "Saved on the VPS" }] }, { status: "complete" }, new Date("2026-07-27T00:02:00.000Z"), database);
+    await saveReportDocument(created.publicId, { blocks: [{ type: "summary", id: "summary", title: "Saved on the VPS" }] }, { status: "complete", expectedFactManifestHash: "" }, new Date("2026-07-27T00:02:00.000Z"), database);
     const remembered = await rememberVerifiedCompetitors("myjam.co.uk", [{
       candidate: {
         domain: "oasismarket.co.uk",
@@ -211,7 +245,7 @@ test("full relational report facts survive snapshot compaction with replay-safe 
     assert.equal(finalized.replayed, false);
     assert.equal((await finalizeReportFactManifest(created.publicId, bundle.manifest, now, database)).replayed, true);
     assert.equal((await saveReportFactChunk(created.publicId, bundle.chunks[0], now, database)).replayed, true);
-    await saveReportDocument(created.publicId, { blocks: [{ type: "product-catalog", id: "catalog", products }] }, { status: "complete" }, now, database);
+    await saveReportDocument(created.publicId, { blocks: [{ type: "product-catalog", id: "catalog", products }] }, { status: "complete", expectedFactManifestHash: bundle.manifest.manifestHash }, now, database);
     const savedProducts = await database.prepare("SELECT COUNT(*) AS count FROM report_products").all();
     const savedMatches = await database.prepare("SELECT COUNT(*) AS count FROM report_matches").all();
     const savedAds = await database.prepare("SELECT COUNT(*) AS count FROM report_ads").all();
@@ -283,7 +317,7 @@ test("terminal report evaluation fails closed without facts and cannot break cus
   try {
     const now = new Date("2026-07-31T12:00:00.000Z");
     const created = await createReportRun({ primaryDomain: "service.example" }, now, database);
-    await saveReportDocument(created.publicId, { blocks: [{ type: "summary", title: "Service report" }] }, { status: "limited" }, now, database);
+    await saveReportDocument(created.publicId, { blocks: [{ type: "summary", title: "Service report" }] }, { status: "limited", expectedFactManifestHash: "" }, now, database);
     const evaluation = await getReportEvaluation(created.publicId, database);
     assert.equal(evaluation.status, "insufficient_facts");
     assert.equal(evaluation.ratingBasis, "none");
@@ -307,7 +341,7 @@ test("terminal report evaluation fails closed without facts and cannot break cus
     const now = new Date("2026-07-31T12:10:00.000Z");
     const created = await createReportRun({ primaryDomain: "durable.example" }, now, database);
     await database.prepare("DROP TABLE report_evaluations").run();
-    await saveReportDocument(created.publicId, { blocks: [{ type: "summary", title: "Still saved" }] }, { status: "complete" }, now, database);
+    await saveReportDocument(created.publicId, { blocks: [{ type: "summary", title: "Still saved" }] }, { status: "complete", expectedFactManifestHash: "" }, now, database);
     const report = await getStoredReport(created.publicId, now, database);
     assert.equal(report.run.status, "complete");
     assert.equal(report.document.blocks[0].title, "Still saved");
@@ -352,7 +386,7 @@ test("recoverable interrupted reports do not create permanent failure evaluation
     const started = new Date("2026-08-16T10:00:00.000Z");
     const created = await createReportRun({ primaryDomain: "recoverable.example" }, started, database);
     await appendReportEvent(created.publicId, { attemptNumber: 1, idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Collecting public pages." }, started, database);
-    const interrupted = await getStoredReport(created.publicId, new Date("2026-08-16T10:20:00.000Z"), database);
+    const interrupted = await getStoredReport(created.publicId, new Date("2026-08-16T10:45:00.000Z"), database);
     assert.equal(interrupted.run.status, "interrupted");
     assert.equal(await getReportEvaluation(created.publicId, database), null);
   } finally {
@@ -375,7 +409,7 @@ test("partial manifests can be atomically superseded while invalid domains and r
     const crawlResults = [{ domain: "shop.example", role: "primary", homepage: { sourceUrl: "https://shop.example/" }, products: [product], fetchedAt: now.toISOString() }];
     const bundle = await buildReportFactBundle({ publicId: created.publicId, crawlResults, comparison: null, adBlock: null, observedAt: now.toISOString(), attemptNumber: 2 });
     const retriedBundle = await buildReportFactBundle({ publicId: created.publicId, crawlResults, comparison: null, adBlock: null, observedAt: "2026-08-01T00:00:00.000Z", attemptNumber: 2 });
-    assert.equal(retriedBundle.manifest.manifestId, bundle.manifest.manifestId);
+    assert.notEqual(retriedBundle.manifest.manifestId, bundle.manifest.manifestId);
     for (const chunk of bundle.chunks) await saveReportFactChunk(created.publicId, chunk, now, database);
     await finalizeReportFactManifest(created.publicId, bundle.manifest, now, database);
     assert.deepEqual((await database.prepare("SELECT domain FROM report_companies ORDER BY domain").all()).results, [{ domain: "shop.example" }]);
@@ -543,7 +577,7 @@ test("stale workers cannot append progress or terminalize a recovered report dur
     await assert.rejects(appendReportEvent(created.publicId, { attemptNumber: 1, idempotencyKey: "stale-event", phase: "crawl", status: "running", message: "stale" }, now, racingDatabase), /stale/);
     assert.equal((await first.prepare("SELECT COUNT(*) AS count FROM report_events WHERE idempotency_key = 'stale-event'").all()).results[0].count, 0);
     nextAttempt = 3;
-    await assert.rejects(saveReportDocument(created.publicId, { blocks: [] }, { attemptNumber: 2, status: "complete" }, now, racingDatabase), /stale/);
+    await assert.rejects(saveReportDocument(created.publicId, { blocks: [] }, { attemptNumber: 2, status: "complete", expectedFactManifestHash: "" }, now, racingDatabase), /stale/);
     assert.equal((await first.prepare("SELECT COUNT(*) AS count FROM report_documents").all()).results[0].count, 0);
     assert.equal((await first.prepare("SELECT status, attempt_count FROM report_runs WHERE public_id = ?").bind(created.publicId).all()).results[0].status, "queued");
   } finally {
@@ -561,7 +595,7 @@ test("a replayed recovery cannot delete the new attempt's finalization lock", as
     const createdAt = new Date("2026-07-31T10:00:00.000Z");
     const created = await createReportRun({ primaryDomain: "recovery-race.example" }, createdAt, first);
     await appendReportEvent(created.publicId, { attemptNumber: 1, idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "running" }, new Date("2026-07-31T10:01:00.000Z"), first);
-    await getStoredReport(created.publicId, new Date("2026-07-31T10:20:00.000Z"), first);
+    await getStoredReport(created.publicId, new Date("2026-07-31T10:45:00.000Z"), first);
     const runId = (await first.prepare("SELECT id FROM report_runs WHERE public_id = ?").bind(created.publicId).all()).results[0].id;
     await first.prepare("INSERT INTO report_fact_manifests (run_id, manifest_id, attempt_number, manifest_hash, company_count, product_count, match_count, ad_count, status, lock_owner, locked_at, completed_at) VALUES (?, ?, 1, ?, 0, 0, 0, 0, 'finalizing', 'old', ?, '')").bind(runId, "1".repeat(64), "2".repeat(64), createdAt.toISOString()).run();
     let raced = false;
@@ -570,14 +604,14 @@ test("a replayed recovery cannot delete the new attempt's finalization lock", as
       batch: async (statements) => {
         if (!raced) {
           raced = true;
-          await recoverInterruptedReport(created.publicId, new Date("2026-07-31T10:21:00.000Z"), second);
+          await recoverInterruptedReport(created.publicId, new Date("2026-07-31T10:46:00.000Z"), second);
           await second.prepare("INSERT INTO report_fact_manifests (run_id, manifest_id, attempt_number, manifest_hash, company_count, product_count, match_count, ad_count, status, lock_owner, locked_at, completed_at) VALUES (?, ?, 2, ?, 0, 0, 0, 0, 'finalizing', 'new', ?, '')").bind(runId, "3".repeat(64), "4".repeat(64), createdAt.toISOString()).run();
           await second.prepare("UPDATE report_runs SET status = 'interrupted', current_phase = 'interrupted' WHERE id = ? AND attempt_count = 2").bind(runId).run();
         }
         return first.batch(statements);
       },
     };
-    await assert.rejects(recoverInterruptedReport(created.publicId, new Date("2026-07-31T10:21:01.000Z"), staleRecovery), /recovery attempt is stale/);
+    await assert.rejects(recoverInterruptedReport(created.publicId, new Date("2026-07-31T10:46:01.000Z"), staleRecovery), /recovery attempt is stale/);
     const manifest = (await first.prepare("SELECT attempt_number, lock_owner FROM report_fact_manifests WHERE run_id = ?").bind(runId).all()).results[0];
     assert.deepEqual(manifest, { attempt_number: 2, lock_owner: "new" });
   } finally {
@@ -645,6 +679,248 @@ test("manifest finalization rejects missing chunks and conflicting completed rep
     const productChunks = bulky.chunks.filter((chunk) => chunk.kind === "products");
     assert.ok(productChunks.length > 1);
     assert.ok(productChunks.every((chunk) => new TextEncoder().encode(JSON.stringify(chunk)).byteLength <= 250_000));
+    const legalPrimary = Array.from({ length: 1_000 }, (_, index) => ({ ...sparse, id: `legal-p${index}`, name: `Legal primary ${index}`, normalizedName: `legal primary ${index}`, description: "p".repeat(12_000), sourceUrl: `https://large.example/p/legal-${index}` }));
+    const legalRivals = Array.from({ length: 6_000 }, (_, index) => ({ ...sparse, id: `legal-r${index}`, domain: "rival.example", name: `Legal rival ${index}`, normalizedName: `legal rival ${index}`, description: "r".repeat(12_000), sourceUrl: `https://rival.example/p/legal-${index}` }));
+    const legalComparison = {
+      type: "product-comparison",
+      id: "products",
+      rows: legalPrimary.map((primary, primaryIndex) => ({
+        primary,
+        matches: legalRivals.slice(primaryIndex * 6, (primaryIndex + 1) * 6).map((rival) => ({
+          domain: rival.domain,
+          product: rival,
+          excludedProduct: null,
+          score: 0.99,
+          confidence: "High",
+          sharedTerms: ["same observed product"],
+          claimIds: [],
+          decision: null,
+          publication: { priceEligible: false, reason: "outside-result-target" },
+          assessment: { method: "ai-hybrid", claimType: "Inferred", verdict: "same_product", confidence: 0.99, model: "test", promptVersion: "test", reasons: ["Same observed sellable identity."], contradictions: [], primarySourceUrl: primary.sourceUrl, rivalSourceUrl: rival.sourceUrl },
+        })),
+      })),
+    };
+    const legalBundle = await buildReportFactBundle({ publicId: "d".repeat(32), crawlResults: [{ domain: "large.example", role: "primary", homepage: { sourceUrl: "https://large.example/" }, products: legalPrimary }], comparison: legalComparison, adBlock: null, observedAt: now.toISOString() });
+    assert.equal(legalBundle.manifest.counts.products, 7_000);
+    assert.equal(legalBundle.manifest.counts.matches, 6_000);
+    assert.ok(legalBundle.chunks.length > 320 && legalBundle.chunks.length <= 512);
+    const callbackOverflowProducts = Array.from({ length: 26_001 }, (_, index) => ({ ...sparse, id: `overflow-${index}`, name: `Overflow ${index}`, normalizedName: `overflow ${index}`, sourceUrl: `https://large.example/p/overflow-${index}` }));
+    await assert.rejects(buildReportFactBundle({ publicId: "c".repeat(32), crawlResults: [{ domain: "large.example", role: "primary", homepage: { sourceUrl: "https://large.example/" }, products: callbackOverflowProducts }], comparison: null, adBlock: null, observedAt: now.toISOString() }), /above the 512-callback orchestration budget/);
+  } finally {
+    database.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("stored report history retains the newest active-attempt events when the bounded window is full", async () => {
+  const { directory, databasePath } = await fixture();
+  let database;
+  try {
+    const now = new Date("2026-08-22T06:00:00.000Z");
+    database = await NodeSqliteDatabase.open(databasePath);
+    const created = await createReportRun({ primaryDomain: "history.example" }, now, database);
+    await database.prepare("UPDATE report_runs SET attempt_count = 2 WHERE id = ?").bind(created.id).run();
+    await database.prepare(`WITH RECURSIVE seq(n) AS (SELECT 2 UNION ALL SELECT n + 1 FROM seq WHERE n < 1002)
+      INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at)
+      SELECT ?, n, CASE WHEN n = 1002 THEN 'report-2-task-1-crawl-complete' ELSE 'history-' || n END,
+        'crawl', 'running', 'history', CASE WHEN n = 1002 THEN '{"discoveryStartIndex":0,"discoveryEndIndex":200,"discoveryBatchComplete":true}' ELSE '{}' END, ? FROM seq`).bind(created.id, now.toISOString()).run();
+
+    const stored = await getStoredReport(created.publicId, now, database);
+    assert.equal(stored.events.length, 1_000);
+    assert.equal(stored.events[0].sequence, 3);
+    assert.equal(stored.events.at(-1).idempotencyKey, "report-2-task-1-crawl-complete");
+  } finally {
+    await database?.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("recovery adopts an immutable completed fact snapshot for the new attempt", async () => {
+  const value = await fixture();
+  const database = await NodeSqliteDatabase.open(value.databasePath);
+  try {
+    const started = new Date("2026-08-16T10:00:00.000Z");
+    const created = await createReportRun({ primaryDomain: "recoverable.example" }, started, database);
+    await appendReportEvent(created.publicId, { attemptNumber: 1, idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Collecting public pages." }, started, database);
+    const bundle = await buildReportFactBundle({ publicId: created.publicId, crawlResults: [{ domain: "recoverable.example", role: "primary", homepage: { sourceUrl: "https://recoverable.example/" }, products: [], fetchedAt: started.toISOString() }], comparison: null, adBlock: null, observedAt: started.toISOString(), attemptNumber: 1 });
+    await saveReportMatchBatchCheckpoint(created.publicId, { attemptNumber: 1, batchIndex: 0, inputHash: "a".repeat(64), result: { assessments: [] } }, started, database);
+    await saveReportMatchBatchCheckpoint(created.publicId, { attemptNumber: 1, batchIndex: 1400, inputHash: "c".repeat(64), result: { assessments: [] } }, started, database);
+    await saveReportMatchBatchCheckpoint(created.publicId, { attemptNumber: 1, batchIndex: 3900, inputHash: "d".repeat(64), result: { candidatePlan: [] } }, started, database);
+    await saveReportMatchBatchCheckpoint(created.publicId, { attemptNumber: 1, batchIndex: 299, inputHash: "b".repeat(64), result: { enrichmentPlan: [] } }, started, database);
+    for (const chunk of bundle.chunks) await saveReportFactChunk(created.publicId, chunk, started, database);
+    await finalizeReportFactManifest(created.publicId, bundle.manifest, started, database);
+    const interrupted = await getStoredReport(created.publicId, new Date("2026-08-16T10:45:00.000Z"), database);
+    assert.equal(interrupted.run.status, "interrupted");
+
+    const recovered = await recoverInterruptedReport(created.publicId, new Date("2026-08-16T10:46:00.000Z"), database);
+    assert.equal(recovered.attemptCount, 2);
+    await appendReportEvent(created.publicId, { attemptNumber: 2, idempotencyKey: "report-2-task-1-crawl-started", phase: "crawl", status: "running", message: "Collecting public pages after recovery." }, new Date("2026-08-16T10:47:00.000Z"), database);
+    await appendReportEvent(created.publicId, { attemptNumber: 2, idempotencyKey: "report-2-task-2-matching-started", phase: "matching", status: "running", message: "Resuming matching in the second task attempt." }, new Date("2026-08-16T10:48:00.000Z"), database);
+    await saveReportMatchBatchCheckpoint(created.publicId, { attemptNumber: 2, batchIndex: 1650, inputHash: "e".repeat(64), result: { assessments: [{ fresh: true }] } }, new Date("2026-08-16T10:49:00.000Z"), database);
+    await saveReportMatchBatchCheckpoint(created.publicId, { attemptNumber: 2, batchIndex: 1400, inputHash: "f".repeat(64), result: { assessments: [{ current: true }] } }, new Date("2026-08-16T10:49:30.000Z"), database);
+    const heartbeat = await database.prepare("SELECT heartbeat_at FROM report_runs WHERE id = ?").bind(recovered.id).all();
+    assert.equal(heartbeat.results[0].heartbeat_at, "2026-08-16T10:48:00.000Z");
+    assert.deepEqual((await database.prepare("SELECT DISTINCT attempt_number FROM report_fact_chunks WHERE run_id = ?").bind(recovered.id).all()).results, [{ attempt_number: 2 }]);
+    assert.deepEqual((await database.prepare("SELECT attempt_number, status FROM report_fact_manifests WHERE run_id = ?").bind(recovered.id).all()).results, [{ attempt_number: 2, status: "complete" }]);
+    assert.deepEqual((await database.prepare("SELECT attempt_number, batch_index FROM report_match_batch_checkpoints WHERE run_id = ? ORDER BY attempt_number, batch_index").bind(recovered.id).all()).results, [{ attempt_number: 1, batch_index: 0 }, { attempt_number: 1, batch_index: 299 }, { attempt_number: 1, batch_index: 1400 }, { attempt_number: 1, batch_index: 3900 }, { attempt_number: 2, batch_index: 1400 }, { attempt_number: 2, batch_index: 1650 }]);
+    assert.deepEqual((await loadReportMatchBatchCheckpoints(created.publicId, { attemptNumber: 2 }, database)).map((checkpoint) => [checkpoint.attemptNumber, checkpoint.batchIndex]), [[2, 1400], [2, 1650], [1, 0], [1, 299], [1, 1400], [1, 3900]]);
+    assert.deepEqual((await loadReportMatchBatchCheckpoints(created.publicId, {
+      attemptNumber: 2,
+      batchIndexStart: 1400,
+      batchIndexEnd: 1650,
+      latestPerBatch: true,
+    }, database)).map((checkpoint) => [checkpoint.attemptNumber, checkpoint.batchIndex]), [[2, 1400], [2, 1650]]);
+  } finally {
+    database.close();
+    await rm(value.directory, { recursive: true, force: true });
+  }
+});
+
+test("recovery discards partial finalizing facts before an empty limited terminal save", async () => {
+  const value = await fixture();
+  const database = await NodeSqliteDatabase.open(value.databasePath);
+  try {
+    const started = new Date("2026-08-22T07:00:00.000Z");
+    const created = await createReportRun({ primaryDomain: "partial-facts.example" }, started, database);
+    await appendReportEvent(created.publicId, { attemptNumber: 1, idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Collecting public pages." }, started, database);
+    const bundle = await buildReportFactBundle({ publicId: created.publicId, crawlResults: [{ domain: "partial-facts.example", role: "primary", homepage: { sourceUrl: "https://partial-facts.example/" }, products: [], fetchedAt: started.toISOString() }], comparison: null, adBlock: null, observedAt: started.toISOString(), attemptNumber: 1 });
+    await saveReportFactChunk(created.publicId, bundle.chunks[0], started, database);
+    await database.prepare("INSERT INTO report_fact_manifests (run_id, manifest_id, attempt_number, manifest_hash, company_count, product_count, match_count, ad_count, status, lock_owner, locked_at, completed_at) VALUES (?, ?, 1, ?, ?, ?, ?, ?, 'finalizing', 'lost-worker', ?, '')")
+      .bind(created.id, bundle.manifest.manifestId, bundle.manifest.manifestHash, bundle.manifest.counts.companies, bundle.manifest.counts.products, bundle.manifest.counts.matches, bundle.manifest.counts.ads, started.toISOString()).run();
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM report_fact_chunks WHERE run_id = ?").bind(created.id).all()).results[0].count, 1);
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM report_companies WHERE run_id = ?").bind(created.id).all()).results[0].count, 1);
+    const interrupted = await getStoredReport(created.publicId, new Date("2026-08-22T07:45:00.000Z"), database);
+    assert.equal(interrupted.run.status, "interrupted");
+
+    const recovered = await recoverInterruptedReport(created.publicId, new Date("2026-08-22T07:46:00.000Z"), database);
+    assert.equal(recovered.attemptCount, 2);
+    for (const table of ["report_fact_chunks", "report_fact_manifests", "report_companies", "report_products", "report_matches", "report_ads"]) {
+      assert.equal((await database.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE run_id = ?`).bind(created.id).all()).results[0].count, 0, table);
+    }
+    const saved = await saveReportDocument(created.publicId, { blocks: [] }, { attemptNumber: 2, status: "limited", expectedFactManifestHash: "" }, new Date("2026-08-22T07:47:00.000Z"), database);
+    assert.equal(saved.status, "limited");
+  } finally {
+    database.close();
+    await rm(value.directory, { recursive: true, force: true });
+  }
+});
+
+test("recovery discards orphan fact chunks created before a manifest row", async () => {
+  const value = await fixture();
+  const database = await NodeSqliteDatabase.open(value.databasePath);
+  try {
+    const started = new Date("2026-08-22T08:00:00.000Z");
+    const created = await createReportRun({ primaryDomain: "orphan-facts.example" }, started, database);
+    await appendReportEvent(created.publicId, { attemptNumber: 1, idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Collecting public pages." }, started, database);
+    const bundle = await buildReportFactBundle({ publicId: created.publicId, crawlResults: [{ domain: "orphan-facts.example", role: "primary", homepage: { sourceUrl: "https://orphan-facts.example/" }, products: [], fetchedAt: started.toISOString() }], comparison: null, adBlock: null, observedAt: started.toISOString(), attemptNumber: 1 });
+    await saveReportFactChunk(created.publicId, bundle.chunks[0], started, database);
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM report_fact_manifests WHERE run_id = ?").bind(created.id).all()).results[0].count, 0);
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM report_fact_chunks WHERE run_id = ?").bind(created.id).all()).results[0].count, 1);
+    assert.equal((await getStoredReport(created.publicId, new Date("2026-08-22T08:45:00.000Z"), database)).run.status, "interrupted");
+
+    await recoverInterruptedReport(created.publicId, new Date("2026-08-22T08:46:00.000Z"), database);
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM report_fact_chunks WHERE run_id = ?").bind(created.id).all()).results[0].count, 0);
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM report_companies WHERE run_id = ?").bind(created.id).all()).results[0].count, 0);
+    const saved = await saveReportDocument(created.publicId, { blocks: [] }, { attemptNumber: 2, status: "limited", expectedFactManifestHash: "" }, new Date("2026-08-22T08:47:00.000Z"), database);
+    assert.equal(saved.status, "limited");
+  } finally {
+    database.close();
+    await rm(value.directory, { recursive: true, force: true });
+  }
+});
+
+test("final task-attempt processing incompleteness remains recoverable instead of becoming failed", async () => {
+  const value = await fixture();
+  const database = await NodeSqliteDatabase.open(value.databasePath);
+  try {
+    const started = new Date("2026-08-22T04:00:00.000Z");
+    const created = await createReportRun({ primaryDomain: "recoverable-incomplete.example" }, started, database);
+    await appendReportEvent(created.publicId, {
+      attemptNumber: 1,
+      idempotencyKey: "report-1-task-2-matching-task-retry",
+      phase: "matching",
+      status: "running",
+      message: "Product matching remained incomplete after the final bounded task attempt; no terminal report was published.",
+    }, new Date("2026-08-22T04:01:00.000Z"), database);
+
+    const interrupted = await getStoredReport(created.publicId, new Date("2026-08-22T04:45:00.000Z"), database);
+    assert.equal(interrupted.run.status, "interrupted");
+    assert.equal(interrupted.events.some((event) => event.status === "failed"), false);
+    const recovered = await recoverInterruptedReport(created.publicId, new Date("2026-08-22T04:46:00.000Z"), database);
+    assert.equal(recovered.status, "queued");
+    assert.equal(recovered.attemptCount, 2);
+  } finally {
+    database.close();
+    await rm(value.directory, { recursive: true, force: true });
+  }
+});
+
+test("report fact manifests use the stable report observation across retry timestamps", async () => {
+  const reportObservedAt = "2026-08-22T03:00:00.000Z";
+  const base = {
+    id: "retry", domain: "catalog.example", name: "Retry jacket", normalizedName: "retry jacket",
+    description: "", category: "apparel", jsonLdType: "Product",
+    priceSignals: [{ raw: "USD 20", currency: "USD", amount: 20 }], attributes: [],
+    ownership: "path-inferred", extraction: "json-ld", confidence: "High",
+    sourceUrl: "https://catalog.example/products/retry", imageUrl: "", claimIds: [],
+  };
+  const make = (observedAt) => buildReportFactBundle({ publicId: "d".repeat(32), crawlResults: [{ domain: "catalog.example", role: "primary", products: [{ ...base, observedAt }], fetchedAt: observedAt }], comparison: null, adBlock: null, observedAt: reportObservedAt });
+  const first = await make("2026-08-22T03:01:00.000Z");
+  const retry = await make("2026-08-22T03:06:00.000Z");
+  assert.equal(retry.manifest.manifestId, first.manifest.manifestId);
+  assert.equal(retry.manifest.manifestHash, first.manifest.manifestHash);
+  assert.ok(retry.chunks.every((chunk) => chunk.items.every((item) => item.snapshotObservedAt === reportObservedAt)));
+  const retryProduct = retry.chunks.find((chunk) => chunk.kind === "products").items[0];
+  assert.equal(retryProduct.observedAt, "2026-08-22T03:06:00.000Z");
+});
+
+test("document persistence CAS rejects a fact manifest finalized after the worker snapshot", async () => {
+  const { directory, databasePath } = await fixture();
+  const first = await NodeSqliteDatabase.open(databasePath);
+  const second = await NodeSqliteDatabase.open(databasePath);
+  try {
+    const now = new Date("2026-08-22T01:00:00.000Z");
+    const created = await createReportRun({ primaryDomain: "manifest-race.example" }, now, first);
+    const bundle = await buildReportFactBundle({ publicId: created.publicId, crawlResults: [{ domain: "manifest-race.example", role: "primary", homepage: { sourceUrl: "https://manifest-race.example/" }, products: [] }], comparison: null, adBlock: null, observedAt: now.toISOString() });
+    let armed = false;
+    let raced = false;
+    const racingDatabase = {
+      prepare: (query) => first.prepare(query),
+      batch: async (statements) => {
+        if (armed && !raced) {
+          raced = true;
+          for (const chunk of bundle.chunks) await saveReportFactChunk(created.publicId, chunk, now, second);
+          await finalizeReportFactManifest(created.publicId, bundle.manifest, now, second);
+        }
+        return first.batch(statements);
+      },
+    };
+    await getStoredReport(created.publicId, now, racingDatabase);
+    armed = true;
+    await assert.rejects(saveReportDocument(created.publicId, { blocks: [] }, { status: "complete", expectedFactManifestHash: "" }, now, racingDatabase), /stale|binding conflicts/i);
+    assert.equal(raced, true);
+    assert.equal((await first.prepare("SELECT COUNT(*) AS count FROM report_documents").all()).results[0].count, 0);
+    assert.equal((await first.prepare("SELECT status FROM report_runs WHERE public_id = ?").bind(created.publicId).all()).results[0].status, "queued");
+    assert.equal((await first.prepare("SELECT status FROM report_fact_manifests").all()).results[0].status, "complete");
+  } finally {
+    first.close();
+    second.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("document persistence rejects an empty manifest binding when partial fact chunks exist", async () => {
+  const { directory, databasePath } = await fixture();
+  const database = await NodeSqliteDatabase.open(databasePath);
+  try {
+    const now = new Date("2026-08-22T02:00:00.000Z");
+    const created = await createReportRun({ primaryDomain: "partial-facts.example" }, now, database);
+    const bundle = await buildReportFactBundle({ publicId: created.publicId, crawlResults: [{ domain: "partial-facts.example", role: "primary", homepage: { sourceUrl: "https://partial-facts.example/" }, products: [] }], comparison: null, adBlock: null, observedAt: now.toISOString() });
+    await saveReportFactChunk(created.publicId, bundle.chunks[0], now, database);
+
+    await assert.rejects(saveReportDocument(created.publicId, { blocks: [] }, { status: "complete", expectedFactManifestHash: "" }, now, database), /stale|binding conflicts/i);
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM report_documents").all()).results[0].count, 0);
+    assert.equal((await database.prepare("SELECT status FROM report_runs WHERE public_id = ?").bind(created.publicId).all()).results[0].status, "queued");
   } finally {
     database.close();
     await rm(directory, { recursive: true, force: true });

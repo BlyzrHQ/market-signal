@@ -47,6 +47,11 @@ test("internal report API authenticates and routes match batch checkpoint load/s
   assert.equal(loaded.status, 200);
   assert.deepEqual((await loaded.json()).checkpoints, [{ batchIndex: 3 }]);
   assert.deepEqual(store.calls.map((call) => call[0]), ["save", "load"]);
+
+  const invalidCursor = await handlers.post(request({ action: "match-batch-checkpoints-load", attemptNumber: 2, afterAttemptNumber: 2, limit: 20 }), context);
+  assert.equal(invalidCursor.status, 400);
+  const invalidLimit = await handlers.post(request({ action: "match-batch-checkpoints-load", attemptNumber: 2, limit: 21 }), context);
+  assert.equal(invalidLimit.status, 400);
 });
 
 test("internal report API rejects stale and terminal checkpoint callbacks", async () => {

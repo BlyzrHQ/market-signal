@@ -1,6 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createMatchHandler, MAX_MATCH_BODY_BYTES, parseCatalogs, parsePinnedPairs, productAnalysisBudgetMs, productAnalysisLimit } from "../app/api/match/route.ts";
+import { createHash } from "node:crypto";
+import { createMatchHandler, MAX_MATCH_BODY_BYTES, parseCatalogs, parsePinnedPairs, persistedCheckpointIndex, productAnalysisBudgetMs, productAnalysisConcurrency, productAnalysisLimit, productBackfillPoolSize } from "../app/api/match/route.ts";
+
+test("matching checkpoints have disjoint task-attempt namespaces", () => {
+  assert.equal(persistedCheckpointIndex(1, 0), 1_400);
+  assert.equal(persistedCheckpointIndex(1, 249), 1_649);
+  assert.equal(persistedCheckpointIndex(2, 0), 1_650);
+  assert.equal(persistedCheckpointIndex(10, 249), 3_899);
+  assert.equal(persistedCheckpointIndex(1, 999), 3_900);
+  assert.equal(persistedCheckpointIndex(10, 999), 3_909);
+  assert.throws(() => persistedCheckpointIndex(1, 250), /exceeds/i);
+});
 
 test("AI matching input keeps a broad but bounded first-party catalog", () => {
   const products = Array.from({ length: 605 }, (_, index) => ({
@@ -26,7 +37,7 @@ test("AI matching input keeps a broad but bounded first-party catalog", () => {
   const catalogs = parseCatalogs([{ domain: "shop.test", products }]);
 
   assert.equal(catalogs.length, 1);
-  assert.equal(catalogs[0].products.length, 600);
+  assert.equal(catalogs[0].products.length, 605);
   assert.equal(catalogs[0].products[0].imageUrl, "https://cdn.shopify.com/public-product.jpg");
   assert.ok(catalogs[0].products.every((product) => new URL(product.sourceUrl).hostname === "shop.test"));
 });
@@ -41,7 +52,7 @@ test("AI matching keeps up to 1,000 first-party products while rival catalogs re
   ], "shop.test");
 
   assert.equal(catalogs[0].products.length, 1_000);
-  assert.equal(catalogs[1].products.length, 600);
+  assert.equal(catalogs[1].products.length, 700);
 });
 
 test("product analysis limits are server-controlled, clamped, and receive scaled budgets", () => {
@@ -55,6 +66,16 @@ test("product analysis limits are server-controlled, clamped, and receive scaled
   assert.equal(productAnalysisBudgetMs(60), 90_000);
   assert.equal(productAnalysisBudgetMs(500), 360_000);
   assert.equal(productAnalysisBudgetMs(1_000), 720_000);
+  assert.equal(productAnalysisConcurrency(20), 3);
+  assert.equal(productAnalysisConcurrency(500), 6);
+  assert.equal(productAnalysisConcurrency(1_000), 12);
+  const worstEmbeddingWaves = Math.ceil(Math.ceil(4_000 / 256) / productAnalysisConcurrency(1_000));
+  const worstJudgeWaves = Math.ceil(Math.ceil((1_000 * 5) / 25) / productAnalysisConcurrency(1_000));
+  assert.ok((worstEmbeddingWaves + worstJudgeWaves) * 35_000 < productAnalysisBudgetMs(1_000));
+  assert.equal(productBackfillPoolSize(20), 1_000);
+  assert.equal(productBackfillPoolSize(50), 1_000);
+  assert.equal(productBackfillPoolSize(500), 1_000);
+  assert.equal(productBackfillPoolSize(1_000), 1_000);
 });
 
 test("catalog bounds retain valid pinned records beyond both ordinary limits", () => {
@@ -65,15 +86,15 @@ test("catalog bounds retain valid pinned records beyond both ordinary limits", (
   ], "shop.test", [{ primaryId: "p1009", rivalDomain: "rival.test", rivalId: "r609" }]);
 
   assert.equal(catalogs[0].products.length, 1_000);
-  assert.equal(catalogs[1].products.length, 600);
+  assert.equal(catalogs[1].products.length, 610);
   assert.ok(catalogs[0].products.some((item) => item.id === "p1009"));
   assert.ok(catalogs[1].products.some((item) => item.id === "r609"));
   assert.deepEqual(parsePinnedPairs([{ primaryId: "p1009", rivalDomain: "rival.test", rivalId: "r609" }], catalogs, "shop.test"), [{ primaryId: "p1009", rivalDomain: "rival.test", rivalId: "r609" }]);
 });
 
 test("rejects an oversized submitted catalog before pin scanning or allocation", () => {
-  const oversized = Array.from({ length: 5_001 }, (_, index) => ({ id: `p${index}`, name: `Product ${index}`, sourceUrl: `https://shop.test/products/${index}` }));
-  assert.deepEqual(parseCatalogs([{ domain: "shop.test", products: oversized }], "shop.test", [{ primaryId: "p5000", rivalDomain: "rival.test", rivalId: "r1" }]), []);
+  const oversized = Array.from({ length: 6_001 }, (_, index) => ({ id: `p${index}`, name: `Product ${index}`, sourceUrl: `https://shop.test/products/${index}` }));
+  assert.deepEqual(parseCatalogs([{ domain: "shop.test", products: oversized }], "shop.test", [{ primaryId: "p6000", rivalDomain: "rival.test", rivalId: "r1" }]), []);
 });
 
 test("bounds nested product arrays before normalization", () => {
@@ -136,6 +157,14 @@ test("rejects duplicate canonical catalog domains", () => {
   ], "shop.test"), []);
 });
 
+test("rejects an oversized rival catalog set instead of silently dropping later rivals", () => {
+  const catalogs = Array.from({ length: 1_714 }, (_, index) => ({
+    domain: `rival-${index}.test`,
+    products: [{ id: `r${index}`, name: `Product ${index}`, sourceUrl: `https://rival-${index}.test/products/${index}` }],
+  }));
+  assert.deepEqual(parseCatalogs(catalogs, "rival-0.test"), []);
+});
+
 test("rejects conflicting pins instead of silently dropping assignment contention", () => {
   const catalogs = parseCatalogs([
     { domain: "shop.test", products: [
@@ -170,13 +199,64 @@ test("pinned pairs reject mixed valid and invalid records without partial admiss
   ], catalogs, "shop.test"), [{ primaryId: "p1", rivalDomain: "rival.test", rivalId: "r1" }]);
 });
 
+test("the match boundary accepts more than twelve bounded exact-pair pins", () => {
+  const primaryProducts = Array.from({ length: 13 }, (_, index) => ({ id: `p${index}`, name: `Product ${index}`, sourceUrl: `https://shop.test/products/${index}` }));
+  const rivalProducts = Array.from({ length: 13 }, (_, index) => ({ id: `r${index}`, name: `Product ${index}`, sourceUrl: `https://rival.test/products/${index}` }));
+  const catalogs = parseCatalogs([
+    { domain: "shop.test", products: primaryProducts },
+    { domain: "rival.test", products: rivalProducts },
+  ], "shop.test");
+  const pins = primaryProducts.map((primary, index) => ({ primaryId: primary.id, rivalDomain: "rival.test", rivalId: rivalProducts[index].id }));
+
+  assert.equal(parsePinnedPairs(pins, catalogs, "shop.test").length, 13);
+});
+
+test("a single seller can retain the complete 6000-product pinned universe", () => {
+  const rivalProducts = Array.from({ length: 6_000 }, (_, index) => ({ id: `r${index}`, name: `Product ${index}`, sourceUrl: `https://rival.test/products/${index}` }));
+  const pin = { primaryId: "p1", rivalDomain: "rival.test", rivalId: "r5999" };
+  const catalogs = parseCatalogs([
+    { domain: "shop.test", products: [{ id: "p1", name: "Primary", sourceUrl: "https://shop.test/products/primary" }] },
+    { domain: "rival.test", products: rivalProducts },
+  ], "shop.test", [pin]);
+
+  assert.equal(catalogs.find((catalog) => catalog.domain === "rival.test")?.products.length, 6_000);
+  assert.deepEqual(parsePinnedPairs([pin], catalogs, "shop.test"), [pin]);
+});
+
+test("the 6000-product rival bound is global across submitted catalogs", () => {
+  const records = (count, domain, prefix) => Array.from({ length: count }, (_, index) => ({ id: `${prefix}${index}`, name: `Product ${index}`, sourceUrl: `https://${domain}/products/${index}` }));
+  const catalogs = parseCatalogs([
+    { domain: "shop.test", products: [{ id: "p1", name: "Primary", sourceUrl: "https://shop.test/products/primary" }] },
+    { domain: "rival-a.test", products: records(3_001, "rival-a.test", "a") },
+    { domain: "rival-b.test", products: records(3_000, "rival-b.test", "b") },
+  ], "shop.test");
+
+  assert.deepEqual(catalogs, []);
+});
+
 test("authenticated matching binds durable judge checkpoints to the active report attempt", async () => {
   const token = "test-callback-token-that-is-at-least-32-characters";
   const saved = [];
   let receivedOptions;
+  const priorPrimaryKey = "p".repeat(43);
+  const priorCandidateKey = "r".repeat(43);
+  const priorGroups = [{ primaryKey: priorPrimaryKey, candidateKeys: [priorCandidateKey] }];
+  const priorPlan = { version: 3, planHash: "d".repeat(64), contentHash: createHash("sha256").update(JSON.stringify({ groups: priorGroups, candidatePairPoolTruncated: false })).digest("hex"), primaryCatalogCount: 1_000, selectedPrimaryCount: 1, candidatePairCount: 1, candidatePairPoolTruncated: false, groups: priorGroups };
+  const adoptedCurrentGroups = [{ primaryKey: "q".repeat(43), candidateKeys: ["s".repeat(43)] }];
+  const adoptedCurrentPlan = { ...priorPlan, planHash: "e".repeat(64), contentHash: createHash("sha256").update(JSON.stringify({ groups: adoptedCurrentGroups, candidatePairPoolTruncated: false })).digest("hex"), groups: adoptedCurrentGroups };
+  const activeCurrentGroups = [{ primaryKey: "t".repeat(43), candidateKeys: ["u".repeat(43)] }];
+  const activeCurrentPlan = { ...priorPlan, planHash: "f".repeat(64), contentHash: createHash("sha256").update(JSON.stringify({ groups: activeCurrentGroups, candidatePairPoolTruncated: false })).digest("hex"), groups: activeCurrentGroups };
+  const fullPrimaryCatalog = Array.from({ length: 1_000 }, (_, index) => ({
+    id: `p${index}`,
+    name: `Product ${index}`,
+    sourceUrl: `https://shop.test/products/${index}`,
+  }));
   const handler = createMatchHandler({
     async build(_domain, _catalogs, options) {
       receivedOptions = options;
+      const planKey = { batchIndex: 999, planHash: "c".repeat(64) };
+      assert.equal(await options.loadCandidatePlan(planKey), null);
+      await options.saveCandidatePlan(planKey, { version: 3, planHash: planKey.planHash, contentHash: createHash("sha256").update(JSON.stringify({ groups: [], candidatePairPoolTruncated: false })).digest("hex"), primaryCatalogCount: 1_000, selectedPrimaryCount: 0, candidatePairCount: 0, candidatePairPoolTruncated: false, groups: [] });
       const key = { batchIndex: 3, batchCount: 5, batchHash: "a".repeat(64), model: "test", promptVersion: "v1", primaryIds: ["p1"], candidatePairCount: 1 };
       assert.deepEqual(await options.loadJudgeBatchCheckpoint(key), { version: 1 });
       await options.saveJudgeBatchCheckpoint(key, { version: 1 });
@@ -184,7 +264,13 @@ test("authenticated matching binds durable judge checkpoints to the active repor
     },
     async loadCheckpoints(publicId, input) {
       assert.equal(publicId, "b".repeat(32));
-      assert.deepEqual(input, { attemptNumber: 2, batchIndex: 3 });
+      if (input.batchIndexStart === 3_900) return [
+        { attemptNumber: 1, batchIndex: 3_900, inputHash: priorPlan.planHash, result: priorPlan },
+        { attemptNumber: 1, batchIndex: 3_902, inputHash: adoptedCurrentPlan.planHash, result: adoptedCurrentPlan },
+        { attemptNumber: 2, batchIndex: 3_902, inputHash: activeCurrentPlan.planHash, result: activeCurrentPlan },
+      ];
+      if (input.batchIndex === 3_902) return [];
+      assert.deepEqual(input, { attemptNumber: 2, batchIndex: 1_903 });
       return [{ inputHash: "a".repeat(64), result: { version: 1 } }];
     },
     async saveCheckpoint(publicId, input) {
@@ -194,34 +280,47 @@ test("authenticated matching binds durable judge checkpoints to the active repor
     async loadEntitlement(publicId, attemptNumber) {
       assert.equal(publicId, "b".repeat(32));
       assert.equal(attemptNumber, 2);
-      return { plan: "agency", productLimit: 1_000 };
+      return { plan: "agency", productLimit: 1_000, reportObservedAt: "2026-07-20T09:00:00.000Z" };
     },
   }, token);
   const response = await handler(new Request("https://signal.test/api/match", {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, primaryDomain: "shop.test", productLimit: 1_000, catalogs: [{ domain: "shop.test", products: [{ name: "Honey", sourceUrl: "https://shop.test/products/honey" }] }] }),
+    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, taskAttemptNumber: 3, reportObservedAt: "2026-07-20T09:00:00.000Z", primaryDomain: "shop.test", marketCountryCode: "GB", productLimit: 1_000, catalogs: [{ domain: "shop.test", products: fullPrimaryCatalog }] }),
   }));
 
   assert.equal(response.status, 200);
   assert.equal(receivedOptions.maxPrimaryProducts, 1_000);
   assert.equal(receivedOptions.totalBudgetMs, 720_000);
-  assert.equal(saved[0].publicId, "b".repeat(32));
-  assert.equal(saved[0].input.attemptNumber, 2);
-  assert.equal(saved[0].input.batchIndex, 3);
+  assert.equal(receivedOptions.concurrency, 12);
+  assert.equal(receivedOptions.referenceTimeMs, Date.parse("2026-07-20T09:00:00.000Z"));
+  assert.equal(receivedOptions.marketCountryCode, "GB");
+  assert.deepEqual(receivedOptions.priorCandidatePairKeys, [`${priorPrimaryKey}\n${priorCandidateKey}`, `${"q".repeat(43)}\n${"s".repeat(43)}`]);
+  const savedJudge = saved.find((item) => item.input.batchIndex === 1_903);
+  const savedPlan = saved.find((item) => item.input.batchIndex === 3_902);
+  assert.equal(savedJudge.publicId, "b".repeat(32));
+  assert.equal(savedJudge.input.attemptNumber, 2);
+  assert.equal(savedPlan.input.inputHash, "c".repeat(64));
+
+  const missingTaskAttempt = await handler(new Request("https://signal.test/api/match", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, reportObservedAt: "2026-07-20T09:00:00.000Z", primaryDomain: "shop.test", productLimit: 1_000, catalogs: [{ domain: "shop.test", products: fullPrimaryCatalog }] }),
+  }));
+  assert.equal(missingTaskAttempt.status, 400);
 
   const mismatch = await handler(new Request("https://signal.test/api/match", {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, primaryDomain: "shop.test", productLimit: 50, catalogs: [{ domain: "shop.test", products: [{ name: "Honey", sourceUrl: "https://shop.test/products/honey" }] }] }),
+    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, taskAttemptNumber: 3, reportObservedAt: "2026-07-20T09:00:00.000Z", primaryDomain: "shop.test", productLimit: 50, catalogs: [{ domain: "shop.test", products: [{ name: "Honey", sourceUrl: "https://shop.test/products/honey" }] }] }),
   }));
   assert.equal(mismatch.status, 409);
-  assert.equal(saved[0].input.inputHash, "a".repeat(64));
+  assert.equal(savedJudge.input.inputHash, "a".repeat(64));
 
   const malformedPins = await handler(new Request("https://signal.test/api/match", {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, primaryDomain: "shop.test", productLimit: 1_000, pinnedPairs: { primaryId: "p1" }, catalogs: [{ domain: "shop.test", products: [{ name: "Honey", sourceUrl: "https://shop.test/products/honey" }] }] }),
+    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, taskAttemptNumber: 3, primaryDomain: "shop.test", productLimit: 1_000, pinnedPairs: { primaryId: "p1" }, catalogs: [{ domain: "shop.test", products: [{ name: "Honey", sourceUrl: "https://shop.test/products/honey" }] }] }),
   }));
   assert.equal(malformedPins.status, 400);
 

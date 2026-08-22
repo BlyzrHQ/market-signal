@@ -8,7 +8,7 @@ export const PRODUCT_PLAN_LIMITS = {
 } as const;
 
 export type ProductPlan = keyof typeof PRODUCT_PLAN_LIMITS;
-export type ProductEntitlement = { plan: ProductPlan; productLimit: number };
+export type ProductEntitlement = { plan: ProductPlan; productLimit: number; reportObservedAt?: string };
 
 function productPlan(value: unknown): ProductPlan | null {
   const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";

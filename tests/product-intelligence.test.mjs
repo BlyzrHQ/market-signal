@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyFinalProductEnrichment, applyPreMatchCatalogEnrichment, buildProductComparison, buildProductPairCandidateIndex, catalogReplacementAuditAttribute, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, planFinalProductEnrichmentTargets, planPreliminaryCatalogReconciliation, publicSourceMarketContext, publicSourceMarketCountryCode, retrieveProductPairCandidates, scoreProductPair, selectFinalProductEnrichmentTargets, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
+import { applyFinalProductEnrichment, applyPreMatchCatalogEnrichment, buildProductComparison, buildProductPairCandidateIndex, catalogReplacementAuditAttribute, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, extractProductsFromSitemapWithCoverage, planFinalProductEnrichmentTargets, planPreliminaryCatalogReconciliation, publicSourceMarketContext, publicSourceMarketCountryCode, retrieveProductPairCandidates, scoreProductPair, selectFinalProductEnrichmentTargets, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
 import { publishPricedProductComparison } from "../app/lib/product-match-lifecycle.ts";
 
 const TEST_NOW = new Date().toISOString();
@@ -832,9 +832,12 @@ test("catalog deduplication keeps nested country-path GTIN observations separate
 });
 
 test("market parsing prioritizes country selectors and recognizes all ISO countries", () => {
-  assert.equal(publicSourceMarketCountryCode("https://shop.example/products/item?locale=en-GB&country=US"), "US");
+  assert.equal(publicSourceMarketContext("https://shop.example/products/item?locale=en-GB&country=US").conflict, true);
+  assert.equal(publicSourceMarketCountryCode("https://shop.example/products/item?locale=en-US&country=US"), "US");
   assert.equal(publicSourceMarketCountryCode("https://shop.example/tr/products/item"), "TR");
   assert.equal(publicSourceMarketCountryCode("https://shop.example/store/gb/products/item"), "GB");
+  assert.equal(publicSourceMarketCountryCode("https://shop.example/en/us/shop/item"), "US");
+  assert.equal(publicSourceMarketCountryCode("https://shop.example/en/gb/store/item"), "GB");
   assert.equal(publicSourceMarketCountryCode("https://shop.gr/products/item"), "GR");
 });
 
@@ -1615,8 +1618,12 @@ test("keeps malformed sitemap path escapes safe and deterministic", () => {
 
 test("keeps a single public sitemap broad but bounded at one thousand products", () => {
   const entries = Array.from({ length: 1_005 }, (_, index) => `<url><loc>https://shop.example/products/catalog-item-${index}</loc></url>`).join("");
-  const products = extractProductsFromSitemap(`<urlset>${entries}</urlset>`, "shop.example", "2026-07-15T00:00:00.000Z");
+  const sitemap = `<urlset>${entries}</urlset>`;
+  const coverage = extractProductsFromSitemapWithCoverage(sitemap, "shop.example", "2026-07-15T00:00:00.000Z");
+  const products = extractProductsFromSitemap(sitemap, "shop.example", "2026-07-15T00:00:00.000Z");
 
+  assert.equal(coverage.products.length, 1_000);
+  assert.equal(coverage.truncated, true);
   assert.equal(products.length, 1_000);
   assert.equal(products.at(-1).name, "catalog item 999");
 });
@@ -1718,6 +1725,15 @@ test("final enrichment re-reads a non-positive existing product price", () => {
   assert.deepEqual(selectFinalProductEnrichmentTargets(comparison, 1).map((target) => target.productId), [primary.id]);
 });
 
+test("final enrichment re-reads both sides of a cross-currency pair in the resolved target market", () => {
+  const primary = { ...product("primary-gbp", "shop.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/custom-jacket?country=GB", priceSignals: [{ raw: "GBP 90", currency: "GBP", amount: 90 }] };
+  const rival = { ...product("rival-usd", "rival.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://rival.test/products/custom-jacket?country=GB", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }] };
+  const comparison = { primaryDomain: "shop.test", marketCountryCode: "GB", comparisonDomains: ["rival.test"], rows: [{ primary, matches: [{ domain: rival.domain, product: rival, score: 0.95, confidence: "Medium", sharedTerms: ["jacket"], claimIds: [], decision: null }] }], unmatched: [], coverage: { primaryProductsAvailable: 1, primaryProductsScanned: 1, primaryProductFamiliesCompared: 1, competitorProductsAvailable: 1, competitorProductsScanned: 1, assignedPairCount: 1, verifiedPairCount: 1, rowsReturned: 1, rowLimit: 1, truncated: false } };
+
+  const plan = planFinalProductEnrichmentTargets(comparison, 2, Date.parse("2026-08-01T00:00:00.000Z"));
+  assert.deepEqual(plan.targets.map((target) => target.productId), [rival.id, primary.id]);
+});
+
 test("a strongest both-missing pair is scheduled before a weaker secondary single-missing pair", () => {
   const primary = { ...product("primary-strong", "shop.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/custom-jacket" };
   const strongest = { ...product("rival-strong", "strong.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://strong.test/products/custom-jacket" };
@@ -1728,6 +1744,16 @@ test("a strongest both-missing pair is scheduled before a weaker secondary singl
   const targets = selectFinalProductEnrichmentTargets(comparison, 2);
 
   assert.deepEqual(targets.map((target) => target.productId), ["rival-strong", "primary-strong"]);
+});
+
+test("remaining price capacity covers a secondary rival before presentation images", () => {
+  const primary = { ...product("primary-backfill", "shop.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/custom-jacket", imageUrl: "" };
+  const strongest = { ...product("rival-strong", "strong.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://strong.test/products/custom-jacket", imageUrl: "" };
+  const secondary = { ...product("rival-secondary", "secondary.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://secondary.test/products/custom-jacket", imageUrl: "" };
+  const match = (rival, score) => ({ domain: rival.domain, product: rival, score, confidence: "Medium", sharedTerms: ["custom", "jacket"], claimIds: [], decision: null });
+  const comparison = { primaryDomain: "shop.test", comparisonDomains: ["strong.test", "secondary.test"], rows: [{ primary, matches: [match(secondary, 0.8), match(strongest, 0.99)] }], unmatched: [], coverage: { primaryProductsAvailable: 1, primaryProductsScanned: 1, primaryProductFamiliesCompared: 1, competitorProductsAvailable: 2, competitorProductsScanned: 2, assignedPairCount: 2, verifiedPairCount: 2, rowsReturned: 1, rowLimit: 1, truncated: false } };
+  const targets = selectFinalProductEnrichmentTargets(comparison, 3);
+  assert.deepEqual(targets.map((target) => target.productId), ["rival-strong", "primary-backfill", "rival-secondary"]);
 });
 
 test("an atomic pair that cannot fit does not let a weaker row starve the next highest score", () => {
@@ -1805,6 +1831,26 @@ test("final enrichment cannot replace a selected market with a different localiz
   assert.equal(enriched.rows[0].matches[0].product.sourceUrl, rival.sourceUrl);
   assert.deepEqual(enriched.rows[0].matches[0].product.priceSignals, rival.priceSignals);
   assert.equal(enriched.rows[0].matches[0].product.observedAt, rival.observedAt);
+});
+
+test("final enrichment cannot replace a product when a merchant reuses its internal id", () => {
+  const primary = { ...product("primary-honey", "shop.test", "Raw Honey 500g"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/raw-honey-500g?country=GB", priceSignals: [{ raw: "GBP 10", currency: "GBP", amount: 10 }] };
+  const rival = { ...product("reused-id", "rival.test", "Raw Honey 500g"), jsonLdType: "Product", sourceUrl: "https://rival.test/products/raw-honey-500g?country=GB", priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }] };
+  const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "rival.test", products: [rival] }]);
+  const changedIdentity = {
+    ...rival,
+    name: "New Coffee 1kg",
+    normalizedName: "new coffee 1kg",
+    sourceUrl: "https://rival.test/products/new-coffee-1kg?country=GB",
+    priceSignals: [{ raw: "GBP 14", currency: "GBP", amount: 14 }],
+    observedAt: "2026-08-22T00:00:00.000Z",
+  };
+
+  const enriched = applyFinalProductEnrichment(comparison, [changedIdentity], { pagesRequested: 1, pagesFetched: 1, maxPages: 24, gaps: [] });
+
+  assert.equal(enriched.rows[0].matches[0].product.name, "Raw Honey 500g");
+  assert.equal(enriched.rows[0].matches[0].product.sourceUrl, rival.sourceUrl);
+  assert.deepEqual(enriched.rows[0].matches[0].product.priceSignals, rival.priceSignals);
 });
 
 test("pre-match reconciliation cannot restore a stale range after fresh currency-conflict evidence", () => {
@@ -1995,6 +2041,71 @@ test("catalog planners retain distinct sibling identities that share one page UR
   assert.deepEqual(final.targets.map((target) => target.productId).sort(), ["jacket-a", "jacket-b"]);
   assert.equal(final.totalEligible, 2);
   assert.equal(final.truncated, false);
+});
+
+test("final enrichment re-fetches stale positive prices before publication", () => {
+  const staleObservedAt = "2020-01-01T00:00:00.000Z";
+  const primary = {
+    ...product("stale-primary", "shop.test", "Beef Cubes Halal 500g"),
+    jsonLdType: "Product",
+    sourceUrl: "https://shop.test/products/beef-cubes-halal-500g",
+    observedAt: staleObservedAt,
+    priceSignals: [{ raw: "GBP 7.99", currency: "GBP", amount: 7.99 }],
+  };
+  const rival = {
+    ...product("stale-rival", "rival.test", "Halal Beef Cubes 500g"),
+    jsonLdType: "Product",
+    sourceUrl: "https://rival.test/products/halal-beef-cubes-500g",
+    observedAt: staleObservedAt,
+    priceSignals: [{ raw: "GBP 8.49", currency: "GBP", amount: 8.49 }],
+  };
+  const match = { domain: rival.domain, product: rival, score: 0.95, confidence: "Medium", sharedTerms: ["beef", "cubes", "500g"], claimIds: [], decision: null };
+  const comparison = {
+    primaryDomain: primary.domain,
+    comparisonDomains: [rival.domain],
+    rows: [{ primary, matches: [match] }],
+    unmatched: [],
+    coverage: { primaryProductsAvailable: 1, primaryProductsScanned: 1, primaryProductFamiliesCompared: 1, competitorProductsAvailable: 1, competitorProductsScanned: 1, assignedPairCount: 1, verifiedPairCount: 1, rowsReturned: 1, rowLimit: 1, truncated: false },
+  };
+
+  const plan = planFinalProductEnrichmentTargets(comparison, 2);
+  assert.deepEqual(plan.targets.map((target) => target.productId).sort(), ["stale-primary", "stale-rival"]);
+  assert.equal(plan.totalEligible, 2);
+  assert.equal(plan.truncated, false);
+});
+
+test("final enrichment reports non-product price gaps as incomplete instead of schedulable", () => {
+  const primary = { ...product("service-primary", "shop.test", "Managed analytics"), jsonLdType: "Service", sourceUrl: "https://shop.test/products/managed-analytics" };
+  const rival = { ...product("service-rival", "rival.test", "Managed analytics"), jsonLdType: "Service", sourceUrl: "https://rival.test/products/managed-analytics" };
+  const comparison = {
+    primaryDomain: primary.domain,
+    comparisonDomains: [rival.domain],
+    rows: [{ primary, matches: [{ domain: rival.domain, product: rival, score: 0.95, confidence: "Medium", sharedTerms: ["managed", "analytics"], claimIds: [], decision: null }] }],
+    unmatched: [],
+    coverage: { primaryProductsAvailable: 1, primaryProductsScanned: 1, primaryProductFamiliesCompared: 1, competitorProductsAvailable: 1, competitorProductsScanned: 1, assignedPairCount: 1, verifiedPairCount: 1, rowsReturned: 1, rowLimit: 1, truncated: false },
+  };
+
+  const plan = planFinalProductEnrichmentTargets(comparison, 2);
+  assert.deepEqual(plan.targets, []);
+  assert.equal(plan.totalEligible, 2);
+  assert.equal(plan.truncated, true);
+});
+
+test("final enrichment counts unsafe-source price gaps as unschedulable work", () => {
+  const primary = { ...product("unsafe-primary", "shop.test", "Unsafe source item"), sourceUrl: "http://127.0.0.1/products/unsafe" };
+  const rival = { ...product("unsafe-rival", "rival.test", "Unsafe source item"), sourceUrl: "https://user:pass@rival.test/products/unsafe" };
+  const comparison = {
+    primaryDomain: primary.domain,
+    comparisonDomains: [rival.domain],
+    rows: [{ primary, matches: [{ domain: rival.domain, product: rival, score: 0.95, confidence: "Medium", sharedTerms: ["unsafe", "source"], claimIds: [], decision: null }] }],
+    unmatched: [],
+    coverage: { primaryProductsAvailable: 1, primaryProductsScanned: 1, primaryProductFamiliesCompared: 1, competitorProductsAvailable: 1, competitorProductsScanned: 1, assignedPairCount: 1, verifiedPairCount: 1, rowsReturned: 1, rowLimit: 1, truncated: false },
+  };
+
+  const plan = planFinalProductEnrichmentTargets(comparison, 2);
+  assert.deepEqual(plan.targets, []);
+  assert.equal(plan.totalEligible, 2);
+  assert.equal(plan.truncated, true);
 });
 
 test("final enrichment never copies same-page sibling evidence across product identities", () => {

@@ -1,4 +1,6 @@
 export const REPORT_ORCHESTRATION_CONTRACT_VERSION = "4" as const;
+export const MAX_REPORT_MATCH_CHECKPOINTS_PER_ATTEMPT = 4_000;
+export const MAX_REPORT_ATTEMPTS = 20;
 
 export type ReportOrchestrationPayload = {
   contractVersion: typeof REPORT_ORCHESTRATION_CONTRACT_VERSION;
@@ -51,7 +53,7 @@ export function parseReportOrchestrationPayload(value: unknown): ReportOrchestra
     throw new PermanentOrchestrationError("primaryDomain must be a canonical public hostname.");
   }
   if (input.locale !== "en" && input.locale !== "ar") throw new PermanentOrchestrationError("Unsupported report locale.");
-  if (!Number.isInteger(input.reportAttempt) || Number(input.reportAttempt) < 1) throw new PermanentOrchestrationError("Invalid report attempt.");
+  if (!Number.isInteger(input.reportAttempt) || Number(input.reportAttempt) < 1 || Number(input.reportAttempt) > MAX_REPORT_ATTEMPTS) throw new PermanentOrchestrationError("Invalid report attempt.");
   if (!version2 && !(typeof input.productPlan === "string" && input.productPlan in PLAN_LIMITS)) throw new PermanentOrchestrationError("Invalid product plan.");
   if (version3 && input.productLimit !== VERSION_3_PLAN_LIMITS[input.productPlan as keyof typeof VERSION_3_PLAN_LIMITS]) throw new PermanentOrchestrationError("Product limit does not match the persisted plan.");
   if (!version2 && !version3 && input.productLimit !== PLAN_LIMITS[input.productPlan as keyof typeof PLAN_LIMITS]) throw new PermanentOrchestrationError("Product limit does not match the persisted plan.");
