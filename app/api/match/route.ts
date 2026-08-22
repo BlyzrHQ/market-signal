@@ -300,7 +300,7 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
       const maxPrimaryProducts = Math.min(productBackfillPoolSize(resultTarget), primaryCatalogSize);
       const priorCandidatePairKeys = hasReportAttempt ? await (async () => {
         const currentPlanIndex = persistedCheckpointIndex(taskAttemptNumber, PRODUCT_CANDIDATE_PLAN_BATCH_INDEX);
-        const checkpoints = await services.loadCheckpoints(publicId, { attemptNumber: reportAttempt, batchIndexStart: PLAN_CHECKPOINT_BASE, batchIndexEnd: PLAN_CHECKPOINT_BASE + MAX_TASK_ATTEMPTS - 1, latestPerBatch: true });
+        const checkpoints = await services.loadCheckpoints(publicId, { attemptNumber: reportAttempt, batchIndexStart: PLAN_CHECKPOINT_BASE, batchIndexEnd: PLAN_CHECKPOINT_BASE + MAX_TASK_ATTEMPTS - 1 });
         const keys = new Set<string>();
         for (const checkpoint of checkpoints) {
           if (checkpoint.batchIndex === currentPlanIndex && checkpoint.attemptNumber === reportAttempt) continue;

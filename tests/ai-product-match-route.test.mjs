@@ -244,6 +244,8 @@ test("authenticated matching binds durable judge checkpoints to the active repor
   const priorPlan = { version: 3, planHash: "d".repeat(64), contentHash: createHash("sha256").update(JSON.stringify({ groups: priorGroups, candidatePairPoolTruncated: false })).digest("hex"), primaryCatalogCount: 1_000, selectedPrimaryCount: 1, candidatePairCount: 1, candidatePairPoolTruncated: false, groups: priorGroups };
   const adoptedCurrentGroups = [{ primaryKey: "q".repeat(43), candidateKeys: ["s".repeat(43)] }];
   const adoptedCurrentPlan = { ...priorPlan, planHash: "e".repeat(64), contentHash: createHash("sha256").update(JSON.stringify({ groups: adoptedCurrentGroups, candidatePairPoolTruncated: false })).digest("hex"), groups: adoptedCurrentGroups };
+  const activeCurrentGroups = [{ primaryKey: "t".repeat(43), candidateKeys: ["u".repeat(43)] }];
+  const activeCurrentPlan = { ...priorPlan, planHash: "f".repeat(64), contentHash: createHash("sha256").update(JSON.stringify({ groups: activeCurrentGroups, candidatePairPoolTruncated: false })).digest("hex"), groups: activeCurrentGroups };
   const fullPrimaryCatalog = Array.from({ length: 1_000 }, (_, index) => ({
     id: `p${index}`,
     name: `Product ${index}`,
@@ -265,6 +267,7 @@ test("authenticated matching binds durable judge checkpoints to the active repor
       if (input.batchIndexStart === 3_900) return [
         { attemptNumber: 1, batchIndex: 3_900, inputHash: priorPlan.planHash, result: priorPlan },
         { attemptNumber: 1, batchIndex: 3_902, inputHash: adoptedCurrentPlan.planHash, result: adoptedCurrentPlan },
+        { attemptNumber: 2, batchIndex: 3_902, inputHash: activeCurrentPlan.planHash, result: activeCurrentPlan },
       ];
       if (input.batchIndex === 3_902) return [];
       assert.deepEqual(input, { attemptNumber: 2, batchIndex: 1_903 });
