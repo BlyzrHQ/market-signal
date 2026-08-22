@@ -524,7 +524,7 @@ function checkpointText(value: unknown, limit: number) {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
 }
 
-function checkpointProduct(product: ProductRecord, lean: boolean): ProductRecord {
+function checkpointProduct(product: ProductRecord): ProductRecord {
   return {
     id: product.id,
     domain: product.domain,
@@ -539,10 +539,10 @@ function checkpointProduct(product: ProductRecord, lean: boolean): ProductRecord
     extraction: product.extraction,
     confidence: product.confidence,
     sourceUrl: product.sourceUrl,
-    imageUrl: lean ? "" : product.imageUrl,
+    imageUrl: product.imageUrl,
     observedAt: product.observedAt,
-    claimIds: lean ? [] : product.claimIds,
-    ...(lean || !product.aliases ? {} : { aliases: product.aliases }),
+    claimIds: product.claimIds,
+    ...(product.aliases ? { aliases: product.aliases } : {}),
     ...(product.identifiers ? { identifiers: product.identifiers } : {}),
     ...(product.quantity ? { quantity: product.quantity } : {}),
     ...(product.recoveryIdentityHash ? { recoveryIdentityHash: product.recoveryIdentityHash } : {}),
@@ -571,15 +571,19 @@ function checkpointHomepage(value: unknown) {
   ].flatMap((key) => source[key] === undefined ? [] : [[key, typeof source[key] === "string" ? checkpointText(source[key], key === "description" ? 1_000 : 500) : source[key]]]));
 }
 
-function crawlCheckpointSnapshot(crawl: CrawlSuccess, lean: boolean): CrawlSuccess {
+function crawlCheckpointSnapshot(crawl: CrawlSuccess): CrawlSuccess {
   const presentation = compactTerminalReportDocument({ primaryDomain: crawl.primaryDomain, document: ensureDocument(crawl.document), marketBrief: null }, 650_000, { factsAuthoritative: false, factCounts: null }) as { document: JsonDocument };
+  const baseline = ensureDocument(crawl.document).blocks.find((block) => block.type === "product-comparison");
+  const document = baseline
+    ? { ...presentation.document, blocks: [...presentation.document.blocks.filter((block) => block.type !== "product-comparison"), baseline] }
+    : presentation.document;
   return {
     ok: true,
     primaryDomain: crawl.primaryDomain,
     results: crawl.results.map((result) => ({
       domain: result.domain,
       homepage: checkpointHomepage(result.homepage),
-      products: result.products.map((product) => checkpointProduct(product, lean)),
+      products: result.products.map(checkpointProduct),
       ...(result.role ? { role: result.role } : {}),
       ...(result.fetchedAt ? { fetchedAt: result.fetchedAt } : {}),
       ...(result.discovery ? { discovery: checkpointDiscovery(result.discovery) } : {}),
@@ -587,7 +591,7 @@ function crawlCheckpointSnapshot(crawl: CrawlSuccess, lean: boolean): CrawlSucce
     ...(crawl.discovery?.productSearchCoverage ? { discovery: { productSearchCoverage: crawl.discovery.productSearchCoverage } } : {}),
     adRequest: crawl.adRequest,
     ...(crawl.matchHints ? { matchHints: crawl.matchHints } : {}),
-    document: presentation.document,
+    document,
   };
 }
 
@@ -609,13 +613,11 @@ function crawlCheckpointInputHash(payload: ReportOrchestrationPayload, taskAttem
 }
 
 function crawlCheckpoint(crawl: CrawlSuccess) {
-  for (const lean of [false, true]) {
-    const json = JSON.stringify(crawlCheckpointSnapshot(crawl, lean));
-    if (Buffer.byteLength(json, "utf8") > MAX_CRAWL_CHECKPOINT_UNCOMPRESSED_BYTES) continue;
-    const checkpoint = { version: 1, encoding: "gzip-base64", data: gzipSync(json, { level: 9 }).toString("base64") };
-    if (encodedJsonBytes(checkpoint) <= REPORT_MATCH_CHECKPOINT_RESULT_BYTES) return checkpoint;
-  }
-  throw new Error("The successful crawl checkpoint exceeds the durable checkpoint budget after bounded compaction.");
+  const json = JSON.stringify(crawlCheckpointSnapshot(crawl));
+  if (Buffer.byteLength(json, "utf8") > MAX_CRAWL_CHECKPOINT_UNCOMPRESSED_BYTES) throw new Error("The successful crawl checkpoint exceeds the durable uncompressed checkpoint budget.");
+  const checkpoint = { version: 1, encoding: "gzip-base64", data: gzipSync(json, { level: 9 }).toString("base64") };
+  if (encodedJsonBytes(checkpoint) <= REPORT_MATCH_CHECKPOINT_RESULT_BYTES) return checkpoint;
+  throw new Error("The successful crawl checkpoint exceeds the durable checkpoint budget after lossless matching-state projection.");
 }
 
 function validCrawlSuccess(value: unknown, payload: ReportOrchestrationPayload): CrawlSuccess | null {

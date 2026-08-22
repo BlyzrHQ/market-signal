@@ -10,7 +10,8 @@ The first durable-resume rollout correctly preserved a successful crawl when its
 - Retain product identity, source, price, quantity, identifier, region, discovery coverage, ad-request, and document facts needed by matching and final persistence.
 - Explicitly drop duplicated crawl pages, enrichment pages, candidates, gaps, and other transport-only crawl detail from retry state.
 - Preserve fields that participate in catalog identity exactly; bound only company metadata and the presentation document.
-- Retry checkpoint encoding with a lean projection that removes non-identity image, alias, and claim-link detail when the richer projection still exceeds the callback budget.
+- Preserve every catalog field used by candidate retrieval and scoring, including images, aliases, and claim links; fail closed if the lossless matching-state projection cannot fit the callback budget.
+- Keep the full product-comparison baseline as computation state while compacting the separate presentation document around it.
 - Keep the live first attempt on the original in-memory crawl; compaction affects only retry recovery.
 
 ## Validation

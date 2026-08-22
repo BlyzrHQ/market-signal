@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import test from "node:test";
+import { gunzipSync } from "node:zlib";
 
 import {
   PermanentOrchestrationError,
@@ -354,10 +355,24 @@ test("a large noisy crawl is compacted into a durable checkpoint before a task r
   let crawlCalls = 0;
   const base = mockPort();
   let rawWireBytes = 0;
+  let expectedCatalogs = null;
+  let expectedBaseline = null;
+  const matchedCatalogs = [];
   const port = mockPort({
     async crawl() {
       crawlCalls += 1;
       const value = await base.crawl();
+      value.results[0].products[0] = {
+        ...value.results[0].products[0],
+        imageUrl: "https://cdn.shop.example/images/honey-500g.webp",
+        aliases: [{ name: "عسل 500 جرام", normalizedName: "عسل 500 جرام", locale: "ar", sourceUrl: "https://shop.example/ar/honey", extraction: "sitemap" }],
+        claimIds: ["claim-identity-1", "claim-identity-2"],
+      };
+      const baseline = { type: "product-comparison", id: "product-comparison", ...comparison({ withPair: true, count: 1 }) };
+      baseline.rows[0].primary = structuredClone(value.results[0].products[0]);
+      value.document.blocks.push(baseline);
+      expectedCatalogs = value.results.map((result) => ({ domain: result.domain, products: structuredClone(result.products) }));
+      expectedBaseline = structuredClone(baseline);
       value.results[0].pages = Array.from({ length: 1_200 }, (_, pageIndex) => ({
         url: `https://shop.example/products/page-${pageIndex}`,
         sourceUrl: `https://shop.example/products/page-${pageIndex}`,
@@ -373,7 +388,10 @@ test("a large noisy crawl is compacted into a durable checkpoint before a task r
       rawWireBytes = Buffer.byteLength(JSON.stringify(value), "utf8");
       return value;
     },
-    async match() { return { ok: true, comparison: comparison({ withPair: false }) }; },
+    async match(input) {
+      matchedCatalogs.push(structuredClone(input.catalogs));
+      return { ok: true, comparison: comparison({ withPair: false }) };
+    },
     async persistFactChunk() { throw new Error("test persistence interruption"); },
   });
 
@@ -382,8 +400,12 @@ test("a large noisy crawl is compacted into a durable checkpoint before a task r
   const checkpoint = port.checkpoints.get(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE);
   assert.ok(checkpoint);
   assert.ok(JSON.stringify(checkpoint.result).length < 3_900_000);
+  const recovered = JSON.parse(gunzipSync(Buffer.from(checkpoint.result.data, "base64")).toString("utf8"));
+  assert.deepEqual(recovered.results.map((result) => ({ domain: result.domain, products: result.products })), expectedCatalogs);
+  assert.deepEqual(recovered.document.blocks.find((block) => block.type === "product-comparison"), expectedBaseline);
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port), /Relational fact persistence remained incomplete/);
   assert.equal(crawlCalls, 1);
+  assert.deepEqual(matchedCatalogs.at(-1), expectedCatalogs);
   assert.ok(port.events.some((item) => item.idempotencyKey === "report-1-task-2-crawl-resumed"));
 });
 
