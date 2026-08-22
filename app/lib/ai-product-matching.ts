@@ -571,22 +571,39 @@ function selectJudgeGroups(groups: CandidateGroup[], maxPrimary: number, pinnedP
     .slice(0, maxPrimary);
 }
 
-function candidatePlanHash(primary: ProductRecord[], competitors: ProductCatalog[], options: { maxPrimary: number; maxCandidates: number; maxPerDomain: number; maxRetrievalPool: number; referenceTimeMs: number; marketCountryCode: string; pinnedPairs: PinnedProductPair[] }) {
+function candidatePlanHash(primary: ProductRecord[], competitors: ProductCatalog[], options: { maxPrimary: number; maxCandidates: number; maxPerDomain: number; maxRetrievalPool: number; referenceTimeMs: number; marketCountryCode: string; pinnedPairs: PinnedProductPair[]; embeddingModel: string; requiredSourceUrls: Record<string, string[]> }) {
+  const requiredSourceUrls = Object.fromEntries(Object.entries(options.requiredSourceUrls)
+    .map(([domain, urls]) => [canonicalDomain(domain), [...new Set(urls)].sort()] as const)
+    .sort(([left], [right]) => left.localeCompare(right)));
+  const pinnedPairs = [...options.pinnedPairs].map((pair) => ({ ...pair, rivalDomain: canonicalDomain(pair.rivalDomain) }))
+    .sort((left, right) => left.primaryId.localeCompare(right.primaryId)
+      || left.rivalDomain.localeCompare(right.rivalDomain)
+      || left.rivalId.localeCompare(right.rivalId));
   return createHash("sha256").update(JSON.stringify({
+    candidatePlanVersion: 2,
     promptVersion: PROMPT_VERSION,
+    embeddingModel: options.embeddingModel,
+    embeddingDimensions: EMBEDDING_DIMENSIONS,
+    requiredSourceUrls,
     primary: primary.map(candidatePlanProductIdentity),
     competitors: competitors.map((catalog) => ({ domain: canonicalDomain(catalog.domain), products: catalog.products.map(candidatePlanProductIdentity) })),
-    ...options,
+    maxPrimary: options.maxPrimary,
+    maxCandidates: options.maxCandidates,
+    maxPerDomain: options.maxPerDomain,
+    maxRetrievalPool: options.maxRetrievalPool,
+    referenceTimeMs: options.referenceTimeMs,
+    marketCountryCode: options.marketCountryCode,
+    pinnedPairs,
   })).digest("hex");
 }
 
 function candidatePlanProductIdentity(product: ProductRecord) {
   return {
-    domain: canonicalDomain(product.domain),
-    id: product.id,
-    sourceUrl: product.sourceUrl,
+    ...safeProduct(product),
     normalizedName: product.normalizedName,
-    quantity: product.quantity || null,
+    priceSignals: product.priceSignals,
+    imageUrl: product.imageUrl,
+    observedAt: product.observedAt,
   };
 }
 
@@ -686,7 +703,7 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   const apiKey = options.apiKey ?? process.env.OPENAI_API_KEY ?? "";
   const model = options.model || process.env.MARKET_SIGNAL_MATCH_MODEL || DEFAULT_MODEL;
   const embeddingModel = options.embeddingModel || process.env.MARKET_SIGNAL_MATCH_EMBEDDING_MODEL || DEFAULT_EMBEDDING_MODEL;
-  const matchingBase = { model, embeddingModel, promptVersion: PROMPT_VERSION, primaryProductsAssessed: 0, primaryProductsScreened: 0, candidatePairsAssessed: 0, retrievalPairsScored: 0, judgeCalls: 0, embeddingCalls: 0, totalJudgeBatches: 0, reusedJudgeCheckpoints: 0, savedJudgeCheckpoints: 0, durationMs: 0, gaps: [] as string[], selectedPrimaryIds: [] as string[], assessedPrimaryIds: [] as string[], attempts: 1, primaryProductsSynchronized: 0, competitorProductsSynchronized: 0, candidateSlotsByDomain: {} as Record<string, number> };
+  const matchingBase = { model, embeddingModel, promptVersion: PROMPT_VERSION, primaryProductsAssessed: 0, primaryProductsScreened: 0, candidatePairsAssessed: 0, retrievalPairsScored: 0, judgeCalls: 0, embeddingCalls: 0, totalJudgeBatches: 0, reusedJudgeCheckpoints: 0, savedJudgeCheckpoints: 0, durationMs: 0, gaps: [] as string[], selectedPrimaryIds: [] as string[], assessedPrimaryIds: [] as string[], processedPrimaryIds: [] as string[], attempts: 1, primaryProductsSynchronized: 0, competitorProductsSynchronized: 0, candidateSlotsByDomain: {} as Record<string, number> };
   if (!apiKey) return { ...withoutUnassessedMatches(fallback), matching: { ...matchingBase, method: "lexical-fallback", available: false, gaps: ["AI product matching is not configured; no product pair was accepted without AI assessment."] } };
 
   const fetcher = options.fetch || fetch;
@@ -723,11 +740,17 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   const gaps: string[] = [];
   const pinnedPairs = requestedPins;
   const referenceTimeMs = Number.isFinite(options.referenceTimeMs) ? Number(options.referenceTimeMs) : Date.now();
-  const planHash = candidatePlanHash(synchronizedPrimary, competitors, { maxPrimary, maxCandidates, maxPerDomain, maxRetrievalPool, referenceTimeMs, marketCountryCode: options.marketCountryCode || "", pinnedPairs });
+  const planHash = candidatePlanHash(synchronizedPrimary, competitors, { maxPrimary, maxCandidates, maxPerDomain, maxRetrievalPool, referenceTimeMs, marketCountryCode: options.marketCountryCode || "", pinnedPairs, embeddingModel, requiredSourceUrls });
   const planKey = { planHash, batchIndex: PRODUCT_CANDIDATE_PLAN_BATCH_INDEX };
+  const retrievalPairsScored = synchronizedPrimary.length * competitors.reduce((sum, catalog) => sum + catalog.products.length, 0);
+  const candidatePlanFailure = (reason: string) => ({
+    ...withoutUnassessedMatches(fallback),
+    matching: { ...matchingBase, method: "lexical-fallback" as const, available: false, retrievalPairsScored, durationMs: Date.now() - startedAt, gaps: [reason] },
+  });
+  if (Boolean(options.loadCandidatePlan) !== Boolean(options.saveCandidatePlan)) return candidatePlanFailure("Durable candidate-plan storage was incomplete; no product pair was accepted from a non-replayable matching plan.");
   let groups: CandidateGroup[] | null = null;
   if (options.loadCandidatePlan) {
-    try { groups = restoreCandidatePlan(await options.loadCandidatePlan(planKey), planHash, synchronizedPrimary, competitors, embeddings); } catch { /* a candidate-plan provider failure is a cache miss */ }
+    try { groups = restoreCandidatePlan(await options.loadCandidatePlan(planKey), planHash, synchronizedPrimary, competitors, embeddings); } catch { return candidatePlanFailure("Durable candidate-plan loading failed; no product pair was accepted from a non-replayable matching plan."); }
   }
   if (!groups) {
     try {
@@ -742,10 +765,9 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
     groups = selectJudgeGroups(retrievedGroups.groups, maxPrimary, new Set(pinnedPairs.map((pair) => pair.primaryId)), referenceTimeMs, options.marketCountryCode || "");
     if (options.saveCandidatePlan) {
       const plan: ProductCandidatePlan = { version: 1, planHash, groups: groups.map((group) => ({ primaryKey: candidatePlanProductKey(group.primary), candidateKeys: group.candidates.map((candidate) => candidatePlanProductKey(candidate.product)) })) };
-      try { await options.saveCandidatePlan(planKey, plan); } catch { /* live matching can proceed when plan persistence is unavailable */ }
+      try { await options.saveCandidatePlan(planKey, plan); } catch { return candidatePlanFailure("Durable candidate-plan persistence failed; no product pair was accepted from a non-replayable matching plan."); }
     }
   }
-  const retrievalPairsScored = synchronizedPrimary.length * competitors.reduce((sum, catalog) => sum + catalog.products.length, 0);
   matchingBase.selectedPrimaryIds = groups.map((group) => group.primary.id);
   matchingBase.primaryProductsScreened = groups.length;
   matchingBase.candidateSlotsByDomain = groups.flatMap((group) => group.candidates).reduce((counts, candidate) => {
@@ -758,6 +780,7 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   const judgeBatches = packJudgeBatches(groups, maxPairsPerBatch, maxGroupsPerBatch);
   matchingBase.totalJudgeBatches = judgeBatches.length;
   const successfulPrimaryIds = new Set<string>();
+  const processedPrimaryIds = new Set(groups.filter((group) => group.candidates.length === 0).map((group) => group.primary.id));
   const rawAssessments: unknown[] = [];
   let judgeCalls = 0;
   let timedOutPrimary = 0;
@@ -774,29 +797,29 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
           const checkpoint = completeCheckpoint(await options.loadJudgeBatchCheckpoint(checkpointKey), checkpointKey, batch);
           if (checkpoint) {
             reusedJudgeCheckpoints += 1;
-            for (const primaryId of checkpointKey.primaryIds) successfulPrimaryIds.add(primaryId);
+            for (const primaryId of checkpointKey.primaryIds) {
+              successfulPrimaryIds.add(primaryId);
+              processedPrimaryIds.add(primaryId);
+            }
             rawAssessments.push(...checkpoint.assessments);
             return;
           }
-        } catch {
-          // A checkpoint provider failure is a cache miss; only validated complete data is reusable.
-        }
+        } catch { throw new Error("Durable judge-checkpoint loading failed."); }
       }
       const result = await judgeBatch(fetcher, `${baseUrl}/responses`, apiKey, model, batch, timeoutMs, deadlineAt, () => { judgeCalls += 1; });
-      for (const primaryId of result.assessedPrimaryIds) successfulPrimaryIds.add(primaryId);
-      incompletePrimary += result.incompletePrimaryIds.length;
-      rawAssessments.push(...result.assessments);
       if (!result.incompletePrimaryIds.length && options.saveJudgeBatchCheckpoint) {
         const checkpoint = checkpointFromResult(checkpointKey, batch, result.assessments);
         if (checkpoint) {
-          try {
-            await options.saveJudgeBatchCheckpoint(checkpointKey, checkpoint);
-            savedJudgeCheckpoints += 1;
-          } catch {
-            // The completed live result remains usable even when durable checkpoint storage fails.
-          }
+          await options.saveJudgeBatchCheckpoint(checkpointKey, checkpoint);
+          savedJudgeCheckpoints += 1;
         }
       }
+      for (const primaryId of result.assessedPrimaryIds) {
+        successfulPrimaryIds.add(primaryId);
+        processedPrimaryIds.add(primaryId);
+      }
+      incompletePrimary += result.incompletePrimaryIds.length;
+      rawAssessments.push(...result.assessments);
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") timedOutPrimary += batch.length;
       else if (error instanceof Error && error.name === "IncompleteOutputError") incompleteOutputPrimary += batch.length;
@@ -812,7 +835,7 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
     const assessment = sanitizeAssessment(value, groupMap);
     return assessment ? [assessment] : [];
   });
-  if (!successfulPrimaryIds.size) return { ...withoutUnassessedMatches(fallback), matching: { ...matchingBase, method: "lexical-fallback", available: false, retrievalPairsScored, judgeCalls, embeddingCalls, reusedJudgeCheckpoints, savedJudgeCheckpoints, durationMs: Date.now() - startedAt, selectedPrimaryIds: primaryProducts.map((product) => product.id), gaps: gaps.length ? gaps : ["AI product judging returned no usable assessments; no product pair was accepted."] } };
+  if (!processedPrimaryIds.size) return { ...withoutUnassessedMatches(fallback), matching: { ...matchingBase, method: "lexical-fallback", available: false, retrievalPairsScored, judgeCalls, embeddingCalls, reusedJudgeCheckpoints, savedJudgeCheckpoints, durationMs: Date.now() - startedAt, selectedPrimaryIds: primaryProducts.map((product) => product.id), gaps: gaps.length ? gaps : ["AI product judging returned no usable assessments; no product pair was accepted."] } };
 
   const pinnedPairKeys = new Set(pinnedPairs.map((pair) => `${pair.primaryId}|${canonicalDomain(pair.rivalDomain)}|${pair.rivalId}`));
   const proposals = sanitized.filter((item): item is typeof item & { verdict: "same_product" | "close_substitute" } => {
@@ -827,51 +850,63 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
       || Number(right.verdict === "same_product") - Number(left.verdict === "same_product")
       || right.confidence - left.confidence
       || left.candidate.product.id.localeCompare(right.candidate.product.id));
-  const assignments = new Map<string, typeof proposals[number]>();
+  const proposalsByPrimary = new Map<string, Array<typeof proposals[number]>>();
+  for (const proposal of proposals) proposalsByPrimary.set(proposal.primary.id, [...(proposalsByPrimary.get(proposal.primary.id) || []), proposal]);
+  const assignments = new Map<string, Array<typeof proposals[number]>>();
   const usedRivals = new Set<string>();
-  for (const proposal of proposals) {
-    const key = `${proposal.primary.id}|${proposal.candidate.product.domain}`;
-    const rivalKey = productIdentityKey(proposal.candidate.product);
-    if (assignments.has(key) || usedRivals.has(rivalKey)) continue;
-    assignments.set(key, proposal);
-    usedRivals.add(rivalKey);
+  const cursors = new Map<string, number>();
+  let assignedInRound = true;
+  while (assignedInRound) {
+    assignedInRound = false;
+    for (const primary of primaryProducts) {
+      const queue = proposalsByPrimary.get(primary.id) || [];
+      let cursor = cursors.get(primary.id) || 0;
+      while (cursor < queue.length && usedRivals.has(productIdentityKey(queue[cursor].candidate.product))) cursor += 1;
+      cursors.set(primary.id, cursor + 1);
+      const proposal = queue[cursor];
+      if (!proposal) continue;
+      assignments.set(primary.id, [...(assignments.get(primary.id) || []), proposal]);
+      usedRivals.add(productIdentityKey(proposal.candidate.product));
+      assignedInRound = true;
+    }
   }
 
   const fallbackRows = new Map(fallback.rows.map((row) => [row.primary.id, row]));
+  const productMatch = (row: ProductComparison["rows"][number], assigned: typeof proposals[number]): ProductMatch => {
+    const verdict = assigned.verdict;
+    const score = aiScore(verdict, assigned.confidence);
+    const rival = assigned.candidate.product;
+    return {
+      domain: canonicalDomain(rival.domain),
+      product: rival,
+      score,
+      confidence: assigned.confidence >= 0.65 ? "Medium" : "Low",
+      sharedTerms: assigned.reasons.slice(0, 8),
+      claimIds: [...row.primary.claimIds, ...rival.claimIds],
+      decision: productDecision(row.primary, rival, score, verdict === "same_product" && exactObservedVariant(row.primary, rival)),
+      assessment: {
+        method: "ai-hybrid",
+        claimType: "Inferred",
+        verdict,
+        confidence: assigned.confidence,
+        model,
+        promptVersion: PROMPT_VERSION,
+        reasons: assigned.reasons,
+        contradictions: assigned.contradictions,
+        normalizedCategory: assigned.normalizedCategory,
+        normalizedVariant: assigned.normalizedVariant,
+        normalizedSize: assigned.normalizedSize,
+        primarySourceUrl: row.primary.sourceUrl,
+        rivalSourceUrl: rival.sourceUrl,
+      },
+    };
+  };
   const rows = primaryProducts.map((primary) => {
     const row = fallbackRows.get(primary.id) || { primary, matches: fallback.comparisonDomains.map((domain): ProductMatch => ({ domain, product: null, score: 0, confidence: null, sharedTerms: [], claimIds: primary.claimIds, decision: null })) };
     if (!successfulPrimaryIds.has(row.primary.id)) return { ...row, matches: emptyMatches(row.primary, fallback.comparisonDomains) };
-    const matches = fallback.comparisonDomains.map((domain): ProductMatch => {
-      const assigned = assignments.get(`${row.primary.id}|${domain}`);
-      if (!assigned) return { domain, product: null, score: 0, confidence: null, sharedTerms: [], claimIds: row.primary.claimIds, decision: null };
-      const verdict = assigned.verdict;
-      const score = aiScore(verdict, assigned.confidence);
-      const rival = assigned.candidate.product;
-      return {
-        domain,
-        product: rival,
-        score,
-        confidence: assigned.confidence >= 0.65 ? "Medium" : "Low",
-        sharedTerms: assigned.reasons.slice(0, 8),
-        claimIds: [...row.primary.claimIds, ...rival.claimIds],
-        decision: productDecision(row.primary, rival, score, verdict === "same_product" && exactObservedVariant(row.primary, rival)),
-        assessment: {
-          method: "ai-hybrid",
-          claimType: "Inferred",
-          verdict,
-          confidence: assigned.confidence,
-          model,
-          promptVersion: PROMPT_VERSION,
-          reasons: assigned.reasons,
-          contradictions: assigned.contradictions,
-          normalizedCategory: assigned.normalizedCategory,
-          normalizedVariant: assigned.normalizedVariant,
-          normalizedSize: assigned.normalizedSize,
-          primarySourceUrl: row.primary.sourceUrl,
-          rivalSourceUrl: rival.sourceUrl,
-        },
-      };
-    });
+    const accepted = (assignments.get(row.primary.id) || []).map((assigned) => productMatch(row, assigned));
+    const acceptedDomains = new Set(accepted.map((match) => match.domain));
+    const matches = [...accepted, ...fallback.comparisonDomains.filter((domain) => !acceptedDomains.has(domain)).map((domain): ProductMatch => ({ domain, product: null, score: 0, confidence: null, sharedTerms: [], claimIds: row.primary.claimIds, decision: null }))];
     return { ...row, matches };
   });
   const assignedIds = new Set(rows.flatMap((row) => row.matches.flatMap((match) => match.product ? [productIdentityKey(match.product)] : [])));
@@ -902,6 +937,7 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
       gaps,
       selectedPrimaryIds: primaryProducts.map((product) => product.id),
       assessedPrimaryIds: [...successfulPrimaryIds].sort(),
+      processedPrimaryIds: [...processedPrimaryIds].sort(),
       attempts: 1,
       primaryProductsSynchronized: matchingBase.primaryProductsSynchronized,
       competitorProductsSynchronized: matchingBase.competitorProductsSynchronized,

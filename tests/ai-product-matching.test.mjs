@@ -696,6 +696,29 @@ test("the default retrieval budget judges five viable candidates for one primary
   assert.equal(comparison.matching?.candidatePairsAssessed, 5);
 });
 
+test("accepted backup candidates survive matching until the final priced-result selection", async () => {
+  const primary = product("backup-p", "shop.example", "Beef Cubes Halal 500g", { price: { raw: "GBP 10", currency: "GBP", amount: 10 }, sourceUrl: "https://shop.example/products/beef?country=GB" });
+  const unpriced = product("backup-r1", "rival.example", "Beef Cubes Halal 500g", { sourceUrl: "https://rival.example/products/beef-one?country=GB" });
+  const priced = product("backup-r2", "rival.example", "Beef Cubes Halal 500g", { price: { raw: "GBP 8", currency: "GBP", amount: 8 }, sourceUrl: "https://rival.example/products/beef-two?country=GB" });
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, index / 100] })) });
+    const request = JSON.parse(body.input[1].content);
+    return response({ output_text: JSON.stringify({ assessments: request.groups[0].candidates.map((candidate) => ({ primaryId: primary.id, candidateId: candidate.id, verdict: "same_product", confidence: candidate.id === unpriced.id ? 0.99 : 0.98, reason: "Same observed product identity.", contradiction: "" })) }) });
+  };
+
+  const screened = await buildAIProductComparison("shop.example", [
+    { domain: "shop.example", products: [primary] },
+    { domain: "rival.example", products: [unpriced, priced] },
+  ], {}, { apiKey: "test", fetch, maxCandidatesPerPrimary: 2, maxCandidatesPerDomain: 2, marketCountryCode: "GB" });
+  assert.deepEqual(screened.rows[0].matches.flatMap((match) => match.product?.id || []), [unpriced.id, priced.id]);
+
+  screened.marketCountryCode = "GB";
+  const published = publishPricedProductComparison(screened, Date.parse("2026-08-01T00:00:00.000Z"));
+  assert.equal(published.rows[0].matches.find((match) => match.product?.id === priced.id)?.publication?.priceEligible, true);
+  assert.equal(published.rows[0].matches.find((match) => match.excludedProduct?.id === unpriced.id)?.publication?.reason, "missing-valid-rival-price");
+});
+
 test("products with no viable candidates still count as screened for honest exhaustion", async () => {
   const primaries = Array.from({ length: 4 }, (_, index) => product(`empty-p${index}`, "shop.test", `Unique local item ${index}`));
   const rival = product("empty-r", "rival.test", "Unrelated imported service");
@@ -717,6 +740,31 @@ test("products with no viable candidates still count as screened for honest exha
   assert.equal(judgeCalls, 0);
   assert.equal(comparison.matching?.primaryProductsScreened, 4);
   assert.deepEqual(comparison.matching?.selectedPrimaryIds, primaries.map((item) => item.id));
+  assert.equal(comparison.matching?.primaryProductsAssessed, 0);
+  assert.deepEqual(comparison.matching?.processedPrimaryIds, primaries.map((item) => item.id));
+  assert.equal(comparison.matching?.method, "ai-hybrid");
+});
+
+test("durable candidate-plan failures stop matching before any judge call", async () => {
+  const primary = product("durable-p", "shop.test", "Sidr Honey 500g");
+  const rival = product("durable-r", "rival.test", "Sidr Honey 500g");
+  for (const failure of ["load", "save"]) {
+    let judgeCalls = 0;
+    const comparison = await buildAIProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "rival.test", products: [rival] }], {}, {
+      apiKey: "test",
+      loadCandidatePlan: async () => { if (failure === "load") throw new Error("storage unavailable"); return null; },
+      saveCandidatePlan: async () => { if (failure === "save") throw new Error("storage unavailable"); },
+      fetch: async (url, init) => {
+        const body = JSON.parse(init.body);
+        if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, 0] })) });
+        judgeCalls += 1;
+        return response({ output_text: JSON.stringify({ assessments: [] }) });
+      },
+    });
+    assert.equal(judgeCalls, 0);
+    assert.equal(comparison.matching?.available, false);
+    assert.match(comparison.matching?.gaps.join(" ") || "", /candidate-plan/i);
+  }
 });
 
 test("the candidate budget follows the strongest candidates instead of forcing domain diversity", async () => {

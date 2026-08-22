@@ -30,6 +30,7 @@ import { buildReportFactBundle } from "../shared/report-facts.ts";
 import { compactTerminalReportDocument } from "../shared/report-document-compaction.ts";
 import type { ReportFactChunkInput, ReportFactManifestInput } from "../../app/lib/report-store.ts";
 import type { PinnedProductPair } from "../../app/lib/ai-product-matching.ts";
+import { createHash } from "node:crypto";
 
 class CompletedFactManifestConflict extends Error {}
 
@@ -37,7 +38,9 @@ export const MAX_OPERATION_TIMEOUT_MS = 13 * 60 * 1000;
 export const FINAL_ENRICHMENT_BATCH_SIZE = 64;
 export const FINAL_ENRICHMENT_BATCH_CONCURRENCY = 2;
 export const MAX_FINAL_ENRICHMENT_TARGETS = 6_000;
+export const MAX_FINAL_ENRICHMENT_BATCHES = Math.ceil(MAX_FINAL_ENRICHMENT_TARGETS / FINAL_ENRICHMENT_BATCH_SIZE);
 export const MAX_FINAL_ENRICHMENT_BATCH_WAVES = Math.ceil(MAX_FINAL_ENRICHMENT_TARGETS / FINAL_ENRICHMENT_BATCH_SIZE / FINAL_ENRICHMENT_BATCH_CONCURRENCY);
+export const ENRICHMENT_CHECKPOINT_BATCH_INDEX_BASE = 300;
 
 export function pricedResultEnrichmentBudget(resultTarget: number) {
   void resultTarget;
@@ -76,6 +79,42 @@ function publishedPricedPrimaryCount(comparison: ProductComparison, referenceTim
   return publishPricedProductComparison(comparison, referenceTimeMs).rows.filter((row) => row.matches.some((match) => match.publication?.priceEligible === true)).length;
 }
 
+type EnrichmentResult = Awaited<ReturnType<ReportOrchestrationPort["enrich"]>>;
+
+function validEnrichmentCheckpoint(value: unknown): EnrichmentResult | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Partial<EnrichmentResult>;
+  if (candidate.ok !== true || !Array.isArray(candidate.products) || !candidate.coverage || typeof candidate.coverage !== "object") return null;
+  if (candidate.products.length > FINAL_ENRICHMENT_BATCH_SIZE) return null;
+  const validProduct = (product: unknown) => {
+    if (!product || typeof product !== "object" || Array.isArray(product)) return false;
+    const item = product as Partial<ProductRecord>;
+    return typeof item.id === "string" && item.id.length > 0
+      && typeof item.domain === "string" && item.domain.length > 0
+      && typeof item.name === "string" && item.name.length > 0
+      && typeof item.normalizedName === "string"
+      && typeof item.sourceUrl === "string" && /^https?:\/\//i.test(item.sourceUrl)
+      && typeof item.observedAt === "string" && Number.isFinite(Date.parse(item.observedAt))
+      && Array.isArray(item.priceSignals)
+      && Array.isArray(item.attributes)
+      && Array.isArray(item.claimIds);
+  };
+  if (!candidate.products.every(validProduct)) return null;
+  const coverage = candidate.coverage as Partial<NonNullable<ProductComparison["enrichment"]>>;
+  const boundedCount = (count: unknown) => typeof count === "number" && Number.isInteger(count) && count >= 0 && count <= FINAL_ENRICHMENT_BATCH_SIZE;
+  if (!boundedCount(coverage.pagesRequested)
+    || !boundedCount(coverage.pagesFetched)
+    || !boundedCount(coverage.maxPages)
+    || (coverage.pagesFetched || 0) > (coverage.pagesRequested || 0)
+    || !Array.isArray(coverage.gaps)
+    || coverage.gaps.length > FINAL_ENRICHMENT_BATCH_SIZE) return null;
+  return candidate as EnrichmentResult;
+}
+
+function enrichmentBatchHash(targets: unknown[], reportReferenceTimeMs: number) {
+  return createHash("sha256").update(JSON.stringify({ version: 1, reportReferenceTimeMs, targets })).digest("hex");
+}
+
 type RunStatus = "queued" | "running" | "complete" | "limited" | "failed" | "interrupted";
 type ReportEvent = { idempotencyKey: string; phase: string; status: RunStatus; message: string; metadata?: Record<string, unknown> };
 type StoredReport = {
@@ -102,6 +141,8 @@ export interface ReportOrchestrationPort {
   ads(input: unknown): Promise<{ ok: true; block: JsonBlock }>;
   match(input: { publicId: string; reportAttempt: number; reportObservedAt: string; primaryDomain: string; marketCountryCode?: string; productLimit: number; catalogs: Array<{ domain: string; products: ProductRecord[] }>; pinnedPairs?: PinnedProductPair[] }): Promise<{ ok: true; comparison: ProductComparison }>;
   enrich(input: { targets: unknown[] }): Promise<{ ok: true; products: ProductRecord[]; coverage: NonNullable<ProductComparison["enrichment"]> }>;
+  loadCheckpoint(publicId: string, input: { attemptNumber: number; batchIndex: number }): Promise<Array<{ batchIndex: number; inputHash: string; result: unknown }>>;
+  saveCheckpoint(publicId: string, input: { attemptNumber: number; batchIndex: number; inputHash: string; result: unknown }): Promise<void>;
   actions(input: { inputs: ProductActionInput[] }): Promise<{ ok: true; result: ProductActionPlanningResult }>;
   persistFactChunk(publicId: string, input: ReportFactChunkInput): Promise<void>;
   finalizeFactManifest(publicId: string, input: ReportFactManifestInput): Promise<void>;
@@ -326,7 +367,21 @@ export async function orchestrateReport(
           const wave = batches.slice(waveStart, waveStart + FINAL_ENRICHMENT_BATCH_CONCURRENCY);
           pagesRequested += wave.reduce((sum, batch) => sum + batch.length, 0);
           batchesProcessed += wave.length;
-          const results = await Promise.allSettled(wave.map((batch) => port.enrich({ targets: batch })));
+          const results = await Promise.allSettled(wave.map(async (batch, waveIndex) => {
+            const batchIndex = waveStart + waveIndex;
+            const checkpointIndex = ENRICHMENT_CHECKPOINT_BATCH_INDEX_BASE + batchIndex;
+            const inputHash = enrichmentBatchHash(batch, reportReferenceTimeMs);
+            const saved = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointIndex }))[0];
+            if (saved) {
+              if (saved.inputHash !== inputHash) throw new Error("A durable enrichment checkpoint conflicts with the current product-page batch.");
+              const checkpoint = validEnrichmentCheckpoint(saved.result);
+              if (!checkpoint) throw new Error("A durable enrichment checkpoint is invalid.");
+              return checkpoint;
+            }
+            const result = await port.enrich({ targets: batch });
+            await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointIndex, inputHash, result });
+            return result;
+          }));
           results.forEach((result, index) => {
             if (result.status === "fulfilled") {
               products.push(...result.value.products);

@@ -128,11 +128,13 @@ function mockPort(overrides = {}) {
   const saves = [];
   const factChunks = [];
   const factManifests = [];
+  const checkpoints = new Map();
   const port = {
     events,
     saves,
     factChunks,
     factManifests,
+    checkpoints,
     async preflight() {},
     async loadReport() {
       return {
@@ -154,6 +156,12 @@ function mockPort(overrides = {}) {
     async ads() { return { ok: true, block: { type: "ad-intelligence", id: "ad-intelligence" } }; },
     async match() { return { ok: true, comparison: comparison({ withPair: true }) }; },
     async enrich({ targets }) { return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: targets.length, gaps: [] } }; },
+    async loadCheckpoint(_publicId, input) { return checkpoints.has(input.batchIndex) ? [checkpoints.get(input.batchIndex)] : []; },
+    async saveCheckpoint(_publicId, input) {
+      const existing = checkpoints.get(input.batchIndex);
+      if (existing && (existing.inputHash !== input.inputHash || JSON.stringify(existing.result) !== JSON.stringify(input.result))) throw new Error("checkpoint conflict");
+      checkpoints.set(input.batchIndex, { batchIndex: input.batchIndex, inputHash: input.inputHash, result: input.result });
+    },
     async actions({ inputs }) { return { ok: true, result: deterministicProductActionResult(inputs) }; },
     async persistFactChunk(_publicId, value) { factChunks.push(value); },
     async finalizeFactManifest(_publicId, value) { factManifests.push(value); },
@@ -677,8 +685,8 @@ test("all operation deadlines keep a two-minute margin below the stale marker", 
   for (const timeout of Object.values(OPERATION_BUDGETS_MS)) assert.ok(timeout <= MAX_OPERATION_TIMEOUT_MS);
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS > OPERATION_BUDGETS_MS.match, "Undici must not preempt the match operation deadline");
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS < MAX_OPERATION_TIMEOUT_MS, "the worker deadline must remain inside the outer edge window");
-  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 8_065_000);
-  assert.ok(WORST_CASE_CRITICAL_PATH_MS <= 8_280_000, "critical path must preserve a two-minute task-ceiling margin");
+  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 12_445_000);
+  assert.ok(WORST_CASE_CRITICAL_PATH_MS <= 12_480_000, "critical path must preserve a two-minute task-ceiling margin");
 });
 
 test("the managed orchestration fetch controls the response-header deadline", async () => {
@@ -768,7 +776,7 @@ test("partial and failed selected enrichment remain visibly limited", async () =
   assert.ok(failure.events.some((item) => item.idempotencyKey === "enrichment-limited"));
 });
 
-test("accepted rivals are enriched in 64-page batches and successful batches survive a later failure", async () => {
+test("publication-ineligible pairs are re-read on both sides and successful batches survive a failure", async () => {
   const batched = comparison({ withPair: true });
   const template = batched.rows[0];
   batched.rows = Array.from({ length: 70 }, (_, index) => {
@@ -791,16 +799,67 @@ test("accepted rivals are enriched in 64-page batches and successful batches sur
     },
   });
   const result = await orchestrateReport({ ...payload, contractVersion: "3", productPlan: "growth", productLimit: 500 }, { attemptNumber: 1, isFinalAttempt: false }, port);
-  assert.deepEqual(batchSizes, [64, 6]);
+  assert.deepEqual(batchSizes, [64, 64, 12]);
   assert.equal(result.reportStatus, "limited");
   const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
-  assert.equal(block.rows.flatMap((row) => row.matches).filter((match) => match.product).length, 64);
-  assert.equal(block.enrichment.pagesRequested, 70);
-  assert.equal(block.enrichment.pagesFetched, 64);
+  assert.equal(block.rows.flatMap((row) => row.matches).filter((match) => match.product).length, 38);
+  assert.equal(block.enrichment.pagesRequested, 140);
+  assert.equal(block.enrichment.pagesFetched, 76);
   assert.equal(block.enrichment.failedBatchCount, 1);
   const checkpoints = port.events.filter((event) => /^enrichment-wave-\d+-checkpoint$/.test(event.idempotencyKey));
-  assert.equal(checkpoints.length, 1);
-  assert.equal(checkpoints[0].metadata.pagesRequested, 70);
+  assert.equal(checkpoints.length, 2);
+  assert.equal(checkpoints[1].metadata.pagesRequested, 140);
+});
+
+test("a task retry reuses durable enrichment batches instead of fetching product pages again", async () => {
+  let enrichCalls = 0;
+  let saveCalls = 0;
+  const port = mockPort({
+    async match() {
+      const value = comparison({ withPair: true, count: 1 });
+      value.rows[0].primary.priceSignals = [];
+      value.rows[0].matches[0].product.priceSignals = [];
+      return { ok: true, comparison: value };
+    },
+    async enrich({ targets }) {
+      enrichCalls += 1;
+      return {
+        ok: true,
+        products: targets.map((target) => ({ ...product(target.domain, target.productId), name: target.expectedName, normalizedName: target.expectedName.toLowerCase(), sourceUrl: target.sourceUrl, priceSignals: [{ raw: target.role === "primary" ? "GBP 9" : "GBP 7", currency: "GBP", amount: target.role === "primary" ? 9 : 7 }] })),
+        coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: 64, gaps: [] },
+      };
+    },
+    async saveDocument() {
+      saveCalls += 1;
+      if (saveCalls === 1) throw new Error("terminal callback lost");
+    },
+  });
+
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
+  await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
+  assert.equal(enrichCalls, 1);
+  assert.equal(port.checkpoints.size, 1);
+});
+
+test("a conflicting enrichment checkpoint fails closed without fetching or publishing it", async () => {
+  let enrichCalls = 0;
+  const port = mockPort({
+    async match() {
+      const value = comparison({ withPair: true, count: 1 });
+      value.rows[0].primary.priceSignals = [];
+      value.rows[0].matches[0].product.priceSignals = [];
+      return { ok: true, comparison: value };
+    },
+    async loadCheckpoint(_publicId, input) {
+      return [{ batchIndex: input.batchIndex, inputHash: "0".repeat(64), result: { ok: true, products: [], coverage: { pagesRequested: 2, pagesFetched: 0, maxPages: 64, gaps: [] } } }];
+    },
+    async enrich() { enrichCalls += 1; throw new Error("must not fetch after a checkpoint conflict"); },
+  });
+
+  const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
+  assert.equal(enrichCalls, 0);
+  assert.equal(result.reportStatus, "limited");
+  assert.ok(result.limitedPhases.includes("enrichment"));
 });
 
 test("action planning runs after final enrichment and persists source-labelled plans", async () => {
@@ -979,6 +1038,25 @@ test("the HTTP report adapter sends authenticated fact chunks and the final mani
   await port.finalizeFactManifest(payload.publicId, { manifestId: "a".repeat(64), manifestHash: "c".repeat(64), counts: { companies: 0, products: 0, matches: 0, ads: 0 } });
   assert.equal(bodies[0].action, "fact-chunk");
   assert.equal(bodies[1].action, "fact-manifest");
+});
+
+test("the HTTP report adapter reads and writes exact enrichment checkpoints", async () => {
+  const bodies = [];
+  const checkpoint = { batchIndex: 301, inputHash: "a".repeat(64), result: { ok: true, products: [], coverage: { pagesRequested: 0, pagesFetched: 0, maxPages: 0, gaps: [] } } };
+  const port = createReportOrchestrationHttpPort({
+    appOrigin: "https://market.example",
+    callbackToken: "callback_secret_with_enough_entropy_123456",
+    async fetchImpl(_url, init) {
+      const body = JSON.parse(init.body);
+      bodies.push({ body, authorization: init.headers.Authorization });
+      return Response.json(body.action === "match-batch-checkpoints-load" ? { ok: true, checkpoints: [checkpoint] } : { ok: true });
+    },
+  });
+  assert.deepEqual(await port.loadCheckpoint(payload.publicId, { attemptNumber: 2, batchIndex: 301 }), [checkpoint]);
+  await port.saveCheckpoint(payload.publicId, { attemptNumber: 2, ...checkpoint });
+  assert.deepEqual(bodies.map(({ body }) => body.action), ["match-batch-checkpoints-load", "match-batch-checkpoint-save"]);
+  assert.deepEqual(bodies.map(({ body }) => [body.attemptNumber, body.batchIndex]), [[2, 301], [2, 301]]);
+  assert.ok(bodies.every(({ authorization }) => authorization === "Bearer callback_secret_with_enough_entropy_123456"));
 });
 
 test("the HTTP report adapter compacts a large terminal document before transport", async () => {

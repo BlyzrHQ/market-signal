@@ -1718,6 +1718,15 @@ test("final enrichment re-reads a non-positive existing product price", () => {
   assert.deepEqual(selectFinalProductEnrichmentTargets(comparison, 1).map((target) => target.productId), [primary.id]);
 });
 
+test("final enrichment re-reads both sides of a cross-currency pair in the resolved target market", () => {
+  const primary = { ...product("primary-gbp", "shop.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/custom-jacket?country=GB", priceSignals: [{ raw: "GBP 90", currency: "GBP", amount: 90 }] };
+  const rival = { ...product("rival-usd", "rival.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://rival.test/products/custom-jacket?country=GB", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }] };
+  const comparison = { primaryDomain: "shop.test", marketCountryCode: "GB", comparisonDomains: ["rival.test"], rows: [{ primary, matches: [{ domain: rival.domain, product: rival, score: 0.95, confidence: "Medium", sharedTerms: ["jacket"], claimIds: [], decision: null }] }], unmatched: [], coverage: { primaryProductsAvailable: 1, primaryProductsScanned: 1, primaryProductFamiliesCompared: 1, competitorProductsAvailable: 1, competitorProductsScanned: 1, assignedPairCount: 1, verifiedPairCount: 1, rowsReturned: 1, rowLimit: 1, truncated: false } };
+
+  const plan = planFinalProductEnrichmentTargets(comparison, 2, Date.parse("2026-08-01T00:00:00.000Z"));
+  assert.deepEqual(plan.targets.map((target) => target.productId), [rival.id, primary.id]);
+});
+
 test("a strongest both-missing pair is scheduled before a weaker secondary single-missing pair", () => {
   const primary = { ...product("primary-strong", "shop.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/custom-jacket" };
   const strongest = { ...product("rival-strong", "strong.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://strong.test/products/custom-jacket" };

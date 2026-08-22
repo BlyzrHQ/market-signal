@@ -1,4 +1,4 @@
-import { MAX_FINAL_ENRICHMENT_BATCH_WAVES, type ReportOrchestrationPort } from "./report-orchestration-core.ts";
+import { MAX_FINAL_ENRICHMENT_BATCHES, MAX_FINAL_ENRICHMENT_BATCH_WAVES, type ReportOrchestrationPort } from "./report-orchestration-core.ts";
 import { parkingProvider } from "../../app/lib/domain-recovery.ts";
 import { PermanentOrchestrationError } from "../shared/report-orchestration-contract.ts";
 import { parseWorkerApiManifest, WorkerApiContractError } from "../shared/worker-api-contract.ts";
@@ -51,13 +51,15 @@ export const OPERATION_BUDGETS_MS = {
   actions: 35_000,
 } as const;
 
-// read + preflight + crawl-start + crawl + crawl-complete + longest parallel lane
+export const MAX_REPORT_FACT_CALLBACKS = 250;
+
+// Read + preflight + crawl events + crawl + longest parallel lane
 // (matching-start + two bounded match calls, where the second replays durable
 // judge checkpoints and only requests missing work, + enrichment-start + bounded
-// enrichment batch waves +
+// enrichment batch waves and their durable load/save callbacks +
 // enrichment-complete + actions-start + actions + actions-complete +
-// matching-complete) + final save.
-export const WORST_CASE_CRITICAL_PATH_MS = (OPERATION_BUDGETS_MS.report * (11 + MAX_FINAL_ENRICHMENT_BATCH_WAVES))
+// matching-complete) + bounded relational-fact chunks, manifest, and final save.
+export const WORST_CASE_CRITICAL_PATH_MS = (OPERATION_BUDGETS_MS.report * (11 + MAX_FINAL_ENRICHMENT_BATCH_WAVES + (MAX_FINAL_ENRICHMENT_BATCHES * 2) + MAX_REPORT_FACT_CALLBACKS))
   + OPERATION_BUDGETS_MS.preflight
   + OPERATION_BUDGETS_MS.crawl
   + (OPERATION_BUDGETS_MS.match * 2)
@@ -310,6 +312,15 @@ export function createReportOrchestrationHttpPort(configuration: { appOrigin: st
       const payload = requiredObject<Awaited<ReturnType<ReportOrchestrationPort["enrich"]>>>(await call(PATHS.enrich, "Product enrichment", OPERATION_BUDGETS_MS.enrich, input), "Product enrichment");
       if (payload.ok !== true) throw new OrchestrationHttpError("Product enrichment", 422, false);
       return payload;
+    },
+    async loadCheckpoint(publicId, input) {
+      const payload = requiredObject<{ ok?: boolean; checkpoints?: unknown }>(await call(PATHS.report(publicId), "Report checkpoint read", OPERATION_BUDGETS_MS.report, { action: "match-batch-checkpoints-load", ...input }), "Report checkpoint read");
+      if (payload.ok !== true || !Array.isArray(payload.checkpoints)) throw new OrchestrationHttpError("Report checkpoint read", 502, true);
+      return payload.checkpoints as Awaited<ReturnType<ReportOrchestrationPort["loadCheckpoint"]>>;
+    },
+    async saveCheckpoint(publicId, input) {
+      const payload = requiredObject<{ ok?: boolean }>(await call(PATHS.report(publicId), "Report checkpoint callback", OPERATION_BUDGETS_MS.report, { action: "match-batch-checkpoint-save", ...input }), "Report checkpoint callback");
+      if (payload.ok !== true) throw new OrchestrationHttpError("Report checkpoint callback", 502, true);
     },
     async actions(input) {
       const payload = requiredObject<Awaited<ReturnType<ReportOrchestrationPort["actions"]>>>(await call(PATHS.actions, "Product action planning", OPERATION_BUDGETS_MS.actions, input), "Product action planning");

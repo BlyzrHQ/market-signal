@@ -171,6 +171,7 @@ export type ProductComparison = {
     gaps: string[];
     selectedPrimaryIds?: string[];
     assessedPrimaryIds?: string[];
+    processedPrimaryIds?: string[];
     attempts?: number;
     primaryProductsSynchronized?: number;
     competitorProductsSynchronized?: number;
@@ -1929,13 +1930,13 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
   const seenTargets = new Set<string>();
   const deferredPriceTargets = new Set<string>();
   const targetKey = (product: ProductRecord, sourceUrl: string) => `${canonicalHost(product.domain)}\n${product.id}\n${sourceUrl}`;
-  const add = (product: ProductRecord, role: ProductEnrichmentTarget["role"], pairScore: number, need: "price" | "image") => {
+  const add = (product: ProductRecord, role: ProductEnrichmentTarget["role"], pairScore: number, need: "price" | "image" | "comparison") => {
     if (product.jsonLdType !== "Product") return;
     const sourceUrl = safeProductSource(product);
     const needsPrice = !hasComparablePublicPrice(product, referenceTimeMs);
     const needsSecureImage = !/^https:\/\//i.test(product.imageUrl);
     const key = targetKey(product, sourceUrl);
-    if (!sourceUrl || (need === "price" ? !needsPrice : !needsSecureImage) || seenTargets.has(key)) return;
+    if (!sourceUrl || (need === "price" ? !needsPrice : need === "image" ? !needsSecureImage : false) || seenTargets.has(key)) return;
     seenTargets.add(key);
     deferredPriceTargets.delete(key);
     eligible.push({ domain: product.domain, sourceUrl, productId: product.id, expectedName: product.name, expectedType: product.jsonLdType, pairScore, role, ...(marketCountryCode ? { marketCountryCode } : {}) });
@@ -1956,11 +1957,12 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
     .filter((group): group is typeof group & { accepted: Array<ProductMatch & { product: ProductRecord }> } => group.accepted.some((match) => Boolean(match.product)))
     .sort((left, right) => (right.accepted[0]?.score || 0) - (left.accepted[0]?.score || 0) || left.rowIndex - right.rowIndex);
   const missingForPair = (pair: { row: ProductComparison["rows"][number]; match: ProductMatch & { product: ProductRecord } }) => {
+    if (marketCountryCode && hasComparablePublicPricePair(pair.row.primary, pair.match.product, referenceTimeMs, marketCountryCode)) return [];
     const missing = [
       { product: pair.match.product, role: "rival" as const },
       { product: pair.row.primary, role: "primary" as const },
     ].flatMap((candidate) => {
-      if (hasComparablePublicPrice(candidate.product, referenceTimeMs)) return [];
+      if (!marketCountryCode && hasComparablePublicPrice(candidate.product, referenceTimeMs)) return [];
       const sourceUrl = safeProductSource(candidate.product);
       return sourceUrl && !seenTargets.has(targetKey(candidate.product, sourceUrl)) ? [{ ...candidate, sourceUrl }] : [];
     });
@@ -1970,7 +1972,7 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
     const uniqueMissing = missingForPair(pair);
     if (eligible.length + uniqueMissing.length > boundedMax) return false;
     const before = eligible.length;
-    uniqueMissing.forEach((candidate) => add(candidate.product, candidate.role, pair.match.score, "price"));
+    uniqueMissing.forEach((candidate) => add(candidate.product, candidate.role, pair.match.score, "comparison"));
     return eligible.length - before === uniqueMissing.length;
   };
   // First give every primary row one completable candidate. Then spend the

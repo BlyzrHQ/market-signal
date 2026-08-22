@@ -20,6 +20,11 @@ function assessedIds(comparison: ProductComparison) {
   return new Set(matching(comparison)?.assessedPrimaryIds || []);
 }
 
+function processedIds(comparison: ProductComparison) {
+  const explicit = matching(comparison)?.processedPrimaryIds || [];
+  return new Set(explicit.length ? explicit : [...assessedIds(comparison)]);
+}
+
 function gapCount(comparison: ProductComparison) {
   return matching(comparison)?.gaps.length || 0;
 }
@@ -35,9 +40,8 @@ function withoutUnassessedMatches(comparison: ProductComparison) {
 export function hasProductMatchCoverageDefect(comparison: ProductComparison | null | undefined) {
   if (!comparison?.matching || comparison.matching.method !== "ai-hybrid" || !comparison.matching.available) return true;
   const selected = selectedIds(comparison);
-  const assessed = assessedIds(comparison);
-  const assessedCount = Math.max(assessed.size, comparison.matching.primaryProductsAssessed);
-  return gapCount(comparison) > 0 || assessedCount < selected.size;
+  const processed = processedIds(comparison);
+  return gapCount(comparison) > 0 || processed.size < selected.size;
 }
 
 export function shouldRetryProductMatch(comparison: ProductComparison | null | undefined, transportFailed = false) {
@@ -48,6 +52,8 @@ export function shouldRetryProductMatch(comparison: ProductComparison | null | u
 }
 
 function attemptRank(left: ProductComparison, right: ProductComparison) {
+  const processedDifference = processedIds(right).size - processedIds(left).size;
+  if (processedDifference) return processedDifference;
   const assessedDifference = assessedIds(right).size - assessedIds(left).size;
   if (assessedDifference) return assessedDifference;
   const gapDifference = gapCount(left) - gapCount(right);
@@ -78,7 +84,8 @@ export function composeProductMatchAttempts(baseline: ProductComparison | null, 
   });
   const selected = new Set(ranked.flatMap((attempt) => [...selectedIds(attempt)]));
   const assessed = new Set(ranked.flatMap((attempt) => [...assessedIds(attempt)]));
-  const unresolved = [...selected].filter((id) => !assessed.has(id));
+  const processed = new Set(ranked.flatMap((attempt) => [...processedIds(attempt)]));
+  const unresolved = [...selected].filter((id) => !processed.has(id));
   const preferredGaps = preferred.matching?.gaps || [];
   const gaps = unresolved.length
     ? [...preferredGaps, `AI product matching did not assess ${unresolved.length} selected primary product${unresolved.length === 1 ? "" : "s"} after the bounded retry.`]
@@ -109,6 +116,7 @@ export function composeProductMatchAttempts(baseline: ProductComparison | null, 
       gaps: [...new Set(gaps)],
       selectedPrimaryIds: [...selected],
       assessedPrimaryIds: [...assessed].sort(),
+      processedPrimaryIds: [...processed].sort(),
       attempts: Math.max(ranked.length, requestCount),
     },
   } satisfies ProductComparison;
@@ -244,9 +252,12 @@ export function limitPublishedProductComparison(comparison: ProductComparison, r
   const priorMatching = comparison.matching;
   const screened = priorMatching?.primaryProductsScreened || priorMatching?.primaryProductsAssessed || 0;
   const selectedIds = new Set(priorMatching?.selectedPrimaryIds || []);
-  const assessedIds = new Set(priorMatching?.assessedPrimaryIds || []);
+  const completedIds = new Set(priorMatching?.processedPrimaryIds?.length ? priorMatching.processedPrimaryIds : priorMatching?.assessedPrimaryIds || []);
+  const marketResolved = /^[A-Z]{2}$/.test(String(comparison.marketCountryCode || "").toUpperCase());
   const matchingCompleted = priorMatching?.available === true
-    && [...selectedIds].every((id) => assessedIds.has(id));
+    && marketResolved
+    && priorMatching.gaps.length === 0
+    && [...selectedIds].every((id) => completedIds.has(id));
   const enrichmentCompleted = !comparison.enrichment?.failedBatchCount
     && comparison.enrichment?.pagesTruncated !== true;
   const resultShortfallReason = resultShortfall
