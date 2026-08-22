@@ -81,11 +81,25 @@ type LaneResult = { lane: SearchLane; category: string; region: string; queries:
 
 const MAX_CANDIDATES = 6;
 const MAX_PRODUCT_SEARCHES = 100;
+const PRODUCT_SEARCH_CONCURRENCY = 10;
 const MAX_PRODUCT_SEARCH_ANCHORS = 1_000;
 const MAX_SOURCE_FIRST_LEADS_PER_SEARCH = 2;
 const MAX_SOURCE_FIRST_CANDIDATES = 2;
 const MAX_MODEL_STRUCTURED_LEADS_PER_LANE = 1;
 const SEARCH_TIMEOUT_MS = 24_000;
+
+async function mapConcurrent<T, R>(values: T[], concurrency: number, work: (value: T) => Promise<R>) {
+  const results = new Array<R>(values.length);
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+    for (;;) {
+      const index = cursor++;
+      if (index >= values.length) return;
+      results[index] = await work(values[index]);
+    }
+  }));
+  return results;
+}
 const SEARCH_SOURCE_STOPWORDS = new Set([
   "apx", "approximately", "buy", "delivered", "delivery", "fresh", "halal", "home", "online", "order", "price", "product", "products", "shop", "store", "uk",
 ]);
@@ -849,7 +863,7 @@ export async function discoverCompetitors(profile: DiscoveryProfile, options: { 
   if (!apiKey) return { available: false, provider: "unavailable", model, category: business.category, region: business.region, businessType: business.businessType, strategy: "not-run", queries: [], candidates: [], gaps: ["Web discovery is not configured."], gap: "Web discovery is not configured. A search-capable provider is required before competitors can be discovered automatically.", productSearchCoverage: baseCoverage };
 
   const endpoint = `${(process.env.OPENAI_RESPONSES_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "")}/responses`;
-  const productResults = await Promise.all(anchors.map((anchor) => runLane(endpoint, apiKey, model, "product", { ...business, offerings: [anchor] }, { ...profile, products: [anchor] })));
+  const productResults = await mapConcurrent(anchors, PRODUCT_SEARCH_CONCURRENCY, (anchor) => runLane(endpoint, apiKey, model, "product", { ...business, offerings: [anchor] }, { ...profile, products: [anchor] }));
   const productCandidates = mergeCandidates(productResults.flatMap((result) => result.candidates), MAX_PRODUCT_SEARCH_ANCHORS, MAX_PRODUCT_SEARCH_ANCHORS);
   const companyResults = await Promise.all((["entity", "category"] as SearchLane[]).map((lane) => runLane(endpoint, apiKey, model, lane, business, profile)));
   const strategy: DiscoveryResult["strategy"] = business.businessType !== "ecommerce"

@@ -893,6 +893,37 @@ test("searches 100 distinct ecommerce anchors and reports the remaining catalog 
   }
 });
 
+test("bounds concurrent product-search requests while preserving every selected anchor", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  let active = 0;
+  let maximumActive = 0;
+  let productCalls = 0;
+  const searchProfile = {
+    ...profile,
+    products: Array.from({ length: 25 }, (_, index) => product(`Beef Sirloin Steak Halal ${500 + index}g`, `https://myjam.co.uk/products/distinct-${index}`)),
+  };
+  globalThis.fetch = async (_url, init) => {
+    const request = JSON.parse(init.body);
+    const input = JSON.parse(request.input[1].content);
+    active += 1;
+    maximumActive = Math.max(maximumActive, active);
+    if (input.lane === "product") productCalls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    active -= 1;
+    return searchResponse({ category: "Grocery", region: "United Kingdom", queries: [], candidates: [] });
+  };
+  try {
+    await discoverCompetitors(searchProfile);
+    assert.equal(productCalls, 25);
+    assert.ok(maximumActive <= 10);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
 test("continues product discovery from the supplied completed-batch cursor", async () => {
   const previousKey = process.env.OPENAI_API_KEY;
   const previousFetch = globalThis.fetch;
