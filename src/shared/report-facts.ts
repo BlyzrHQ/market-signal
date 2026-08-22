@@ -2,6 +2,7 @@ import { isSupportedCurrency, type ProductComparison, type ProductRecord } from 
 import type { ReportFactChunkInput, ReportFactKind, ReportFactManifestInput } from "../../app/lib/report-store.ts";
 import { canonicalDomain } from "../../app/lib/domain.ts";
 import { publicHttpUrl } from "../../app/lib/public-url.ts";
+import { durablePublishedMatchAssessment } from "../../app/lib/product-match-lifecycle.ts";
 
 type JsonRecord = Record<string, unknown>;
 type CrawlFactResult = {
@@ -285,28 +286,60 @@ function productFact(product: ProductRecord, fallbackObservedAt: string) {
 
 function productFacts(results: CrawlFactResult[], comparison: ProductComparison | null, fallbackObservedAt: string) {
   const key = (product: ProductRecord) => `${canonicalDomain(product.domain)}\n${product.id}`;
+  const crawlProductsByKey = new Map<string, { product: ProductRecord; quality: number; canonical: string }>();
+  for (const result of results) for (const product of result.products) {
+    const owned = { ...product, domain: product.domain || result.domain };
+    const canonical = JSON.stringify(stable(owned));
+    const quality = new TextEncoder().encode(canonical).byteLength
+      + (owned.imageUrl ? 20_000 : 0)
+      + (owned.priceSignals.length ? 20_000 : 0);
+    const productKey = key(owned);
+    const prior = crawlProductsByKey.get(productKey);
+    if (!prior || quality > prior.quality || (quality === prior.quality && canonical < prior.canonical)) {
+      crawlProductsByKey.set(productKey, { product: owned, quality, canonical });
+    }
+  }
+  const crawlProduct = (productKey: string) => crawlProductsByKey.get(productKey)?.product;
+  const mergeCrawlMetadata = (product: ProductRecord) => {
+    const crawl = crawlProduct(key(product));
+    if (!crawl || crawl.sourceUrl !== product.sourceUrl) return product;
+    return {
+      ...crawl,
+      ...product,
+      name: product.name || crawl.name,
+      normalizedName: product.normalizedName || crawl.normalizedName,
+      description: product.description || crawl.description,
+      category: product.category || crawl.category,
+      attributes: product.attributes?.length ? product.attributes : crawl.attributes,
+      imageUrl: product.imageUrl || crawl.imageUrl,
+      claimIds: product.claimIds?.length ? product.claimIds : crawl.claimIds,
+      aliases: product.aliases?.length ? product.aliases : crawl.aliases,
+      identifiers: product.identifiers || crawl.identifiers,
+      quantity: product.quantity || crawl.quantity,
+    };
+  };
   const comparisonProducts = new Map<string, ProductRecord>();
   if (comparison) {
     for (const row of comparison.rows) {
-      comparisonProducts.set(key(row.primary), row.primary);
+      comparisonProducts.set(key(row.primary), mergeCrawlMetadata(row.primary));
       for (const match of row.matches) {
         const product = match.product || match.excludedProduct;
-        if (product) comparisonProducts.set(key(product), product);
+        if (product) comparisonProducts.set(key(product), mergeCrawlMetadata(product));
       }
     }
   }
-  const crawlProducts = results.flatMap((result) => result.products
-    .map((product) => ({ ...product, domain: product.domain || result.domain }))
-    .filter((product) => !comparisonProducts.has(key(product))));
+  const crawlProducts = [...crawlProductsByKey.values()].map(({ product }) => product).filter((product) => !comparisonProducts.has(key(product)));
   return [...crawlProducts, ...comparisonProducts.values()].map((product) => productFact(product, fallbackObservedAt));
 }
 
 async function matchFacts(publicId: string, comparison: ProductComparison | null, fallbackObservedAt: string) {
   if (!comparison) return [];
-  return await Promise.all(comparison.rows.flatMap((row) => row.matches.filter((match) => (match.product || match.excludedProduct) && match.assessment && ["same_product", "close_substitute"].includes(match.assessment.verdict)).map(async (match) => {
+  return await Promise.all(comparison.rows.flatMap((row) => row.matches.flatMap((match) => {
     const product = (match.product || match.excludedProduct)!;
-    const assessment = match.assessment!;
-    return {
+    if (!product) return [];
+    const assessment = durablePublishedMatchAssessment(row.primary, match, comparison);
+    if (!assessment) return [];
+    return [async () => ({
       id: await reportFactHash([publicId, row.primary.id, product.domain, product.id]),
       primaryProductId: row.primary.id,
       rivalProductId: product.id,
@@ -331,8 +364,8 @@ async function matchFacts(publicId: string, comparison: ProductComparison | null
         publication: match.publication,
       },
       observedAt: observedAt(product.observedAt, fallbackObservedAt),
-    };
-  })));
+    })];
+  })).map((build) => build()));
 }
 
 async function adFacts(publicId: string, adBlock: JsonRecord | null, fallbackObservedAt: string) {

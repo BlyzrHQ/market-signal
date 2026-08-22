@@ -1469,7 +1469,8 @@ export async function orchestrateReport(
         priorManifest = refreshed?.factManifest || null;
       }
     }
-    const facts = await buildReportFactBundle({ publicId: payload.publicId, crawlResults: crawl.results, comparison: screenedComparison || comparison, adBlock, observedAt: stored.run.createdAt, attemptNumber: attempt.attemptNumber });
+    const factReferenceTime = new Date(productEvidenceReferenceTimeMs(crawl.results.map((result) => ({ products: result.products })), stored.run.createdAt, Date.now())).toISOString();
+    const facts = await buildReportFactBundle({ publicId: payload.publicId, crawlResults: crawl.results, comparison: screenedComparison || comparison, adBlock, observedAt: factReferenceTime, attemptNumber: attempt.attemptNumber });
     terminalDocument = compactTerminalReportDocument({ primaryDomain: crawl.primaryDomain, document, marketBrief: null }, 430_000, { factsAuthoritative: true, factCounts: facts.manifest.counts });
     const presentationCheckpoint = { version: 2, taskAttemptNumber: attempt.taskAttemptNumber || 1, manifestHash: facts.manifest.manifestHash, status: reportStatus, observedAt: finishedAt, document: terminalDocument };
     const presentationInputHash = createHash("sha256").update(JSON.stringify(presentationCheckpoint)).digest("hex");

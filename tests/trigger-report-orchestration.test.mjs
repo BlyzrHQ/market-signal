@@ -1636,6 +1636,12 @@ test("the final bounded task publishes a validated durable matcher result when b
   const base = mockPort();
   let matcherAvailable = true;
   const port = mockPort({
+    async loadReport() {
+      return {
+        run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "queued", attemptCount: 1, createdAt: "2026-07-18T09:00:00.000Z", updatedAt: "2026-07-18T09:00:00.000Z", productPlan: "starter", productLimit: 20 },
+        events: [],
+      };
+    },
     async crawl() {
       const result = await base.crawl();
       result.discovery.productSearchCoverage = {
@@ -1664,6 +1670,7 @@ test("the final bounded task publishes a validated durable matcher result when b
     /remained incomplete before the final task attempt/,
   );
   assert.ok(port.checkpoints.has(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX));
+  for (const [index, checkpoint] of port.checkpoints) port.checkpoints.set(index, JSON.parse(JSON.stringify(checkpoint)));
 
   matcherAvailable = false;
   const terminal = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 10, isFinalAttempt: true }, port);
@@ -1673,6 +1680,11 @@ test("the final bounded task publishes a validated durable matcher result when b
   const terminalBlock = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
   assert.equal(terminalBlock.rows.length, 1);
   assert.equal(terminalBlock.matching.resultShortfallReason, "processing-incomplete");
+  assert.equal(port.factManifests[0].counts.matches, 1);
+  const productFacts = port.factChunks.filter((chunk) => chunk.kind === "products").flatMap((chunk) => chunk.items);
+  const primaryFact = productFacts.find((item) => item.domain === "shop.example" && item.productId === "p1");
+  assert.equal(primaryFact.normalizedName, "honey 1 500g");
+  assert.equal(primaryFact.prices.length, 1);
   assert.ok(port.events.some((item) => item.idempotencyKey === "report-1-task-10-matching-limited"));
   assert.equal(port.events.some((item) => item.idempotencyKey === "orchestration-failed"), false);
 });

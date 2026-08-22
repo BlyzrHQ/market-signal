@@ -109,6 +109,29 @@ function exactProductPriority(match: ProductMatch) {
   return Number(!match.assessment || match.assessment.verdict === "same_product");
 }
 
+export function durablePublishedMatchAssessment(primary: ProductRecord, match: ProductMatch, comparison: ProductComparison): ProductMatch["assessment"] | null {
+  if (match.assessment && ["same_product", "close_substitute"].includes(match.assessment.verdict)) return match.assessment;
+  if (!match.product || match.publication?.priceEligible !== true) return null;
+  // Compact durable checkpoints intentionally encode an accepted exact match
+  // by omitting the prose-heavy assessment. Rehydrate only the semantic fields
+  // already proven by the publication gate; never infer an unpublished edge.
+  return {
+    method: "ai-hybrid",
+    claimType: "Inferred",
+    verdict: "same_product",
+    confidence: typeof match.score === "number" && Number.isFinite(match.score) ? match.score : 0,
+    model: comparison.matching?.model || "",
+    promptVersion: comparison.matching?.promptVersion || "",
+    reasons: [],
+    contradictions: [],
+    normalizedCategory: "",
+    normalizedVariant: "",
+    normalizedSize: "",
+    primarySourceUrl: primary.sourceUrl,
+    rivalSourceUrl: match.product.sourceUrl,
+  };
+}
+
 function evidenceRowsWithinByteBudget(rows: ProductComparison["rows"], maxBytes = MAX_DURABLE_EVIDENCE_ROWS_BYTES) {
   const retained = rows.map((row) => ({ ...row, matches: row.matches.slice(0, MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY) }));
   const byteLength = new TextEncoder().encode(JSON.stringify(retained)).byteLength;
