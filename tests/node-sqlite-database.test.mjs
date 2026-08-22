@@ -645,6 +645,8 @@ test("manifest finalization rejects missing chunks and conflicting completed rep
     const productChunks = bulky.chunks.filter((chunk) => chunk.kind === "products");
     assert.ok(productChunks.length > 1);
     assert.ok(productChunks.every((chunk) => new TextEncoder().encode(JSON.stringify(chunk)).byteLength <= 250_000));
+    const callbackOverflowProducts = Array.from({ length: 12_401 }, (_, index) => ({ ...sparse, id: `overflow-${index}`, name: `Overflow ${index}`, normalizedName: `overflow ${index}`, sourceUrl: `https://large.example/p/overflow-${index}` }));
+    await assert.rejects(buildReportFactBundle({ publicId: "c".repeat(32), crawlResults: [{ domain: "large.example", role: "primary", homepage: { sourceUrl: "https://large.example/" }, products: callbackOverflowProducts }], comparison: null, adBlock: null, observedAt: now.toISOString() }), /above the 250-callback orchestration budget/);
   } finally {
     database.close();
     await rm(directory, { recursive: true, force: true });

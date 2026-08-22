@@ -3,6 +3,7 @@ import { parkingProvider } from "../../app/lib/domain-recovery.ts";
 import { PermanentOrchestrationError } from "../shared/report-orchestration-contract.ts";
 import { parseWorkerApiManifest, WorkerApiContractError } from "../shared/worker-api-contract.ts";
 import { compactTerminalReportDocument, encodedJsonBytes, REPORT_CALLBACK_ENVELOPE_BYTES } from "../shared/report-document-compaction.ts";
+import { MAX_REPORT_FACT_CHUNKS } from "../shared/report-facts.ts";
 import { Agent, fetch as undiciFetch } from "undici";
 
 type FetchLike = typeof fetch;
@@ -53,15 +54,16 @@ export const OPERATION_BUDGETS_MS = {
   actions: 35_000,
 } as const;
 
-export const MAX_REPORT_FACT_CALLBACKS = 250;
+export const MAX_REPORT_FACT_CALLBACKS = MAX_REPORT_FACT_CHUNKS;
 
 // Read + preflight + crawl events + crawl + longest parallel lane
 // (matching-start + two bounded match calls, where the second replays durable
 // judge checkpoints and only requests missing work, + enrichment-start + bounded
-// enrichment batch waves and their durable load/save callbacks +
+// one bulk durable-checkpoint read + enrichment batch waves and their bounded
+// save/ambiguous-save recovery callbacks +
 // enrichment-complete + actions-start + actions + actions-complete +
 // matching-complete) + bounded relational-fact chunks, manifest, and final save.
-export const WORST_CASE_CRITICAL_PATH_MS = (OPERATION_BUDGETS_MS.report * (11 + MAX_FINAL_ENRICHMENT_BATCH_WAVES + (MAX_FINAL_ENRICHMENT_BATCHES * 2) + MAX_REPORT_FACT_CALLBACKS))
+export const WORST_CASE_CRITICAL_PATH_MS = (OPERATION_BUDGETS_MS.report * (20 + MAX_FINAL_ENRICHMENT_BATCH_WAVES + (MAX_FINAL_ENRICHMENT_BATCHES * 2) + MAX_REPORT_FACT_CALLBACKS))
   + OPERATION_BUDGETS_MS.preflight
   + OPERATION_BUDGETS_MS.crawl
   + (OPERATION_BUDGETS_MS.match * 2)

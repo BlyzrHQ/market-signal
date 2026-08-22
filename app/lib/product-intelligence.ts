@@ -1026,7 +1026,7 @@ export function extractFirstPartyOfferings(input: FirstPartyOfferingInput) {
   return [...selected.values()];
 }
 
-export function extractProductsFromSitemap(document: string, domain: string, observedAt: string) {
+export function extractProductsFromSitemapWithCoverage(document: string, domain: string, observedAt: string) {
   const products: ProductRecord[] = [];
   for (const match of document.matchAll(/<url>([\s\S]*?)<\/url>/gi)) {
     const entry = match[1] || "";
@@ -1068,9 +1068,14 @@ export function extractProductsFromSitemap(document: string, domain: string, obs
       aliases: locale === "und" ? undefined : [{ name: boundedName, normalizedName: normalized(boundedName), locale, sourceUrl, extraction: "sitemap" }],
       quantity: parseCanonicalQuantity(name) || undefined,
     });
-    if (products.length >= 1_000) break;
+    if (products.length > 1_000) break;
   }
-  return selectPreferredProducts(products);
+  const selected = selectPreferredProducts(products);
+  return { products: selected.slice(0, 1_000), truncated: products.length > 1_000 || selected.length > 1_000 };
+}
+
+export function extractProductsFromSitemap(document: string, domain: string, observedAt: string) {
+  return extractProductsFromSitemapWithCoverage(document, domain, observedAt).products;
 }
 
 export function selectPreferredProducts(items: ProductRecord[]) {

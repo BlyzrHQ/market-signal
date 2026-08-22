@@ -163,7 +163,7 @@ function mockPort(overrides = {}) {
     async ads() { return { ok: true, block: { type: "ad-intelligence", id: "ad-intelligence" } }; },
     async match() { return { ok: true, comparison: comparison({ withPair: true }) }; },
     async enrich({ targets }) { return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: targets.length, gaps: targets.map((target) => ({ url: target.sourceUrl, productId: target.productId, role: target.role, reason: "Test fixture did not fetch this page." })) } }; },
-    async loadCheckpoint(_publicId, input) { return checkpoints.has(input.batchIndex) ? [checkpoints.get(input.batchIndex)] : []; },
+    async loadCheckpoint(_publicId, input) { return input.batchIndex === undefined ? [...checkpoints.values()] : checkpoints.has(input.batchIndex) ? [checkpoints.get(input.batchIndex)] : []; },
     async saveCheckpoint(_publicId, input) {
       const existing = checkpoints.get(input.batchIndex);
       if (existing && (existing.inputHash !== input.inputHash || JSON.stringify(existing.result) !== JSON.stringify(input.result))) throw new Error("checkpoint conflict");
@@ -819,7 +819,7 @@ test("all operation deadlines keep a two-minute margin below the stale marker", 
   for (const timeout of Object.values(OPERATION_BUDGETS_MS)) assert.ok(timeout <= MAX_OPERATION_TIMEOUT_MS);
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS > OPERATION_BUDGETS_MS.match, "Undici must not preempt the match operation deadline");
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS < MAX_OPERATION_TIMEOUT_MS, "the worker deadline must remain inside the outer edge window");
-  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 13_565_000);
+  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 13_655_000);
   assert.ok(WORST_CASE_CRITICAL_PATH_MS <= 14_580_000, "critical path must preserve a two-minute task-ceiling margin");
 });
 
@@ -1237,9 +1237,11 @@ test("a conflicting enrichment checkpoint fails closed without fetching or publi
     async enrich() { enrichCalls += 1; throw new Error("must not fetch after a checkpoint conflict"); },
   });
   const loadCheckpoint = port.loadCheckpoint.bind(port);
-  port.loadCheckpoint = async (publicId, input) => input.batchIndex >= 300
-    ? [{ batchIndex: input.batchIndex, inputHash: "0".repeat(64), result: { ok: true, products: [], coverage: { pagesRequested: 2, pagesFetched: 0, maxPages: 64, gaps: [] } } }]
-    : loadCheckpoint(publicId, input);
+  port.loadCheckpoint = async (publicId, input) => input.batchIndex === undefined
+    ? [{ batchIndex: 300, inputHash: "0".repeat(64), result: { ok: true, products: [], coverage: { pagesRequested: 2, pagesFetched: 0, maxPages: 64, gaps: [] } } }]
+    : input.batchIndex >= 300
+      ? [{ batchIndex: input.batchIndex, inputHash: "0".repeat(64), result: { ok: true, products: [], coverage: { pagesRequested: 2, pagesFetched: 0, maxPages: 64, gaps: [] } } }]
+      : loadCheckpoint(publicId, input);
 
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, port), /remained incomplete after the final task attempt/);
   assert.equal(enrichCalls, 0);

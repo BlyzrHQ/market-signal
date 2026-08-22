@@ -1,5 +1,5 @@
 import { canonicalDomain, normalizeDomain } from "../../lib/domain.ts";
-import { applyPreMatchCatalogEnrichment, buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, hasValidObservedRivalPrice, planPreliminaryCatalogReconciliation, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity, type ProductComparison, type ProductRecord } from "../../lib/product-intelligence.ts";
+import { applyPreMatchCatalogEnrichment, buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemapWithCoverage, hasValidObservedRivalPrice, planPreliminaryCatalogReconciliation, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity, type ProductComparison, type ProductRecord } from "../../lib/product-intelligence.ts";
 import { sharedRobotsPolicyResolver } from "../../lib/robots-policy.ts";
 import { boundedPrimaryCatalogProducts, discoverCompetitors, publicDiscoveryCandidate, publicDiscoverySnapshot, type DiscoveryCandidate, type DiscoveryResult } from "../../lib/competitor-discovery.ts";
 import { attributableFacebookUrl, type AdIntelligenceResult } from "../../lib/ad-intelligence.ts";
@@ -563,18 +563,22 @@ function parseSitemapUrls(text: string, domain: string) {
 
 async function collectSitemapEvidence(sitemapUrl: string, domain: string, observedAt: string, maxDocuments = MAX_SITEMAP_DOCUMENTS, fetchPage = fetchText) {
   const root = await fetchPage(sitemapUrl, "application/xml,text/xml,text/plain", domain);
-  if (!root.ok) return { paths: [] as string[], products: [] as ProductRecord[], truncated: false };
+  if (!root.ok) return { paths: [] as string[], products: [] as ProductRecord[], truncated: true };
   const rootUrls = parseSitemapUrls(root.text, domain);
   const eligibleChildSitemaps = rootUrls.filter((value) => /sitemap[^/]*\.xml/i.test(new URL(value).pathname)).sort((left, right) => Number(!/products?/i.test(left)) - Number(!/products?/i.test(right)) || left.localeCompare(right));
   const childSitemaps = eligibleChildSitemaps.slice(0, maxDocuments);
   const documents = childSitemaps.length ? await Promise.all(childSitemaps.map(async (url) => ({ url, result: await fetchPage(url, "application/xml,text/xml,text/plain", domain) }))) : [{ url: sitemapUrl, result: root }];
   const urls = documents.flatMap(({ result }) => result.ok ? parseSitemapUrls(result.text, domain) : []);
-  const products = documents.flatMap(({ result }) => result.ok ? extractProductsFromSitemap(result.text, domain, observedAt) : []);
+  const sitemapFetchFailed = documents.some(({ result }) => !result.ok);
+  const extracted = documents.map(({ result }) => result.ok ? extractProductsFromSitemapWithCoverage(result.text, domain, observedAt) : { products: [] as ProductRecord[], truncated: true });
+  const products = extracted.flatMap((result) => result.products);
   const selectedProducts = selectPreferredProducts(products);
   return {
     paths: unique(urls.flatMap((value) => { try { return [new URL(value).pathname]; } catch { return []; } }), 500),
     products: selectedProducts,
-    truncated: eligibleChildSitemaps.length > childSitemaps.length && selectedProducts.length < MAX_PRIMARY_CATALOG_PRODUCTS,
+    truncated: sitemapFetchFailed
+      || extracted.some((result) => result.truncated)
+      || (eligibleChildSitemaps.length > childSitemaps.length && selectedProducts.length < MAX_PRIMARY_CATALOG_PRODUCTS),
   };
 }
 

@@ -384,6 +384,7 @@ async function adFacts(publicId: string, adBlock: JsonRecord | null, fallbackObs
 }
 
 const MAX_FACT_CHUNK_BYTES = 250_000;
+export const MAX_REPORT_FACT_CHUNKS = 250;
 
 function chunkEnvelopeBytes(kind: ReportFactKind, manifestId: string, attemptNumber: number, items: Array<Record<string, unknown>>) {
   return new TextEncoder().encode(JSON.stringify({ manifestId, attemptNumber, kind, chunkIndex: 999, chunkCount: 1_000, contentHash: "f".repeat(64), items })).byteLength;
@@ -429,6 +430,7 @@ export async function buildReportFactBundle(input: {
   const manifestId = await reportFactHash({ publicId: input.publicId, facts: stableFacts });
   const attemptNumber = Number.isInteger(input.attemptNumber) && Number(input.attemptNumber) > 0 ? Number(input.attemptNumber) : 1;
   const chunks = (await Promise.all((Object.keys(facts) as ReportFactKind[]).map((kind) => chunksFor(kind, manifestId, attemptNumber, facts[kind])))).flat();
+  if (chunks.length > MAX_REPORT_FACT_CHUNKS) throw new Error(`Report facts require ${chunks.length} callbacks, above the ${MAX_REPORT_FACT_CHUNKS}-callback orchestration budget.`);
   const manifestHash = await reportFactHash(chunks.map((chunk) => ({ kind: chunk.kind, chunkIndex: chunk.chunkIndex, contentHash: chunk.contentHash })).sort((left, right) => left.kind.localeCompare(right.kind) || left.chunkIndex - right.chunkIndex));
   return {
     chunks,

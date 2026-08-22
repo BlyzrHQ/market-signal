@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { applyFinalProductEnrichment, applyPreMatchCatalogEnrichment, buildProductComparison, buildProductPairCandidateIndex, catalogReplacementAuditAttribute, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, planFinalProductEnrichmentTargets, planPreliminaryCatalogReconciliation, publicSourceMarketContext, publicSourceMarketCountryCode, retrieveProductPairCandidates, scoreProductPair, selectFinalProductEnrichmentTargets, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
+import { applyFinalProductEnrichment, applyPreMatchCatalogEnrichment, buildProductComparison, buildProductPairCandidateIndex, catalogReplacementAuditAttribute, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemap, extractProductsFromSitemapWithCoverage, planFinalProductEnrichmentTargets, planPreliminaryCatalogReconciliation, publicSourceMarketContext, publicSourceMarketCountryCode, retrieveProductPairCandidates, scoreProductPair, selectFinalProductEnrichmentTargets, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity } from "../app/lib/product-intelligence.ts";
 import { publishPricedProductComparison } from "../app/lib/product-match-lifecycle.ts";
 
 const TEST_NOW = new Date().toISOString();
@@ -1615,8 +1615,12 @@ test("keeps malformed sitemap path escapes safe and deterministic", () => {
 
 test("keeps a single public sitemap broad but bounded at one thousand products", () => {
   const entries = Array.from({ length: 1_005 }, (_, index) => `<url><loc>https://shop.example/products/catalog-item-${index}</loc></url>`).join("");
-  const products = extractProductsFromSitemap(`<urlset>${entries}</urlset>`, "shop.example", "2026-07-15T00:00:00.000Z");
+  const sitemap = `<urlset>${entries}</urlset>`;
+  const coverage = extractProductsFromSitemapWithCoverage(sitemap, "shop.example", "2026-07-15T00:00:00.000Z");
+  const products = extractProductsFromSitemap(sitemap, "shop.example", "2026-07-15T00:00:00.000Z");
 
+  assert.equal(coverage.products.length, 1_000);
+  assert.equal(coverage.truncated, true);
   assert.equal(products.length, 1_000);
   assert.equal(products.at(-1).name, "catalog item 999");
 });
