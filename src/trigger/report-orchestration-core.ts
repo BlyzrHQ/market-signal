@@ -1081,9 +1081,25 @@ export async function orchestrateReport(
       comparison = mergeAccumulatedPublishedIntoScreenedComparison(comparison, adoptedJudgeEvidence);
       const maxEnrichmentPages = pricedResultEnrichmentBudget(payload.productLimit);
       let enrichmentPlan = planFinalProductEnrichmentTargets(comparison, maxEnrichmentPages, reportReferenceTimeMs);
-      const recoveredProducts = recoveredEnrichmentProducts([...allDurableCheckpoints.values()]
-        .filter((checkpoint) => checkpoint.batchIndex >= ENRICHMENT_CHECKPOINT_BATCH_INDEX_BASE && checkpoint.batchIndex < MATCH_JUDGE_CHECKPOINT_BATCH_INDEX_BASE)
-        .map((checkpoint) => checkpoint.result), comparison);
+      const recoveredEnrichmentResults: EnrichmentResult[] = [];
+      for (const checkpoint of [...allDurableCheckpoints.values()].filter((candidate) => candidate.batchIndex >= ENRICHMENT_CHECKPOINT_BATCH_INDEX_BASE && candidate.batchIndex < MATCH_JUDGE_CHECKPOINT_BATCH_INDEX_BASE)) {
+        const checkpointOffset = checkpoint.batchIndex - ENRICHMENT_CHECKPOINT_BATCH_INDEX_BASE;
+        const checkpointTaskAttempt = Math.floor(checkpointOffset / MAX_FINAL_ENRICHMENT_BATCHES) + 1;
+        const batchOffset = checkpointOffset % MAX_FINAL_ENRICHMENT_BATCHES;
+        const batch = enrichmentPlan.targets.slice(batchOffset * FINAL_ENRICHMENT_BATCH_SIZE, (batchOffset + 1) * FINAL_ENRICHMENT_BATCH_SIZE);
+        const inputMatches = batch.length > 0 && checkpoint.inputHash === enrichmentBatchHash(batch);
+        const validated = inputMatches ? validEnrichmentCheckpoint(checkpoint.result, batch) : null;
+        if (!validated) {
+          if (checkpoint.attemptNumber === attempt.attemptNumber && checkpointTaskAttempt === taskAttemptNumber) {
+            throw new EnrichmentCheckpointConflictError(inputMatches
+              ? "A durable enrichment checkpoint is invalid."
+              : "A durable enrichment checkpoint conflicts with the current product-page batch.");
+          }
+          continue;
+        }
+        recoveredEnrichmentResults.push(validated);
+      }
+      const recoveredProducts = recoveredEnrichmentProducts(recoveredEnrichmentResults, comparison);
       if (recoveredProducts.length) comparison = applyFinalProductEnrichment(comparison, recoveredProducts, {
         pagesRequested: recoveredProducts.length,
         pagesFetched: recoveredProducts.length,
@@ -1200,7 +1216,12 @@ export async function orchestrateReport(
               durableCheckpoints.set(checkpointIndex, savedCheckpoint);
               allDurableCheckpoints.set(`${attempt.attemptNumber}:${checkpointIndex}`, savedCheckpoint);
             } catch (saveError) {
-              const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointIndex }))[0];
+              let committed: Awaited<ReturnType<ReportOrchestrationPort["loadCheckpoint"]>>[number] | undefined;
+              try {
+                committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointIndex }))[0];
+              } catch (confirmationError) {
+                throw new EnrichmentCheckpointConflictError("The enrichment checkpoint save could not be confirmed.", { cause: confirmationError });
+              }
               if (!committed || committed.attemptNumber !== attempt.attemptNumber || committed.inputHash !== inputHash) {
                 throw new EnrichmentCheckpointConflictError("The enrichment checkpoint save could not be confirmed.", { cause: saveError });
               }
@@ -1399,12 +1420,12 @@ export async function orchestrateReport(
     }
     const limited = attempts.length === 0 || hasProductMatchCoverageDefect(comparison);
     const processingIncomplete = attempts.length === 0 || comparison?.matching?.resultShortfallReason === "processing-incomplete";
-    // The final bounded task must always publish the strongest verified facts
-    // collected so far. Requiring at least one comparison row left reports in
-    // `running` after Trigger exhausted its retries, even when the durable crawl
-    // contained useful source-linked facts. A zero-row comparison remains an
-    // explicit coverage limitation; it is never promoted to a successful match.
-    const publishBestFinalResult = attempt.isFinalAttempt;
+    // The final bounded task publishes the strongest verified facts after at
+    // least one matcher response was parsed. Requiring a comparison row left
+    // honest zero-row coverage results in `running`, while accepting zero
+    // successful matcher responses would mislabel transport/auth/contract
+    // failure as bounded exhaustion.
+    const publishBestFinalResult = attempt.isFinalAttempt && attempts.length > 0;
     if (processingIncomplete && !publishBestFinalResult) {
       await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "matching-task-retry"), "matching", attempt.isFinalAttempt
         ? "Product matching or enrichment remained incomplete after the final bounded task attempt; no terminal report was published."

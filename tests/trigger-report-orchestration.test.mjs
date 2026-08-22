@@ -1591,6 +1591,24 @@ test("the final bounded task publishes a limited report when processing has zero
   assert.equal(terminalBlock.matching.resultShortfallReason, "processing-incomplete");
   assert.ok(port.events.some((item) => item.idempotencyKey === "report-1-task-10-matching-limited"));
   assert.equal(port.events.some((item) => item.idempotencyKey === "orchestration-failed"), false);
+  assert.equal(port.factChunks.filter((chunk) => chunk.kind === "matches").flatMap((chunk) => chunk.items).length, 0);
+  assert.equal(port.factManifests.length, 1);
+  assert.equal(port.factManifests[0].counts.matches, 0);
+  assert.equal(port.saves[0].expectedFactManifestHash, port.factManifests[0].manifestHash);
+  const compaction = port.saves[0].document.document.blocks.find((block) => block.type === "presentation-compaction");
+  assert.equal(compaction.relationalFactsAuthoritative, true);
+  assert.deepEqual(compaction.factCounts, port.factManifests[0].counts);
+});
+
+test("the final bounded task does not misreport total matcher failure as zero-row exhaustion", async () => {
+  const port = mockPort({ async match() { throw new Error("matcher contract authorization failed"); } });
+
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 10, isFinalAttempt: true }, port),
+    /remained incomplete after the final task attempt/,
+  );
+  assert.equal(port.saves.length, 0);
+  assert.equal(port.factChunks.length, 0);
 });
 
 test("terminal product-page rejections permit truthful bounded exhaustion while preserving their gaps", async () => {
@@ -2149,6 +2167,40 @@ test("an ambiguous enrichment save rejects different same-slot observations", as
   assert.equal(port.saves.length, 0);
 });
 
+test("an ambiguous enrichment save fails closed when its confirmation read also fails", async () => {
+  const port = mockPort({
+    async match() {
+      const value = comparison({ withPair: true, count: 1 });
+      value.rows[0].primary.priceSignals = [];
+      value.rows[0].matches[0].product.priceSignals = [];
+      return { ok: true, comparison: value };
+    },
+    async enrich({ targets }) {
+      return {
+        ok: true,
+        products: targets.map((target) => ({ ...product(target.domain, target.productId), name: target.expectedName, normalizedName: target.expectedName.toLowerCase(), sourceUrl: target.sourceUrl, priceSignals: [{ raw: "GBP 10", currency: "GBP", amount: 10 }] })),
+        coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: 64, gaps: [] },
+      };
+    },
+  });
+  const saveCheckpoint = port.saveCheckpoint.bind(port);
+  const loadCheckpoint = port.loadCheckpoint.bind(port);
+  port.saveCheckpoint = async (publicId, input) => {
+    if (input.batchIndex >= 300 && input.batchIndex < 300 + MAX_FINAL_ENRICHMENT_BATCHES) throw new Error("checkpoint response lost");
+    return saveCheckpoint(publicId, input);
+  };
+  port.loadCheckpoint = async (publicId, input) => {
+    if (input.batchIndex >= 300 && input.batchIndex < 300 + MAX_FINAL_ENRICHMENT_BATCHES) throw new Error("checkpoint confirmation unavailable");
+    return loadCheckpoint(publicId, input);
+  };
+
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, port),
+    /checkpoint save could not be confirmed/,
+  );
+  assert.equal(port.saves.length, 0);
+});
+
 test("a shape-valid but semantically incomplete enrichment checkpoint is rejected", async () => {
   let enrichCalls = 0;
   const port = mockPort({
@@ -2174,20 +2226,30 @@ test("a shape-valid but semantically incomplete enrichment checkpoint is rejecte
 
 test("a conflicting enrichment checkpoint fails closed without fetching or publishing it", async () => {
   let enrichCalls = 0;
+  const accepted = comparison({ withPair: true, count: 20 });
+  for (const row of accepted.rows) {
+    row.primary.priceSignals = [];
+    row.matches[0].product.priceSignals = [];
+  }
+  const recoveredProducts = accepted.rows.flatMap((row) => [
+    { ...row.primary, priceSignals: [{ raw: "GBP 10", currency: "GBP", amount: 10 }] },
+    { ...row.matches[0].product, priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }] },
+  ]);
+  const conflictingCheckpoint = {
+    batchIndex: 300,
+    attemptNumber: 1,
+    inputHash: "0".repeat(64),
+    result: { ok: true, products: recoveredProducts, coverage: { pagesRequested: recoveredProducts.length, pagesFetched: recoveredProducts.length, maxPages: 64, gaps: [] } },
+  };
   const port = mockPort({
-    async match() {
-      const value = comparison({ withPair: true, count: 1 });
-      value.rows[0].primary.priceSignals = [];
-      value.rows[0].matches[0].product.priceSignals = [];
-      return { ok: true, comparison: value };
-    },
+    async match() { return { ok: true, comparison: accepted }; },
     async enrich() { enrichCalls += 1; throw new Error("must not fetch after a checkpoint conflict"); },
   });
   const loadCheckpoint = port.loadCheckpoint.bind(port);
-  port.loadCheckpoint = async (publicId, input) => input.batchIndex === undefined
-    ? [{ batchIndex: 300, inputHash: "0".repeat(64), result: { ok: true, products: [], coverage: { pagesRequested: 2, pagesFetched: 0, maxPages: 64, gaps: [] } } }]
-    : input.batchIndex >= 300
-      ? [{ batchIndex: input.batchIndex, inputHash: "0".repeat(64), result: { ok: true, products: [], coverage: { pagesRequested: 2, pagesFetched: 0, maxPages: 64, gaps: [] } } }]
+  port.loadCheckpoint = async (publicId, input) => input.batchIndex === undefined && input.batchIndexStart <= 300 && input.batchIndexEnd >= 300
+    ? [conflictingCheckpoint]
+    : input.batchIndex !== undefined && input.batchIndex >= 300
+      ? [{ ...conflictingCheckpoint, batchIndex: input.batchIndex }]
       : loadCheckpoint(publicId, input);
 
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, port), /durable enrichment checkpoint conflicts/);
