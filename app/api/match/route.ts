@@ -38,7 +38,7 @@ function strings(value: unknown, limit: number, itemLimit: number) {
 
 function publicUrl(value: unknown, domain: string) {
   try {
-    const url = new URL(publicHttpUrl(typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "", false, 1_000));
+    const url = new URL(publicHttpUrl(value, false, 1_000));
     return canonicalDomain(url.hostname) === canonicalDomain(domain) ? url.toString() : "";
   } catch {
     return "";
@@ -55,10 +55,10 @@ function publicImageUrl(value: unknown) {
   }
 }
 
-function identifiers(value: unknown): ProductIdentifiers | undefined {
+export function identifiers(value: unknown): ProductIdentifiers | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const item = value as Record<string, unknown>;
-  const gtins = [...new Set((Array.isArray(item.gtins) ? item.gtins.slice(0, 20) : []).map(canonicalGtin).filter((gtin): gtin is string => Boolean(gtin)))];
+  const gtins = [...new Set((Array.isArray(item.gtins) ? item.gtins : []).map(canonicalGtin).filter((gtin): gtin is string => Boolean(gtin)))].slice(0, 20);
   const sku = text(item.sku, 120) || undefined;
   const mpn = text(item.mpn, 120) || undefined;
   const brand = text(item.brand, 120) || undefined;

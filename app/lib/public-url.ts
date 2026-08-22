@@ -25,7 +25,9 @@ export function isPublicHostname(value: string) {
 }
 
 export function publicHttpUrl(value: unknown, allowEmpty = true, limit = 2_000) {
-  const candidate = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+  const raw = typeof value === "string" ? value : "";
+  if (raw.length > limit) throw new Error("Invalid report fact URL.");
+  const candidate = raw.trim();
   if (!candidate && allowEmpty) return "";
   try {
     if (candidate.length > limit) throw new Error();

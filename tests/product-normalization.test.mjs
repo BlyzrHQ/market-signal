@@ -11,6 +11,7 @@ import {
   sharedValidGtin,
 } from "../app/lib/product-normalization.ts";
 import { extractProductsFromHtml } from "../app/lib/product-intelligence.ts";
+import { identifiers as matchIdentifiers } from "../app/api/match/route.ts";
 
 test("normalizes Arabic presentation forms without changing Latin product text", () => {
   const arabic = "\u0640\u0625\u0650\u0646\u062a\u0627\u062c \u0665\u0660\u0660 \u062c\u0631\u0627\u0645 \u0641\u0626\u0629";
@@ -75,4 +76,18 @@ test("adds identifier and quantity evidence without changing legacy product IDs"
   assert.equal(enriched.normalizedName, legacy.normalizedName);
   assert.equal(enriched.identifiers?.gtins[0], "04006381333931");
   assert.deepEqual(enriched.quantity, { kind: "mass", amount: 500, unit: "g" });
+});
+
+test("match ingress validates and deduplicates GTINs before applying its twenty-item bound", () => {
+  const validGtin = (seed) => {
+    const body = String(seed).padStart(13, "0").slice(-13);
+    let sum = 0;
+    for (let index = body.length - 1, weight = 3; index >= 0; index -= 1, weight = weight === 3 ? 1 : 3) sum += Number(body[index]) * weight;
+    return `${body}${(10 - (sum % 10)) % 10}`;
+  };
+  const valid = Array.from({ length: 20 }, (_, index) => validGtin(index + 1));
+  const bounded = matchIdentifiers({ gtins: ["invalid", ...valid] });
+
+  assert.equal(bounded.gtins.length, 20);
+  assert.equal(bounded.gtins.at(-1), canonicalGtin(valid.at(-1)));
 });
