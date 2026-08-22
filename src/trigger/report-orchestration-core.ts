@@ -528,6 +528,13 @@ class CrawlCheckpointProjectionError extends Error {
   }
 }
 
+class CrawlCheckpointConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CrawlCheckpointConflictError";
+  }
+}
+
 function checkpointText(value: unknown, limit: number) {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
 }
@@ -871,8 +878,8 @@ export async function orchestrateReport(
             const exactCommittedResult = committed.inputHash === crawlInputHash
               && JSON.stringify(stableCheckpointValue(committed.result)) === JSON.stringify(stableCheckpointValue(checkpoint));
             const committedCrawl = exactCommittedResult ? validCrawlCheckpoint(committed.result, payload) : null;
-            if (!committedCrawl) throw saveError;
-            crawl = committedCrawl;
+            if (!committedCrawl) throw new CrawlCheckpointConflictError(message(saveError, "A different crawl checkpoint was committed in the current attempt."));
+            crawl = validatedFreshCrawl;
           }
         }
       } else if (priorDurableCrawl) {
@@ -880,7 +887,7 @@ export async function orchestrateReport(
         await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "crawl-resumed"), "crawl", "The next discovery wave was unavailable, so processing resumed from the last durable successful crawl.", { taskAttempt: taskAttemptNumber }));
       }
     } catch (error) {
-      if (error instanceof CrawlCheckpointProjectionError) throw error;
+      if (error instanceof CrawlCheckpointProjectionError || error instanceof CrawlCheckpointConflictError) throw error;
       if (priorDurableCrawl) {
         crawl = priorDurableCrawl.crawl;
         await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "crawl-resumed"), "crawl", "The next discovery wave failed, so processing resumed from the last durable successful crawl.", { taskAttempt: taskAttemptNumber, reason: message(error, "Discovery wave unavailable.") }));

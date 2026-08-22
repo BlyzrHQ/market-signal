@@ -568,6 +568,74 @@ test("ambiguous crawl checkpoint save rejects different committed content in the
   assert.equal(matchCalls, 0);
 });
 
+test("a same-attempt crawl checkpoint conflict cannot fall back to an older durable crawl", async () => {
+  let crawlCalls = 0;
+  let saveCalls = 0;
+  let port;
+  const base = mockPort();
+  port = mockPort({
+    async crawl() {
+      crawlCalls += 1;
+      const value = await base.crawl();
+      value.discovery.productSearchCoverage.complete = false;
+      return value;
+    },
+    async saveDocument(_publicId, value) {
+      saveCalls += 1;
+      if (saveCalls === 1) throw new Error("terminal callback lost");
+      port.saves.push(value);
+    },
+  });
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
+  const ordinarySave = port.saveCheckpoint.bind(port);
+  port.saveCheckpoint = async (publicId, input) => {
+    if (input.batchIndex !== CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1) return ordinarySave(publicId, input);
+    const different = JSON.parse(gunzipSync(Buffer.from(input.result.data, "base64")).toString("utf8"));
+    different.results[0].products[0].name = "Conflicting second-wave product";
+    port.checkpoints.set(input.batchIndex, {
+      attemptNumber: input.attemptNumber,
+      batchIndex: input.batchIndex,
+      inputHash: input.inputHash,
+      result: { ...input.result, data: gzipSync(JSON.stringify(different), { level: 9 }).toString("base64") },
+    });
+    throw new Error("second-wave checkpoint conflict");
+  };
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port),
+    /second-wave checkpoint conflict/,
+  );
+  assert.equal(crawlCalls, 2);
+  assert.equal(port.events.some((item) => item.idempotencyKey === "report-1-task-2-crawl-resumed"), false);
+});
+
+test("an exact committed crawl after a lost save response keeps rich live facts in memory", async () => {
+  const base = mockPort();
+  let port;
+  let lost = false;
+  let freshProduct = null;
+  port = mockPort({
+    async crawl() {
+      const value = await base.crawl();
+      freshProduct = value.results[0].products[0];
+      return value;
+    },
+    async match(input) {
+      assert.equal(input.catalogs[0].products[0], freshProduct);
+      return { ok: true, comparison: comparison({ withPair: true }) };
+    },
+  });
+  const ordinarySave = port.saveCheckpoint.bind(port);
+  port.saveCheckpoint = async (publicId, input) => {
+    await ordinarySave(publicId, input);
+    if (!lost && input.batchIndex === CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE) {
+      lost = true;
+      throw new Error("crawl checkpoint response lost");
+    }
+  };
+  await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: true }, port);
+  assert.equal(lost, true);
+});
+
 test("a retry advances to the next discovery anchor batch only after a complete prior batch", async () => {
   const base = mockPort();
   let crawlInput;
