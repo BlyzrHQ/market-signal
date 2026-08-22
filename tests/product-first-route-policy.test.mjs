@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { investigationGapSourceUrl, rememberedReverificationFailures, resolvePrimaryDiscoveryPolicy, verifiedExactMatchHints, verifyDiscoveredCompetitor, verifyDiscoveredCompetitorWithInferredLeads, verifyInferredProductLead } from "../app/api/crawl/route.ts";
+import { investigationGapSourceUrl, MAX_PRIMARY_CATALOG_PRODUCTS, rememberedReverificationFailures, resolvePrimaryDiscoveryPolicy, verifiedExactMatchHints, verifyDiscoveredCompetitor, verifyDiscoveredCompetitorWithInferredLeads, verifyInferredProductLead } from "../app/api/crawl/route.ts";
 import { resolveVerificationMarket } from "../app/lib/competitor-verification.ts";
 
 function product(domain, name) {
@@ -86,6 +86,10 @@ function rememberedCandidate() {
     rememberedVerifiedAt: "2026-08-01T00:00:00.000Z",
   };
 }
+
+test("the primary catalog screening bound is independent of the 20-result publication target", () => {
+  assert.equal(MAX_PRIMARY_CATALOG_PRODUCTS, 1_000);
+});
 
 test("route policy keeps ecommerce overlap mandatory when discovery is unavailable", () => {
   const primary = crawl("myjam.co.uk", [

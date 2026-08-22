@@ -297,7 +297,7 @@ export interface ReportOrchestrationPort {
   preflight(): Promise<void>;
   loadReport(publicId: string): Promise<StoredReport | null>;
   appendEvent(publicId: string, event: ReportEvent & { attemptNumber?: number }): Promise<void>;
-  crawl(input: { primary: string; domains: string[]; productLimit: number }): Promise<CrawlOutcome>;
+  crawl(input: { primary: string; domains: string[]; productLimit: number; catalogProductLimit: number }): Promise<CrawlOutcome>;
   brief(input: { primary: string; domains: string[] }): Promise<unknown>;
   ads(input: unknown): Promise<{ ok: true; block: JsonBlock }>;
   match(input: { publicId: string; reportAttempt: number; reportObservedAt: string; primaryDomain: string; marketCountryCode?: string; productLimit: number; catalogs: Array<{ domain: string; products: ProductRecord[] }>; pinnedPairs?: PinnedProductPair[] }): Promise<{ ok: true; comparison: ProductComparison }>;
@@ -308,6 +308,12 @@ export interface ReportOrchestrationPort {
   persistFactChunk(publicId: string, input: ReportFactChunkInput): Promise<void>;
   finalizeFactManifest(publicId: string, input: ReportFactManifestInput): Promise<void>;
   saveDocument(publicId: string, input: { attemptNumber?: number; status: "complete" | "limited"; observedAt: string; expectedFactManifestHash: string; document: unknown }): Promise<void>;
+}
+
+const MAX_PRIMARY_CATALOG_PRODUCTS = 1_000;
+
+function progressEventKey(attempt: ReportAttemptContext, key: string) {
+  return `report-${attempt.attemptNumber}-task-${attempt.taskAttemptNumber || 1}-${key}`;
 }
 
 function event(idempotencyKey: string, phase: string, message: string, metadata?: Record<string, unknown>): ReportEvent {
@@ -392,11 +398,11 @@ export async function orchestrateReport(
   const startedAt = now().toISOString();
   const completedPhases: string[] = [];
   const limitedPhases: string[] = [];
-  await port.appendEvent(payload.publicId, event("crawl-started", "crawl", "Crawling the submitted website and collecting public product pages."));
+  await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "crawl-started"), "crawl", "Crawling the submitted website and collecting public product pages."));
 
   let crawl: CrawlOutcome;
   try {
-    crawl = await port.crawl({ primary: payload.primaryDomain, domains: [payload.primaryDomain], productLimit: payload.productLimit });
+    crawl = await port.crawl({ primary: payload.primaryDomain, domains: [payload.primaryDomain], productLimit: payload.productLimit, catalogProductLimit: MAX_PRIMARY_CATALOG_PRODUCTS });
     if (!crawl || (crawl.ok !== true && crawl.code !== "parked-domain" && crawl.code !== "unavailable-domain")) throw new Error("The public crawl could not be completed.");
   } catch (error) {
     const detail = message(error, "The public crawl could not be completed.");
@@ -446,7 +452,7 @@ export async function orchestrateReport(
     throw error;
   }
   completedPhases.push("crawl");
-  await port.appendEvent(payload.publicId, event("crawl-complete", "competitors", "The primary catalog was collected and competitor websites were verified.", {
+  await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "crawl-complete"), "competitors", "The primary catalog was collected and competitor websites were verified.", {
     primaryProducts: primary.products.length,
     verifiedCompetitors: crawl.results.filter((result) => result.role === "discovered-competitor" && result.homepage && (result.discovery?.verificationScore || 0) >= 55).length,
   }));
@@ -457,25 +463,25 @@ export async function orchestrateReport(
   let adBlock: JsonBlock | null = null;
 
   const adsWork = (async () => {
-    await port.appendEvent(payload.publicId, event("ads-started", "ads", "Checking attributable public advertiser records for the verified companies."));
+    await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "ads-started"), "ads", "Checking attributable public advertiser records for the verified companies."));
     try {
       const result = await port.ads(crawl.adRequest);
       if (!result?.ok || !result.block) throw new Error("The public ad-library scan was unavailable.");
       adBlock = result.block;
       document = replaceBlock(document, result.block);
       completedPhases.push("ads");
-      await port.appendEvent(payload.publicId, event("ads-complete", "ads", "The public ad-library phase finished with explicit advertiser coverage states."));
+      await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "ads-complete"), "ads", "The public ad-library phase finished with explicit advertiser coverage states."));
     } catch (error) {
       limitedPhases.push("ads");
-      await port.appendEvent(payload.publicId, event("ads-limited", "ads", "Advertiser coverage is limited and no ad activity was invented.", { reason: message(error, "Ad scan unavailable.") }));
+      await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "ads-limited"), "ads", "Advertiser coverage is limited and no ad activity was invented.", { reason: message(error, "Ad scan unavailable.") }));
     }
   })();
 
   const matchWork = (async () => {
-    await port.appendEvent(payload.publicId, event("matching-started", "matching", "Comparing the strongest product families across the synchronized catalogs."));
+    await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "matching-started"), "matching", "Comparing the strongest product families across the synchronized catalogs."));
     if (!primary.products.length) {
       limitedPhases.push("matching");
-      await port.appendEvent(payload.publicId, event("matching-limited", "matching", "No attributable primary product pages were found, so semantic matching could not run."));
+      await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "matching-limited"), "matching", "No attributable primary product pages were found, so semantic matching could not run."));
       return;
     }
     const baselineBlock = document.blocks.find((block) => block.type === "product-comparison");
@@ -497,7 +503,7 @@ export async function orchestrateReport(
     }
     if (shouldRetryProductMatch(attempts[0], transportFailed)) {
       try {
-        await port.appendEvent(payload.publicId, event("matching-retry-started", "matching", "Resuming only incomplete product judge batches from durable checkpoints."));
+        await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "matching-retry-started"), "matching", "Resuming only incomplete product judge batches from durable checkpoints."));
         requestCount += 1;
         const retry = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, reportObservedAt: stored.run.createdAt, primaryDomain: crawl.primaryDomain, marketCountryCode, productLimit: payload.productLimit, catalogs, pinnedPairs: crawl.matchHints });
         attempts.push({ ...retry.comparison, ...(marketCountryCode ? { marketCountryCode } : {}) });
@@ -713,12 +719,12 @@ export async function orchestrateReport(
       comparison = limitPublishedProductComparison(comparison, payload.productLimit);
       const actionInputs = collectProductActionInputs(comparison);
       if (actionInputs.length) {
-        await port.appendEvent(payload.publicId, event("actions-started", "actions", "Drafting evidence-grounded next moves for the accepted product pairs.", { pairs: actionInputs.length }));
+        await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "actions-started"), "actions", "Drafting evidence-grounded next moves for the accepted product pairs.", { pairs: actionInputs.length }));
         try {
           const planned = await port.actions({ inputs: actionInputs });
           comparison = applyProductActionPlans(comparison, planned.result);
           completedPhases.push("actions");
-          await port.appendEvent(payload.publicId, event("actions-complete", "actions", "Next moves were drafted and checked against saved product evidence.", {
+          await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "actions-complete"), "actions", "Next moves were drafted and checked against saved product evidence.", {
             requested: planned.result.metadata.actionsRequested,
             aiAccepted: planned.result.metadata.aiActionsAccepted,
             deterministicFallbacks: planned.result.metadata.fallbackActions,
@@ -727,7 +733,7 @@ export async function orchestrateReport(
           const fallback = deterministicProductActionResult(actionInputs, undefined, [message(error, "AI action planning was unavailable; deterministic recommendations were retained.")]);
           comparison = applyProductActionPlans(comparison, fallback);
           completedPhases.push("actions");
-          await port.appendEvent(payload.publicId, event("actions-complete", "actions", "AI action drafting was unavailable, so the report retained its deterministic next moves.", {
+          await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "actions-complete"), "actions", "AI action drafting was unavailable, so the report retained its deterministic next moves.", {
             requested: actionInputs.length,
             aiAccepted: 0,
             deterministicFallbacks: actionInputs.length,
@@ -738,12 +744,16 @@ export async function orchestrateReport(
       document = upsertProductComparisonBlock(document, comparison) as JsonDocument;
     }
     const limited = attempts.length === 0 || hasProductMatchCoverageDefect(comparison);
-    if (!attempt.isFinalAttempt && (attempts.length === 0 || comparison?.matching?.resultShortfallReason === "processing-incomplete")) {
-      await port.appendEvent(payload.publicId, event(`matching-task-retry-${attempt.taskAttemptNumber || 1}`, "matching", "Product matching or enrichment remained incomplete; durable checkpoints will resume on the bounded task retry.", { attempts: requestCount }));
-      throw new Error("Product matching or enrichment remained incomplete before the final task attempt.");
+    if (attempts.length === 0 || comparison?.matching?.resultShortfallReason === "processing-incomplete") {
+      await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "matching-task-retry"), "matching", attempt.isFinalAttempt
+        ? "Product matching or enrichment remained incomplete after the final bounded task attempt; no terminal report was published."
+        : "Product matching or enrichment remained incomplete; durable checkpoints will resume on the bounded task retry.", { attempts: requestCount }));
+      throw new Error(attempt.isFinalAttempt
+        ? "Product matching or enrichment remained incomplete after the final task attempt."
+        : "Product matching or enrichment remained incomplete before the final task attempt.");
     }
     (limited ? limitedPhases : completedPhases).push("matching");
-    await port.appendEvent(payload.publicId, event("matching-complete", "matching", limited ? "Product matching finished with a visible coverage limitation." : "Product matching finished and accepted comparisons were source-linked.", { limited, attempts: requestCount }));
+    await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "matching-complete"), "matching", limited ? "Product matching finished with a visible coverage limitation." : "Product matching finished and accepted comparisons were source-linked.", { limited, attempts: requestCount }));
   })();
 
   await Promise.all([adsWork, matchWork]);
@@ -780,9 +790,9 @@ export async function orchestrateReport(
   } catch (error) {
     if (error instanceof CompletedFactManifestConflict) throw error;
     limitedPhases.push("persistence");
-    try { await port.appendEvent(payload.publicId, event("facts-limited", "persistence", "The presentation can be saved, but the complete relational fact set was not available for evaluation.", { reason: message(error, "Relational fact persistence was unavailable.") })); } catch { /* quality telemetry must not block the terminal document */ }
+    try { await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "facts-limited"), "persistence", "The presentation can be saved, but the complete relational fact set was not available for evaluation.", { reason: message(error, "Relational fact persistence was unavailable.") })); } catch { /* quality telemetry must not block the terminal document */ }
   }
-  if (persistedCounts) try { await port.appendEvent(payload.publicId, event("facts-complete", "persistence", "The complete company, product, match, and attributable ad facts were saved for evaluation.", persistedCounts)); } catch { /* the manifest is authoritative and the terminal document still saves */ }
+  if (persistedCounts) try { await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "facts-complete"), "persistence", "The complete company, product, match, and attributable ad facts were saved for evaluation.", persistedCounts)); } catch { /* the manifest is authoritative and the terminal document still saves */ }
   const reportStatus = limitedPhases.length ? "limited" : "complete";
   await port.saveDocument(payload.publicId, {
     status: reportStatus,

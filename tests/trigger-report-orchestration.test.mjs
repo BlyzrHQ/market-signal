@@ -27,6 +27,7 @@ import { encodedJsonBytes, REPORT_CALLBACK_ENVELOPE_BYTES, REPORT_PRESENTATION_T
 import { babanujScaleDocument } from "./fixtures/babanuj-report-document.mjs";
 import { createWorkerApiManifest } from "../src/shared/worker-api-contract.ts";
 import { AI_ACTION_PLANNER_LIMITS, deterministicProductActionResult } from "../app/lib/ai-action-planner.ts";
+import { publishPricedProductComparison } from "../app/lib/product-match-lifecycle.ts";
 
 const payload = {
   contractVersion: "4",
@@ -191,7 +192,14 @@ test("payload contract accepts only a canonical, exact, versioned payload", () =
 });
 
 test("successful orchestration persists ordered heartbeats and a complete document", async () => {
-  const port = mockPort({ async match(input) {
+  const base = mockPort();
+  const port = mockPort({
+    async crawl(input) {
+      assert.equal(input.productLimit, 20);
+      assert.equal(input.catalogProductLimit, 1_000);
+      return base.crawl();
+    },
+    async match(input) {
     assert.equal(input.productLimit, 20);
     return { ok: true, comparison: comparison({ withPair: true }) };
   } });
@@ -202,10 +210,10 @@ test("successful orchestration persists ordered heartbeats and a complete docume
   assert.deepEqual(result.limitedPhases, []);
   assert.equal(port.saves.length, 1);
   assert.equal(port.saves[0].status, "complete");
-  assert.ok(port.events.some((item) => item.idempotencyKey === "crawl-started"));
-  assert.ok(port.events.some((item) => item.idempotencyKey === "ads-complete"));
-  assert.ok(port.events.some((item) => item.idempotencyKey === "matching-complete"));
-  assert.ok(port.events.some((item) => item.idempotencyKey === "facts-complete"));
+  assert.ok(port.events.some((item) => item.idempotencyKey.endsWith("-crawl-started")));
+  assert.ok(port.events.some((item) => item.idempotencyKey.endsWith("-ads-complete")));
+  assert.ok(port.events.some((item) => item.idempotencyKey.endsWith("-matching-complete")));
+  assert.ok(port.events.some((item) => item.idempotencyKey.endsWith("-facts-complete")));
   assert.equal(port.factChunks.length, 4);
   assert.deepEqual(port.factManifests[0].counts, { companies: 2, products: 40, matches: 20, ads: 0 });
   assert.equal(port.events.some((item) => item.idempotencyKey.startsWith("brief-")), false);
@@ -213,6 +221,42 @@ test("successful orchestration persists ordered heartbeats and a complete docume
   const compaction = port.saves[0].document.document.blocks.find((block) => block.type === "presentation-compaction");
   assert.equal(compaction.relationalFactsAuthoritative, true);
   assert.deepEqual(compaction.factCounts, { companies: 2, products: 40, matches: 20, ads: 0 });
+});
+
+test("the matcher can publish a valid pair found after the first 20 primary catalog products", async () => {
+  const primaryProducts = Array.from({ length: 25 }, (_, index) => ({
+    ...product("shop.example", `p-${index + 1}`),
+    name: `Catalog product ${index + 1}`,
+    normalizedName: `catalog product ${index + 1}`,
+    sourceUrl: `https://shop.example/products/catalog-${index + 1}?country=GB`,
+    priceSignals: [{ raw: "GBP 10", currency: "GBP", amount: 10 }],
+  }));
+  const latePrimary = { ...primaryProducts[24], name: "Honey 20 500g", normalizedName: "honey 20 500g" };
+  const base = mockPort();
+  const port = mockPort({
+    async crawl(input) {
+      assert.equal(input.productLimit, 20);
+      assert.equal(input.catalogProductLimit, 1_000);
+      const value = await base.crawl();
+      return { ...value, results: [{ ...value.results[0], products: primaryProducts }] };
+    },
+    async match(input) {
+      assert.equal(input.catalogs.find((catalog) => catalog.domain === "shop.example").products.length, 25);
+      const value = comparison({ withPair: true, count: 20 });
+      value.rows[19].primary = latePrimary;
+      value.rows[19].matches[0].assessment.primarySourceUrl = latePrimary.sourceUrl;
+      value.coverage = { ...value.coverage, primaryProductsAvailable: 25, primaryProductsScanned: 25, primaryProductFamiliesCompared: 25, truncated: false };
+      value.matching = { ...value.matching, primaryProductsAssessed: 25, selectedPrimaryIds: value.rows.map((row) => row.primary.id), assessedPrimaryIds: [...value.rows.map((row) => row.primary.id), ...primaryProducts.slice(19, 24).map((item) => item.id)] };
+      assert.equal(publishPricedProductComparison(value, Date.parse("2026-07-20T09:00:00.000Z")).rows.filter((row) => row.matches.some((match) => match.publication?.priceEligible)).length, 20);
+      return { ok: true, comparison: value };
+    },
+  });
+
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: true }, port);
+  assert.equal(result.reportStatus, "complete");
+  const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
+  assert.ok(block.rows.some((row) => row.primary.id === "p-25"));
+  assert.equal(block.rows.flatMap((row) => row.matches).filter((match) => match.product).length, 20);
 });
 
 test("enrichment checkpoints require one exact source-bound outcome per target", () => {
@@ -279,7 +323,7 @@ test("non-terminal orchestration preflights before its first mutation", async ()
   });
   await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
   assert.equal(order[0], "preflight");
-  assert.equal(order[1], "event:crawl-started");
+  assert.equal(order[1], "event:report-1-task-1-crawl-started");
 });
 
 test("independent phase failures remain visible and produce a limited report", async () => {
@@ -288,7 +332,7 @@ test("independent phase failures remain visible and produce a limited report", a
   assert.equal(result.reportStatus, "limited");
   assert.deepEqual(result.limitedPhases, ["ads"]);
   assert.equal(port.saves[0].status, "limited");
-  assert.match(port.events.find((item) => item.idempotencyKey === "ads-limited").metadata.reason, /provider unavailable/);
+  assert.match(port.events.find((item) => item.idempotencyKey.endsWith("-ads-limited")).metadata.reason, /provider unavailable/);
 });
 
 test("Trigger task retries keep the same database report-attempt ownership", async () => {
@@ -307,7 +351,7 @@ test("relational fact persistence failure stays visible while the dashboard snap
   assert.equal(result.reportStatus, "limited");
   assert.deepEqual(result.limitedPhases, ["persistence"]);
   assert.equal(port.saves.length, 1);
-  assert.match(port.events.find((item) => item.idempotencyKey === "facts-limited").metadata.reason, /database temporarily unavailable/);
+  assert.match(port.events.find((item) => item.idempotencyKey.endsWith("-facts-limited")).metadata.reason, /database temporarily unavailable/);
   assert.equal(port.saves[0].document.document.blocks.find((block) => block.type === "presentation-compaction").relationalFactsAuthoritative, false);
 });
 
@@ -350,7 +394,7 @@ test("a retry reuses a completed fact manifest only when its current bundle hash
   assert.equal(result.reportStatus, "complete");
   assert.equal(port.factChunks.length, 0);
   assert.equal(port.factManifests.length, 0);
-  assert.deepEqual(port.events.find((item) => item.idempotencyKey === "facts-complete").metadata, manifest.counts);
+  assert.deepEqual(port.events.find((item) => item.idempotencyKey.endsWith("-facts-complete")).metadata, manifest.counts);
 });
 
 test("terminal replay validates attempt and entitlement before returning without mutations", async () => {
@@ -369,7 +413,7 @@ test("fact telemetry callback failures never prevent the terminal document", asy
   const port = mockPort({
     async persistFactChunk() { throw new Error("fact database unavailable"); },
     async appendEvent(_publicId, value) {
-      if (value.idempotencyKey === "facts-limited") throw new Error("telemetry unavailable");
+      if (value.idempotencyKey.endsWith("-facts-limited")) throw new Error("telemetry unavailable");
       port.events.push(value);
     },
   });
@@ -378,7 +422,7 @@ test("fact telemetry callback failures never prevent the terminal document", asy
   assert.equal(port.saves.length, 1);
   const completePort = mockPort({
     async appendEvent(_publicId, value) {
-      if (value.idempotencyKey === "facts-complete") throw new Error("telemetry unavailable");
+      if (value.idempotencyKey.endsWith("-facts-complete")) throw new Error("telemetry unavailable");
       completePort.events.push(value);
     },
   });
@@ -771,10 +815,10 @@ test("a second match attempt refreshes the report heartbeat before another long 
   });
   await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
   assert.equal(calls, 2);
-  assert.ok(port.events.some((item) => item.idempotencyKey === "matching-retry-started"));
+  assert.ok(port.events.some((item) => item.idempotencyKey.endsWith("-matching-retry-started")));
 });
 
-test("partial and failed selected enrichment remain visibly limited", async () => {
+test("partial and failed selected enrichment fail closed even on the final task attempt", async () => {
   let successfulCalls = 0;
   const success = mockPort({
     async match() { return { ok: true, comparison: comparison({ withPair: true, count: 1 }) }; },
@@ -783,18 +827,16 @@ test("partial and failed selected enrichment remain visibly limited", async () =
       return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: 24, gaps: [] } };
     },
   });
-  const successResult = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, success);
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, success), /remained incomplete after the final task attempt/);
   assert.equal(successfulCalls, 1);
-  assert.equal(successResult.reportStatus, "limited");
-  assert.ok(successResult.limitedPhases.includes("enrichment"));
+  assert.equal(success.saves.length, 0);
 
   const failure = mockPort({
     async match() { return { ok: true, comparison: comparison({ withPair: true, count: 1 }) }; },
     async enrich() { throw new Error("selected page timeout"); },
   });
-  const failureResult = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, failure);
-  assert.equal(failureResult.reportStatus, "limited");
-  assert.ok(failureResult.limitedPhases.includes("enrichment"));
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, failure), /remained incomplete after the final task attempt/);
+  assert.equal(failure.saves.length, 0);
   assert.ok(failure.events.some((item) => item.idempotencyKey.endsWith("-limited") && item.phase === "enrichment"));
 });
 
@@ -810,14 +852,10 @@ test("unschedulable accepted price gaps remain processing-incomplete instead of 
 
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/);
   assert.equal(port.saves.length, 0);
-  assert.ok(port.events.some((item) => item.idempotencyKey === "matching-task-retry-1"));
-  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port);
+  assert.ok(port.events.some((item) => item.idempotencyKey === "report-1-task-1-matching-task-retry"));
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port), /remained incomplete after the final task attempt/);
   assert.equal(enrichCalls, 0);
-  assert.equal(result.reportStatus, "limited");
-  assert.ok(result.limitedPhases.includes("enrichment"));
-  const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
-  assert.equal(block.matching.resultShortfallReason, "processing-incomplete");
-  assert.doesNotMatch(block.matching.gaps.join(" "), /exhausted/i);
+  assert.equal(port.saves.length, 0);
   assert.ok(port.events.some((item) => item.idempotencyKey.endsWith("-limited") && item.phase === "enrichment" && item.metadata?.pagesPlanned === 0));
 });
 
@@ -891,14 +929,9 @@ test("publication-ineligible pairs are re-read on both sides and successful batc
       return { ok: true, products: targets.map((target) => ({ ...product(target.domain, target.productId), name: target.expectedName, normalizedName: target.expectedName.toLowerCase(), sourceUrl: target.sourceUrl, priceSignals: [{ raw: "GBP 7", currency: "GBP", amount: 7 }] })), coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: 64, gaps: [] } };
     },
   });
-  const result = await orchestrateReport({ ...payload, contractVersion: "3", productPlan: "growth", productLimit: 500 }, { attemptNumber: 1, isFinalAttempt: true }, port);
+  await assert.rejects(() => orchestrateReport({ ...payload, contractVersion: "3", productPlan: "growth", productLimit: 500 }, { attemptNumber: 1, isFinalAttempt: true }, port), /remained incomplete after the final task attempt/);
   assert.deepEqual(batchSizes, [64, 64, 12]);
-  assert.equal(result.reportStatus, "limited");
-  const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
-  assert.equal(block.rows.flatMap((row) => row.matches).filter((match) => match.product).length, 38);
-  assert.equal(block.enrichment.pagesRequested, 140);
-  assert.equal(block.enrichment.pagesFetched, 76);
-  assert.equal(block.enrichment.failedBatchCount, 1);
+  assert.equal(port.saves.length, 0);
   const checkpoints = port.events.filter((event) => /^enrichment-report-\d+-task-\d+-wave-\d+-checkpoint$/.test(event.idempotencyKey));
   assert.equal(checkpoints.length, 2);
   assert.equal(checkpoints[1].metadata.pagesRequested, 140);
@@ -1040,14 +1073,12 @@ test("a failed transient retry preserves prior successful pages and published pa
   });
 
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/);
-  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port);
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port), /remained incomplete after the final task attempt/);
   assert.equal(enrichCalls, 2);
-  assert.equal(result.reportStatus, "limited");
-  const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
-  assert.equal(block.rows.length, 1);
-  assert.equal(block.matching.publishedPrimaryProducts, 1);
-  assert.equal(block.enrichment.pagesFetched, 3);
-  assert.equal(block.enrichment.gaps[0].failureKind, "network");
+  assert.equal(port.saves.length, 0);
+  const firstBatch = [...port.checkpoints.values()].find((item) => item.result?.coverage?.pagesFetched === 3);
+  assert.ok(firstBatch);
+  assert.equal(firstBatch.result.coverage.gaps[0].failureKind, "network");
 });
 
 test("an ambiguous checkpoint-save response reloads and uses the committed enrichment batch", async () => {
@@ -1101,10 +1132,9 @@ test("a shape-valid but semantically incomplete enrichment checkpoint is rejecte
   const checkpoint = [...port.checkpoints.values()].find((value) => value.result?.coverage);
   assert.ok(checkpoint);
   checkpoint.result.coverage.gaps = [];
-  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port);
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port), /remained incomplete after the final task attempt/);
   assert.equal(enrichCalls, 1);
-  assert.equal(result.reportStatus, "limited");
-  assert.ok(result.limitedPhases.includes("enrichment"));
+  assert.equal(port.saves.length, 0);
 });
 
 test("a conflicting enrichment checkpoint fails closed without fetching or publishing it", async () => {
@@ -1123,10 +1153,9 @@ test("a conflicting enrichment checkpoint fails closed without fetching or publi
     ? [{ batchIndex: input.batchIndex, inputHash: "0".repeat(64), result: { ok: true, products: [], coverage: { pagesRequested: 2, pagesFetched: 0, maxPages: 64, gaps: [] } } }]
     : loadCheckpoint(publicId, input);
 
-  const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, port);
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, port), /remained incomplete after the final task attempt/);
   assert.equal(enrichCalls, 0);
-  assert.equal(result.reportStatus, "limited");
-  assert.ok(result.limitedPhases.includes("enrichment"));
+  assert.equal(port.saves.length, 0);
 });
 
 test("action planning runs after final enrichment and persists source-labelled plans", async () => {
@@ -1153,8 +1182,8 @@ test("action planning runs after final enrichment and persists source-labelled p
   assert.equal(result.reportStatus, "complete");
   assert.equal(sawEnrichedPrice, true);
   const eventKeys = port.events.map((item) => item.idempotencyKey);
-  assert.ok(eventKeys.findIndex((key) => key.endsWith("-complete") && key.startsWith("enrichment-report-")) < eventKeys.indexOf("actions-started"));
-  assert.ok(eventKeys.indexOf("actions-complete") < eventKeys.indexOf("matching-complete"));
+  assert.ok(eventKeys.findIndex((key) => key.endsWith("-complete") && key.startsWith("enrichment-report-")) < eventKeys.findIndex((key) => key.endsWith("-actions-started")));
+  assert.ok(eventKeys.findIndex((key) => key.endsWith("-actions-complete")) < eventKeys.findIndex((key) => key.endsWith("-matching-complete")));
   const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
   assert.equal(block.actionPlanning.fallbackActions, 20);
   assert.equal(block.rows[0].matches[0].decision.actionPlan.source, "deterministic");

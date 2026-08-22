@@ -106,6 +106,7 @@ const MAX_SITEMAP_DOCUMENTS = 4;
 const MAX_DISCOVERED_SITEMAP_DOCUMENTS = 2;
 const MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES = 16;
 const MAX_PRIMARY_PRODUCT_PRICE_PAGES = 16;
+export const MAX_PRIMARY_CATALOG_PRODUCTS = 1_000;
 const MAX_CATALOG_RECONCILIATION_PAGES = 64;
 const MAX_DOCUMENT_BYTES = 1_500_000;
 const MAX_HTML_EXTRACTION_BYTES = 400_000;
@@ -996,17 +997,15 @@ function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?
 export async function POST(request: Request) {
   if (!await hasValidAnalysisAuthorization(request.headers.get("authorization"))) return unauthorizedInternalResponse();
   try {
-    const payload = await request.json() as { primary?: unknown; domains?: unknown; productLimit?: unknown };
+    const payload = await request.json() as { primary?: unknown; domains?: unknown; productLimit?: unknown; catalogProductLimit?: unknown };
     const rawDomains = Array.isArray(payload.domains) ? payload.domains.filter((domain): domain is string => typeof domain === "string" && Boolean(domain.trim())).map((domain) => canonicalDomain(domain)) : [];
     const domains = [...new Set(rawDomains)].slice(0, MAX_DOMAINS);
     if (!domains.length) return Response.json({ ok: false, live: false, error: "Enter at least one public domain to crawl." }, { status: 400 });
     const primaryDomain = canonicalDomain(typeof payload.primary === "string" ? payload.primary : domains[0]);
-    const requestedProductLimit = Number(payload.productLimit);
-    const productLimit = Number.isInteger(requestedProductLimit) ? Math.max(1, Math.min(1_000, requestedProductLimit)) : 50;
     let submittedResults = await Promise.all(domains.map((domain) => domain === primaryDomain ? crawlPrimaryDomain(domain) : crawlDomain(domain, "submitted-comparison")));
     let primary = submittedResults.find((result) => result.domain === primaryDomain);
     if (isSallaCatalogRecoveryEligible(primary)) {
-      const recovered = primary ? await sallaRecoveryDomainCrawl(primary, productLimit) : null;
+      const recovered = primary ? await sallaRecoveryDomainCrawl(primary, MAX_PRIMARY_CATALOG_PRODUCTS) : null;
       if (recovered) {
         submittedResults = submittedResults.map((result) => result.domain === primaryDomain ? recovered : result);
         primary = recovered;
