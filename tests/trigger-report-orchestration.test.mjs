@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import test from "node:test";
 
@@ -346,6 +347,43 @@ test("a task retry resumes the durable successful crawl without another network 
   await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
   assert.equal(crawlCalls, 1);
   assert.ok(port.checkpoints.has(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE));
+  assert.ok(port.events.some((item) => item.idempotencyKey === "report-1-task-2-crawl-resumed"));
+});
+
+test("a large noisy crawl is compacted into a durable checkpoint before a task retry", async () => {
+  let crawlCalls = 0;
+  const base = mockPort();
+  let rawWireBytes = 0;
+  const port = mockPort({
+    async crawl() {
+      crawlCalls += 1;
+      const value = await base.crawl();
+      value.results[0].pages = Array.from({ length: 1_200 }, (_, pageIndex) => ({
+        url: `https://shop.example/products/page-${pageIndex}`,
+        sourceUrl: `https://shop.example/products/page-${pageIndex}`,
+        internalLinks: Array.from({ length: 20 }, (__, linkIndex) => `https://shop.example/products/${pageIndex}-${linkIndex}-${createHash("sha256").update(`link:${pageIndex}:${linkIndex}`).digest("hex")}`),
+        claims: Array.from({ length: 20 }, (__, claimIndex) => ({
+          id: `claim-${pageIndex}-${claimIndex}`,
+          text: Array.from({ length: 4 }, (___, part) => createHash("sha256").update(`claim:${pageIndex}:${claimIndex}:${part}`).digest("hex")).join(""),
+          sourceUrl: `https://shop.example/products/page-${pageIndex}`,
+        })),
+        products: value.results[0].products,
+      }));
+      value.results[0].enrichmentPages = value.results[0].pages.slice(0, 16);
+      rawWireBytes = Buffer.byteLength(JSON.stringify(value), "utf8");
+      return value;
+    },
+    async match() { return { ok: true, comparison: comparison({ withPair: false }) }; },
+    async persistFactChunk() { throw new Error("test persistence interruption"); },
+  });
+
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /Relational fact persistence remained incomplete/);
+  assert.ok(rawWireBytes > 4_000_000);
+  const checkpoint = port.checkpoints.get(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE);
+  assert.ok(checkpoint);
+  assert.ok(JSON.stringify(checkpoint.result).length < 3_900_000);
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port), /Relational fact persistence remained incomplete/);
+  assert.equal(crawlCalls, 1);
   assert.ok(port.events.some((item) => item.idempotencyKey === "report-1-task-2-crawl-resumed"));
 });
 
