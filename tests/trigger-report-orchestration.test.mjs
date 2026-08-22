@@ -11,6 +11,7 @@ import {
   MAX_OPERATION_TIMEOUT_MS,
   orchestrateReport,
   pricedResultEnrichmentBudget,
+  validEnrichmentCheckpoint,
 } from "../src/trigger/report-orchestration-core.ts";
 import {
   OPERATION_BUDGETS_MS,
@@ -155,7 +156,7 @@ function mockPort(overrides = {}) {
     async brief() { return { ok: true, summary: "Observed market" }; },
     async ads() { return { ok: true, block: { type: "ad-intelligence", id: "ad-intelligence" } }; },
     async match() { return { ok: true, comparison: comparison({ withPair: true }) }; },
-    async enrich({ targets }) { return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: targets.length, gaps: [] } }; },
+    async enrich({ targets }) { return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: targets.length, gaps: targets.map((target) => ({ url: target.sourceUrl, productId: target.productId, role: target.role, reason: "Test fixture did not fetch this page." })) } }; },
     async loadCheckpoint(_publicId, input) { return checkpoints.has(input.batchIndex) ? [checkpoints.get(input.batchIndex)] : []; },
     async saveCheckpoint(_publicId, input) {
       const existing = checkpoints.get(input.batchIndex);
@@ -211,6 +212,19 @@ test("successful orchestration persists ordered heartbeats and a complete docume
   const compaction = port.saves[0].document.document.blocks.find((block) => block.type === "presentation-compaction");
   assert.equal(compaction.relationalFactsAuthoritative, true);
   assert.deepEqual(compaction.factCounts, { companies: 2, products: 40, matches: 20, ads: 0 });
+});
+
+test("enrichment checkpoints require one exact source-bound outcome per target", () => {
+  const targets = [
+    { domain: "shop.example", sourceUrl: "https://shop.example/products/one?country=GB", productId: "p1", expectedName: "One", expectedType: "Product", pairScore: 1, role: "primary" },
+    { domain: "rival.example", sourceUrl: "https://rival.example/products/two?country=GB", productId: "r2", expectedName: "Two", expectedType: "Product", pairScore: 1, role: "rival" },
+  ];
+  const products = targets.map((target) => ({ ...product(target.domain, target.productId), name: target.expectedName, normalizedName: target.expectedName.toLowerCase(), sourceUrl: target.sourceUrl }));
+  const complete = { ok: true, products, coverage: { pagesRequested: 2, pagesFetched: 2, maxPages: 64, gaps: [] } };
+  assert.ok(validEnrichmentCheckpoint(complete, targets));
+  assert.equal(validEnrichmentCheckpoint({ ...complete, products: [products[0], products[0]] }, targets), null);
+  assert.equal(validEnrichmentCheckpoint({ ...complete, products: [products[0], { ...products[1], sourceUrl: "https://rival.example/products/wrong-page" }] }, targets), null);
+  assert.equal(validEnrichmentCheckpoint({ ...complete, products: [products[0]], coverage: { ...complete.coverage, pagesFetched: 1 } }, targets), null);
 });
 
 test("the priced table is capped while suppressed screened evidence remains in relational facts", async () => {
@@ -886,7 +900,7 @@ test("a shape-valid but semantically incomplete enrichment checkpoint is rejecte
     },
     async enrich({ targets }) {
       enrichCalls += 1;
-      return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: 64, gaps: [] } };
+      return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: 64, gaps: targets.map((target) => ({ url: target.sourceUrl, productId: target.productId, role: target.role, reason: "Test fixture page gap." })) } };
     },
     async saveDocument() {
       saveCalls += 1;
@@ -895,7 +909,7 @@ test("a shape-valid but semantically incomplete enrichment checkpoint is rejecte
   });
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
   const checkpoint = port.checkpoints.values().next().value;
-  checkpoint.result.coverage.pagesRequested = 0;
+  checkpoint.result.coverage.gaps = [];
   const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
   assert.equal(enrichCalls, 1);
   assert.equal(result.reportStatus, "limited");

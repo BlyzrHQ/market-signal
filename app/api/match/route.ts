@@ -207,6 +207,10 @@ export function productAnalysisBudgetMs(limit: number) {
   return limit <= 60 ? 90_000 : limit <= 500 ? 360_000 : 720_000;
 }
 
+export function productAnalysisConcurrency(limit: number) {
+  return limit <= 60 ? 3 : limit <= 500 ? 6 : 12;
+}
+
 export function productBackfillPoolSize(resultTarget: number) {
   void resultTarget;
   return MAX_PRIMARY_PRODUCTS;
@@ -303,6 +307,7 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
       const comparison = await services.build(primaryDomain, catalogs, {
         maxPrimaryProducts,
         totalBudgetMs: productAnalysisBudgetMs(maxPrimaryProducts),
+        concurrency: productAnalysisConcurrency(maxPrimaryProducts),
         referenceTimeMs: Date.parse(reportObservedAt) || Date.now(),
         marketCountryCode,
         pinnedPairs,

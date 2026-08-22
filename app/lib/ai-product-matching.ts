@@ -38,7 +38,7 @@ type Candidate = {
 type CandidateGroup = { primary: ProductRecord; candidates: Candidate[] };
 
 export type ProductCandidatePlanKey = { planHash: string; batchIndex: number };
-export type ProductCandidatePlan = { version: 1; planHash: string; groups: Array<{ primaryKey: string; candidateKeys: string[] }> };
+export type ProductCandidatePlan = { version: 2; planHash: string; primaryCatalogCount: number; selectedPrimaryCount: number; candidatePairCount: number; groups: Array<{ primaryKey: string; candidateKeys: string[] }> };
 export const PRODUCT_CANDIDATE_PLAN_BATCH_INDEX = 999;
 
 export type PinnedProductPair = {
@@ -617,10 +617,16 @@ function candidatePlanProductKey(product: ProductRecord) {
   return createHash("sha256").update(JSON.stringify(candidatePlanProductIdentity(product))).digest("base64url");
 }
 
-function restoreCandidatePlan(value: unknown, planHash: string, primary: ProductRecord[], competitors: ProductCatalog[], embeddings: Map<string, number[]>) {
+function restoreCandidatePlan(value: unknown, planHash: string, primary: ProductRecord[], competitors: ProductCatalog[], embeddings: Map<string, number[]>, expectedGroupCount: number) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const plan = value as ProductCandidatePlan;
-  if (plan.version !== 1 || plan.planHash !== planHash || !Array.isArray(plan.groups)) return null;
+  if (plan.version !== 2
+    || plan.planHash !== planHash
+    || plan.primaryCatalogCount !== primary.length
+    || plan.selectedPrimaryCount !== expectedGroupCount
+    || !Array.isArray(plan.groups)
+    || plan.groups.length !== expectedGroupCount
+    || plan.candidatePairCount !== plan.groups.reduce((sum, group) => sum + (Array.isArray(group?.candidateKeys) ? group.candidateKeys.length : 0), 0)) return null;
   const primaryByKey = new Map(primary.map((product) => [candidatePlanProductKey(product), product]));
   const rivalByKey = new Map<string, ProductRecord>(competitors.flatMap((catalog) => catalog.products.map((product) => [candidatePlanProductKey(product), product] as [string, ProductRecord])));
   const groups: CandidateGroup[] = [];
@@ -721,7 +727,7 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   const maxRetrievalPool = Math.max(1, options.maxRetrievalPoolPerDomain || DEFAULT_MAX_RETRIEVAL_POOL_PER_DOMAIN);
   const maxGroupsPerBatch = Math.min(MAX_GROUPS_PER_BATCH, Math.max(1, options.primaryProductsPerJudgeCall || DEFAULT_GROUPS_PER_BATCH));
   const maxPairsPerBatch = Math.min(MAX_PAIRS_PER_BATCH, Math.max(1, options.maxPairsPerJudgeCall || DEFAULT_MAX_PAIRS_PER_BATCH));
-  const concurrency = Math.max(1, options.concurrency || DEFAULT_CONCURRENCY);
+  const concurrency = Math.min(16, Math.max(1, options.concurrency || DEFAULT_CONCURRENCY));
   const timeoutMs = Math.max(1_000, options.timeoutMs || DEFAULT_TIMEOUT_MS);
   const totalBudgetMs = Math.max(1_000, options.totalBudgetMs || DEFAULT_TOTAL_BUDGET_MS);
   const deadlineAt = startedAt + totalBudgetMs;
@@ -756,7 +762,13 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   if (Boolean(options.loadCandidatePlan) !== Boolean(options.saveCandidatePlan)) return candidatePlanFailure("Durable candidate-plan storage was incomplete; no product pair was accepted from a non-replayable matching plan.");
   let groups: CandidateGroup[] | null = null;
   if (options.loadCandidatePlan) {
-    try { groups = restoreCandidatePlan(await options.loadCandidatePlan(planKey), planHash, synchronizedPrimary, competitors, embeddings); } catch { return candidatePlanFailure("Durable candidate-plan loading failed; no product pair was accepted from a non-replayable matching plan."); }
+    try {
+      const loadedPlan = await options.loadCandidatePlan(planKey);
+      if (loadedPlan !== null && loadedPlan !== undefined) {
+        groups = restoreCandidatePlan(loadedPlan, planHash, synchronizedPrimary, competitors, embeddings, Math.min(maxPrimary, synchronizedPrimary.length));
+        if (!groups) return candidatePlanFailure("The durable candidate plan was incomplete or invalid; no product pair was accepted from a truncated matching pool.");
+      }
+    } catch { return candidatePlanFailure("Durable candidate-plan loading failed; no product pair was accepted from a non-replayable matching plan."); }
   }
   if (!groups) {
     try {
@@ -770,7 +782,8 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
     const retrievedGroups = retrieveGroups(synchronizedPrimary, competitors, embeddings, fallback, maxCandidates, maxPerDomain, maxRetrievalPool, pinnedPairs);
     groups = selectJudgeGroups(retrievedGroups.groups, maxPrimary, new Set(pinnedPairs.map((pair) => pair.primaryId)), referenceTimeMs, options.marketCountryCode || "");
     if (options.saveCandidatePlan) {
-      const plan: ProductCandidatePlan = { version: 1, planHash, groups: groups.map((group) => ({ primaryKey: candidatePlanProductKey(group.primary), candidateKeys: group.candidates.map((candidate) => candidatePlanProductKey(candidate.product)) })) };
+      const planGroups = groups.map((group) => ({ primaryKey: candidatePlanProductKey(group.primary), candidateKeys: group.candidates.map((candidate) => candidatePlanProductKey(candidate.product)) }));
+      const plan: ProductCandidatePlan = { version: 2, planHash, primaryCatalogCount: synchronizedPrimary.length, selectedPrimaryCount: groups.length, candidatePairCount: planGroups.reduce((sum, group) => sum + group.candidateKeys.length, 0), groups: planGroups };
       try { await options.saveCandidatePlan(planKey, plan); } catch { return candidatePlanFailure("Durable candidate-plan persistence failed; no product pair was accepted from a non-replayable matching plan."); }
     }
   }

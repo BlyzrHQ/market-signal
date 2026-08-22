@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createMatchHandler, MAX_MATCH_BODY_BYTES, parseCatalogs, parsePinnedPairs, productAnalysisBudgetMs, productAnalysisLimit, productBackfillPoolSize } from "../app/api/match/route.ts";
+import { createMatchHandler, MAX_MATCH_BODY_BYTES, parseCatalogs, parsePinnedPairs, productAnalysisBudgetMs, productAnalysisConcurrency, productAnalysisLimit, productBackfillPoolSize } from "../app/api/match/route.ts";
 
 test("AI matching input keeps a broad but bounded first-party catalog", () => {
   const products = Array.from({ length: 605 }, (_, index) => ({
@@ -55,6 +55,12 @@ test("product analysis limits are server-controlled, clamped, and receive scaled
   assert.equal(productAnalysisBudgetMs(60), 90_000);
   assert.equal(productAnalysisBudgetMs(500), 360_000);
   assert.equal(productAnalysisBudgetMs(1_000), 720_000);
+  assert.equal(productAnalysisConcurrency(20), 3);
+  assert.equal(productAnalysisConcurrency(500), 6);
+  assert.equal(productAnalysisConcurrency(1_000), 12);
+  const worstEmbeddingWaves = Math.ceil(Math.ceil(4_000 / 256) / productAnalysisConcurrency(1_000));
+  const worstJudgeWaves = Math.ceil(Math.ceil((1_000 * 5) / 25) / productAnalysisConcurrency(1_000));
+  assert.ok((worstEmbeddingWaves + worstJudgeWaves) * 35_000 < productAnalysisBudgetMs(1_000));
   assert.equal(productBackfillPoolSize(20), 1_000);
   assert.equal(productBackfillPoolSize(50), 1_000);
   assert.equal(productBackfillPoolSize(500), 1_000);
@@ -188,7 +194,7 @@ test("authenticated matching binds durable judge checkpoints to the active repor
       receivedOptions = options;
       const planKey = { batchIndex: 999, planHash: "c".repeat(64) };
       assert.equal(await options.loadCandidatePlan(planKey), null);
-      await options.saveCandidatePlan(planKey, { version: 1, planHash: planKey.planHash, groups: [] });
+      await options.saveCandidatePlan(planKey, { version: 2, planHash: planKey.planHash, primaryCatalogCount: 1_000, selectedPrimaryCount: 0, candidatePairCount: 0, groups: [] });
       const key = { batchIndex: 3, batchCount: 5, batchHash: "a".repeat(64), model: "test", promptVersion: "v1", primaryIds: ["p1"], candidatePairCount: 1 };
       assert.deepEqual(await options.loadJudgeBatchCheckpoint(key), { version: 1 });
       await options.saveJudgeBatchCheckpoint(key, { version: 1 });
@@ -219,6 +225,7 @@ test("authenticated matching binds durable judge checkpoints to the active repor
   assert.equal(response.status, 200);
   assert.equal(receivedOptions.maxPrimaryProducts, 1_000);
   assert.equal(receivedOptions.totalBudgetMs, 720_000);
+  assert.equal(receivedOptions.concurrency, 12);
   assert.equal(receivedOptions.referenceTimeMs, Date.parse("2026-07-20T09:00:00.000Z"));
   assert.equal(receivedOptions.marketCountryCode, "GB");
   const savedJudge = saved.find((item) => item.input.batchIndex === 3);

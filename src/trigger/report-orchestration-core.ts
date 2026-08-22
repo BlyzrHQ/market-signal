@@ -83,23 +83,33 @@ function publishedPricedPrimaryCount(comparison: ProductComparison, referenceTim
 
 type EnrichmentResult = Awaited<ReturnType<ReportOrchestrationPort["enrich"]>>;
 
-function validEnrichmentCheckpoint(value: unknown, targets: ProductEnrichmentTarget[]): EnrichmentResult | null {
+export function validEnrichmentCheckpoint(value: unknown, targets: ProductEnrichmentTarget[]): EnrichmentResult | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const candidate = value as Partial<EnrichmentResult>;
   if (candidate.ok !== true || !Array.isArray(candidate.products) || !candidate.coverage || typeof candidate.coverage !== "object") return null;
   if (candidate.products.length > FINAL_ENRICHMENT_BATCH_SIZE) return null;
   const targetByProduct = new Map(targets.map((target) => [`${canonicalDomain(target.domain)}\n${target.productId}`, target]));
   if (targetByProduct.size !== targets.length) return null;
+  const comparablePath = (value: string) => {
+    const url = new URL(value);
+    return url.pathname.replace(/^\/[a-z]{2,3}-[a-z]{2}(?=\/)/i, "").replace(/\/+$/, "") || "/";
+  };
+  const sourceMatchesTarget = (sourceUrl: string, target: ProductEnrichmentTarget) => {
+    try {
+      const source = new URL(sourceUrl);
+      const requested = new URL(target.sourceUrl);
+      if (canonicalDomain(source.hostname) !== canonicalDomain(target.domain) || canonicalDomain(requested.hostname) !== canonicalDomain(target.domain)) return false;
+      return target.allowCatalogReplacement === true || comparablePath(sourceUrl) === comparablePath(target.sourceUrl);
+    } catch { return false; }
+  };
   const validProduct = (product: unknown) => {
     if (!product || typeof product !== "object" || Array.isArray(product)) return false;
     const item = product as Partial<ProductRecord>;
     const domain = canonicalDomain(String(item.domain || ""));
     const target = targetByProduct.get(`${domain}\n${String(item.id || "")}`);
-    let sourceDomain = "";
-    try { sourceDomain = canonicalDomain(new URL(String(item.sourceUrl || "")).hostname); } catch { return false; }
     return Boolean(target)
-      && sourceDomain === domain
       && domain === canonicalDomain(target?.domain || "")
+      && sourceMatchesTarget(String(item.sourceUrl || ""), target as ProductEnrichmentTarget)
       && typeof item.id === "string" && item.id.length > 0
       && typeof item.domain === "string" && item.domain.length > 0
       && typeof item.name === "string" && item.name.length > 0
@@ -111,6 +121,8 @@ function validEnrichmentCheckpoint(value: unknown, targets: ProductEnrichmentTar
       && Array.isArray(item.claimIds);
   };
   if (!candidate.products.every(validProduct)) return null;
+  const productKeys = new Set(candidate.products.map((product) => `${canonicalDomain(product.domain)}\n${product.id}`));
+  if (productKeys.size !== candidate.products.length) return null;
   const coverage = candidate.coverage as Partial<NonNullable<ProductComparison["enrichment"]>>;
   const boundedCount = (count: unknown) => typeof count === "number" && Number.isInteger(count) && count >= 0 && count <= FINAL_ENRICHMENT_BATCH_SIZE;
   if (coverage.pagesRequested !== targets.length
@@ -125,10 +137,16 @@ function validEnrichmentCheckpoint(value: unknown, targets: ProductEnrichmentTar
   if (!coverage.gaps.every((gap) => {
     if (!gap || typeof gap !== "object") return false;
     const record = gap as { productId?: unknown; url?: unknown };
-    const target = targets.find((item) => item.productId === record.productId);
-    if (!target || typeof record.url !== "string") return false;
-    try { return canonicalDomain(new URL(record.url).hostname) === canonicalDomain(target.domain); } catch { return false; }
+    if (typeof record.url !== "string") return false;
+    try {
+      const key = `${canonicalDomain(new URL(record.url).hostname)}\n${String(record.productId || "")}`;
+      const target = targetByProduct.get(key);
+      return Boolean(target) && sourceMatchesTarget(record.url, target as ProductEnrichmentTarget);
+    } catch { return false; }
   })) return null;
+  const represented = new Set(candidate.products.map((product) => `${canonicalDomain(product.domain)}\n${product.id}`));
+  for (const gap of coverage.gaps) represented.add(`${canonicalDomain(new URL(gap.url).hostname)}\n${gap.productId}`);
+  if ([...targetByProduct.keys()].some((key) => !represented.has(key))) return null;
   return candidate as EnrichmentResult;
 }
 

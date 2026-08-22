@@ -944,6 +944,12 @@ test("a persisted candidate plan makes retries independent of embedding drift", 
   assert.deepEqual(judged[1], judged[0]);
   assert.ok(first.matching.embeddingCalls > 0);
   assert.equal(second.matching.embeddingCalls, 0);
+
+  savedPlan = { ...savedPlan, groups: [], selectedPrimaryCount: 1, candidatePairCount: 0 };
+  const truncated = await run(true);
+  assert.equal(truncated.matching.available, false);
+  assert.match(truncated.matching.gaps.join(" "), /incomplete or invalid|truncated matching pool/i);
+  assert.equal(judged.length, 2);
 });
 
 test("replays complete deterministic judge checkpoints without another judge call", async () => {
