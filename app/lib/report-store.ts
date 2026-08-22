@@ -1118,7 +1118,7 @@ export async function appendReportEvent(publicReportId: string, input: { attempt
   return { publicId: run.publicId, phase: input.phase, status: input.status, observedAt };
 }
 
-export async function saveReportDocument(publicReportId: string, document: unknown, options: { attemptNumber?: number; status?: "complete" | "limited"; observedAt?: string; expectedFactManifestHash?: string } = {}, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+export async function saveReportDocument(publicReportId: string, document: unknown, options: { attemptNumber?: number; status?: "complete" | "limited"; observedAt?: string; expectedFactManifestHash: string }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
   const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
   if (!database) throw new Error("Persistent report storage is unavailable.");
   if (!PUBLIC_ID_PATTERN.test(publicReportId) || !document || typeof document !== "object" || Array.isArray(document)) throw new Error("Invalid report document.");
@@ -1135,15 +1135,15 @@ export async function saveReportDocument(publicReportId: string, document: unkno
   const manifest = manifestRows.results?.[0];
   const completeManifest = manifest?.status === "complete" && /^[a-f0-9]{64}$/.test(String(manifest.manifest_hash || ""));
   const expectedFactManifestHash = options.expectedFactManifestHash;
-  if (expectedFactManifestHash !== undefined && expectedFactManifestHash !== "" && !/^[a-f0-9]{64}$/.test(expectedFactManifestHash)) throw new Error("Invalid expected report fact manifest hash.");
+  if (typeof expectedFactManifestHash !== "string" || (expectedFactManifestHash !== "" && !/^[a-f0-9]{64}$/.test(expectedFactManifestHash))) throw new Error("Invalid expected report fact manifest hash.");
   const actualFactManifestHash = completeManifest ? String(manifest.manifest_hash) : "";
-  if (expectedFactManifestHash !== undefined && actualFactManifestHash !== expectedFactManifestHash) throw new Error("The report document fact manifest binding conflicts with the persisted evidence snapshot.");
-  const factManifestGuard = expectedFactManifestHash === undefined
-    ? "1 = 1"
-    : expectedFactManifestHash
-      ? "EXISTS (SELECT 1 FROM report_fact_manifests WHERE run_id = ? AND status = 'complete' AND manifest_hash = ?)"
-      : "NOT EXISTS (SELECT 1 FROM report_fact_manifests WHERE run_id = ? AND status = 'complete')";
-  const factManifestBindings = expectedFactManifestHash === undefined ? [] : expectedFactManifestHash ? [run.id, expectedFactManifestHash] : [run.id];
+  const chunkRows = await database.prepare(`SELECT COUNT(*) AS count FROM report_fact_chunks WHERE run_id = ?`).bind(run.id).all<Record<string, unknown>>();
+  const hasFactArtifacts = Boolean(manifestRows.results?.length) || Number(chunkRows.results?.[0]?.count || 0) > 0;
+  if ((expectedFactManifestHash && actualFactManifestHash !== expectedFactManifestHash) || (!expectedFactManifestHash && hasFactArtifacts)) throw new Error("The report document fact manifest binding conflicts with the persisted evidence snapshot.");
+  const factManifestGuard = expectedFactManifestHash
+    ? "EXISTS (SELECT 1 FROM report_fact_manifests WHERE run_id = ? AND status = 'complete' AND manifest_hash = ?)"
+    : "NOT EXISTS (SELECT 1 FROM report_fact_manifests WHERE run_id = ?) AND NOT EXISTS (SELECT 1 FROM report_fact_chunks WHERE run_id = ?)";
+  const factManifestBindings = expectedFactManifestHash ? [run.id, expectedFactManifestHash] : [run.id, run.id];
   const factCounts = completeManifest ? { companies: Number(manifest?.company_count || 0), products: Number(manifest?.product_count || 0), matches: Number(manifest?.match_count || 0), ads: Number(manifest?.ad_count || 0) } : null;
   const compactedDocument = compactTerminalReportDocument(document, undefined, { factsAuthoritative: completeManifest, factCounts });
   const documentJson = JSON.stringify(compactedDocument);
@@ -1172,11 +1172,9 @@ export async function saveReportDocument(publicReportId: string, document: unkno
   }
   const persistedRun = await findRun(database, publicReportId);
   if (!persistedRun || persistedRun.attemptCount !== attemptNumber || persistedRun.status !== status) throw new Error("Report callback attempt is stale or invalid.");
-  if (expectedFactManifestHash !== undefined) {
-    const persistedManifest = (await database.prepare(`SELECT manifest_hash, status FROM report_fact_manifests WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>()).results?.[0];
-    const persistedFactManifestHash = persistedManifest?.status === "complete" ? String(persistedManifest.manifest_hash || "") : "";
-    if (persistedFactManifestHash !== expectedFactManifestHash) throw new Error("The report document fact manifest binding conflicts with the persisted evidence snapshot.");
-  }
+  const persistedManifest = (await database.prepare(`SELECT manifest_hash, status FROM report_fact_manifests WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>()).results?.[0];
+  const persistedFactManifestHash = persistedManifest?.status === "complete" ? String(persistedManifest.manifest_hash || "") : "";
+  if (persistedFactManifestHash !== expectedFactManifestHash) throw new Error("The report document fact manifest binding conflicts with the persisted evidence snapshot.");
   if (evaluationCreated && completeManifest) {
     try {
       await evaluateStoredReport(publicReportId, { inputHash: documentHash, factManifestHash: String(manifest?.manifest_hash || ""), evaluatorVersion: AGENT_EVALUATOR_VERSION }, now, database);

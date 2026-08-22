@@ -109,7 +109,7 @@ test("Node SQLite preserves reports and competitor memory after reopening", asyn
       status: "running",
       message: "Duplicate transport retry.",
     }, new Date("2026-07-27T00:01:01.000Z"), database);
-    await saveReportDocument(created.publicId, { blocks: [{ type: "summary", id: "summary", title: "Saved on the VPS" }] }, { status: "complete" }, new Date("2026-07-27T00:02:00.000Z"), database);
+    await saveReportDocument(created.publicId, { blocks: [{ type: "summary", id: "summary", title: "Saved on the VPS" }] }, { status: "complete", expectedFactManifestHash: "" }, new Date("2026-07-27T00:02:00.000Z"), database);
     const remembered = await rememberVerifiedCompetitors("myjam.co.uk", [{
       candidate: {
         domain: "oasismarket.co.uk",
@@ -211,7 +211,7 @@ test("full relational report facts survive snapshot compaction with replay-safe 
     assert.equal(finalized.replayed, false);
     assert.equal((await finalizeReportFactManifest(created.publicId, bundle.manifest, now, database)).replayed, true);
     assert.equal((await saveReportFactChunk(created.publicId, bundle.chunks[0], now, database)).replayed, true);
-    await saveReportDocument(created.publicId, { blocks: [{ type: "product-catalog", id: "catalog", products }] }, { status: "complete" }, now, database);
+    await saveReportDocument(created.publicId, { blocks: [{ type: "product-catalog", id: "catalog", products }] }, { status: "complete", expectedFactManifestHash: bundle.manifest.manifestHash }, now, database);
     const savedProducts = await database.prepare("SELECT COUNT(*) AS count FROM report_products").all();
     const savedMatches = await database.prepare("SELECT COUNT(*) AS count FROM report_matches").all();
     const savedAds = await database.prepare("SELECT COUNT(*) AS count FROM report_ads").all();
@@ -283,7 +283,7 @@ test("terminal report evaluation fails closed without facts and cannot break cus
   try {
     const now = new Date("2026-07-31T12:00:00.000Z");
     const created = await createReportRun({ primaryDomain: "service.example" }, now, database);
-    await saveReportDocument(created.publicId, { blocks: [{ type: "summary", title: "Service report" }] }, { status: "limited" }, now, database);
+    await saveReportDocument(created.publicId, { blocks: [{ type: "summary", title: "Service report" }] }, { status: "limited", expectedFactManifestHash: "" }, now, database);
     const evaluation = await getReportEvaluation(created.publicId, database);
     assert.equal(evaluation.status, "insufficient_facts");
     assert.equal(evaluation.ratingBasis, "none");
@@ -307,7 +307,7 @@ test("terminal report evaluation fails closed without facts and cannot break cus
     const now = new Date("2026-07-31T12:10:00.000Z");
     const created = await createReportRun({ primaryDomain: "durable.example" }, now, database);
     await database.prepare("DROP TABLE report_evaluations").run();
-    await saveReportDocument(created.publicId, { blocks: [{ type: "summary", title: "Still saved" }] }, { status: "complete" }, now, database);
+    await saveReportDocument(created.publicId, { blocks: [{ type: "summary", title: "Still saved" }] }, { status: "complete", expectedFactManifestHash: "" }, now, database);
     const report = await getStoredReport(created.publicId, now, database);
     assert.equal(report.run.status, "complete");
     assert.equal(report.document.blocks[0].title, "Still saved");
@@ -543,7 +543,7 @@ test("stale workers cannot append progress or terminalize a recovered report dur
     await assert.rejects(appendReportEvent(created.publicId, { attemptNumber: 1, idempotencyKey: "stale-event", phase: "crawl", status: "running", message: "stale" }, now, racingDatabase), /stale/);
     assert.equal((await first.prepare("SELECT COUNT(*) AS count FROM report_events WHERE idempotency_key = 'stale-event'").all()).results[0].count, 0);
     nextAttempt = 3;
-    await assert.rejects(saveReportDocument(created.publicId, { blocks: [] }, { attemptNumber: 2, status: "complete" }, now, racingDatabase), /stale/);
+    await assert.rejects(saveReportDocument(created.publicId, { blocks: [] }, { attemptNumber: 2, status: "complete", expectedFactManifestHash: "" }, now, racingDatabase), /stale/);
     assert.equal((await first.prepare("SELECT COUNT(*) AS count FROM report_documents").all()).results[0].count, 0);
     assert.equal((await first.prepare("SELECT status, attempt_count FROM report_runs WHERE public_id = ?").bind(created.publicId).all()).results[0].status, "queued");
   } finally {
@@ -659,7 +659,6 @@ test("document persistence CAS rejects a fact manifest finalized after the worke
     const now = new Date("2026-08-22T01:00:00.000Z");
     const created = await createReportRun({ primaryDomain: "manifest-race.example" }, now, first);
     const bundle = await buildReportFactBundle({ publicId: created.publicId, crawlResults: [{ domain: "manifest-race.example", role: "primary", homepage: { sourceUrl: "https://manifest-race.example/" }, products: [] }], comparison: null, adBlock: null, observedAt: now.toISOString() });
-    for (const chunk of bundle.chunks) await saveReportFactChunk(created.publicId, chunk, now, first);
     let armed = false;
     let raced = false;
     const racingDatabase = {
@@ -667,6 +666,7 @@ test("document persistence CAS rejects a fact manifest finalized after the worke
       batch: async (statements) => {
         if (armed && !raced) {
           raced = true;
+          for (const chunk of bundle.chunks) await saveReportFactChunk(created.publicId, chunk, now, second);
           await finalizeReportFactManifest(created.publicId, bundle.manifest, now, second);
         }
         return first.batch(statements);
@@ -682,6 +682,24 @@ test("document persistence CAS rejects a fact manifest finalized after the worke
   } finally {
     first.close();
     second.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("document persistence rejects an empty manifest binding when partial fact chunks exist", async () => {
+  const { directory, databasePath } = await fixture();
+  const database = await NodeSqliteDatabase.open(databasePath);
+  try {
+    const now = new Date("2026-08-22T02:00:00.000Z");
+    const created = await createReportRun({ primaryDomain: "partial-facts.example" }, now, database);
+    const bundle = await buildReportFactBundle({ publicId: created.publicId, crawlResults: [{ domain: "partial-facts.example", role: "primary", homepage: { sourceUrl: "https://partial-facts.example/" }, products: [] }], comparison: null, adBlock: null, observedAt: now.toISOString() });
+    await saveReportFactChunk(created.publicId, bundle.chunks[0], now, database);
+
+    await assert.rejects(saveReportDocument(created.publicId, { blocks: [] }, { status: "complete", expectedFactManifestHash: "" }, now, database), /stale|binding conflicts/i);
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM report_documents").all()).results[0].count, 0);
+    assert.equal((await database.prepare("SELECT status FROM report_runs WHERE public_id = ?").bind(created.publicId).all()).results[0].status, "queued");
+  } finally {
+    database.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

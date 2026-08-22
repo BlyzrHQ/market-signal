@@ -63,7 +63,7 @@ async function persistBundle(database, created, count, now, publicationForIndex 
   });
   for (const chunk of bundle.chunks) await saveReportFactChunk(created.publicId, chunk, now, database);
   await finalizeReportFactManifest(created.publicId, bundle.manifest, now, database);
-  await saveReportDocument(created.publicId, { blocks: [{ type: "product-comparison", id: "products", ...comparison }] }, { status: "complete" }, now, database);
+  await saveReportDocument(created.publicId, { blocks: [{ type: "product-comparison", id: "products", ...comparison }] }, { status: "complete", expectedFactManifestHash: bundle.manifest.manifestHash }, now, database);
 }
 
 test("completed relational matches paginate without duplicates and preserve product evidence", async () => {

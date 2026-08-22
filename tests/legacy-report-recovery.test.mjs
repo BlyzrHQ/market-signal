@@ -88,7 +88,7 @@ test("local reports bypass legacy recovery even when it is enabled", async () =>
   const { directory, database } = await fixture();
   try {
     const created = await createReportRun({ primaryDomain: "local.example" }, options.now, database);
-    await saveReportDocument(created.publicId, { document: { version: "1", blocks: [] } }, {}, options.now, database);
+    await saveReportDocument(created.publicId, { document: { version: "1", blocks: [] } }, { expectedFactManifestHash: "" }, options.now, database);
     const result = await recoverLegacyReport(created.publicId, {
       ...options,
       database,

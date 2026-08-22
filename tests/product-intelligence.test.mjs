@@ -2007,6 +2007,37 @@ test("catalog planners retain distinct sibling identities that share one page UR
   assert.equal(final.truncated, false);
 });
 
+test("final enrichment re-fetches stale positive prices before publication", () => {
+  const staleObservedAt = "2020-01-01T00:00:00.000Z";
+  const primary = {
+    ...product("stale-primary", "shop.test", "Beef Cubes Halal 500g"),
+    jsonLdType: "Product",
+    sourceUrl: "https://shop.test/products/beef-cubes-halal-500g",
+    observedAt: staleObservedAt,
+    priceSignals: [{ raw: "GBP 7.99", currency: "GBP", amount: 7.99 }],
+  };
+  const rival = {
+    ...product("stale-rival", "rival.test", "Halal Beef Cubes 500g"),
+    jsonLdType: "Product",
+    sourceUrl: "https://rival.test/products/halal-beef-cubes-500g",
+    observedAt: staleObservedAt,
+    priceSignals: [{ raw: "GBP 8.49", currency: "GBP", amount: 8.49 }],
+  };
+  const match = { domain: rival.domain, product: rival, score: 0.95, confidence: "Medium", sharedTerms: ["beef", "cubes", "500g"], claimIds: [], decision: null };
+  const comparison = {
+    primaryDomain: primary.domain,
+    comparisonDomains: [rival.domain],
+    rows: [{ primary, matches: [match] }],
+    unmatched: [],
+    coverage: { primaryProductsAvailable: 1, primaryProductsScanned: 1, primaryProductFamiliesCompared: 1, competitorProductsAvailable: 1, competitorProductsScanned: 1, assignedPairCount: 1, verifiedPairCount: 1, rowsReturned: 1, rowLimit: 1, truncated: false },
+  };
+
+  const plan = planFinalProductEnrichmentTargets(comparison, 2);
+  assert.deepEqual(plan.targets.map((target) => target.productId).sort(), ["stale-primary", "stale-rival"]);
+  assert.equal(plan.totalEligible, 2);
+  assert.equal(plan.truncated, false);
+});
+
 test("final enrichment never copies same-page sibling evidence across product identities", () => {
   const sharedUrl = "https://shop.test/products/workwear-collection";
   const jacketA = { ...product("a", "shop.test", "Jacket A"), jsonLdType: "Product", sourceUrl: sharedUrl };

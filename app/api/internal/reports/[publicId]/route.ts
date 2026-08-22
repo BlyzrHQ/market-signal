@@ -239,6 +239,7 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
           return Response.json({ ok: true, saved });
         }
         if (body.action === "document") {
+          if (typeof body.expectedFactManifestHash !== "string") return Response.json({ ok: false, error: "The expected report fact manifest hash is required." }, { status: 400 });
           if (["complete", "limited"].includes(report.run.status)) {
             if (!documentReplayMatches(report, body)) return Response.json({ ok: false, error: "The completed report callback conflicts with the saved document." }, { status: 409 });
             await terminal.settle(report.run);
@@ -251,7 +252,7 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
             attemptNumber,
             status: body.status === "limited" ? "limited" : "complete",
             observedAt: typeof body.observedAt === "string" ? body.observedAt : undefined,
-            expectedFactManifestHash: typeof body.expectedFactManifestHash === "string" ? body.expectedFactManifestHash : undefined,
+            expectedFactManifestHash: body.expectedFactManifestHash,
           });
           const persisted = await store.get(id);
           if (!persisted) throw new Error("The completed report was not persisted.");

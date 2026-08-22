@@ -153,7 +153,7 @@ test("report runs persist ordered idempotent events and a reloadable document", 
   await appendReportEvent(created.publicId, { idempotencyKey: "ads-started", phase: "ads", status: "running", message: "Checking attributable ads." }, new Date("2026-07-16T00:01:02.000Z"), database);
   await appendReportEvent(created.publicId, { idempotencyKey: "actions-started", phase: "actions", status: "running", message: "Drafting evidence-grounded next moves." }, new Date("2026-07-16T00:01:02.500Z"), database);
   await appendReportEvent(created.publicId, { idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Late duplicate transport retry." }, new Date("2026-07-16T00:01:03.000Z"), database);
-  await saveReportDocument(created.publicId, { blocks: [{ type: "market-profile", id: "profile" }, { type: "presentation-compaction", id: "presentation-compaction", relationalFactsAuthoritative: true, factCounts: { companies: 99, products: 99, matches: 99, ads: 99 } }] }, { status: "complete" }, new Date("2026-07-16T00:02:00.000Z"), database);
+  await saveReportDocument(created.publicId, { blocks: [{ type: "market-profile", id: "profile" }, { type: "presentation-compaction", id: "presentation-compaction", relationalFactsAuthoritative: true, factCounts: { companies: 99, products: 99, matches: 99, ads: 99 } }] }, { status: "complete", expectedFactManifestHash: "" }, new Date("2026-07-16T00:02:00.000Z"), database);
   const reloaded = await getStoredReport(created.publicId, new Date("2026-07-16T00:03:00.000Z"), database);
   assert.equal(reloaded.run.status, "complete");
   assert.deepEqual(reloaded.events.map((event) => event.idempotencyKey), ["run-created", "crawl-started", "ads-started", "actions-started", "report-saved"]);
@@ -175,7 +175,7 @@ test("limited phase events remain visible without making the run terminal before
   assert.equal(progressing.run.status, "running");
   assert.equal(progressing.events.find((event) => event.idempotencyKey === "crawl-limited").status, "limited");
   assert.equal(progressing.events.find((event) => event.idempotencyKey === "ads-limited").status, "limited");
-  await saveReportDocument(created.publicId, { primaryDomain: "parked.example", document: { version: "1", blocks: [] } }, { status: "limited" }, new Date("2026-07-20T10:02:00.000Z"), database);
+  await saveReportDocument(created.publicId, { primaryDomain: "parked.example", document: { version: "1", blocks: [] } }, { status: "limited", expectedFactManifestHash: "" }, new Date("2026-07-20T10:02:00.000Z"), database);
   const saved = await getStoredReport(created.publicId, new Date("2026-07-20T10:02:01.000Z"), database);
   assert.equal(saved.run.status, "limited");
 });
@@ -235,15 +235,15 @@ test("report persistence rejects missing databases, invalid ids, and oversized d
   await assert.rejects(() => getStoredReport("enumerate-me", new Date(), new FakeDatabase()), /Invalid report id/);
   const database = new FakeDatabase();
   const created = await createReportRun({ primaryDomain: "example.com" }, new Date(), database);
-  await assert.rejects(() => saveReportDocument(created.publicId, { value: "x".repeat(MAX_REPORT_DOCUMENT_BYTES) }, {}, new Date(), database), /budget|too large/);
+  await assert.rejects(() => saveReportDocument(created.publicId, { value: "x".repeat(MAX_REPORT_DOCUMENT_BYTES) }, { expectedFactManifestHash: "" }, new Date(), database), /budget|too large/);
 });
 
 test("terminal reports cannot regress or be overwritten", async () => {
   const database = new FakeDatabase();
   const created = await createReportRun({ primaryDomain: "example.com" }, new Date("2026-07-16T00:00:00.000Z"), database);
-  await saveReportDocument(created.publicId, { blocks: [] }, {}, new Date("2026-07-16T00:01:00.000Z"), database);
+  await saveReportDocument(created.publicId, { blocks: [] }, { expectedFactManifestHash: "" }, new Date("2026-07-16T00:01:00.000Z"), database);
   await assert.rejects(() => appendReportEvent(created.publicId, { idempotencyKey: "late", phase: "crawl", status: "running", message: "Late event." }, new Date(), database), /terminal report/);
-  await assert.rejects(() => saveReportDocument(created.publicId, { blocks: [{ id: "replacement" }] }, {}, new Date(), database), /terminal report/);
+  await assert.rejects(() => saveReportDocument(created.publicId, { blocks: [{ id: "replacement" }] }, { expectedFactManifestHash: "" }, new Date(), database), /terminal report/);
 });
 
 test("only a persisted document can declare a report complete", async () => {

@@ -11,6 +11,7 @@ import {
   type ProductIdentifiers,
 } from "./product-normalization.ts";
 import { stripInactiveHtmlMarkup } from "./active-html-markup.ts";
+import { publicHttpUrl } from "./public-url.ts";
 
 export type ProductPriceSignal = {
   raw: string;
@@ -1780,8 +1781,19 @@ export function buildProductComparison(primaryDomain: string, catalogs: Array<{ 
   };
 }
 
-function hasComparablePublicPrice(product: ProductRecord) {
+function hasComparablePublicPrice(product: ProductRecord, now = Date.now()) {
   if (!product.priceSignals.length) return false;
+  try {
+    const source = new URL(publicHttpUrl(product.sourceUrl, false));
+    if (canonicalHost(source.hostname) !== canonicalHost(product.domain)) return false;
+  } catch {
+    return false;
+  }
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(product.observedAt)) return false;
+  const observedAt = Date.parse(product.observedAt);
+  if (!Number.isFinite(observedAt) || new Date(observedAt).toISOString() !== product.observedAt) return false;
+  const age = now - observedAt;
+  if (age < -(5 * 60 * 1_000) || age > (366 * 24 * 60 * 60 * 1_000)) return false;
   const currencies = new Set<string>();
   for (const signal of product.priceSignals) {
     if (typeof signal.amount !== "number" || !Number.isFinite(signal.amount) || signal.amount <= 0 || !String(signal.raw || "").trim() || !isSupportedCurrency(signal.currency)) return false;
