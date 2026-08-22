@@ -324,9 +324,24 @@ export function createReportOrchestrationHttpPort(configuration: { appOrigin: st
       return payload;
     },
     async loadCheckpoint(publicId, input) {
-      const payload = requiredObject<{ ok?: boolean; checkpoints?: unknown }>(await call(PATHS.report(publicId), "Report checkpoint read", OPERATION_BUDGETS_MS.report, { action: "match-batch-checkpoints-load", ...input }), "Report checkpoint read");
-      if (payload.ok !== true || !Array.isArray(payload.checkpoints)) throw new OrchestrationHttpError("Report checkpoint read", 502, true);
-      return payload.checkpoints as Awaited<ReturnType<ReportOrchestrationPort["loadCheckpoint"]>>;
+      const checkpoints: Awaited<ReturnType<ReportOrchestrationPort["loadCheckpoint"]>> = [];
+      const pageLimit = 20;
+      let afterAttemptNumber: number | undefined;
+      let afterBatchIndex: number | undefined;
+      for (let page = 0; page < 2_000; page += 1) {
+        const cursor = afterAttemptNumber === undefined ? {} : { afterAttemptNumber, afterBatchIndex };
+        const payload = requiredObject<{ ok?: boolean; checkpoints?: unknown }>(await call(PATHS.report(publicId), "Report checkpoint read", OPERATION_BUDGETS_MS.report, { action: "match-batch-checkpoints-load", ...input, ...cursor, limit: pageLimit }), "Report checkpoint read");
+        if (payload.ok !== true || !Array.isArray(payload.checkpoints)) throw new OrchestrationHttpError("Report checkpoint read", 502, true);
+        const batch = payload.checkpoints as Awaited<ReturnType<ReportOrchestrationPort["loadCheckpoint"]>>;
+        checkpoints.push(...batch);
+        if (batch.length < pageLimit) return checkpoints;
+        const last = batch.at(-1);
+        if (!last || !Number.isInteger(last.attemptNumber) || !Number.isInteger(last.batchIndex)
+          || (last.attemptNumber === afterAttemptNumber && last.batchIndex === afterBatchIndex)) throw new OrchestrationHttpError("Report checkpoint read", 502, true);
+        afterAttemptNumber = last.attemptNumber;
+        afterBatchIndex = last.batchIndex;
+      }
+      throw new OrchestrationHttpError("Report checkpoint read", 502, true);
     },
     async saveCheckpoint(publicId, input) {
       const payload = requiredObject<{ ok?: boolean }>(await call(PATHS.report(publicId), "Report checkpoint callback", OPERATION_BUDGETS_MS.report, { action: "match-batch-checkpoint-save", ...input }), "Report checkpoint callback");

@@ -180,7 +180,12 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
         if (body.action === "match-batch-checkpoints-load") {
           if (["complete", "limited", "failed", "interrupted"].includes(report.run.status)) return Response.json({ ok: false, error: "A terminal report cannot load report match batch checkpoints." }, { status: 409 });
           const batchIndex = body.batchIndex === undefined ? undefined : Number(body.batchIndex);
-          const checkpoints = await store.loadMatchBatchCheckpoints(id, { attemptNumber, batchIndex });
+          const afterAttemptNumber = body.afterAttemptNumber === undefined ? undefined : Number(body.afterAttemptNumber);
+          const afterBatchIndex = body.afterBatchIndex === undefined ? undefined : Number(body.afterBatchIndex);
+          const limit = body.limit === undefined ? undefined : Number(body.limit);
+          if ((afterAttemptNumber === undefined) !== (afterBatchIndex === undefined)) return Response.json({ ok: false, error: "Invalid report checkpoint cursor." }, { status: 400 });
+          if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 20)) return Response.json({ ok: false, error: "Invalid report checkpoint page limit." }, { status: 400 });
+          const checkpoints = await store.loadMatchBatchCheckpoints(id, { attemptNumber, batchIndex, afterAttemptNumber, afterBatchIndex, limit });
           return Response.json({ ok: true, checkpoints }, { headers: { "Cache-Control": "no-store" } });
         }
         if (body.action === "match-batch-checkpoint-save") {

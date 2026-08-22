@@ -976,11 +976,14 @@ function validateMatchBatchCheckpointIdentity(attemptNumber: number, batchIndex:
   if (inputHash !== undefined && !/^[a-f0-9]{64}$/.test(inputHash)) throw new Error("Invalid report match batch checkpoint input hash.");
 }
 
-export async function loadReportMatchBatchCheckpoints(publicReportId: string, input: { attemptNumber: number; batchIndex?: number }, databaseOverride?: D1DatabaseLike | null) {
+export async function loadReportMatchBatchCheckpoints(publicReportId: string, input: { attemptNumber: number; batchIndex?: number; afterAttemptNumber?: number; afterBatchIndex?: number; limit?: number }, databaseOverride?: D1DatabaseLike | null) {
   const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
   if (!database) throw new Error(STORAGE_UNAVAILABLE_MESSAGE);
   if (!PUBLIC_ID_PATTERN.test(publicReportId)) throw new Error("Invalid report id.");
   validateMatchBatchCheckpointIdentity(input.attemptNumber, input.batchIndex ?? 0);
+  const hasCursor = input.afterAttemptNumber !== undefined || input.afterBatchIndex !== undefined;
+  if (hasCursor && (!Number.isInteger(input.afterAttemptNumber) || Number(input.afterAttemptNumber) < 1 || !Number.isInteger(input.afterBatchIndex) || Number(input.afterBatchIndex) < 0 || Number(input.afterBatchIndex) >= MAX_REPORT_MATCH_CHECKPOINTS)) throw new Error("Invalid report match batch checkpoint cursor.");
+  if (input.limit !== undefined && (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 20)) throw new Error("Invalid report match batch checkpoint page limit.");
   await ensureSchema(database);
   const run = await findRun(database, publicReportId);
   if (!run) throw new Error("Report not found.");
@@ -1001,8 +1004,13 @@ export async function loadReportMatchBatchCheckpoints(publicReportId: string, in
   const attempts = [...adoptedAttempts].sort((left, right) => right - left);
   const placeholders = attempts.map(() => "?").join(", ");
   const byBatch = input.batchIndex === undefined ? "" : " AND batch_index = ?";
-  const bindings = input.batchIndex === undefined ? [run.id, ...attempts] : [run.id, ...attempts, input.batchIndex];
-  const rows = await database.prepare(`SELECT attempt_number, batch_index, input_hash, result_json, result_hash, created_at, updated_at FROM report_match_batch_checkpoints WHERE run_id = ? AND attempt_number IN (${placeholders})${byBatch} ORDER BY attempt_number DESC, batch_index ASC`).bind(...bindings).all<Record<string, unknown>>();
+  const afterCursor = hasCursor ? " AND (attempt_number < ? OR (attempt_number = ? AND batch_index > ?))" : "";
+  const pageLimit = input.limit === undefined ? "" : " LIMIT ?";
+  const bindings: unknown[] = [run.id, ...attempts];
+  if (input.batchIndex !== undefined) bindings.push(input.batchIndex);
+  if (hasCursor) bindings.push(input.afterAttemptNumber, input.afterAttemptNumber, input.afterBatchIndex);
+  if (input.limit !== undefined) bindings.push(input.limit);
+  const rows = await database.prepare(`SELECT attempt_number, batch_index, input_hash, result_json, result_hash, created_at, updated_at FROM report_match_batch_checkpoints WHERE run_id = ? AND attempt_number IN (${placeholders})${byBatch}${afterCursor} ORDER BY attempt_number DESC, batch_index ASC${pageLimit}`).bind(...bindings).all<Record<string, unknown>>();
   return Promise.all((rows.results || []).map(async (row) => {
     const checkpoint = rowMatchBatchCheckpoint(row);
     const resultJson = boundedCheckpointResult(checkpoint.result);

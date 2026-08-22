@@ -1731,6 +1731,30 @@ test("the HTTP report adapter reads and writes exact enrichment checkpoints", as
   assert.ok(bodies.every(({ authorization }) => authorization === "Bearer callback_secret_with_enough_entropy_123456"));
 });
 
+test("the HTTP report adapter pages checkpoint recovery below the response transport bound", async () => {
+  const bodies = [];
+  const firstPage = Array.from({ length: 20 }, (_, index) => ({ attemptNumber: 3, batchIndex: index, inputHash: `${index}`.padStart(64, "a").slice(-64), result: { index } }));
+  const finalPage = [{ attemptNumber: 2, batchIndex: 40, inputHash: "b".repeat(64), result: { index: 20 } }];
+  const port = createReportOrchestrationHttpPort({
+    appOrigin: "https://market.example",
+    callbackToken: "callback_secret_with_enough_entropy_123456",
+    async fetchImpl(_url, init) {
+      const body = JSON.parse(init.body);
+      bodies.push(body);
+      return Response.json({ ok: true, checkpoints: bodies.length === 1 ? firstPage : finalPage });
+    },
+  });
+
+  const loaded = await port.loadCheckpoint(payload.publicId, { attemptNumber: 3 });
+
+  assert.equal(loaded.length, 21);
+  assert.equal(bodies.length, 2);
+  assert.deepEqual(bodies.map((body) => body.limit), [20, 20]);
+  assert.equal(bodies[0].afterAttemptNumber, undefined);
+  assert.equal(bodies[1].afterAttemptNumber, 3);
+  assert.equal(bodies[1].afterBatchIndex, 19);
+});
+
 test("the HTTP report adapter compacts a large terminal document before transport", async () => {
   let body;
   const source = babanujScaleDocument();
