@@ -1181,7 +1181,7 @@ export async function orchestrateReport(
     const [matcherStateCheckpoints, stateCheckpoints, actionCheckpoints, ...judgeCheckpointPages] = await Promise.all([
       port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: MATCHER_STATE_CHECKPOINT_BATCH_INDEX_BASE, batchIndexEnd: CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE - 1, latestPerBatch: true }),
       port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: 270, batchIndexEnd: MATCH_JUDGE_CHECKPOINT_BATCH_INDEX_BASE - 1, latestPerBatch: true }),
-      port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: ACTION_PLAN_CHECKPOINT_BATCH_INDEX, batchIndexEnd: ACTION_PLAN_CHECKPOINT_BATCH_INDEX, latestPerBatch: true, limit: 1 }),
+      port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: ACTION_PLAN_CHECKPOINT_BATCH_INDEX, batchIndexEnd: ACTION_PLAN_CHECKPOINT_BATCH_INDEX + MAX_ORCHESTRATION_TASK_ATTEMPTS - 1, latestPerBatch: true, limit: MAX_ORCHESTRATION_TASK_ATTEMPTS }),
       ...judgeCheckpointRanges.map((range) => port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: range.start, batchIndexEnd: range.end, latestPerBatch: true })),
     ]);
     const adoptedJudgeCheckpoints = judgeCheckpointPages.flat();
@@ -1603,10 +1603,12 @@ export async function orchestrateReport(
       if (actionInputs.length) {
         await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "actions-started"), "actions", "Drafting evidence-grounded next moves for the accepted product pairs.", { pairs: actionInputs.length }));
         const inputHash = actionPlanInputHash(actionInputs);
-        const saved = durableCheckpoints.get(ACTION_PLAN_CHECKPOINT_BATCH_INDEX);
+        const checkpointIndex = ACTION_PLAN_CHECKPOINT_BATCH_INDEX + taskAttemptNumber - 1;
+        const currentSlot = durableCheckpoints.get(checkpointIndex);
+        if (currentSlot && currentSlot.inputHash !== inputHash) throw new Error("The current task attempt contains a conflicting durable action-plan checkpoint.");
+        const saved = currentSlot || actionCheckpoints.find((checkpoint) => checkpoint.inputHash === inputHash);
         let actionResult: ProductActionPlanningResult;
         if (saved) {
-          if (saved.inputHash !== inputHash) throw new Error("The durable action-plan checkpoint belongs to different product evidence.");
           const validated = validActionPlanCheckpoint(saved.result, actionInputs);
           if (!validated) throw new Error("The durable action-plan checkpoint is invalid.");
           actionResult = validated;
@@ -1617,15 +1619,15 @@ export async function orchestrateReport(
             actionResult = deterministicProductActionResult(actionInputs, undefined, [message(error, "AI action planning was unavailable; deterministic recommendations were retained.")]);
           }
           if (!validActionPlanCheckpoint(actionResult, actionInputs)) throw new Error("Product action planning returned an invalid result.");
-          const checkpoint = { attemptNumber: attempt.attemptNumber, batchIndex: ACTION_PLAN_CHECKPOINT_BATCH_INDEX, inputHash, result: actionResult };
+          const checkpoint = { attemptNumber: attempt.attemptNumber, batchIndex: checkpointIndex, inputHash, result: actionResult };
           try {
             await port.saveCheckpoint(payload.publicId, checkpoint);
-            durableCheckpoints.set(ACTION_PLAN_CHECKPOINT_BATCH_INDEX, checkpoint);
-            allDurableCheckpoints.set(`${attempt.attemptNumber}:${ACTION_PLAN_CHECKPOINT_BATCH_INDEX}`, checkpoint);
+            durableCheckpoints.set(checkpointIndex, checkpoint);
+            allDurableCheckpoints.set(`${attempt.attemptNumber}:${checkpointIndex}`, checkpoint);
           } catch (saveError) {
             const committed = (await port.loadCheckpoint(payload.publicId, {
               attemptNumber: attempt.attemptNumber,
-              batchIndex: ACTION_PLAN_CHECKPOINT_BATCH_INDEX,
+              batchIndex: checkpointIndex,
             }))[0];
             const committedResult = committed?.inputHash === inputHash
               ? validActionPlanCheckpoint(committed.result, actionInputs)
@@ -1633,8 +1635,8 @@ export async function orchestrateReport(
             if (!committed || !committedResult
               || JSON.stringify(stableCheckpointValue(committed.result)) !== JSON.stringify(stableCheckpointValue(actionResult))) throw saveError;
             actionResult = committedResult;
-            durableCheckpoints.set(ACTION_PLAN_CHECKPOINT_BATCH_INDEX, committed);
-            allDurableCheckpoints.set(`${committed.attemptNumber}:${ACTION_PLAN_CHECKPOINT_BATCH_INDEX}`, committed);
+            durableCheckpoints.set(checkpointIndex, committed);
+            allDurableCheckpoints.set(`${committed.attemptNumber}:${checkpointIndex}`, committed);
           }
         }
         comparison = applyProductActionPlans(comparison, actionResult);

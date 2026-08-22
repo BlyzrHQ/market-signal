@@ -2611,6 +2611,32 @@ test("a task retry adopts the durable action plan instead of dispatching actions
   assert.equal(actionCalls, 1);
 });
 
+test("a task retry skips a stale prior action slot when product evidence evolves", async () => {
+  let actionCalls = 0;
+  let factCalls = 0;
+  const port = mockPort({
+    async actions({ inputs }) {
+      actionCalls += 1;
+      return { ok: true, result: deterministicProductActionResult(inputs) };
+    },
+    async persistFactChunk(_publicId, value) {
+      factCalls += 1;
+      if (factCalls === 1) throw new Error("fact persistence unavailable");
+      port.factChunks.push(value);
+    },
+  });
+
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port),
+    /relational fact persistence remained incomplete/i,
+  );
+  port.checkpoints.get(ACTION_PLAN_CHECKPOINT_BATCH_INDEX).inputHash = "f".repeat(64);
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
+  assert.equal(result.reportStatus, "complete");
+  assert.equal(actionCalls, 2);
+  assert.ok(port.checkpoints.has(ACTION_PLAN_CHECKPOINT_BATCH_INDEX + 1));
+});
+
 test("a corrupt durable action-plan checkpoint fails closed without another action dispatch", async () => {
   let actionCalls = 0;
   let factCalls = 0;
@@ -2630,8 +2656,10 @@ test("a corrupt durable action-plan checkpoint fails closed without another acti
     () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port),
     /relational fact persistence remained incomplete/i,
   );
-  const checkpoint = port.checkpoints.get(ACTION_PLAN_CHECKPOINT_BATCH_INDEX);
+  const checkpoint = structuredClone(port.checkpoints.get(ACTION_PLAN_CHECKPOINT_BATCH_INDEX));
+  checkpoint.batchIndex = ACTION_PLAN_CHECKPOINT_BATCH_INDEX + 1;
   checkpoint.result.plans[0].plan.evidenceKeys = ["forged-evidence-key"];
+  port.checkpoints.set(checkpoint.batchIndex, checkpoint);
   await assert.rejects(
     () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port),
     /durable action-plan checkpoint is invalid/,
