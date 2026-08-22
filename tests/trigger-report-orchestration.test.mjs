@@ -238,8 +238,8 @@ test("a retry advances to the next discovery anchor batch only after a complete 
       return {
         ...stored,
         events: [
-          { idempotencyKey: "prior", phase: "competitors", status: "running", metadata: { discoveryStartIndex: 0, discoveryEndIndex: 20, discoveryBatchComplete: true, discoveryAnchorSetHash: "a".repeat(64) } },
-          { idempotencyKey: "failed-next", phase: "competitors", status: "running", metadata: { discoveryStartIndex: 20, discoveryEndIndex: 40, discoveryBatchComplete: false } },
+          { idempotencyKey: "report-1-task-1-crawl-complete", phase: "competitors", status: "running", metadata: { discoveryStartIndex: 0, discoveryEndIndex: 20, discoveryBatchComplete: true, discoveryAnchorSetHash: "a".repeat(64) } },
+          { idempotencyKey: "report-1-task-2-crawl-complete", phase: "competitors", status: "running", metadata: { discoveryStartIndex: 20, discoveryEndIndex: 40, discoveryBatchComplete: false } },
         ],
       };
     },
@@ -249,6 +249,26 @@ test("a retry advances to the next discovery anchor batch only after a complete 
   assert.equal(crawlInput.discoverySearchOffset, 20);
   assert.equal(crawlInput.discoveryPriorCoverageComplete, true);
   assert.equal(crawlInput.discoveryExpectedAnchorSetHash, "a".repeat(64));
+});
+
+test("report recovery starts a fresh discovery cursor instead of reusing prior-attempt events", async () => {
+  const base = mockPort();
+  let crawlInput;
+  const port = mockPort({
+    async loadReport() {
+      const stored = await base.loadReport();
+      return {
+        ...stored,
+        run: { ...stored.run, attemptCount: 2 },
+        events: [{ idempotencyKey: "report-1-task-5-crawl-complete", phase: "competitors", status: "running", metadata: { discoveryStartIndex: 0, discoveryEndIndex: 1_000, discoveryBatchComplete: true, discoveryAnchorSetHash: "a".repeat(64) } }],
+      };
+    },
+    async crawl(input) { crawlInput = input; return base.crawl(); },
+  });
+
+  await orchestrateReport(recoveryPayload, { attemptNumber: 2, taskAttemptNumber: 1, isFinalAttempt: false }, port);
+  assert.equal(crawlInput.discoverySearchOffset, 0);
+  assert.equal(crawlInput.discoveryExpectedAnchorSetHash, "");
 });
 
 test("the matcher can publish a valid pair found after the first 20 primary catalog products", async () => {

@@ -314,8 +314,10 @@ export interface ReportOrchestrationPort {
 
 const MAX_PRIMARY_CATALOG_PRODUCTS = 1_000;
 
-function completedDiscoveryCursor(events: StoredReport["events"]) {
+function completedDiscoveryCursor(events: StoredReport["events"], reportAttempt: number) {
+  const eventPrefix = `report-${reportAttempt}-task-`;
   const batches = events.flatMap((item, eventIndex) => {
+    if (!item.idempotencyKey?.startsWith(eventPrefix)) return [];
     const metadata = item.metadata;
     const startIndex = Number(metadata?.discoveryStartIndex);
     const endIndex = Number(metadata?.discoveryEndIndex);
@@ -424,7 +426,7 @@ export async function orchestrateReport(
 
   let crawl: CrawlOutcome;
   try {
-    const discoveryCursor = completedDiscoveryCursor(stored.events);
+    const discoveryCursor = completedDiscoveryCursor(stored.events, attempt.attemptNumber);
     crawl = await port.crawl({ primary: payload.primaryDomain, domains: [payload.primaryDomain], productLimit: payload.productLimit, catalogProductLimit: MAX_PRIMARY_CATALOG_PRODUCTS, discoverySearchOffset: discoveryCursor.offset, discoveryPriorCoverageComplete: true, discoveryExpectedAnchorSetHash: discoveryCursor.anchorSetHash });
     if (!crawl || (crawl.ok !== true && crawl.code !== "parked-domain" && crawl.code !== "unavailable-domain")) throw new Error("The public crawl could not be completed.");
   } catch (error) {

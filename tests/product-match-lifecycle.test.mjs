@@ -368,6 +368,17 @@ test("priced result backfill records an explicit bounded-pool shortfall", () => 
   assert.equal(hasProductMatchCoverageDefect(result), true);
 });
 
+test("a completely empty rival pool can exhaust without inventing a market code", () => {
+  const screened = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1")], accepted: 0 });
+  delete screened.marketCountryCode;
+  screened.matching.processedPrimaryIds = ["p1"];
+  screened.matching.competitorProductsSynchronized = 0;
+  screened.matching.candidatePairsAssessed = 0;
+  const result = limitPublishedProductComparison(publishPricedProductComparison(screened), 1);
+
+  assert.equal(result.matching.resultShortfallReason, "bounded-candidate-pool-exhausted");
+});
+
 test("priced result backfill reports processing incompleteness without claiming pool exhaustion", () => {
   const screened = comparison({ selected: ["p1", "p2"], assessed: ["p1"], rows: [row("p1"), row("p2")], accepted: 0 });
   const result = limitPublishedProductComparison(publishPricedProductComparison(screened), 2);

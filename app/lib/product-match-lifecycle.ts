@@ -254,8 +254,10 @@ export function limitPublishedProductComparison(comparison: ProductComparison, r
   const selectedIds = new Set(priorMatching?.selectedPrimaryIds || []);
   const completedIds = new Set(priorMatching?.processedPrimaryIds?.length ? priorMatching.processedPrimaryIds : priorMatching?.assessedPrimaryIds || []);
   const marketResolved = /^[A-Z]{2}$/.test(String(comparison.marketCountryCode || "").toUpperCase());
+  const emptyRivalPool = priorMatching?.competitorProductsSynchronized === 0
+    && priorMatching?.candidatePairsAssessed === 0;
   const matchingCompleted = priorMatching?.available === true
-    && marketResolved
+    && (marketResolved || emptyRivalPool)
     && priorMatching.gaps.length === 0
     && [...selectedIds].every((id) => completedIds.has(id));
   const enrichmentCompleted = !comparison.enrichment?.failedBatchCount
