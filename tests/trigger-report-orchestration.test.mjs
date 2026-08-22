@@ -11,6 +11,7 @@ import {
   MAX_FINAL_ENRICHMENT_BATCHES,
   PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX,
   MAX_OPERATION_TIMEOUT_MS,
+  comparisonWithinPrimaryCatalog,
   orchestrateReport,
   pricedResultEnrichmentBudget,
   validEnrichmentCheckpoint,
@@ -47,6 +48,16 @@ test("priced-result enrichment can exhaust the full bounded catalog regardless o
   assert.equal(pricedResultEnrichmentBudget(20), MAX_FINAL_ENRICHMENT_TARGETS);
   assert.equal(pricedResultEnrichmentBudget(200), MAX_FINAL_ENRICHMENT_TARGETS);
   assert.equal(pricedResultEnrichmentBudget(1_000), MAX_FINAL_ENRICHMENT_TARGETS);
+});
+
+test("adopted judge evidence requires the exact current primary product identity", () => {
+  const current = product("shop.example", "stable-id");
+  current.quantity = { value: 500, unit: "g", normalized: "500g" };
+  const adopted = comparison({ withPair: true, count: 1 });
+  adopted.rows[0].primary = { ...current, quantity: { value: 1_000, unit: "g", normalized: "1000g" } };
+  assert.equal(comparisonWithinPrimaryCatalog(adopted, [current]), null);
+  adopted.rows[0].primary = structuredClone(current);
+  assert.equal(comparisonWithinPrimaryCatalog(adopted, [current]).rows.length, 1);
 });
 const recoveryPayload = { ...payload, reportAttempt: 2 };
 
@@ -511,6 +522,7 @@ test("completed fact recovery selects the newest owned terminal presentation", a
       return [
         { attemptNumber: 1, batchIndex: 280, inputHash: "a".repeat(64), result: { version: 2, taskAttemptNumber: 1, manifestHash, status: "limited", observedAt: "2026-07-20T09:58:00.000Z", document: { marker: "old" } } },
         { attemptNumber: 2, batchIndex: 281, inputHash: "b".repeat(64), result: { version: 2, taskAttemptNumber: 2, manifestHash, status: "complete", observedAt: "2026-07-20T10:00:00.000Z", document: { marker: "new" } } },
+        { attemptNumber: 3, batchIndex: 289, inputHash: "c".repeat(64), result: { version: 1, manifestHash, status: "limited", observedAt: "2026-07-20T10:01:00.000Z", document: { marker: "unowned-newer" } } },
       ];
     },
   });

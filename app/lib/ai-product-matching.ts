@@ -778,13 +778,12 @@ export function screenedComparisonFromJudgeCheckpoints(primaryDomain: string, va
       const pairKey = `${domain}\n${rival.id}`;
       if (!row.matches.some((match) => `${match.domain}\n${(match.product || match.excludedProduct)?.id || ""}` === pairKey)) row.matches.push({
         domain,
-        product: null,
-        excludedProduct: rival,
+        product: rival,
         score: aiScore(assessed.verdict, assessed.confidence),
         confidence: assessed.confidence >= 0.65 ? "Medium" : "Low",
         sharedTerms: assessed.reasons.slice(0, 8),
         claimIds: [...primary.claimIds, ...rival.claimIds],
-        decision: null,
+        decision: productDecision(primary, rival, aiScore(assessed.verdict, assessed.confidence), assessed.verdict === "same_product" && exactObservedVariant(primary, rival)),
         assessment: {
           method: "ai-hybrid",
           claimType: "Inferred",
@@ -800,7 +799,6 @@ export function screenedComparisonFromJudgeCheckpoints(primaryDomain: string, va
           primarySourceUrl: primary.sourceUrl,
           rivalSourceUrl: rival.sourceUrl,
         },
-        publication: { priceEligible: false, reason: "outside-result-target" },
       });
       rows.set(primary.id, row);
     }
@@ -813,7 +811,7 @@ export function screenedComparisonFromJudgeCheckpoints(primaryDomain: string, va
     comparisonDomains: [...comparisonDomains].sort(),
     rows: [...rows.values()].sort((left, right) => left.primary.id.localeCompare(right.primary.id)),
     unmatched: [],
-    coverage: { primaryProductsAvailable: rows.size, primaryProductsScanned: rows.size, primaryProductFamiliesCompared: rows.size, competitorProductsAvailable: pairCount, competitorProductsScanned: pairCount, assignedPairCount: 0, verifiedPairCount: 0, rowsReturned: rows.size, rowLimit: rows.size, truncated: false },
+    coverage: { primaryProductsAvailable: rows.size, primaryProductsScanned: rows.size, primaryProductFamiliesCompared: rows.size, competitorProductsAvailable: pairCount, competitorProductsScanned: pairCount, assignedPairCount: pairCount, verifiedPairCount: pairCount, rowsReturned: rows.size, rowLimit: rows.size, truncated: false },
   };
 }
 

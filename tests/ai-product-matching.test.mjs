@@ -1234,8 +1234,8 @@ test("durable judge evidence preserves accepted backup pairs within the checkpoi
   const screened = screenedComparisonFromJudgeCheckpoints("shop.test", [savedCheckpoint], "GB");
   assert.equal(screened?.rows.length, 1);
   assert.equal(screened?.rows[0].matches.length, 5);
-  assert.deepEqual(screened?.rows[0].matches.map((match) => match.excludedProduct?.id).sort(), rivals.map((item) => item.id).sort());
-  assert.ok(screened?.rows[0].matches.every((match) => match.publication?.reason === "outside-result-target"));
+  assert.deepEqual(screened?.rows[0].matches.map((match) => match.product?.id).sort(), rivals.map((item) => item.id).sort());
+  assert.ok(screened?.rows[0].matches.every((match) => match.product && match.publication === undefined));
 });
 
 test("rejects malformed judge checkpoints and replaces them only with a complete live result", async () => {

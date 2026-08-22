@@ -79,17 +79,43 @@ function validTerminalPresentationCheckpoint(value: unknown, manifestHash: strin
 }
 
 function primaryCatalogIdentity(products: ProductRecord[]) {
-  return products.map((product) => ({
+  return products.map(primaryRecoveryIdentity).sort((left, right) => left.id.localeCompare(right.id) || left.sourceUrl.localeCompare(right.sourceUrl));
+}
+
+function recoveryText(value: unknown, maxLength: number) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function primaryRecoveryIdentity(product: ProductRecord) {
+  return {
     id: product.id,
     domain: canonicalDomain(product.domain),
-    sourceUrl: product.sourceUrl,
+    name: recoveryText(product.name, 220),
     normalizedName: product.normalizedName,
-    quantity: product.quantity || null,
-  })).sort((left, right) => left.id.localeCompare(right.id) || left.sourceUrl.localeCompare(right.sourceUrl));
+    category: recoveryText(product.category, 160),
+    type: product.jsonLdType,
+    description: recoveryText(product.description, 500),
+    attributes: product.attributes.map((item) => recoveryText(item, 100)).filter(Boolean).slice(0, 8),
+    sourceUrl: product.sourceUrl,
+    observedIdentifiers: product.identifiers ? {
+      gtins: product.identifiers.gtins,
+      sku: product.identifiers.sku || "",
+      mpn: product.identifiers.mpn || "",
+      brand: product.identifiers.brand || "",
+    } : null,
+    canonicalQuantity: product.quantity || null,
+  };
 }
 
 function primaryCatalogProductKeys(products: ProductRecord[]) {
   return new Set(products.map((product) => `${product.id}\n${canonicalDomain(product.domain)}`));
+}
+
+function primaryCatalogRecoveryIdentities(products: ProductRecord[]) {
+  return new Map(products.map((product) => [
+    `${product.id}\n${canonicalDomain(product.domain)}`,
+    createHash("sha256").update(JSON.stringify(primaryRecoveryIdentity(product))).digest("hex"),
+  ]));
 }
 
 function validPublishedResultCheckpoint(value: unknown, resultTarget: number, referenceTimeMs: number, allowedPrimaryProductKeys: Set<string>) {
@@ -169,9 +195,15 @@ function mergeAccumulatedPublishedIntoScreenedComparison(screened: ProductCompar
   return { ...screened, rows: [...rows, ...accumulatedRows.values()] };
 }
 
-function comparisonWithinPrimaryCatalog(comparison: ProductComparison | null, allowedPrimaryProductKeys: Set<string>) {
+export function comparisonWithinPrimaryCatalog(comparison: ProductComparison | null, primaryProducts: ProductRecord[]) {
   if (!comparison) return null;
-  const rows = comparison.rows.filter((row) => allowedPrimaryProductKeys.has(`${row.primary.id}\n${canonicalDomain(row.primary.domain)}`));
+  const allowedPrimaryIdentities = primaryCatalogRecoveryIdentities(primaryProducts);
+  const rows = comparison.rows.filter((row) => {
+    const key = `${row.primary.id}\n${canonicalDomain(row.primary.domain)}`;
+    const expected = allowedPrimaryIdentities.get(key);
+    const observed = createHash("sha256").update(JSON.stringify(primaryRecoveryIdentity(row.primary))).digest("hex");
+    return expected === observed;
+  });
   return rows.length ? { ...comparison, rows } : null;
 }
 
@@ -516,11 +548,15 @@ export async function orchestrateReport(
   let legacyCompletedManifestWithoutPresentation = false;
   if (stored.factManifest?.status === "complete") {
     const checkpoints = await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber });
-    const presentation = checkpoints
+    const presentationCandidates = checkpoints
       .filter((checkpoint) => checkpoint.batchIndex >= TERMINAL_PRESENTATION_CHECKPOINT_BATCH_INDEX_BASE && checkpoint.batchIndex <= 289)
       .sort((left, right) => right.attemptNumber - left.attemptNumber || right.batchIndex - left.batchIndex)
-      .map((checkpoint) => validTerminalPresentationCheckpoint(checkpoint.result, stored.factManifest!.manifestHash, checkpoint.batchIndex - TERMINAL_PRESENTATION_CHECKPOINT_BATCH_INDEX_BASE + 1))
-      .find((value) => value !== null);
+      .map((checkpoint) => ({
+        version: Number((checkpoint.result as { version?: unknown })?.version),
+        presentation: validTerminalPresentationCheckpoint(checkpoint.result, stored.factManifest!.manifestHash, checkpoint.batchIndex - TERMINAL_PRESENTATION_CHECKPOINT_BATCH_INDEX_BASE + 1),
+      }))
+      .filter((candidate) => candidate.presentation !== null);
+    const presentation = (presentationCandidates.find((candidate) => candidate.version === 2) || presentationCandidates.find((candidate) => candidate.version === 1))?.presentation || null;
     if (presentation) {
       await port.saveDocument(payload.publicId, {
         status: presentation.status,
@@ -691,7 +727,7 @@ export async function orchestrateReport(
         crawl.primaryDomain,
         [...allDurableCheckpoints.values()].filter((checkpoint) => checkpoint.batchIndex >= 1_400 && checkpoint.batchIndex < 3_900).map((checkpoint) => checkpoint.result),
         marketCountryCode,
-      ), allowedPrimaryProductKeys);
+      ), primary.products);
       comparison = mergeAccumulatedPublishedIntoScreenedComparison(comparison, adoptedJudgeEvidence);
       const maxEnrichmentPages = pricedResultEnrichmentBudget(payload.productLimit);
       let enrichmentPlan = planFinalProductEnrichmentTargets(comparison, maxEnrichmentPages, reportReferenceTimeMs);
@@ -912,7 +948,7 @@ export async function orchestrateReport(
         crawl.primaryDomain,
         [...allDurableCheckpoints.values()].filter((checkpoint) => checkpoint.batchIndex >= 1_400 && checkpoint.batchIndex < 3_900).map((checkpoint) => checkpoint.result),
         marketCountryCode,
-      ), allowedPrimaryProductKeys);
+      ), primary.products);
       screenedComparison = mergeAccumulatedPublishedIntoScreenedComparison(comparison, judgeEvidence);
       screenedComparison = mergeAccumulatedPublishedIntoScreenedComparison(screenedComparison, accumulatedPublished);
       const publishedState = mergePublishedProductComparisonState(comparison, accumulatedPublished, payload.productLimit, reportReferenceTimeMs);
