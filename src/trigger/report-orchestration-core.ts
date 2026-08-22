@@ -147,7 +147,27 @@ function bindComparisonPrimaryRecoveryIdentities(comparison: ProductComparison |
   } satisfies ProductComparison;
 }
 
-function validPublishedResultCheckpoint(value: unknown, resultTarget: number, referenceTimeMs: number, allowedPrimaryProductKeys: Set<string>, allowedPrimaryIdentities: Map<string, string>) {
+function stableCheckpointValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableCheckpointValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, item]) => [key, stableCheckpointValue(item)]));
+}
+
+function checkpointEdgeIdentities(comparison: ProductComparison) {
+  return comparison.rows.flatMap((row) => row.matches.flatMap((match) => match.product ? [JSON.stringify({
+    primaryId: row.primary.id,
+    primaryDomain: canonicalDomain(row.primary.domain),
+    rivalDomain: canonicalDomain(match.product.domain),
+    rivalId: match.product.id,
+    sourceUrl: match.product.sourceUrl,
+    assignmentComponentHash: match.product.assignmentComponentHash || "",
+    gtins: [...(match.product.identifiers?.gtins || [])].sort(),
+  })] : [])).sort();
+}
+
+export function validPublishedResultCheckpoint(value: unknown, resultTarget: number, referenceTimeMs: number, allowedPrimaryProductKeys: Set<string>, allowedPrimaryIdentities: Map<string, string>) {
   try {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const checkpoint = value as { version?: unknown; comparison?: ProductComparison; evidence?: ProductComparison };
@@ -176,6 +196,8 @@ function validPublishedResultCheckpoint(value: unknown, resultTarget: number, re
     const revalidatedEvidence = evidence
       ? publishPricedProductComparison(evidence, referenceTimeMs)
       : mergePublishedProductComparisonState(validated, null, resultTarget, referenceTimeMs).evidence;
+    if (JSON.stringify(checkpointEdgeIdentities(validated)) !== JSON.stringify(checkpointEdgeIdentities(checkpoint.comparison))) return null;
+    if (evidence && JSON.stringify(checkpointEdgeIdentities(revalidatedEvidence)) !== JSON.stringify(checkpointEdgeIdentities(evidence))) return null;
     if (revalidatedEvidence.rows.some((row) => row.matches.some((match) => match.product && match.publication?.priceEligible !== true))) return null;
     return validated.rows.length === checkpoint.comparison.rows.length ? { comparison: validated, evidence: revalidatedEvidence } : null;
   } catch { return null; }
@@ -1030,7 +1052,7 @@ export async function orchestrateReport(
           allDurableCheckpoints.set(`${attempt.attemptNumber}:${publishedCheckpointIndex}`, savedCheckpoint);
         } catch (saveError) {
           const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: publishedCheckpointIndex }))[0];
-          const exactCommittedResult = committed && JSON.stringify(committed.result) === JSON.stringify(publishedCheckpoint);
+          const exactCommittedResult = committed && JSON.stringify(stableCheckpointValue(committed.result)) === JSON.stringify(stableCheckpointValue(publishedCheckpoint));
           const validated = committed?.attemptNumber === attempt.attemptNumber && committed.inputHash === publishedResultInputHash && exactCommittedResult
             ? validPublishedResultCheckpoint(committed.result, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys, allowedPrimaryRecoveryIdentities)
             : null;

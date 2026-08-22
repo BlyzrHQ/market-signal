@@ -1237,7 +1237,10 @@ function sourceMarketContext(value: string): PublicSourceMarketContext {
       }
     }
     const pathSegments = url.pathname.split("/").filter(Boolean);
-    const productRouteIndex = pathSegments.findIndex((segment) => PRODUCT_ROUTE_SEGMENTS.has(segment.toLowerCase()));
+    const strictProductRouteIndex = pathSegments.findIndex((segment) => PRODUCT_ROUTE_SEGMENTS.has(segment.toLowerCase()));
+    const productRouteIndex = strictProductRouteIndex >= 0
+      ? strictProductRouteIndex
+      : pathSegments.findIndex((segment) => PRODUCT_SOURCE_ROUTE_SEGMENTS.has(segment.toLowerCase()));
     const selectorSegments = pathSegments.slice(0, productRouteIndex >= 0 ? productRouteIndex : Math.min(pathSegments.length, 1));
     for (const segment of selectorSegments) {
       const normalizedSegment = clean(segment).replace(/_/g, "-").toUpperCase();

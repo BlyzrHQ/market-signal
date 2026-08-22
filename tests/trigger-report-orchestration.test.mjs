@@ -16,6 +16,7 @@ import {
   pricedResultEnrichmentBudget,
   productEvidenceReferenceTimeMs,
   validEnrichmentCheckpoint,
+  validPublishedResultCheckpoint,
 } from "../src/trigger/report-orchestration-core.ts";
 import {
   checkpointReadPageBound,
@@ -194,6 +195,28 @@ function comparison({ withPair = false, count = withPair ? 20 : 1 } = {}) {
     },
   };
 }
+
+test("published checkpoint validation rejects any evidence edge lost during revalidation", () => {
+  const referenceTimeMs = Date.parse("2026-07-20T10:01:00.000Z");
+  const recoveryIdentityHash = "a".repeat(64);
+  const published = publishPricedProductComparison(comparison({ withPair: true, count: 1 }), referenceTimeMs);
+  published.rows[0].primary.recoveryIdentityHash = recoveryIdentityHash;
+  const evidence = structuredClone(published);
+  const invalidBackup = structuredClone(evidence.rows[0].matches[0]);
+  invalidBackup.product.id = "rival-invalid-backup";
+  invalidBackup.product.sourceUrl = "https://other.example/products/honey?country=GB";
+  invalidBackup.publication = { priceEligible: true };
+  evidence.rows[0].matches.push(invalidBackup);
+
+  const key = `${published.rows[0].primary.id}\nshop.example`;
+  assert.equal(validPublishedResultCheckpoint(
+    { version: 3, comparison: published, evidence },
+    20,
+    referenceTimeMs,
+    new Set([key]),
+    new Map([[key, recoveryIdentityHash]]),
+  ), null);
+});
 
 function mockPort(overrides = {}) {
   const events = [];
@@ -1284,6 +1307,10 @@ test("a committed publication checkpoint with a lost response retains rich decis
   port.saveCheckpoint = async (publicId, input) => {
     await saveCheckpoint(publicId, input);
     if (!lostResponse && input.batchIndex === PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX) {
+      const stable = (value) => Array.isArray(value) ? value.map(stable) : value && typeof value === "object"
+        ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, stable(item)]))
+        : value;
+      port.checkpoints.get(input.batchIndex).result = stable(structuredClone(input.result));
       lostResponse = true;
       throw new Error("publication checkpoint response lost");
     }
@@ -1826,7 +1853,7 @@ test("the HTTP report adapter reads and writes exact enrichment checkpoints", as
     async fetchImpl(_url, init) {
       const body = JSON.parse(init.body);
       bodies.push({ body, authorization: init.headers.Authorization });
-      return Response.json(body.action === "match-batch-checkpoints-load" ? { ok: true, checkpoints: [checkpoint] } : { ok: true });
+      return Response.json(body.action === "match-batch-checkpoints-load" ? { ok: true, checkpoints: [checkpoint] } : { ok: true, checkpoint: { attemptNumber: body.attemptNumber, batchIndex: body.batchIndex, inputHash: body.inputHash, result: body.result } });
     },
   });
   assert.deepEqual(await port.loadCheckpoint(payload.publicId, { attemptNumber: 2, batchIndex: 301 }), [checkpoint]);
@@ -1834,6 +1861,16 @@ test("the HTTP report adapter reads and writes exact enrichment checkpoints", as
   assert.deepEqual(bodies.map(({ body }) => body.action), ["match-batch-checkpoints-load", "match-batch-checkpoint-save"]);
   assert.deepEqual(bodies.map(({ body }) => [body.attemptNumber, body.batchIndex]), [[2, 301], [2, 301]]);
   assert.ok(bodies.every(({ authorization }) => authorization === "Bearer callback_secret_with_enough_entropy_123456"));
+});
+
+test("the HTTP report adapter rejects a success response for different checkpoint content", async () => {
+  const checkpoint = { attemptNumber: 2, batchIndex: 301, inputHash: "a".repeat(64), result: { ok: true } };
+  const port = createReportOrchestrationHttpPort({
+    appOrigin: "https://market.example",
+    callbackToken: "callback_secret_with_enough_entropy_123456",
+    async fetchImpl() { return Response.json({ ok: true, checkpoint: { ...checkpoint, result: { ok: false } } }); },
+  });
+  await assert.rejects(() => port.saveCheckpoint(payload.publicId, checkpoint), /HTTP 502/);
 });
 
 test("the HTTP report adapter pages checkpoint recovery below the response transport bound", async () => {

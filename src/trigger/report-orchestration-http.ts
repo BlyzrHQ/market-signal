@@ -41,6 +41,18 @@ export function createOrchestrationFetch(timeoutMs = ORCHESTRATION_FETCH_TIMEOUT
 
 const orchestrationFetch = createOrchestrationFetch();
 
+function stableCheckpointValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableCheckpointValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, item]) => [key, stableCheckpointValue(item)]));
+}
+
+function sameCheckpointValue(left: unknown, right: unknown) {
+  return JSON.stringify(stableCheckpointValue(left)) === JSON.stringify(stableCheckpointValue(right));
+}
+
 const PATHS = {
   capabilities: "/api/internal/capabilities",
   report: (publicId: string) => `/api/internal/reports/${publicId}`,
@@ -358,8 +370,10 @@ export function createReportOrchestrationHttpPort(configuration: { appOrigin: st
       throw new OrchestrationHttpError("Report checkpoint read", 502, true);
     },
     async saveCheckpoint(publicId, input) {
-      const payload = requiredObject<{ ok?: boolean }>(await call(PATHS.report(publicId), "Report checkpoint callback", OPERATION_BUDGETS_MS.report, { action: "match-batch-checkpoint-save", ...input }), "Report checkpoint callback");
-      if (payload.ok !== true) throw new OrchestrationHttpError("Report checkpoint callback", 502, true);
+      const payload = requiredObject<{ ok?: boolean; checkpoint?: { attemptNumber?: unknown; batchIndex?: unknown; inputHash?: unknown; result?: unknown } }>(await call(PATHS.report(publicId), "Report checkpoint callback", OPERATION_BUDGETS_MS.report, { action: "match-batch-checkpoint-save", ...input }), "Report checkpoint callback");
+      const checkpoint = payload.checkpoint;
+      if (payload.ok !== true || !checkpoint || checkpoint.attemptNumber !== input.attemptNumber || checkpoint.batchIndex !== input.batchIndex
+        || checkpoint.inputHash !== input.inputHash || !sameCheckpointValue(checkpoint.result, input.result)) throw new OrchestrationHttpError("Report checkpoint callback", 502, true);
     },
     async actions(input) {
       const payload = requiredObject<Awaited<ReturnType<ReportOrchestrationPort["actions"]>>>(await call(PATHS.actions, "Product action planning", OPERATION_BUDGETS_MS.actions, input), "Product action planning");

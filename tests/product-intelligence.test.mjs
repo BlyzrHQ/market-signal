@@ -836,6 +836,8 @@ test("market parsing prioritizes country selectors and recognizes all ISO countr
   assert.equal(publicSourceMarketCountryCode("https://shop.example/products/item?locale=en-US&country=US"), "US");
   assert.equal(publicSourceMarketCountryCode("https://shop.example/tr/products/item"), "TR");
   assert.equal(publicSourceMarketCountryCode("https://shop.example/store/gb/products/item"), "GB");
+  assert.equal(publicSourceMarketCountryCode("https://shop.example/en/us/shop/item"), "US");
+  assert.equal(publicSourceMarketCountryCode("https://shop.example/en/gb/store/item"), "GB");
   assert.equal(publicSourceMarketCountryCode("https://shop.gr/products/item"), "GR");
 });
 
