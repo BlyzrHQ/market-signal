@@ -444,7 +444,7 @@ test("a later task attempt cannot replace a durable successful crawl with an HTT
   assert.equal(port.events.some((item) => item.idempotencyKey === "crawl-failed"), false);
 });
 
-test("a corrupt durable crawl checkpoint is ignored and replaced by a fresh valid crawl", async () => {
+test("a corrupt active-attempt crawl checkpoint fails closed before another network crawl", async () => {
   let crawlCalls = 0;
   let saveCalls = 0;
   const base = mockPort();
@@ -458,9 +458,12 @@ test("a corrupt durable crawl checkpoint is ignored and replaced by a fresh vali
   });
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
   port.checkpoints.get(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE).result.data = "not-gzip";
-  await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
-  assert.equal(crawlCalls, 2);
-  assert.ok(port.checkpoints.has(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1));
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port),
+    /active report attempt contains an invalid crawl checkpoint/,
+  );
+  assert.equal(crawlCalls, 1);
+  assert.equal(port.checkpoints.has(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1), false);
 });
 
 test("crawl checkpoint recovery validates newest-first and never expands older history after a valid hit", async () => {
@@ -491,6 +494,35 @@ test("crawl checkpoint recovery validates newest-first and never expands older h
   await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
   assert.equal(crawlCalls, 1);
   assert.ok(port.events.some((item) => item.idempotencyKey === "report-1-task-2-crawl-resumed"));
+});
+
+test("a pre-existing active-attempt crawl conflict cannot resume an older complete crawl", async () => {
+  let crawlCalls = 0;
+  let saveCalls = 0;
+  const base = mockPort();
+  const port = mockPort({
+    async crawl() { crawlCalls += 1; return base.crawl(); },
+    async saveDocument(_publicId, value) {
+      saveCalls += 1;
+      if (saveCalls === 1) throw new Error("terminal callback lost");
+      port.saves.push(value);
+    },
+  });
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
+  const older = port.checkpoints.get(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE);
+  port.checkpoints.set(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1, {
+    ...older,
+    attemptNumber: 1,
+    batchIndex: CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1,
+    inputHash: "f".repeat(64),
+  });
+
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port),
+    /active report attempt contains a conflicting crawl checkpoint/,
+  );
+  assert.equal(crawlCalls, 1);
+  assert.equal(port.events.some((item) => item.idempotencyKey === "report-1-task-2-crawl-resumed"), false);
 });
 
 test("lossless crawl checkpoint overflow fails closed before downstream processing", async () => {

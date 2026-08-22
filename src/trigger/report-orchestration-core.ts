@@ -845,9 +845,18 @@ export async function orchestrateReport(
     if (!checkpoint) continue;
     crawlCheckpointCandidates += 1;
     const checkpointTaskAttempt = checkpoint.batchIndex - CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1;
-    if (checkpointTaskAttempt < 1 || checkpointTaskAttempt > taskAttemptNumber || checkpoint.inputHash !== crawlCheckpointInputHash(payload, checkpointTaskAttempt)) continue;
+    const expectedInputHash = checkpointTaskAttempt >= 1 && checkpointTaskAttempt <= taskAttemptNumber
+      ? crawlCheckpointInputHash(payload, checkpointTaskAttempt)
+      : "";
+    if (!expectedInputHash || checkpoint.inputHash !== expectedInputHash) {
+      if (checkpoint.attemptNumber === attempt.attemptNumber) throw new CrawlCheckpointConflictError("The active report attempt contains a conflicting crawl checkpoint.");
+      continue;
+    }
     const value = validCrawlCheckpoint(checkpoint.result, payload);
-    if (!value) continue;
+    if (!value) {
+      if (checkpoint.attemptNumber === attempt.attemptNumber) throw new CrawlCheckpointConflictError("The active report attempt contains an invalid crawl checkpoint.");
+      continue;
+    }
     priorDurableCrawl = { taskAttemptNumber: checkpointTaskAttempt, crawl: value };
     break;
   }
