@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import test from "node:test";
-import { gunzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 
 import {
   PermanentOrchestrationError,
@@ -502,6 +502,33 @@ test("lossless crawl checkpoint overflow fails closed before downstream processi
   assert.equal(port.checkpoints.has(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE), false);
 });
 
+test("a newer successful crawl overflow cannot silently fall back to an older durable crawl", async () => {
+  let crawlCalls = 0;
+  let saveCalls = 0;
+  const base = mockPort();
+  const port = mockPort({
+    async crawl() {
+      crawlCalls += 1;
+      const value = await base.crawl();
+      value.discovery.productSearchCoverage.complete = false;
+      if (crawlCalls > 1) value.results[0].products[0].claimIds = Array.from({ length: 100_000 }, (_, index) => createHash("sha256").update(`newer-oversized-claim:${index}`).digest("hex"));
+      return value;
+    },
+    async saveDocument(_publicId, value) {
+      saveCalls += 1;
+      if (saveCalls === 1) throw new Error("terminal callback lost");
+      port.saves.push(value);
+    },
+  });
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port),
+    /durable checkpoint budget/,
+  );
+  assert.equal(crawlCalls, 2);
+  assert.equal(port.events.some((item) => item.idempotencyKey === "report-1-task-2-crawl-resumed"), false);
+});
+
 test("checkpoint storage failure does not relabel a successful crawl as failed", async () => {
   const base = mockPort();
   const port = mockPort({
@@ -514,6 +541,31 @@ test("checkpoint storage failure does not relabel a successful crawl as failed",
   const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: true }, port);
   assert.equal(result.reportStatus, "complete");
   assert.equal(port.events.some((item) => item.idempotencyKey === "crawl-failed"), false);
+});
+
+test("ambiguous crawl checkpoint save rejects different committed content in the same slot", async () => {
+  let matchCalls = 0;
+  let port;
+  port = mockPort({
+    async saveCheckpoint(_publicId, input) {
+      if (input.batchIndex !== CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE) return;
+      const different = JSON.parse(gunzipSync(Buffer.from(input.result.data, "base64")).toString("utf8"));
+      different.results[0].products[0].name = "Different committed crawl product";
+      port.checkpoints.set(input.batchIndex, {
+        attemptNumber: input.attemptNumber,
+        batchIndex: input.batchIndex,
+        inputHash: input.inputHash,
+        result: { ...input.result, data: gzipSync(JSON.stringify(different), { level: 9 }).toString("base64") },
+      });
+      throw new Error("ambiguous crawl checkpoint save");
+    },
+    async match() { matchCalls += 1; return { ok: true, comparison: comparison({ withPair: true }) }; },
+  });
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port),
+    /ambiguous crawl checkpoint save/,
+  );
+  assert.equal(matchCalls, 0);
 });
 
 test("a retry advances to the next discovery anchor batch only after a complete prior batch", async () => {
