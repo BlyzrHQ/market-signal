@@ -1730,6 +1730,16 @@ test("a strongest both-missing pair is scheduled before a weaker secondary singl
   assert.deepEqual(targets.map((target) => target.productId), ["rival-strong", "primary-strong"]);
 });
 
+test("remaining price capacity covers a secondary rival before presentation images", () => {
+  const primary = { ...product("primary-backfill", "shop.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/custom-jacket", imageUrl: "" };
+  const strongest = { ...product("rival-strong", "strong.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://strong.test/products/custom-jacket", imageUrl: "" };
+  const secondary = { ...product("rival-secondary", "secondary.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://secondary.test/products/custom-jacket", imageUrl: "" };
+  const match = (rival, score) => ({ domain: rival.domain, product: rival, score, confidence: "Medium", sharedTerms: ["custom", "jacket"], claimIds: [], decision: null });
+  const comparison = { primaryDomain: "shop.test", comparisonDomains: ["strong.test", "secondary.test"], rows: [{ primary, matches: [match(secondary, 0.8), match(strongest, 0.99)] }], unmatched: [], coverage: { primaryProductsAvailable: 1, primaryProductsScanned: 1, primaryProductFamiliesCompared: 1, competitorProductsAvailable: 2, competitorProductsScanned: 2, assignedPairCount: 2, verifiedPairCount: 2, rowsReturned: 1, rowLimit: 1, truncated: false } };
+  const targets = selectFinalProductEnrichmentTargets(comparison, 3);
+  assert.deepEqual(targets.map((target) => target.productId), ["rival-strong", "primary-backfill", "rival-secondary"]);
+});
+
 test("an atomic pair that cannot fit does not let a weaker row starve the next highest score", () => {
   const primaryA = { ...product("primary-a", "shop.test", "Jacket A"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/jacket-a" };
   const impossible = { ...product("rival-impossible", "strong.test", "Jacket A"), jsonLdType: "Product", sourceUrl: "https://strong.test/products/jacket-a" };

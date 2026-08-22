@@ -158,6 +158,7 @@ export type ProductComparison = {
     resultTarget?: number;
     publishedPrimaryProducts?: number;
     resultShortfall?: number;
+    resultShortfallReason?: "bounded-candidate-pool-exhausted" | "processing-incomplete";
     candidatePairsAssessed: number;
     retrievalPairsScored: number;
     judgeCalls: number;
@@ -1945,9 +1946,9 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
     uniqueMissing.forEach((candidate) => add(candidate.product, candidate.role, pair.match.score, "price"));
     return true;
   };
-  // Spend the price budget on at most one completable match per primary row.
-  // When the strongest pair cannot fit atomically, a cheaper accepted rival
-  // for that same primary may fill the row before capacity moves onward.
+  // First give every primary row one completable candidate. Then spend the
+  // remaining price budget on secondary accepted rivals so a failed strongest
+  // page does not strand a row that has another independently priced option.
   const selectedPairs: Array<{ row: ProductComparison["rows"][number]; match: ProductMatch & { product: ProductRecord } }> = [];
   for (const group of rowGroups) {
     const candidates = group.accepted
@@ -1956,6 +1957,17 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
     const selected = candidates.find((pair) => schedulePair(pair));
     if (selected) selectedPairs.push(selected);
     else missingForPair(candidates[0]).forEach((candidate) => deferredPriceTargets.add(targetKey(candidate.product, candidate.sourceUrl)));
+  }
+  const selectedKeys = new Set(selectedPairs.map((pair) => `${pair.row.primary.id}\n${pair.match.domain}\n${pair.match.product.id}`));
+  const secondaryPairs = rowGroups.flatMap((group) => group.accepted
+    .filter((match): match is ProductMatch & { product: ProductRecord } => Boolean(match.product))
+    .map((match) => ({ row: group.row, match })))
+    .filter((pair) => !selectedKeys.has(`${pair.row.primary.id}\n${pair.match.domain}\n${pair.match.product.id}`))
+    .sort((left, right) => right.match.score - left.match.score
+      || left.row.primary.id.localeCompare(right.row.primary.id)
+      || left.match.domain.localeCompare(right.match.domain));
+  for (const pair of secondaryPairs) {
+    if (!schedulePair(pair)) missingForPair(pair).forEach((candidate) => deferredPriceTargets.add(targetKey(candidate.product, candidate.sourceUrl)));
   }
   if (deferredPriceTargets.size === 0) {
     for (const pair of selectedPairs) {

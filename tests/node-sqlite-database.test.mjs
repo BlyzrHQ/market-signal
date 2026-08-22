@@ -639,46 +639,12 @@ test("manifest finalization rejects missing chunks and conflicting completed rep
     await finalizeReportFactManifest(created.publicId, bundle.manifest, now, database);
     await assert.rejects(finalizeReportFactManifest(created.publicId, { ...bundle.manifest, manifestHash: "f".repeat(64) }, now, database), /manifest replay conflicts/);
     const replacementCompanies = [{ domain: "large.example", role: "primary", companyName: "Changed", evidenceUrl: "https://large.example/", evidence: {}, observedAt: now.toISOString() }];
-    await saveReportFactChunk(created.publicId, { manifestId: "e".repeat(64), kind: "companies", chunkIndex: 0, chunkCount: 1, contentHash: await factHash("companies", replacementCompanies), items: replacementCompanies }, now, database);
-    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM report_fact_manifests").all()).results[0].count, 0);
+    await assert.rejects(saveReportFactChunk(created.publicId, { manifestId: "e".repeat(64), kind: "companies", chunkIndex: 0, chunkCount: 1, contentHash: await factHash("companies", replacementCompanies), items: replacementCompanies }, now, database), /immutable/);
     const bulkyProducts = products.slice(0, 50).map((product) => ({ ...product, description: "x".repeat(14_000), priceSignals: [{ raw: "y".repeat(7_000) }] }));
     const bulky = await buildReportFactBundle({ publicId: "b".repeat(32), crawlResults: [{ domain: "large.example", role: "primary", homepage: { sourceUrl: "https://large.example/" }, products: bulkyProducts }], comparison: null, adBlock: null, observedAt: now.toISOString() });
     const productChunks = bulky.chunks.filter((chunk) => chunk.kind === "products");
     assert.ok(productChunks.length > 1);
     assert.ok(productChunks.every((chunk) => new TextEncoder().encode(JSON.stringify(chunk)).byteLength <= 250_000));
-  } finally {
-    database.close();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("a nonterminal task retry atomically replaces a stale completed fact manifest", async () => {
-  const { directory, databasePath } = await fixture();
-  const database = await NodeSqliteDatabase.open(databasePath);
-  try {
-    const now = new Date("2026-08-21T12:00:00.000Z");
-    const created = await createReportRun({ primaryDomain: "replace.example" }, now, database);
-    const facts = async (title) => buildReportFactBundle({
-      publicId: created.publicId,
-      crawlResults: [{ domain: "replace.example", role: "primary", homepage: { sourceUrl: "https://replace.example/", title }, products: [], fetchedAt: now.toISOString() }],
-      comparison: null,
-      adBlock: null,
-      observedAt: now.toISOString(),
-      attemptNumber: 1,
-    });
-    const first = await facts("First catalog");
-    for (const chunk of first.chunks) await saveReportFactChunk(created.publicId, chunk, now, database);
-    await finalizeReportFactManifest(created.publicId, first.manifest, now, database);
-
-    const replacement = await facts("Replacement catalog");
-    assert.notEqual(replacement.manifest.manifestId, first.manifest.manifestId);
-    for (const chunk of replacement.chunks) await saveReportFactChunk(created.publicId, chunk, now, database);
-    await finalizeReportFactManifest(created.publicId, replacement.manifest, now, database);
-
-    const manifest = (await database.prepare("SELECT manifest_id, manifest_hash, status FROM report_fact_manifests").all()).results[0];
-    assert.deepEqual(manifest, { manifest_id: replacement.manifest.manifestId, manifest_hash: replacement.manifest.manifestHash, status: "complete" });
-    assert.equal((await database.prepare("SELECT company_name FROM report_companies WHERE domain = 'replace.example'").all()).results[0].company_name, "Replacement catalog");
-    assert.equal((await database.prepare("SELECT COUNT(DISTINCT manifest_id) AS count FROM report_fact_chunks").all()).results[0].count, 1);
   } finally {
     database.close();
     await rm(directory, { recursive: true, force: true });

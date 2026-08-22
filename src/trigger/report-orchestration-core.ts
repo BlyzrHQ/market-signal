@@ -31,6 +31,8 @@ import { compactTerminalReportDocument } from "../shared/report-document-compact
 import type { ReportFactChunkInput, ReportFactManifestInput } from "../../app/lib/report-store.ts";
 import type { PinnedProductPair } from "../../app/lib/ai-product-matching.ts";
 
+class CompletedFactManifestConflict extends Error {}
+
 export const MAX_OPERATION_TIMEOUT_MS = 13 * 60 * 1000;
 export const FINAL_ENRICHMENT_BATCH_SIZE = 64;
 export const FINAL_ENRICHMENT_BATCH_CONCURRENCY = 2;
@@ -418,6 +420,9 @@ export async function orchestrateReport(
     const reusableManifest = priorManifest?.status === "complete"
       && priorManifest.manifestId === facts.manifest.manifestId
       && priorManifest.manifestHash === facts.manifest.manifestHash;
+    if (priorManifest?.status === "complete" && !reusableManifest) {
+      throw new CompletedFactManifestConflict("The completed relational fact snapshot differs from this retry; orchestration stopped before replacing authoritative facts or saving a mismatched presentation.");
+    }
     if (!reusableManifest) {
       for (const chunk of facts.chunks) await port.persistFactChunk(payload.publicId, chunk);
       await port.finalizeFactManifest(payload.publicId, facts.manifest);
@@ -426,6 +431,7 @@ export async function orchestrateReport(
       persistedCounts = priorManifest.counts;
     }
   } catch (error) {
+    if (error instanceof CompletedFactManifestConflict) throw error;
     limitedPhases.push("persistence");
     try { await port.appendEvent(payload.publicId, event("facts-limited", "persistence", "The presentation can be saved, but the complete relational fact set was not available for evaluation.", { reason: message(error, "Relational fact persistence was unavailable.") })); } catch { /* quality telemetry must not block the terminal document */ }
   }

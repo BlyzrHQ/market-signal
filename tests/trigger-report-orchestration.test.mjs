@@ -272,7 +272,7 @@ test("relational fact persistence failure stays visible while the dashboard snap
   assert.equal(port.saves[0].document.document.blocks.find((block) => block.type === "presentation-compaction").relationalFactsAuthoritative, false);
 });
 
-test("a retry does not reuse a completed fact manifest whose hash differs from the current document", async () => {
+test("a retry fails closed before replacing a completed fact manifest or saving a mismatched document", async () => {
   const counts = { companies: 2, products: 63, matches: 4, ads: 1 };
   const port = mockPort({
     async loadReport() {
@@ -283,12 +283,10 @@ test("a retry does not reuse a completed fact manifest whose hash differs from t
       };
     },
   });
-  const result = await orchestrateReport(recoveryPayload, { attemptNumber: 2, isFinalAttempt: true }, port);
-  assert.equal(result.reportStatus, "complete");
-  assert.ok(port.factChunks.length > 0);
-  assert.equal(port.factManifests.length, 1);
-  assert.notEqual(port.factManifests[0].manifestHash, "b".repeat(64));
-  assert.notDeepEqual(port.events.find((item) => item.idempotencyKey === "facts-complete").metadata, counts);
+  await assert.rejects(orchestrateReport(recoveryPayload, { attemptNumber: 2, isFinalAttempt: true }, port), /completed relational fact snapshot differs/i);
+  assert.equal(port.factChunks.length, 0);
+  assert.equal(port.factManifests.length, 0);
+  assert.equal(port.saves.length, 0);
 });
 
 test("a retry reuses a completed fact manifest only when its current bundle hashes match", async () => {
@@ -334,7 +332,7 @@ test("fact telemetry callback failures never prevent the terminal document", asy
   assert.equal(completePort.saves.length, 1);
 });
 
-test("a lost finalization response reloads and reuses the authoritative completed manifest", async () => {
+test("a lost finalization response fails closed when the reloaded authoritative manifest differs", async () => {
   const counts = { companies: 2, products: 20, matches: 3, ads: 0 };
   let loads = 0;
   const port = mockPort({
@@ -348,12 +346,10 @@ test("a lost finalization response reloads and reuses the authoritative complete
     },
     async finalizeFactManifest() { throw new Error("response lost after commit"); },
   });
-  const result = await orchestrateReport(recoveryPayload, { attemptNumber: 2, isFinalAttempt: true }, port);
-  assert.equal(result.reportStatus, "limited");
+  await assert.rejects(orchestrateReport(recoveryPayload, { attemptNumber: 2, isFinalAttempt: true }, port), /completed relational fact snapshot differs/i);
   assert.equal(loads, 2);
-  assert.ok(port.factChunks.length > 0);
-  assert.equal(port.saves.length, 1);
-  assert.equal(port.saves[0].document.document.blocks.find((block) => block.type === "presentation-compaction").relationalFactsAuthoritative, false);
+  assert.equal(port.factChunks.length, 0);
+  assert.equal(port.saves.length, 0);
 });
 
 test("crawl failure remains non-terminal before the final task attempt", async () => {

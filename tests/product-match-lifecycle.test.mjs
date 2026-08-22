@@ -353,8 +353,17 @@ test("priced result backfill records an explicit bounded-pool shortfall", () => 
   assert.equal(result.coverage.assignedPairCount, 1);
   assert.equal(result.matching.primaryProductsScreened, 3);
   assert.equal(result.matching.resultShortfall, 2);
-  assert.match(result.matching.gaps.join(" "), /Published 1 of 3.*screening 3/i);
+  assert.equal(result.matching.resultShortfallReason, "bounded-candidate-pool-exhausted");
+  assert.match(result.matching.gaps.join(" "), /Published 1 of 3.*fully processing.*3 screened/i);
   assert.equal(hasProductMatchCoverageDefect(result), true);
+});
+
+test("priced result backfill reports processing incompleteness without claiming pool exhaustion", () => {
+  const screened = comparison({ selected: ["p1", "p2"], assessed: ["p1"], rows: [row("p1"), row("p2")], accepted: 0 });
+  const result = limitPublishedProductComparison(publishPricedProductComparison(screened), 2);
+  assert.equal(result.matching.resultShortfallReason, "processing-incomplete");
+  assert.match(result.matching.gaps.join(" "), /did not fully process/i);
+  assert.doesNotMatch(result.matching.gaps.join(" "), /exhausted/i);
 });
 
 test("priced result backfill does not shrink the purchased target to a small catalog", () => {

@@ -1927,28 +1927,8 @@ export async function saveReportFactChunk(publicReportId: string, input: ReportF
     return { replayed: true as const, kind: input.kind, chunkIndex: input.chunkIndex, itemCount: items.length };
   }
   if (["complete", "limited", "failed", "interrupted"].includes(run.status)) throw new Error("A terminal report cannot accept report facts.");
-  const completed = await database.prepare(`SELECT manifest_id, attempt_number, status FROM report_fact_manifests WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>();
-  const completedManifest = completed.results?.[0];
-  if (completedManifest) {
-    const canReplace = completedManifest.status === "complete"
-      && String(completedManifest.manifest_id) !== input.manifestId
-      && Number(completedManifest.attempt_number) <= attemptNumber
-      && input.kind === "companies"
-      && input.chunkIndex === 0;
-    if (!canReplace) throw new Error("Completed report facts are immutable.");
-    const replacementGuard = `EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND attempt_count = ? AND status NOT IN ('complete', 'limited', 'failed', 'interrupted')) AND EXISTS (SELECT 1 FROM report_fact_manifests WHERE run_id = ? AND manifest_id = ? AND attempt_number = ? AND status = 'complete')`;
-    const replacementBindings = [run.id, attemptNumber, run.id, String(completedManifest.manifest_id), Number(completedManifest.attempt_number)] as const;
-    await database.batch([
-      database.prepare(`DELETE FROM report_matches WHERE run_id = ? AND ${replacementGuard}`).bind(run.id, ...replacementBindings),
-      database.prepare(`DELETE FROM report_ads WHERE run_id = ? AND ${replacementGuard}`).bind(run.id, ...replacementBindings),
-      database.prepare(`DELETE FROM report_products WHERE run_id = ? AND ${replacementGuard}`).bind(run.id, ...replacementBindings),
-      database.prepare(`DELETE FROM report_companies WHERE run_id = ? AND ${replacementGuard}`).bind(run.id, ...replacementBindings),
-      database.prepare(`DELETE FROM report_fact_chunks WHERE run_id = ? AND ${replacementGuard}`).bind(run.id, ...replacementBindings),
-      database.prepare(`DELETE FROM report_fact_manifests WHERE run_id = ? AND ${replacementGuard}`).bind(run.id, ...replacementBindings),
-    ]);
-    const remaining = await database.prepare(`SELECT manifest_id FROM report_fact_manifests WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>();
-    if (remaining.results?.length) throw new Error("Completed report facts could not be replaced safely.");
-  }
+  const completed = await database.prepare(`SELECT manifest_id FROM report_fact_manifests WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>();
+  if (completed.results?.length) throw new Error("Completed report facts are immutable.");
   const otherManifest = await database.prepare(`SELECT manifest_id, attempt_number FROM report_fact_chunks WHERE run_id = ? AND manifest_id <> ? ORDER BY attempt_number DESC LIMIT 1`).bind(run.id, input.manifestId).all<Record<string, unknown>>();
   const replacingManifest = Boolean(otherManifest.results?.length);
   if (replacingManifest && (input.kind !== "companies" || input.chunkIndex !== 0 || Number(otherManifest.results?.[0]?.attempt_number || 0) >= attemptNumber)) throw new Error("A different report fact manifest is already in progress.");

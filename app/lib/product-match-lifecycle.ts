@@ -243,8 +243,21 @@ export function limitPublishedProductComparison(comparison: ProductComparison, r
   const resultShortfall = Math.max(0, target - publishedPrimaryProducts);
   const priorMatching = comparison.matching;
   const screened = priorMatching?.primaryProductsScreened || priorMatching?.primaryProductsAssessed || 0;
+  const selectedIds = new Set(priorMatching?.selectedPrimaryIds || []);
+  const assessedIds = new Set(priorMatching?.assessedPrimaryIds || []);
+  const matchingCompleted = priorMatching?.available === true
+    && [...selectedIds].every((id) => assessedIds.has(id));
+  const enrichmentCompleted = !comparison.enrichment?.failedBatchCount
+    && comparison.enrichment?.pagesTruncated !== true;
+  const resultShortfallReason = resultShortfall
+    ? matchingCompleted && enrichmentCompleted
+      ? "bounded-candidate-pool-exhausted" as const
+      : "processing-incomplete" as const
+    : undefined;
   const shortfallGap = resultShortfall
-    ? `Published ${publishedPrimaryProducts} of ${target} requested priced product comparisons after screening ${screened} primary products; the bounded candidate pool was exhausted.`
+    ? resultShortfallReason === "bounded-candidate-pool-exhausted"
+      ? `Published ${publishedPrimaryProducts} of ${target} requested priced product comparisons after fully processing the bounded pool of ${screened} screened primary products; no additional eligible priced pair remained in that pool.`
+      : `Published ${publishedPrimaryProducts} of ${target} requested priced product comparisons after screening ${screened} primary products; matching or enrichment did not fully process the bounded pool.`
     : "";
   return {
     ...comparison,
@@ -264,6 +277,7 @@ export function limitPublishedProductComparison(comparison: ProductComparison, r
       resultTarget: target,
       publishedPrimaryProducts,
       resultShortfall,
+      resultShortfallReason,
       gaps: shortfallGap ? [...new Set([...priorMatching.gaps, shortfallGap])] : priorMatching.gaps,
     } : priorMatching,
   };
