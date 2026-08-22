@@ -154,6 +154,22 @@ test("memory is isolated, expires old rows, and ignores malformed records", asyn
   assert.deepEqual(database.reads[0].values, ["myjam.co.uk", "2026-06-15T00:00:00.000Z"]);
 });
 
+test("remembered competitors restore attributable primary-to-seller product bindings", async () => {
+  const lead = {
+    primaryProductId: "primary-13",
+    primarySourceUrl: "https://myjam.co.uk/products/halal-product-13",
+    laneQuery: "halal product 13 500g",
+    candidateDomain: "rival.test",
+    candidateSourceUrl: "https://rival.test/products/halal-product-13",
+    admission: "inferred-cross-language",
+  };
+  const storedCandidate = { ...candidate("rival.test"), inferredProductLeads: [lead, { ...lead, candidateSourceUrl: "https://other.test/wrong" }] };
+  const database = new FakeDatabase([record("myjam.co.uk", "rival.test", "2026-07-14T00:00:00.000Z", JSON.stringify(storedCandidate))]);
+  const result = await loadRememberedCompetitors("myjam.co.uk", new Date("2026-07-15T00:00:00.000Z"), database);
+
+  assert.deepEqual(result.candidates[0].inferredProductLeads, [lead]);
+});
+
 test("verified leads whitelist lead evidence, upsert, and delete by canonical domain", async () => {
   const database = new FakeDatabase();
   const verified = {
@@ -164,6 +180,7 @@ test("verified leads whitelist lead evidence, upsert, and delete by canonical do
     overlapTerms: ["grocery"],
     provenPrimaryProduct: { name: "Primary item", priceSignals: [{ raw: "GBP 9" }] },
     provenRivalProduct: { name: "Rival item", priceSignals: [{ raw: "GBP 8" }] },
+    inferredProductLeads: [{ primaryProductId: "primary-13", primarySourceUrl: "https://myjam.co.uk/products/item", laneQuery: "primary item", candidateDomain: "rival.test", candidateSourceUrl: "https://rival.test/products/item", admission: "source-first-cross-language" }],
   };
   const stored = await rememberVerifiedCompetitors("https://MYJAM.co.uk/", [{ candidate: verified, verificationScore: 83.6 }], "2026-07-15T12:00:00.000Z", database);
   const removed = await forgetRememberedCompetitors("MYJAM.co.uk", ["https://RIVAL.test/shop"], database);
@@ -182,6 +199,7 @@ test("verified leads whitelist lead evidence, upsert, and delete by canonical do
   assert.equal("overlapTerms" in storedJson, false);
   assert.equal("provenPrimaryProduct" in storedJson, false);
   assert.equal("provenRivalProduct" in storedJson, false);
+  assert.equal(storedJson.inferredProductLeads.length, 1);
   assert.doesNotMatch(mutations[0][0].values[2], /priceSignals|GBP 9|GBP 8/);
   assert.match(mutations[1][0].query, /^DELETE FROM verified_competitors/);
   assert.deepEqual(mutations[1][0].values, ["myjam.co.uk", "rival.test"]);

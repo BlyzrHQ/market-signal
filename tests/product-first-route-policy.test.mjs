@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { competitorInvestigationComplete, finalizedDiscoveryCoverage, investigationGapSourceUrl, MAX_PRIMARY_CATALOG_PRODUCTS, rememberedReverificationFailures, resolvePrimaryDiscoveryPolicy, verifiedExactMatchHints, verifyDiscoveredCompetitor, verifyDiscoveredCompetitorWithInferredLeads, verifyInferredProductLead } from "../app/api/crawl/route.ts";
+import { competitorInvestigationComplete, finalizedDiscoveryCoverage, investigationGapSourceUrl, MAX_PRIMARY_CATALOG_PRODUCTS, rememberedReverificationFailures, resolvePrimaryDiscoveryPolicy, verifiedExactMatchHints, verifyDiscoveredCompetitor, verifyDiscoveredCompetitorWithInferredLeads, verifyInferredProductLead, verifyInferredProductLeads } from "../app/api/crawl/route.ts";
 import { resolveVerificationMarket } from "../app/lib/competitor-verification.ts";
 
 function product(domain, name) {
@@ -136,6 +136,22 @@ test("promotes only the exact structured, priced inferred product page after sem
   const unpriced = crawl("health.example", [{ ...rivalProduct, priceSignals: [] }]);
   const rejected = await verifyInferredProductLead(primary, unpriced, discovery, async () => { throw new Error("judge must not run"); });
   assert.equal(rejected, undefined);
+});
+
+test("one seller preserves more than twelve verified exact pairs as match hints", async () => {
+  const primaryProducts = Array.from({ length: 13 }, (_, index) => ({ ...product("myjam.co.uk", `Halal Product ${index} 500g`), id: `primary-${index}` }));
+  const rivalProducts = Array.from({ length: 13 }, (_, index) => ({ ...product("rival.example", `Halal Product ${index} 500g`), id: `rival-${index}`, extraction: "json-ld", ownership: "self-declared-brand", priceSignals: [{ raw: `GBP ${index + 1}`, currency: "GBP", amount: index + 1 }] }));
+  const discovery = {
+    ...rememberedCandidate(),
+    inferredProductLeads: primaryProducts.map((primary, index) => ({ primaryProductId: primary.id, primarySourceUrl: primary.sourceUrl, laneQuery: `halal product ${index}`, candidateDomain: "rival.example", candidateSourceUrl: rivalProducts[index].sourceUrl, admission: "inferred-cross-language" })),
+  };
+  const judge = async () => ({ rows: primaryProducts.map((primary, index) => ({ primary, matches: [{ domain: "rival.example", product: rivalProducts[index], confidence: "Medium", assessment: { verdict: "same_product", confidence: 0.95, contradictions: [] } }] })) });
+
+  assert.equal((await verifyInferredProductLeads(crawl("myjam.co.uk", primaryProducts), crawl("rival.example", rivalProducts), discovery, judge)).length, 13);
+  const verified = await verifyDiscoveredCompetitorWithInferredLeads(crawl("myjam.co.uk", primaryProducts), crawl("rival.example", rivalProducts), discovery, resolveVerificationMarket("United Kingdom", "United Kingdom"), true, judge);
+  const hints = verifiedExactMatchHints([verified]);
+  assert.equal(hints.length, 13);
+  assert.ok(hints.some((hint) => hint.primaryId === "primary-12" && hint.rivalDomain === "rival.example" && hint.rivalId === "rival-12"));
 });
 
 test("rejects inferred leads when the exact page is absent or the one-pair judge declines", async () => {

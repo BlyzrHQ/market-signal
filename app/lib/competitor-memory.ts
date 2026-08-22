@@ -1,5 +1,5 @@
 import { canonicalDomain } from "./domain.ts";
-import type { DiscoveryCandidate, DiscoveryProvenance } from "./competitor-discovery.ts";
+import type { DiscoveryCandidate, DiscoveryProvenance, InferredProductLead } from "./competitor-discovery.ts";
 import type { ApplicationDatabase, DatabasePreparedStatement } from "./database-contract.ts";
 import { runtimeDatabase } from "./runtime-database.ts";
 
@@ -80,6 +80,7 @@ function candidateFromRecord(record: VerifiedCompetitorMemory): MemoryCandidate 
     matchedProductUrl: safeUrl(item.matchedProductUrl) || undefined,
     matchedPrimaryProductNames: strings(item.matchedPrimaryProductNames, MAX_REMEMBERED_PRODUCT_EVIDENCE) || undefined,
     matchedProductUrls: Array.isArray(item.matchedProductUrls) ? item.matchedProductUrls.map(safeUrl).filter(Boolean).slice(0, MAX_REMEMBERED_PRODUCT_EVIDENCE) : undefined,
+    inferredProductLeads: inferredProductLeads(item.inferredProductLeads, record.primaryDomain, domain),
     evidenceMethod: item.evidenceMethod === "search-source" ? "search-source" : "model-summarized",
     provenance: "remembered-reverified",
     rememberedVerifiedAt: record.lastVerifiedAt,
@@ -186,6 +187,31 @@ export function mergeRememberedCandidateCoverage(fresh: DiscoveryCandidate[], re
   return { candidates: bounded, truncated: freshTruncated || rememberedTruncated, freshTruncated, rememberedTruncated };
 }
 
+function inferredProductLeads(value: unknown, primaryDomain: string, candidateDomain: string): InferredProductLead[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, MAX_REMEMBERED_PRODUCT_EVIDENCE).flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const item = entry as Record<string, unknown>;
+    const primaryProductId = clean(item.primaryProductId, 300);
+    const primarySourceUrl = safeUrl(item.primarySourceUrl);
+    const laneQuery = clean(item.laneQuery, 300);
+    const leadCandidateDomain = canonicalDomain(clean(item.candidateDomain, 300));
+    const candidateSourceUrl = safeUrl(item.candidateSourceUrl);
+    const admission = item.admission;
+    let primaryUrlDomain = "";
+    let candidateUrlDomain = "";
+    try { primaryUrlDomain = canonicalDomain(new URL(primarySourceUrl).hostname); } catch { return []; }
+    try { candidateUrlDomain = canonicalDomain(new URL(candidateSourceUrl).hostname); } catch { return []; }
+    if (!primaryProductId || !laneQuery || primaryUrlDomain !== canonicalDomain(primaryDomain)
+      || leadCandidateDomain !== canonicalDomain(candidateDomain) || candidateUrlDomain !== canonicalDomain(candidateDomain)
+      || !["inferred-cross-language", "source-first-cross-language", "model-structured-cross-language"].includes(String(admission))) return [];
+    return [{ primaryProductId, primarySourceUrl, laneQuery, candidateDomain: leadCandidateDomain, candidateSourceUrl, admission: admission as InferredProductLead["admission"] }];
+  }).filter((lead, index, all) => all.findIndex((other) => other.primaryProductId === lead.primaryProductId
+    && other.primarySourceUrl === lead.primarySourceUrl
+    && other.candidateSourceUrl === lead.candidateSourceUrl
+    && other.admission === lead.admission) === index);
+}
+
 export function mergeRememberedCandidates(fresh: DiscoveryCandidate[], remembered: MemoryCandidate[], limit = MAX_INVESTIGATIONS) {
   return mergeRememberedCandidateCoverage(fresh, remembered, limit).candidates;
 }
@@ -250,6 +276,7 @@ export async function rememberVerifiedCompetitors(primaryDomain: string, verifie
         matchedProductUrl: safeUrl(candidate.matchedProductUrl) || undefined,
         matchedPrimaryProductNames: strings(candidate.matchedPrimaryProductNames, MAX_REMEMBERED_PRODUCT_EVIDENCE),
         matchedProductUrls: Array.isArray(candidate.matchedProductUrls) ? candidate.matchedProductUrls.map(safeUrl).filter(Boolean).slice(0, MAX_REMEMBERED_PRODUCT_EVIDENCE) : undefined,
+        inferredProductLeads: inferredProductLeads(candidate.inferredProductLeads, primary, candidate.domain),
         evidenceMethod: candidate.evidenceMethod === "search-source" ? "search-source" : "model-summarized",
       };
       return database.prepare(`INSERT INTO verified_competitors (

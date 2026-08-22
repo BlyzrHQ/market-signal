@@ -95,6 +95,7 @@ type DomainCrawl = {
   homepageFailure?: PublicEndpointFailure;
   homepageAccessDenied?: { status: 403; hosts: string[] };
   benchmarkEligible?: boolean;
+  verifiedExactProductPairs?: Array<{ primary: ProductRecord; rival: ProductRecord; confidence: number }>;
 };
 
 type ReportBlock = Record<string, unknown> & { type: string; id: string };
@@ -260,7 +261,7 @@ function exactPageProductFingerprint(product: ProductRecord, expectedDomain: str
 
 type ExactPairJudge = typeof buildAIProductComparison;
 
-export async function verifyInferredProductLead(
+export async function verifyInferredProductLeads(
   primary: DomainCrawl,
   candidate: DomainCrawl,
   discovery: DiscoveryCandidate,
@@ -292,7 +293,7 @@ export async function verifyInferredProductLead(
     const rivalProduct = exactPageProducts[0];
     if (!eligiblePairs.some((pair) => pair.primary.id === primaryProduct.id && pair.rival.id === rivalProduct.id)) eligiblePairs.push({ primary: primaryProduct, rival: rivalProduct, lead });
   }
-  if (!eligiblePairs.length) return undefined;
+  if (!eligiblePairs.length) return [];
   const comparison = await judge(primary.domain, [
     { domain: primary.domain, products: selectPreferredProducts(eligiblePairs.map((pair) => pair.primary)) },
     { domain: candidate.domain, products: selectPreferredProducts(eligiblePairs.map((pair) => pair.rival)) },
@@ -308,15 +309,23 @@ export async function verifyInferredProductLead(
     totalBudgetMs: 720_000,
     pinnedPairs: eligiblePairs.map((pair) => ({ primaryId: pair.primary.id, rivalDomain: candidate.domain, rivalId: pair.rival.id })),
   });
-  for (const { primary: primaryProduct, rival: rivalProduct, lead } of eligiblePairs) {
+  return eligiblePairs.flatMap(({ primary: primaryProduct, rival: rivalProduct, lead }) => {
     const match = comparison.rows.find((row) => row.primary.id === primaryProduct.id)?.matches
       .find((item) => item.product?.id === rivalProduct.id && canonicalDomain(item.domain) === canonicalDomain(candidate.domain));
     if (!match?.product || match.confidence !== "Medium" || !match.assessment
       || (match.assessment.verdict !== "same_product" && match.assessment.verdict !== "close_substitute")
-      || match.assessment.confidence < 0.8 || match.assessment.contradictions.length) continue;
-    return { primary: primaryProduct, rival: rivalProduct, confidence: match.assessment.confidence, lead };
-  }
-  return undefined;
+      || match.assessment.confidence < 0.8 || match.assessment.contradictions.length) return [];
+    return [{ primary: primaryProduct, rival: rivalProduct, confidence: match.assessment.confidence, lead }];
+  });
+}
+
+export async function verifyInferredProductLead(
+  primary: DomainCrawl,
+  candidate: DomainCrawl,
+  discovery: DiscoveryCandidate,
+  judge: ExactPairJudge = buildAIProductComparison,
+) {
+  return (await verifyInferredProductLeads(primary, candidate, discovery, judge))[0];
 }
 
 export async function verifyDiscoveredCompetitorWithInferredLeads(
@@ -327,9 +336,10 @@ export async function verifyDiscoveredCompetitorWithInferredLeads(
   requireProductOverlap = false,
   judge: ExactPairJudge = buildAIProductComparison,
 ) {
-  const verifiedExactProductPair = discovery.inferredProductLeads?.length
-    ? await verifyInferredProductLead(primary, candidate, discovery, judge)
-    : undefined;
+  const verifiedExactProductPairs = discovery.inferredProductLeads?.length
+    ? await verifyInferredProductLeads(primary, candidate, discovery, judge)
+    : [];
+  const verifiedExactProductPair = verifiedExactProductPairs[0];
   const attributableDiscoveryEvidence = discovery.evidence.filter((item) => {
     try { return canonicalDomain(new URL(item.url).hostname) === canonicalDomain(discovery.domain); } catch { return false; }
   });
@@ -367,7 +377,7 @@ export async function verifyDiscoveredCompetitorWithInferredLeads(
       provenRivalProduct: undefined,
     },
   };
-  return verified;
+  return { ...verified, verifiedExactProductPairs: verifiedExactProductPairs.map(({ primary: exactPrimary, rival, confidence }) => ({ primary: exactPrimary, rival, confidence })) };
 }
 
 export function rememberedReverificationFailures(candidates: MemoryCandidate[], results: Array<DomainCrawl | null>) {
@@ -416,9 +426,21 @@ export function finalizedDiscoveryCoverage(
 }
 
 export function verifiedExactMatchHints(confirmed: DomainCrawl[]) {
-  return confirmed.flatMap((result) => result.discovery?.exactProductPairVerified && result.discovery.provenPrimaryProduct && result.discovery.provenRivalProduct
-    ? [{ primaryId: result.discovery.provenPrimaryProduct.id, rivalDomain: result.domain, rivalId: result.discovery.provenRivalProduct.id }]
-    : []).slice(0, 12);
+  const candidates = confirmed.flatMap((result) => result.verifiedExactProductPairs?.length
+    ? result.verifiedExactProductPairs.map((pair) => ({ primaryId: pair.primary.id, rivalDomain: result.domain, rivalId: pair.rival.id, confidence: pair.confidence }))
+    : result.discovery?.exactProductPairVerified && result.discovery.provenPrimaryProduct && result.discovery.provenRivalProduct
+      ? [{ primaryId: result.discovery.provenPrimaryProduct.id, rivalDomain: result.domain, rivalId: result.discovery.provenRivalProduct.id, confidence: 0.8 }]
+      : []).sort((left, right) => right.confidence - left.confidence || left.primaryId.localeCompare(right.primaryId) || left.rivalDomain.localeCompare(right.rivalDomain) || left.rivalId.localeCompare(right.rivalId));
+  const primaryAssignments = new Set<string>();
+  const rivalAssignments = new Set<string>();
+  return candidates.flatMap(({ primaryId, rivalDomain, rivalId }) => {
+    const primaryKey = `${primaryId}|${rivalDomain}`;
+    const rivalKey = `${rivalDomain}|${rivalId}`;
+    if (primaryAssignments.has(primaryKey) || rivalAssignments.has(rivalKey)) return [];
+    primaryAssignments.add(primaryKey);
+    rivalAssignments.add(rivalKey);
+    return [{ primaryId, rivalDomain, rivalId }];
+  }).slice(0, 6_000);
 }
 
 function productPathPriority(path: string) {
@@ -770,9 +792,14 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
 
 function comparisonSourceUrls(results: DomainCrawl[], primaryDomain: string) {
   const primary = results.find((result) => result.domain === primaryDomain);
-  const required = Object.fromEntries(results.map((result) => [result.domain, [result.discovery?.provenPrimaryProduct?.sourceUrl, result.discovery?.provenRivalProduct?.sourceUrl].filter((value): value is string => Boolean(value))]));
+  const required = Object.fromEntries(results.map((result) => [result.domain, [
+    result.discovery?.provenPrimaryProduct?.sourceUrl,
+    result.discovery?.provenRivalProduct?.sourceUrl,
+    ...(result.verifiedExactProductPairs || []).map((pair) => pair.rival.sourceUrl),
+  ].filter((value): value is string => Boolean(value))]));
   for (const result of results.filter((candidate) => candidate.role === "discovered-competitor" && candidate.discovery?.accepted)) {
     if (primary && result.discovery?.provenPrimaryProduct?.sourceUrl) (required[primary.domain] ||= []).push(result.discovery.provenPrimaryProduct.sourceUrl);
+    if (primary) (required[primary.domain] ||= []).push(...(result.verifiedExactProductPairs || []).map((pair) => pair.primary.sourceUrl));
   }
   return required;
 }
@@ -1219,7 +1246,9 @@ export async function POST(request: Request) {
     const document = compactCatalogSnapshots(buildDocument(results, primaryDomain, discovery, discoveredResults));
     const matchHints = verifiedExactMatchHints(confirmed);
     const publishedDiscovery = publicDiscoverySnapshot(discovery, confirmed.map((result) => result.discovery!));
-    const publishedResults = results.map((result) => result.discovery ? { ...result, discovery: publicDiscoveryCandidate(result.discovery) } : result);
+    const publishedResults = results.map((result) => result.discovery
+      ? { ...result, verifiedExactProductPairs: undefined, discovery: publicDiscoveryCandidate(result.discovery) }
+      : { ...result, verifiedExactProductPairs: undefined });
     return Response.json({ ok: true, live: true, primaryDomain, results: publishedResults, discovery: publishedDiscovery, adRequest, matchHints, document, crawl: { maxPagesPerDomain: MAX_HTML_PAGES, maxPagesPerDiscoveredCompetitor: MAX_DISCOVERED_HTML_PAGES, maxPrimaryProductPricePages: MAX_PRIMARY_PRODUCT_PRICE_PAGES, maxMatchedProductEnrichmentPages: MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES, competitorCrawlConcurrency: COMPETITOR_CRAWL_CONCURRENCY, htmlExtractionBytes: MAX_HTML_EXTRACTION_BYTES, robotsAware: true, generatedAt: new Date().toISOString() } });
   } catch (error) {
     return Response.json({ ok: false, live: false, error: error instanceof Error ? error.message : "Unable to crawl the submitted domains." }, { status: 400 });

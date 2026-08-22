@@ -18,9 +18,9 @@ export const MAX_MATCH_BODY_BYTES = 64 * 1_024 * 1_024;
 const DEFAULT_PRODUCT_ANALYSIS_LIMIT = 20;
 const PLAN_PRODUCT_LIMITS = new Set([20, 50, 500, 1_000]);
 const MAX_TASK_ATTEMPTS = 10;
-const MAX_JUDGE_BATCHES_PER_TASK_ATTEMPT = 200;
+const MAX_JUDGE_BATCHES_PER_TASK_ATTEMPT = 250;
 const JUDGE_CHECKPOINT_BASE = 1_400;
-const PLAN_CHECKPOINT_BASE = 3_400;
+const PLAN_CHECKPOINT_BASE = 3_900;
 
 export function persistedCheckpointIndex(taskAttemptNumber: number, batchIndex: number) {
   if (batchIndex === PRODUCT_CANDIDATE_PLAN_BATCH_INDEX) return PLAN_CHECKPOINT_BASE + taskAttemptNumber - 1;
@@ -107,7 +107,7 @@ function product(value: unknown, catalogDomain: string): ProductRecord | null {
 function requestedPinIds(value: unknown) {
   const ids = new Map<string, Set<string>>();
   if (!Array.isArray(value)) return ids;
-  for (const entry of value.slice(0, 12)) {
+  for (const entry of value.slice(0, MAX_PINNED_PAIRS)) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
     const item = entry as Record<string, unknown>;
     const primaryId = text(item.primaryId, 300);
