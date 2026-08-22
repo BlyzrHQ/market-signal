@@ -169,12 +169,12 @@ export function canonicalReportFact(kind: ReportFactKind, item: JsonRecord) {
     evidenceUrl: safeUrl(item.evidenceUrl), evidence: companyEvidence(item.evidence), observedAt: observedAt(item.observedAt, ""), ...snapshot,
   };
   if (kind === "products") return {
-    domain: canonicalDomain(text(item.domain, 253)), productId: text(item.productId, 240), name: text(item.name, 500),
+    domain: canonicalDomain(text(item.domain, 253)), productId: text(item.productId, 300), name: text(item.name, 500),
     normalizedName: text(item.normalizedName, 500), sourceUrl: safeUrl(item.sourceUrl, false), imageUrl: safeUrl(item.imageUrl),
     prices: productPrices(item.prices), metadata: productMetadata(item.metadata, canonicalDomain(text(item.domain, 253))), observedAt: observedAt(item.observedAt, ""), ...snapshot,
   };
   if (kind === "matches") return {
-    id: text(item.id, 500), primaryProductId: text(item.primaryProductId, 240), rivalProductId: text(item.rivalProductId, 240),
+    id: text(item.id, 500), primaryProductId: text(item.primaryProductId, 300), rivalProductId: text(item.rivalProductId, 300),
     rivalDomain: canonicalDomain(text(item.rivalDomain, 253)), verdict: text(item.verdict, 40), confidence: text(item.confidence, 40),
     claimType: text(item.claimType, 40), model: text(item.model, 160), promptVersion: text(item.promptVersion, 160),
     evidence: matchEvidence(item.evidence), observedAt: observedAt(item.observedAt, ""), ...snapshot,

@@ -90,6 +90,37 @@ test("report facts retain fresh prices observed after report creation", async ()
   assert.equal(fact.prices[0].currency, "USD");
 });
 
+test("authoritative facts preserve distinct legal 300-character product ids", async () => {
+  const observedAt = "2026-08-22T08:00:00.000Z";
+  const prefix = "x".repeat(299);
+  const ids = [`${prefix}a`, `${prefix}b`];
+  const products = ids.map((id, index) => ({
+    id, domain: "long-id.example", name: `Product ${index}`, normalizedName: `product ${index}`, description: "", category: "test", jsonLdType: "Product",
+    priceSignals: [], attributes: [], ownership: "path-inferred", extraction: "json-ld", confidence: "High",
+    sourceUrl: `https://long-id.example/products/${index}`, imageUrl: "", observedAt, claimIds: [],
+  }));
+  const bundle = await buildReportFactBundle({ publicId: "e".repeat(32), crawlResults: [{ domain: "long-id.example", role: "primary", homepage: { sourceUrl: "https://long-id.example/" }, products, fetchedAt: observedAt }], comparison: null, adBlock: null, observedAt });
+  const productFacts = bundle.chunks.filter((chunk) => chunk.kind === "products").flatMap((chunk) => chunk.items);
+
+  assert.equal(bundle.manifest.counts.products, 2);
+  assert.deepEqual(productFacts.map((item) => item.productId).sort(), ids.sort());
+  const matchFact = canonicalReportFact("matches", {
+    id: "long-id-match",
+    primaryProductId: ids[0],
+    rivalProductId: ids[1],
+    rivalDomain: "rival.example",
+    verdict: "same_product",
+    confidence: "High",
+    claimType: "inference",
+    model: "test",
+    promptVersion: "test",
+    evidence: {},
+    observedAt,
+  });
+  assert.equal(matchFact.primaryProductId, ids[0]);
+  assert.equal(matchFact.rivalProductId, ids[1]);
+});
+
 test("Node SQLite preserves reports and competitor memory after reopening", async () => {
   const { directory, databasePath } = await fixture();
   let database;
@@ -764,6 +795,30 @@ test("recovery discards partial finalizing facts before an empty limited termina
       assert.equal((await database.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE run_id = ?`).bind(created.id).all()).results[0].count, 0, table);
     }
     const saved = await saveReportDocument(created.publicId, { blocks: [] }, { attemptNumber: 2, status: "limited", expectedFactManifestHash: "" }, new Date("2026-08-22T07:47:00.000Z"), database);
+    assert.equal(saved.status, "limited");
+  } finally {
+    database.close();
+    await rm(value.directory, { recursive: true, force: true });
+  }
+});
+
+test("recovery discards orphan fact chunks created before a manifest row", async () => {
+  const value = await fixture();
+  const database = await NodeSqliteDatabase.open(value.databasePath);
+  try {
+    const started = new Date("2026-08-22T08:00:00.000Z");
+    const created = await createReportRun({ primaryDomain: "orphan-facts.example" }, started, database);
+    await appendReportEvent(created.publicId, { attemptNumber: 1, idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Collecting public pages." }, started, database);
+    const bundle = await buildReportFactBundle({ publicId: created.publicId, crawlResults: [{ domain: "orphan-facts.example", role: "primary", homepage: { sourceUrl: "https://orphan-facts.example/" }, products: [], fetchedAt: started.toISOString() }], comparison: null, adBlock: null, observedAt: started.toISOString(), attemptNumber: 1 });
+    await saveReportFactChunk(created.publicId, bundle.chunks[0], started, database);
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM report_fact_manifests WHERE run_id = ?").bind(created.id).all()).results[0].count, 0);
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM report_fact_chunks WHERE run_id = ?").bind(created.id).all()).results[0].count, 1);
+    assert.equal((await getStoredReport(created.publicId, new Date("2026-08-22T08:45:00.000Z"), database)).run.status, "interrupted");
+
+    await recoverInterruptedReport(created.publicId, new Date("2026-08-22T08:46:00.000Z"), database);
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM report_fact_chunks WHERE run_id = ?").bind(created.id).all()).results[0].count, 0);
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM report_companies WHERE run_id = ?").bind(created.id).all()).results[0].count, 0);
+    const saved = await saveReportDocument(created.publicId, { blocks: [] }, { attemptNumber: 2, status: "limited", expectedFactManifestHash: "" }, new Date("2026-08-22T08:47:00.000Z"), database);
     assert.equal(saved.status, "limited");
   } finally {
     database.close();

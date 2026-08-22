@@ -49,6 +49,7 @@ export type ProductRecord = {
   identifiers?: ProductIdentifiers;
   quantity?: CanonicalProductQuantity;
   recoveryIdentityHash?: string;
+  assignmentComponentHash?: string;
 };
 
 const ISO_CURRENCIES = new Set<string>((() => {

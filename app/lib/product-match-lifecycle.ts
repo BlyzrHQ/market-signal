@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { canonicalProductSourceKey, hasPriceCurrencyIntegrity, hasValidObservedRivalPrice, isSupportedCurrency, productDecision, productIdentityKey, publicSourceMarketCountryCode, publicSourceMarketEvidence, type ProductComparison, type ProductMatch, type ProductRecord } from "./product-intelligence.ts";
 import { canonicalDomain } from "./domain.ts";
 import { publicHttpUrl } from "./public-url.ts";
@@ -64,11 +65,12 @@ function compactPricedEvidenceProduct(product: ProductRecord): ProductRecord {
     ...(identifiers ? { identifiers } : {}),
     ...(product.quantity ? { quantity: product.quantity } : {}),
     ...(product.recoveryIdentityHash ? { recoveryIdentityHash: product.recoveryIdentityHash } : {}),
+    ...(product.assignmentComponentHash ? { assignmentComponentHash: product.assignmentComponentHash } : {}),
   };
 }
 
-function compactPricedEvidenceMatch(primary: ProductRecord, match: ProductMatch & { product: ProductRecord }): ProductMatch {
-  const rival = compactPricedEvidenceProduct(match.product);
+function compactPricedEvidenceMatch(primary: ProductRecord, match: ProductMatch & { product: ProductRecord }, assignmentComponentHash = ""): ProductMatch {
+  const rival = { ...compactPricedEvidenceProduct(match.product), ...(assignmentComponentHash ? { assignmentComponentHash } : {}) };
   return {
     domain: match.domain,
     product: rival,
@@ -486,21 +488,15 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
       `physical:${productIdentityKey(product)}`,
       ...(source ? [`source:${source}`] : []),
       `merchant:${canonicalDomain(product.domain)}|${product.id}`,
+      ...(/^[a-f0-9]{64}$/.test(product.assignmentComponentHash || "") ? [`assignment:${product.assignmentComponentHash}`] : []),
     ];
   };
   const rankedCandidates = candidateRows.map((row) => {
-    const seen = new Set<string>();
     return row.matches
       .filter((match): match is ProductMatch & { product: ProductRecord } => Boolean(match.product && match.publication?.priceEligible === true))
       .sort((left, right) => exactProductPriority(right) - exactProductPriority(left)
         || right.score - left.score
-        || productIdentityKey(left.product).localeCompare(productIdentityKey(right.product)))
-      .filter((match) => {
-        const keys = rivalConstraintKeys(match.product);
-        if (keys.some((key) => seen.has(key))) return false;
-        keys.forEach((key) => seen.add(key));
-        return true;
-      });
+        || productIdentityKey(left.product).localeCompare(productIdentityKey(right.product)));
   });
   const allCandidates = rankedCandidates.flat();
   const parents = allCandidates.map((_match, index) => index);
@@ -518,10 +514,25 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
       else unionCandidateComponents(first, index);
     }
   });
+  const componentConstraints = new Map<number, Set<string>>();
+  allCandidates.forEach((match, index) => {
+    const root = findRoot(index);
+    const constraints = componentConstraints.get(root) || new Set<string>();
+    rivalConstraintKeys(match.product).forEach((key) => constraints.add(key));
+    componentConstraints.set(root, constraints);
+  });
+  const componentHashByRoot = new Map([...componentConstraints.entries()].map(([root, constraints]) => [
+    root,
+    createHash("sha256").update(JSON.stringify([...constraints].sort())).digest("hex"),
+  ]));
   const candidateIndex = new Map(allCandidates.map((match, index) => [match, index]));
   const rivalAssignmentKey = (match: ProductMatch) => {
     const index = candidateIndex.get(match as ProductMatch & { product: ProductRecord });
     return index === undefined ? "missing-candidate" : `component:${findRoot(index)}`;
+  };
+  const rivalAssignmentHash = (match: ProductMatch) => {
+    const index = candidateIndex.get(match as ProductMatch & { product: ProductRecord });
+    return index === undefined ? "" : componentHashByRoot.get(findRoot(index)) || "";
   };
   // Collapse transitive source/merchant/physical aliases before applying the
   // per-primary cap. Twenty distinct rival components are sufficient for a
@@ -652,16 +663,19 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
   ].slice(0, Math.max(1, Math.floor(resultTarget)));
   const uncompactedEvidenceRows = evidenceCandidates.map((row) => {
     const compactPrimary = compactPricedEvidenceProduct(row.primary);
-    const seenRivals = new Set<string>();
+    const seenComponents = new Set<string>();
     const selected = selectedByRow.get(candidateRows.indexOf(row));
-    const matches = row.matches.filter((match): match is ProductMatch & { product: ProductRecord } => {
-      if (!match.product || match.publication?.priceEligible !== true) return false;
-      const keys = rivalConstraintKeys(match.product);
-      if (keys.some((key) => seenRivals.has(key))) return false;
-      keys.forEach((key) => seenRivals.add(key));
-      return true;
-    }).sort((left, right) => Number(right === selected) - Number(left === selected))
-      .slice(0, MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY).map((match) => compactPricedEvidenceMatch(compactPrimary, match));
+    const matches = row.matches.filter((match): match is ProductMatch & { product: ProductRecord } => Boolean(match.product && match.publication?.priceEligible === true))
+      .sort((left, right) => Number(right === selected) - Number(left === selected)
+        || exactProductPriority(right) - exactProductPriority(left)
+        || right.score - left.score)
+      .filter((match) => {
+        const component = rivalAssignmentKey(match);
+        if (seenComponents.has(component)) return false;
+        seenComponents.add(component);
+        return true;
+      })
+      .slice(0, MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY).map((match) => compactPricedEvidenceMatch(compactPrimary, match, rivalAssignmentHash(match)));
     return { primary: compactPrimary, matches };
   });
   const evidenceRows = evidenceRowsWithinByteBudget(uncompactedEvidenceRows);

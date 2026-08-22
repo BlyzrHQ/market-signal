@@ -709,6 +709,29 @@ test("global alias collapse retains the twenty-first raw edge required for twent
   assert.equal(result.comparison.rows.find((item) => item.primary.id === "p-main")?.matches.find((match) => match.product)?.product.id, "late-unique");
 });
 
+test("global alias collapse retains a locally duplicate bridge edge", () => {
+  const first = row("p1", "a");
+  first.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+  first.matches[0].product.sourceUrl = "https://rival.test/products/shared-source?country=US";
+  first.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+  const bridge = structuredClone(first.matches[0]);
+  bridge.product = product("bridge", "rival.test");
+  bridge.product.sourceUrl = first.matches[0].product.sourceUrl;
+  bridge.product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+  first.matches.push(bridge);
+
+  const second = row("p2", "bridge");
+  second.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+  second.matches[0].product.sourceUrl = "https://rival.test/products/other-source?country=US";
+  second.matches[0].product.priceSignals = [{ raw: "USD 7", currency: "USD", amount: 7 }];
+  const screened = comparison({ selected: ["p1", "p2"], assessed: ["p1", "p2"], rows: [first, second], accepted: 3 });
+
+  const state = mergePublishedProductComparisonState(screened, null, 2);
+  assert.equal(state.comparison.rows.length, 1);
+  const checkpoint = JSON.parse(JSON.stringify(compactPublishedProductComparisonCheckpoint(state.evidence)));
+  assert.equal(mergePublishedProductComparisonState(checkpoint, null, 2).comparison.rows.length, 1);
+});
+
 test("global assignment maximizes exact products after cardinality", () => {
   const first = row("p1", "shared");
   first.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
