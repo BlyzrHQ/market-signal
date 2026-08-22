@@ -49,6 +49,7 @@ export const ENRICHMENT_PLAN_CHECKPOINT_BATCH_INDEX = 299;
 export const ENRICHMENT_CHECKPOINT_BATCH_INDEX_BASE = 300;
 export const PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX = 279;
 export const TERMINAL_PRESENTATION_CHECKPOINT_BATCH_INDEX_BASE = 280;
+export const MAX_ORCHESTRATION_TASK_ATTEMPTS = 10;
 
 function enrichmentPlanCheckpointIndex(taskAttemptNumber: number) {
   const index = ENRICHMENT_PLAN_CHECKPOINT_BATCH_INDEX - (taskAttemptNumber - 1);
@@ -642,12 +643,12 @@ export async function orchestrateReport(
       primaryCatalog: primaryCatalogIdentity(primary.products),
     })).digest("hex");
     let accumulatedPublished: ProductComparison | null = null;
-    for (let priorTaskAttempt = taskAttemptNumber; priorTaskAttempt >= 1; priorTaskAttempt -= 1) {
+    for (let priorTaskAttempt = MAX_ORCHESTRATION_TASK_ATTEMPTS; priorTaskAttempt >= 1; priorTaskAttempt -= 1) {
       const saved = durableCheckpoints.get(publishedResultCheckpointIndex(priorTaskAttempt));
       if (!saved || saved.inputHash !== publishedResultInputHash) continue;
-      accumulatedPublished = validPublishedResultCheckpoint(saved.result, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys);
-      if (!accumulatedPublished) throw new Error("The durable published-result checkpoint is invalid.");
-      break;
+      const validated = validPublishedResultCheckpoint(saved.result, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys);
+      if (!validated) throw new Error("The durable published-result checkpoint is invalid.");
+      accumulatedPublished = mergePublishedProductComparisons(validated, accumulatedPublished, payload.productLimit, reportReferenceTimeMs);
     }
     let requestCount = 0;
     let transportFailed = false;
@@ -683,7 +684,8 @@ export async function orchestrateReport(
           enrichmentPlan = checkpoint;
         } else {
           let reusedPriorPlan = false;
-          for (let priorTaskAttempt = taskAttemptNumber - 1; priorTaskAttempt >= 1; priorTaskAttempt -= 1) {
+          for (let priorTaskAttempt = MAX_ORCHESTRATION_TASK_ATTEMPTS; priorTaskAttempt >= 1; priorTaskAttempt -= 1) {
+            if (priorTaskAttempt === taskAttemptNumber) continue;
             const priorIndex = enrichmentPlanCheckpointIndex(priorTaskAttempt);
             const prior = durableCheckpoints.get(priorIndex);
             if (!prior || prior.inputHash !== inputHash) continue;
@@ -740,7 +742,8 @@ export async function orchestrateReport(
               return checkpoint;
             }
             let previous: EnrichmentResult | null = null;
-            for (let priorTaskAttempt = taskAttemptNumber - 1; priorTaskAttempt >= 1; priorTaskAttempt -= 1) {
+            for (let priorTaskAttempt = MAX_ORCHESTRATION_TASK_ATTEMPTS; priorTaskAttempt >= 1; priorTaskAttempt -= 1) {
+              if (priorTaskAttempt === taskAttemptNumber) continue;
               const priorIndex = ENRICHMENT_CHECKPOINT_BATCH_INDEX_BASE + batchIndex + ((priorTaskAttempt - 1) * MAX_FINAL_ENRICHMENT_BATCHES);
               const priorSaved = durableCheckpoints.get(priorIndex);
               if (!priorSaved) continue;
@@ -884,11 +887,10 @@ export async function orchestrateReport(
       comparison = mergePublishedProductComparisons(comparison, accumulatedPublished, payload.productLimit, reportReferenceTimeMs);
       const publishedCheckpointIndex = publishedResultCheckpointIndex(taskAttemptNumber);
       const publishedCheckpoint = { version: 1, comparison };
-      const existingPublishedCheckpoint = durableCheckpoints.get(publishedCheckpointIndex);
       const checkpointIsComplete = comparison.matching?.resultShortfallReason !== "processing-incomplete"
         && comparison.enrichment?.pagesTruncated !== true
         && (comparison.enrichment?.failedBatchCount || 0) === 0;
-      if (!existingPublishedCheckpoint && checkpointIsComplete) {
+      if (checkpointIsComplete) {
         if (!validPublishedResultCheckpoint(publishedCheckpoint, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys)) {
           throw new Error("The published-result checkpoint does not belong to the current primary catalog.");
         }

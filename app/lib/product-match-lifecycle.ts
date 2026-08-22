@@ -1,4 +1,4 @@
-import { hasValidObservedRivalPrice, isSupportedCurrency, publicSourceMarketCountryCode, publicSourceMarketEvidence, type ProductComparison, type ProductMatch, type ProductRecord } from "./product-intelligence.ts";
+import { hasValidObservedRivalPrice, isSupportedCurrency, productIdentityKey, publicSourceMarketCountryCode, publicSourceMarketEvidence, type ProductComparison, type ProductMatch, type ProductRecord } from "./product-intelligence.ts";
 import { canonicalDomain } from "./domain.ts";
 import { publicHttpUrl } from "./public-url.ts";
 
@@ -309,7 +309,38 @@ export function mergePublishedProductComparisons(current: ProductComparison, pri
   const currentRows = publishedCurrent.rows.filter(publishable);
   const priorRows = publishedPrior.rows.filter(publishable);
   const currentIds = new Set(currentRows.map((row) => row.primary.id));
-  const rows = [...currentRows, ...priorRows.filter((row) => !currentIds.has(row.primary.id))];
+  const candidateRows = [...currentRows, ...priorRows.filter((row) => !currentIds.has(row.primary.id))];
+  const candidates = candidateRows.map((row) => row.matches
+    .filter((match): match is ProductMatch & { product: ProductRecord } => Boolean(match.product && match.publication?.priceEligible === true))
+    .sort((left, right) => Number(right.assessment?.verdict === "same_product") - Number(left.assessment?.verdict === "same_product")
+      || right.score - left.score
+      || productIdentityKey(left.product).localeCompare(productIdentityKey(right.product))));
+  const rivalOwners = new Map<string, number>();
+  const selectedByRow = new Map<number, ProductMatch>();
+  const assignUniqueRival = (rowIndex: number, visitedRivals: Set<string>): boolean => {
+    for (const match of candidates[rowIndex]) {
+      const rivalKey = productIdentityKey(match.product);
+      if (visitedRivals.has(rivalKey)) continue;
+      visitedRivals.add(rivalKey);
+      const owner = rivalOwners.get(rivalKey);
+      if (owner !== undefined && !assignUniqueRival(owner, visitedRivals)) continue;
+      rivalOwners.set(rivalKey, rowIndex);
+      selectedByRow.set(rowIndex, match);
+      return true;
+    }
+    return false;
+  };
+  candidateRows.forEach((_row, rowIndex) => assignUniqueRival(rowIndex, new Set()));
+  const rows = candidateRows.flatMap((row, rowIndex) => {
+    const selected = selectedByRow.get(rowIndex);
+    if (!selected) return [];
+    return [{
+      ...row,
+      matches: row.matches.map((match) => match === selected
+        ? match
+        : { domain: match.domain, product: null, score: 0, confidence: null, sharedTerms: [], claimIds: row.primary.claimIds, decision: null }),
+    }];
+  });
   const currentMatching = publishedCurrent.matching;
   const priorMatching = publishedPrior.matching;
   const union = (left: string[] = [], right: string[] = []) => [...new Set([...left, ...right])];

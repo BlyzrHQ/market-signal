@@ -370,6 +370,23 @@ test("priced result backfill accumulates distinct publishable products across di
   assert.equal(result.matching.resultShortfall, 0);
 });
 
+test("priced result backfill never counts the same rival offering twice across discovery waves", () => {
+  const pricedRow = (primaryId, rivalId) => {
+    const item = row(primaryId, rivalId);
+    item.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+    item.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+    return item;
+  };
+  const prior = comparison({ selected: ["p1"], assessed: ["p1"], rows: [pricedRow("p1", "shared-rival")], accepted: 1 });
+  const current = comparison({ selected: ["p2"], assessed: ["p2"], rows: [pricedRow("p2", "shared-rival")], accepted: 1 });
+  const result = mergePublishedProductComparisons(current, limitPublishedProductComparison(publishPricedProductComparison(prior), 2), 2);
+
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.matching.publishedPrimaryProducts, 1);
+  assert.equal(result.matching.resultShortfall, 1);
+  assert.equal(new Set(result.rows.flatMap((item) => item.matches.flatMap((match) => match.product ? [match.product.id] : []))).size, 1);
+});
+
 test("a later unpriced observation does not evict an earlier valid priced comparison", () => {
   const priorRow = row("p1", "r1");
   priorRow.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];

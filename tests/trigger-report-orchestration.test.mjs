@@ -1135,6 +1135,59 @@ test("task retries accumulate distinct priced results from earlier discovery wav
   assert.ok(port.checkpoints.has(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX - 1));
 });
 
+test("report recovery restores priced results accumulated by a later task attempt", async () => {
+  let matchCall = 0;
+  const waveComparison = (offset) => {
+    const value = comparison({ withPair: true, count: 10 });
+    value.rows.forEach((item, index) => {
+      const number = offset + index + 1;
+      item.primary.id = `recovered-p${number}`;
+      item.primary.sourceUrl = `https://shop.example/products/recovered-${number}?country=GB`;
+      item.primary.imageUrl = `https://shop.example/images/recovered-${number}.jpg`;
+      item.matches[0].product.id = `recovered-r${number}`;
+      item.matches[0].product.sourceUrl = `https://rival.example/products/recovered-${number}?country=GB`;
+      item.matches[0].product.imageUrl = `https://rival.example/images/recovered-${number}.jpg`;
+    });
+    value.matching.selectedPrimaryIds = value.rows.map((item) => item.primary.id);
+    value.matching.assessedPrimaryIds = [...value.matching.selectedPrimaryIds];
+    value.matching.processedPrimaryIds = [...value.matching.selectedPrimaryIds];
+    return value;
+  };
+  const port = mockPort({
+    async crawl() {
+      const primaryProducts = Array.from({ length: 20 }, (_, index) => {
+        const number = index + 1;
+        return { ...product("shop.example", `recovered-p${number}`), name: `Honey ${number} 500g`, normalizedName: `honey ${number} 500g`, sourceUrl: `https://shop.example/products/recovered-${number}?country=GB` };
+      });
+      return {
+        ok: true,
+        primaryDomain: payload.primaryDomain,
+        results: [{ domain: payload.primaryDomain, homepage: { sourceUrl: "https://shop.example", regionCountryCode: "GB" }, products: primaryProducts }],
+        discovery: { productSearchCoverage: { eligibleAnchors: 1_000, searchedAnchors: 200, startIndex: 0, endIndex: 200, anchorSetHash: "stable-recovery-catalog", truncated: true, searchesComplete: true, candidateDomainsFound: 1, candidateDomainsInvestigated: 1, candidateTruncated: false, verificationComplete: true, batchComplete: true, complete: false } },
+        adRequest: { companies: [{ domain: payload.primaryDomain }], region: "GB" },
+        document: { version: "1", blocks: [] },
+      };
+    },
+    async match() { const value = waveComparison(matchCall * 10); matchCall += 1; return { ok: true, comparison: value }; },
+  });
+
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/i);
+  const accumulated = port.checkpoints.get(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX);
+  assert.ok(accumulated, `expected a published checkpoint after ${matchCall} match calls; keys=${[...port.checkpoints.keys()].join(",")}`);
+  port.checkpoints.set(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX - 1, { ...accumulated, batchIndex: PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX - 1 });
+  port.checkpoints.delete(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX);
+  const loadPriorReport = port.loadReport.bind(port);
+  port.loadReport = async () => {
+    const stored = await loadPriorReport();
+    return { ...stored, run: { ...stored.run, attemptCount: 2 } };
+  };
+  const result = await orchestrateReport(recoveryPayload, { attemptNumber: 2, taskAttemptNumber: 1, isFinalAttempt: true }, port);
+  const block = port.saves.at(-1).document.document.blocks.find((item) => item.type === "product-comparison");
+  assert.equal(result.reportStatus, "complete");
+  assert.equal(block.rows.length, 20);
+  assert.deepEqual(block.rows.map((item) => item.primary.id).sort(), Array.from({ length: 20 }, (_, index) => `recovered-p${index + 1}`).sort());
+});
+
 test("catalog drift prevents stale priced-result accumulation", async () => {
   let matchCall = 0;
   let crawlCall = 0;
