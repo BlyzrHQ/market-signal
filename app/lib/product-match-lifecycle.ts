@@ -6,7 +6,7 @@ import { publicHttpUrl } from "./public-url.ts";
 
 export type ProductMatchLifecycle = "idle" | "matching" | "retrying" | "complete" | "limited";
 export const MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY = 20;
-const MAX_DURABLE_EVIDENCE_ROWS_BYTES = 1_200_000;
+const MAX_DURABLE_EVIDENCE_ROWS_BYTES = 1_300_000;
 
 function compactEvidenceText(value: unknown, maxLength: number) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
@@ -40,7 +40,7 @@ function compactPricedEvidenceProduct(product: ProductRecord): ProductRecord {
   return {
     id: compactEvidenceText(product.id, 300),
     domain: product.domain,
-    name: compactEvidenceText(product.name, 220),
+    name: compactEvidenceText(product.name, 120),
     // The durable layer is a priced assignment graph, not a second catalog
     // snapshot. The display name, immutable identifiers, source, quantity and
     // price are sufficient to revalidate identity and publication. Omitting the
@@ -522,8 +522,10 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
   });
   const componentConstraints = new Map<number, Set<string>>();
   const componentAssignmentHashes = new Map<number, Set<string>>();
+  const componentMemberCounts = new Map<number, number>();
   allCandidates.forEach((match, index) => {
     const root = findRoot(index);
+    componentMemberCounts.set(root, (componentMemberCounts.get(root) || 0) + 1);
     const constraints = componentConstraints.get(root) || new Set<string>();
     rivalConstraintKeys(match.product).forEach((key) => constraints.add(key));
     componentConstraints.set(root, constraints);
@@ -538,7 +540,9 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
     root,
     componentAssignmentHashes.get(root)?.size === 1
       ? [...componentAssignmentHashes.get(root)!][0]
-      : createHash("sha256").update(JSON.stringify([...constraints].sort())).digest("hex"),
+      : (componentAssignmentHashes.get(root)?.size || 0) > 1 || (componentMemberCounts.get(root) || 0) > 1
+        ? createHash("sha256").update(JSON.stringify([...constraints].sort())).digest("hex")
+        : "",
   ]));
   const candidateIndex = new Map(allCandidates.map((match, index) => [match, index]));
   const rivalAssignmentKey = (match: ProductMatch) => {
@@ -577,8 +581,7 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
   };
   const componentNodeByKey = new Map(componentKeys.map((key, index) => [key, componentNodeStart + index]));
   const flowTarget = Math.min(Math.max(1, Math.floor(resultTarget)), candidateRows.length);
-  const scoreScale = 1_000_000;
-  const exactBonus = (flowTarget + 1) * (scoreScale + 1);
+  const exactBonus = flowTarget + 1;
   const assignmentEdges: ResidualEdge[] = [];
   for (let rowIndex = 0; rowIndex < candidateRows.length; rowIndex += 1) {
     const rowNode = rowNodeStart + rowIndex;
@@ -586,7 +589,7 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
     for (const match of candidates[rowIndex]) {
       const componentNode = componentNodeByKey.get(rivalAssignmentKey(match));
       if (componentNode === undefined) continue;
-      const benefit = (exactProductPriority(match) * exactBonus) + Math.round(Math.max(0, Math.min(1, match.score)) * scoreScale);
+      const benefit = (exactProductPriority(match) * exactBonus) + Math.max(0, Math.min(1, match.score));
       assignmentEdges.push(addEdge(rowNode, componentNode, 1, -benefit, { match, rowIndex }));
     }
   }

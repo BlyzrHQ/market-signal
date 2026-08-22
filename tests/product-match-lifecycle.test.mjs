@@ -550,6 +550,42 @@ test("maximum-size durable evidence preserves the rival needed when the twentiet
   assert.equal(second.comparison.rows.length, 20);
 });
 
+test("maximum legal compact fields preserve twenty alternatives for every target row", () => {
+  const legalId = (prefix) => `${prefix}-${"i".repeat(Math.max(0, 299 - prefix.length))}`.slice(0, 300);
+  const legalUrl = (prefix) => {
+    const head = `https://rival.test/products/${prefix}/`;
+    const tail = "?country=US";
+    return `${head}${"x".repeat(2_048 - head.length - tail.length)}${tail}`;
+  };
+  const validGtin = (seed) => {
+    const body = String(seed).padStart(13, "0").slice(-13);
+    let sum = 0;
+    for (let index = body.length - 1, weight = 3; index >= 0; index -= 1, weight = weight === 3 ? 1 : 3) sum += Number(body[index]) * weight;
+    return `${body}${(10 - (sum % 10)) % 10}`;
+  };
+  const rows = Array.from({ length: 20 }, (_, primaryIndex) => {
+    const item = row(legalId(`p${primaryIndex}`));
+    item.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+    item.matches = Array.from({ length: 20 }, (_, rivalIndex) => {
+      const match = row(item.primary.id, legalId(`r${primaryIndex}-${rivalIndex}`)).matches[0];
+      match.product.name = `Rival ${primaryIndex}-${rivalIndex} ${"n".repeat(220)}`;
+      match.product.sourceUrl = legalUrl(`${primaryIndex}-${rivalIndex}`);
+      match.product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+      match.product.identifiers = { gtins: Array.from({ length: 8 }, (_, gtinIndex) => validGtin(1 + (primaryIndex * 160) + (rivalIndex * 8) + gtinIndex)) };
+      match.score = 1 - (rivalIndex / 1_000);
+      return match;
+    });
+    return item;
+  });
+  const ids = rows.map((item) => item.primary.id);
+  const state = mergePublishedProductComparisonState(comparison({ selected: ids, assessed: ids, rows, accepted: 400 }), null, 20);
+  const checkpoint = { version: 3, comparison: compactPublishedProductComparisonCheckpoint(state.comparison), evidence: compactPublishedProductComparisonCheckpoint(state.evidence) };
+
+  assert.equal(state.comparison.rows.length, 20);
+  assert.deepEqual(state.evidence.rows.map((item) => item.matches.length), Array(20).fill(20));
+  assert.ok(Buffer.byteLength(JSON.stringify(checkpoint), "utf8") < 1_400_000);
+});
+
 test("global assignment counts a merchant product id only once when its URL and name drift", () => {
   const pricedRow = (primaryId, rivalName, rivalUrl) => {
     const item = row(primaryId, "merchant-product-id");
@@ -788,6 +824,25 @@ test("global assignment maximizes exact products after cardinality", () => {
   assert.equal(result.rows.length, 2);
   assert.equal(result.rows.find((item) => item.primary.id === "p1")?.matches.find((match) => match.product)?.product.id, "shared");
   assert.equal(result.rows.find((item) => item.primary.id === "p2")?.matches.find((match) => match.product)?.product.id, "b");
+});
+
+test("global assignment maximizes unrounded total score after cardinality and exactness", () => {
+  const candidate = (primaryId, rivalId, score) => {
+    const match = row(primaryId, rivalId).matches[0];
+    match.product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+    match.score = score;
+    match.assessment = { verdict: "same_product" };
+    return match;
+  };
+  const first = row("p1");
+  first.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+  first.matches = [candidate("p1", "A", 0.9000001), candidate("p1", "B", 0.9)];
+  const second = row("p2");
+  second.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+  second.matches = [candidate("p2", "A", 0.9), candidate("p2", "B", 0.8999998)];
+  const state = mergePublishedProductComparisonState(comparison({ selected: ["p1", "p2"], assessed: ["p1", "p2"], rows: [first, second], accepted: 4 }), null, 2);
+
+  assert.deepEqual(state.comparison.rows.map((item) => [item.primary.id, item.matches[0].product.id]), [["p1", "B"], ["p2", "A"]]);
 });
 
 test("priced result backfill records an explicit bounded-pool shortfall", () => {
