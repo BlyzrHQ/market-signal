@@ -21,6 +21,7 @@ export type EnrichmentGap = {
   code?: "robots_unreachable" | "robots_disallowed" | "fetch_failed" | "identity_mismatch" | "adapter_limited";
   httpStatus?: number;
   failureKind?: "robots" | "network" | "http" | "content" | "identity" | "adapter" | "redirect";
+  retryExhausted?: true;
 };
 
 export type ProductEnrichmentCoverage = {
@@ -992,6 +993,8 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       const initialIdentity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle, canonicalCrossLanguageOptions);
       const replacementCandidates = [...extracted.result.products];
       let adapterGap = "";
+      let adapterGapHttpStatus: number | undefined;
+      let adapterGapFailureKind: EnrichmentGap["failureKind"] = "adapter";
       let adapterEvidenceProduct: ProductRecord | null = null;
       const adapter = storefrontAdapterRequest(fetched.url);
       const strongestInitialProduct = initialIdentity.products[0];
@@ -1003,8 +1006,13 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
             adapterGap = `robots.txt disallows the ${adapterLabel} endpoint.`;
           } else {
             const adapterResponse = await fetchSameDomain(adapter.endpointUrl, item.domain, "application/json", fetchImpl);
-            if (!adapterResponse.ok || !/json|javascript/i.test(adapterResponse.contentType)) {
+            if (!adapterResponse.ok) {
               adapterGap = `${adapterLabel} endpoint returned HTTP ${adapterResponse.status} or non-JSON content.`;
+              adapterGapHttpStatus = adapterResponse.status;
+              adapterGapFailureKind = "http";
+            } else if (!/json|javascript/i.test(adapterResponse.contentType)) {
+              adapterGap = `${adapterLabel} endpoint returned HTTP ${adapterResponse.status} or non-JSON content.`;
+              adapterGapFailureKind = "content";
             } else {
               const payload = JSON.parse(adapterResponse.text);
               const observedAt = new Date().toISOString();
@@ -1061,7 +1069,14 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
             }
           }
         } catch (error) {
-          adapterGap = error instanceof SyntaxError ? `${adapterLabel} endpoint returned invalid JSON.` : `${adapterLabel} endpoint could not be fetched.`;
+          if (error instanceof ProductFetchFailure) {
+            adapterGap = `${adapterLabel} endpoint could not be fetched.`;
+            adapterGapFailureKind = error.failureKind;
+            if (error.failureKind === "network") adapterGapHttpStatus = 0;
+          } else {
+            adapterGap = error instanceof SyntaxError ? `${adapterLabel} endpoint returned invalid JSON.` : `${adapterLabel} endpoint could not be fetched.`;
+            adapterGapFailureKind = "content";
+          }
         }
       }
       const identity = validateProductPageIdentity([expected], extracted.result.products, extracted.pageTitle, { allowScopedPageSignal: true, ...canonicalCrossLanguageOptions });
@@ -1090,7 +1105,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
           ? { ...adapterIdentityProduct, imageUrl: adapterIdentityProduct.imageUrl || (productsCanShareEvidence(adapterIdentityProduct, originalIdentityProduct, extracted.pageTitle) ? originalIdentityProduct?.imageUrl : "") || "" }
           : originalIdentityProduct || identity.products[0];
       const unresolvedAdapterGap = adapterGap && accepted && !hasConfirmedPrice([accepted]) ? adapterGap : "";
-      return { product: accepted ? { ...accepted, id: item.productId } : null, gap: unresolvedAdapterGap ? gap(unresolvedAdapterGap, "adapter_limited", undefined, "adapter") : null };
+      return { product: accepted ? { ...accepted, id: item.productId } : null, gap: unresolvedAdapterGap ? gap(unresolvedAdapterGap, "adapter_limited", adapterGapHttpStatus, adapterGapFailureKind) : null };
     } catch (error) {
       const failureKind = error instanceof ProductFetchFailure ? error.failureKind : "content";
       return { product: null, gap: gap(error instanceof Error ? `Selected product page could not be fetched: ${error.message}` : "Selected product page could not be fetched.", "fetch_failed", failureKind === "network" ? 0 : undefined, failureKind) };

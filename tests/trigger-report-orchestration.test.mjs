@@ -14,6 +14,7 @@ import {
   CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE,
   CRAWL_RESULT_CHECKPOINT_BATCH_INDEX,
   PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX,
+  ACTION_PLAN_CHECKPOINT_BATCH_INDEX,
   MAX_OPERATION_TIMEOUT_MS,
   comparisonWithinPrimaryCatalog,
   orchestrateReport,
@@ -39,6 +40,7 @@ import { babanujScaleDocument } from "./fixtures/babanuj-report-document.mjs";
 import { createWorkerApiManifest } from "../src/shared/worker-api-contract.ts";
 import { AI_ACTION_PLANNER_LIMITS, deterministicProductActionResult } from "../app/lib/ai-action-planner.ts";
 import { publishPricedProductComparison } from "../app/lib/product-match-lifecycle.ts";
+import { judgeBatchKey } from "../app/lib/ai-product-matching.ts";
 
 const payload = {
   contractVersion: "4",
@@ -201,6 +203,29 @@ function comparison({ withPair = false, count = withPair ? 20 : 1 } = {}) {
   };
 }
 
+async function persistJudgeEvidence(port, value, envelopeBatchIndex = 1_400) {
+  const row = value.rows.find((candidate) => candidate.matches.some((match) => match.product));
+  const rival = row?.matches.find((match) => match.product)?.product;
+  assert.ok(row && rival);
+  const groups = [{ primary: row.primary, candidates: [{ product: rival, retrievalScore: 1, lexicalScore: 1, lexicalEligible: true, semanticScore: 1, identitySignal: true }] }];
+  const key = judgeBatchKey(value.matching.model, groups, 0, 1);
+  await port.saveCheckpoint(payload.publicId, {
+    attemptNumber: 1,
+    batchIndex: envelopeBatchIndex,
+    inputHash: key.batchHash,
+    result: {
+      version: 2,
+      batchHash: key.batchHash,
+      batchIndex: key.batchIndex,
+      batchCount: key.batchCount,
+      model: key.model,
+      promptVersion: key.promptVersion,
+      evidenceGroups: [{ primary: row.primary, candidates: [rival] }],
+      assessments: [{ primaryId: row.primary.id, candidateId: rival.id, verdict: "same_product", confidence: 0.98, reason: "Observed product identity aligns.", contradiction: "" }],
+    },
+  });
+}
+
 test("published checkpoint validation rejects any evidence edge lost during revalidation", () => {
   const referenceTimeMs = Date.parse("2026-07-20T10:01:00.000Z");
   const recoveryIdentityHash = "a".repeat(64);
@@ -229,6 +254,24 @@ test("enrichment checkpoint validation rejects an outcome from a different expli
   const checkpoint = { ok: true, products: [outcome], coverage: { pagesRequested: 1, pagesFetched: 1, maxPages: 1, gaps: [] } };
 
   assert.equal(validEnrichmentCheckpoint(checkpoint, [target]), null);
+});
+
+test("enrichment checkpoint validation rejects forged retry metadata", () => {
+  const target = { domain: "rival.example", productId: "r1", sourceUrl: "https://rival.example/products/honey", expectedName: "Honey", role: "rival" };
+  const base = { ok: true, products: [], coverage: { pagesRequested: 1, pagesFetched: 0, maxPages: 1, gaps: [{ url: target.sourceUrl, productId: target.productId, role: target.role, reason: "Temporary network failure.", code: "fetch_failed", failureKind: "network", httpStatus: 0 }] } };
+  assert.ok(validEnrichmentCheckpoint(base, [target]));
+  assert.ok(validEnrichmentCheckpoint({ ...base, coverage: { ...base.coverage, gaps: [{ ...base.coverage.gaps[0], retryExhausted: true }] } }, [target]));
+  for (const gap of [
+    { ...base.coverage.gaps[0], role: "primary" },
+    { ...base.coverage.gaps[0], reason: 42 },
+    { ...base.coverage.gaps[0], code: "paid_retry_please" },
+    { ...base.coverage.gaps[0], failureKind: "forged" },
+    { ...base.coverage.gaps[0], httpStatus: 999 },
+    { ...base.coverage.gaps[0], code: undefined },
+    { ...base.coverage.gaps[0], failureKind: undefined },
+    { ...base.coverage.gaps[0], retryExhausted: false },
+    { ...base.coverage.gaps[0], retryExhausted: "yes" },
+  ]) assert.equal(validEnrichmentCheckpoint({ ...base, coverage: { ...base.coverage, gaps: [gap] } }, [target]), null);
 });
 
 function mockPort(overrides = {}) {
@@ -265,7 +308,7 @@ function mockPort(overrides = {}) {
     async brief() { return { ok: true, summary: "Observed market" }; },
     async ads() { return { ok: true, block: { type: "ad-intelligence", id: "ad-intelligence" } }; },
     async match() { return { ok: true, comparison: comparison({ withPair: true }) }; },
-    async enrich({ targets }) { return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: targets.length, gaps: targets.map((target) => ({ url: target.sourceUrl, productId: target.productId, role: target.role, reason: "Test fixture did not fetch this page." })) } }; },
+    async enrich({ targets }) { return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: targets.length, gaps: targets.map((target) => ({ url: target.sourceUrl, productId: target.productId, role: target.role, reason: "Test fixture did not fetch this page.", code: "fetch_failed", failureKind: "content" })) } }; },
     async loadCheckpoint(_publicId, input) {
       let values = input.batchIndex === undefined ? [...checkpoints.values()] : checkpoints.has(input.batchIndex) ? [checkpoints.get(input.batchIndex)] : [];
       if (input.batchIndexStart !== undefined) values = values.filter((item) => item.batchIndex >= input.batchIndexStart && item.batchIndex <= input.batchIndexEnd);
@@ -914,11 +957,11 @@ test("enrichment checkpoints require one exact source-bound outcome per target",
   assert.equal(validEnrichmentCheckpoint({ ...complete, products: [products[0], { ...products[1], sourceUrl: "https://rival.example/products/wrong-page" }] }, targets), null);
   assert.equal(validEnrichmentCheckpoint({ ...complete, products: [products[0], { ...products[1], sourceUrl: "https://rival.example/products/two?country=US" }] }, targets), null);
   assert.equal(validEnrichmentCheckpoint({ ...complete, products: [products[0]], coverage: { ...complete.coverage, pagesFetched: 1 } }, targets), null);
-  const gap = { url: targets[1].sourceUrl, productId: targets[1].productId, role: "rival", reason: "Unavailable." };
+  const gap = { url: targets[1].sourceUrl, productId: targets[1].productId, role: "rival", reason: "Unavailable.", code: "fetch_failed", failureKind: "content" };
   assert.ok(validEnrichmentCheckpoint({ ...complete, products: [products[0]], coverage: { ...complete.coverage, pagesFetched: 1, gaps: [gap] } }, targets));
   assert.equal(validEnrichmentCheckpoint({ ...complete, coverage: { ...complete.coverage, gaps: [gap] } }, targets), null);
   assert.equal(validEnrichmentCheckpoint({ ...complete, products: [products[0]], coverage: { ...complete.coverage, pagesFetched: 1, gaps: [gap, gap] } }, targets), null);
-  const allGaps = targets.map((target) => ({ url: target.sourceUrl, productId: target.productId, role: target.role, reason: "Unavailable." }));
+  const allGaps = targets.map((target) => ({ url: target.sourceUrl, productId: target.productId, role: target.role, reason: "Unavailable.", code: "fetch_failed", failureKind: "content" }));
   assert.ok(validEnrichmentCheckpoint({ ...complete, products: [], coverage: { ...complete.coverage, pagesFetched: 0, gaps: allGaps } }, targets));
 });
 
@@ -2065,7 +2108,7 @@ test("a task retry reuses durable enrichment batches instead of fetching product
   await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
   assert.equal(enrichCalls, 1);
   assert.equal(crawlCalls, 1);
-  assert.equal(port.checkpoints.size, 7);
+  assert.equal(port.checkpoints.size, 10);
   assert.ok(port.checkpoints.has(299));
   assert.ok(port.checkpoints.has(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX));
   assert.ok(port.checkpoints.has(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX - 1));
@@ -2151,6 +2194,154 @@ test("a task retry preserves successful pages, re-fetches only transient gaps, a
   assert.equal(block.matching.publishedPrimaryProducts, 1);
 });
 
+test("a temporary adapter-limited price gap is terminal for the report and does not trigger another paid task", async () => {
+  let enrichCalls = 0;
+  const fetchedRoles = [];
+  const port = mockPort({
+    async match() {
+      const value = comparison({ withPair: true, count: 1 });
+      value.rows[0].primary.priceSignals = [];
+      value.rows[0].matches[0].product.priceSignals = [];
+      return { ok: true, comparison: value };
+    },
+    async enrich({ targets }) {
+      enrichCalls += 1;
+      fetchedRoles.push(targets.map((target) => target.role));
+      if (enrichCalls === 1) {
+        const primaryTarget = targets.find((target) => target.role === "primary");
+        const rivalTarget = targets.find((target) => target.role === "rival");
+        return {
+          ok: true,
+          products: [{ ...product(primaryTarget.domain, primaryTarget.productId), name: primaryTarget.expectedName, normalizedName: primaryTarget.expectedName.toLowerCase(), sourceUrl: primaryTarget.sourceUrl, priceSignals: [{ raw: "GBP 9", currency: "GBP", amount: 9 }] }],
+          coverage: { pagesRequested: targets.length, pagesFetched: 1, maxPages: 64, gaps: [{ url: rivalTarget.sourceUrl, productId: rivalTarget.productId, role: rivalTarget.role, reason: "Price adapter was temporarily unavailable.", code: "adapter_limited", failureKind: "network", httpStatus: 0 }] },
+        };
+      }
+      return {
+        ok: true,
+        products: targets.map((target) => ({ ...product(target.domain, target.productId), name: target.expectedName, normalizedName: target.expectedName.toLowerCase(), sourceUrl: target.sourceUrl, priceSignals: [{ raw: "GBP 7", currency: "GBP", amount: 7 }] })),
+        coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: 64, gaps: [] },
+      };
+    },
+  });
+
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port);
+  assert.equal(enrichCalls, 1);
+  assert.deepEqual(fetchedRoles[0].sort(), ["primary", "rival"]);
+  assert.equal(result.reportStatus, "limited");
+  const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
+  assert.equal(block.rows.length, 0);
+  assert.equal(block.enrichment.gaps[0].code, "adapter_limited");
+});
+
+test("a permanent adapter limitation terminalizes without a task retry or paid action planning", async () => {
+  let matchCalls = 0;
+  let enrichCalls = 0;
+  let actionCalls = 0;
+  const port = mockPort({
+    async match() {
+      matchCalls += 1;
+      const value = comparison({ withPair: true, count: 1 });
+      value.rows[0].primary.priceSignals = [];
+      value.rows[0].matches[0].product.priceSignals = [];
+      return { ok: true, comparison: value };
+    },
+    async enrich({ targets }) {
+      enrichCalls += 1;
+      const primaryTarget = targets.find((target) => target.role === "primary");
+      const rivalTarget = targets.find((target) => target.role === "rival");
+      return {
+        ok: true,
+        products: [{ ...product(primaryTarget.domain, primaryTarget.productId), name: primaryTarget.expectedName, normalizedName: primaryTarget.expectedName.toLowerCase(), sourceUrl: primaryTarget.sourceUrl, priceSignals: [{ raw: "GBP 9", currency: "GBP", amount: 9 }] }],
+        coverage: { pagesRequested: targets.length, pagesFetched: 1, maxPages: 64, gaps: [{ url: rivalTarget.sourceUrl, productId: rivalTarget.productId, role: rivalTarget.role, reason: "No same-page currency was confirmed.", code: "adapter_limited", failureKind: "adapter" }] },
+      };
+    },
+    async actions() { actionCalls += 1; throw new Error("must not plan actions without a published pair"); },
+  });
+
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port);
+  assert.equal(result.reportStatus, "limited");
+  assert.equal(matchCalls, 1);
+  assert.equal(enrichCalls, 1);
+  assert.equal(actionCalls, 0);
+  assert.equal(port.events.some((item) => item.idempotencyKey === "report-1-task-1-matching-task-retry"), false);
+});
+
+test("a transient adapter failure does not retry or invoke paid action planning", async () => {
+  let matchCalls = 0;
+  let enrichCalls = 0;
+  let actionCalls = 0;
+  const port = mockPort({
+    async match() {
+      matchCalls += 1;
+      const value = comparison({ withPair: true, count: 1 });
+      value.rows[0].primary.priceSignals = [];
+      value.rows[0].matches[0].product.priceSignals = [];
+      await persistJudgeEvidence(port, value);
+      return { ok: true, comparison: value };
+    },
+    async enrich({ targets }) {
+      enrichCalls += 1;
+      const primaryTarget = targets.find((target) => target.role === "primary");
+      const rivalTarget = targets.find((target) => target.role === "rival") || targets[0];
+      const products = primaryTarget
+        ? [{ ...product(primaryTarget.domain, primaryTarget.productId), name: primaryTarget.expectedName, normalizedName: primaryTarget.expectedName.toLowerCase(), sourceUrl: primaryTarget.sourceUrl, priceSignals: [{ raw: "GBP 9", currency: "GBP", amount: 9 }] }]
+        : [];
+      return {
+        ok: true,
+        products,
+        coverage: { pagesRequested: targets.length, pagesFetched: products.length, maxPages: 64, gaps: [{ url: rivalTarget.sourceUrl, productId: rivalTarget.productId, role: rivalTarget.role, reason: "Price adapter remains temporarily unavailable.", code: "adapter_limited", failureKind: "network", httpStatus: 0 }] },
+      };
+    },
+    async actions() { actionCalls += 1; throw new Error("must not plan actions without a published pair"); },
+  });
+
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port);
+  assert.equal(result.reportStatus, "limited");
+  assert.equal(matchCalls, 1);
+  assert.equal(enrichCalls, 1);
+  assert.equal(actionCalls, 0);
+  assert.equal(port.events.some((item) => item.idempotencyKey === "report-1-task-1-matching-task-retry"), false);
+});
+
+test("a crash after a terminal adapter checkpoint reuses matcher and enrichment state", async () => {
+  let saveCalls = 0;
+  let matchCalls = 0;
+  let enrichCalls = 0;
+  let actionCalls = 0;
+  const port = mockPort({
+    async match() {
+      matchCalls += 1;
+      const value = comparison({ withPair: true, count: 1 });
+      value.rows[0].primary.priceSignals = [];
+      value.rows[0].matches[0].product.priceSignals = [];
+      await persistJudgeEvidence(port, value);
+      return { ok: true, comparison: value };
+    },
+    async enrich({ targets }) {
+      enrichCalls += 1;
+      const primaryTarget = targets.find((target) => target.role === "primary");
+      const rivalTarget = targets.find((target) => target.role === "rival");
+      return {
+        ok: true,
+        products: [{ ...product(primaryTarget.domain, primaryTarget.productId), name: primaryTarget.expectedName, normalizedName: primaryTarget.expectedName.toLowerCase(), sourceUrl: primaryTarget.sourceUrl, priceSignals: [{ raw: "GBP 9", currency: "GBP", amount: 9 }] }],
+        coverage: { pagesRequested: targets.length, pagesFetched: 1, maxPages: 64, gaps: [{ url: rivalTarget.sourceUrl, productId: rivalTarget.productId, role: rivalTarget.role, reason: "Price adapter temporarily unavailable.", code: "adapter_limited", failureKind: "network", httpStatus: 0 }] },
+      };
+    },
+    async actions() { actionCalls += 1; throw new Error("must not run while no pair is publishable"); },
+    async saveDocument(_publicId, value) {
+      saveCalls += 1;
+      if (saveCalls === 1) throw new Error("terminal callback lost");
+      port.saves.push(value);
+    },
+  });
+
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
+  assert.equal((await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port)).reportStatus, "limited");
+  assert.equal(matchCalls, 1);
+  assert.equal(enrichCalls, 1);
+  assert.equal(actionCalls, 0);
+});
+
 test("a failed transient retry preserves prior successful pages and published pairs", async () => {
   let enrichCalls = 0;
   const port = mockPort({
@@ -2178,6 +2369,10 @@ test("a failed transient retry preserves prior successful pages and published pa
   const firstBatch = [...port.checkpoints.values()].find((item) => item.result?.coverage?.pagesFetched === 3);
   assert.ok(firstBatch);
   assert.equal(firstBatch.result.coverage.gaps[0].failureKind, "network");
+  const exhausted = [...port.checkpoints.values()].find((item) => item.result?.coverage?.gaps?.some((gap) => gap.retryExhausted === true));
+  assert.ok(exhausted);
+  await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 3, isFinalAttempt: true }, port);
+  assert.equal(enrichCalls, 2, "an exhausted retry must not dispatch enrichment again on another task attempt");
 });
 
 test("an ambiguous checkpoint-save response reloads and uses the committed enrichment batch", async () => {
@@ -2296,7 +2491,7 @@ test("a shape-valid but semantically incomplete enrichment checkpoint is rejecte
     },
   });
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/);
-  const checkpoint = [...port.checkpoints.values()].find((value) => value.result?.coverage);
+  const checkpoint = [...port.checkpoints.values()].find((value) => value.batchIndex >= 300 && value.result?.coverage);
   assert.ok(checkpoint);
   checkpoint.result.coverage.gaps = [];
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port), /durable enrichment checkpoint is invalid/);
@@ -2389,6 +2584,119 @@ test("AI action transport failure retains deterministic moves without limiting t
   const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
   assert.equal(block.rows[0].matches[0].decision.actionPlan.source, "deterministic");
   assert.match(block.actionPlanning.gaps.join(" "), /provider timeout/i);
+});
+
+test("a task retry adopts the durable action plan instead of dispatching actions again", async () => {
+  let actionCalls = 0;
+  let factCalls = 0;
+  const port = mockPort({
+    async actions({ inputs }) {
+      actionCalls += 1;
+      return { ok: true, result: deterministicProductActionResult(inputs) };
+    },
+    async persistFactChunk(_publicId, value) {
+      factCalls += 1;
+      if (factCalls === 1) throw new Error("fact persistence unavailable");
+      port.factChunks.push(value);
+    },
+  });
+
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port),
+    /relational fact persistence remained incomplete/i,
+  );
+  assert.ok(port.checkpoints.has(ACTION_PLAN_CHECKPOINT_BATCH_INDEX));
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
+  assert.equal(result.reportStatus, "complete");
+  assert.equal(actionCalls, 1);
+});
+
+test("a task retry skips a stale prior action slot when product evidence evolves", async () => {
+  let actionCalls = 0;
+  let factCalls = 0;
+  const port = mockPort({
+    async actions({ inputs }) {
+      actionCalls += 1;
+      return { ok: true, result: deterministicProductActionResult(inputs) };
+    },
+    async persistFactChunk(_publicId, value) {
+      factCalls += 1;
+      if (factCalls === 1) throw new Error("fact persistence unavailable");
+      port.factChunks.push(value);
+    },
+  });
+
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port),
+    /relational fact persistence remained incomplete/i,
+  );
+  port.checkpoints.get(ACTION_PLAN_CHECKPOINT_BATCH_INDEX).inputHash = "f".repeat(64);
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
+  assert.equal(result.reportStatus, "complete");
+  assert.equal(actionCalls, 2);
+  assert.ok(port.checkpoints.has(ACTION_PLAN_CHECKPOINT_BATCH_INDEX + 1));
+});
+
+test("a recovered report skips a conflicting prior-attempt action slot at the current task index", async () => {
+  const seedPort = mockPort();
+  await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, seedPort);
+  const stale = structuredClone(seedPort.checkpoints.get(ACTION_PLAN_CHECKPOINT_BATCH_INDEX));
+  stale.inputHash = "f".repeat(64);
+
+  let actionCalls = 0;
+  const port = mockPort({
+    async loadReport() {
+      return {
+        run: { publicId: recoveryPayload.publicId, primaryDomain: recoveryPayload.primaryDomain, locale: recoveryPayload.locale, status: "queued", attemptCount: 2, createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:00:00.000Z", productPlan: "starter", productLimit: 20 },
+        events: [],
+      };
+    },
+    async actions({ inputs }) {
+      actionCalls += 1;
+      return { ok: true, result: deterministicProductActionResult(inputs) };
+    },
+  });
+  const loadCheckpoint = port.loadCheckpoint.bind(port);
+  port.loadCheckpoint = async (publicId, input) => input.batchIndex === undefined
+    && input.batchIndexStart <= ACTION_PLAN_CHECKPOINT_BATCH_INDEX
+    && input.batchIndexEnd >= ACTION_PLAN_CHECKPOINT_BATCH_INDEX
+    ? [stale]
+    : loadCheckpoint(publicId, input);
+
+  const result = await orchestrateReport(recoveryPayload, { attemptNumber: 2, taskAttemptNumber: 1, isFinalAttempt: false }, port);
+  assert.equal(result.reportStatus, "complete");
+  assert.equal(actionCalls, 1);
+  assert.equal(port.checkpoints.get(ACTION_PLAN_CHECKPOINT_BATCH_INDEX).attemptNumber, 2);
+});
+
+test("a corrupt durable action-plan checkpoint fails closed without another action dispatch", async () => {
+  let actionCalls = 0;
+  let factCalls = 0;
+  const port = mockPort({
+    async actions({ inputs }) {
+      actionCalls += 1;
+      return { ok: true, result: deterministicProductActionResult(inputs) };
+    },
+    async persistFactChunk(_publicId, value) {
+      factCalls += 1;
+      if (factCalls === 1) throw new Error("fact persistence unavailable");
+      port.factChunks.push(value);
+    },
+  });
+
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port),
+    /relational fact persistence remained incomplete/i,
+  );
+  const checkpoint = structuredClone(port.checkpoints.get(ACTION_PLAN_CHECKPOINT_BATCH_INDEX));
+  checkpoint.batchIndex = ACTION_PLAN_CHECKPOINT_BATCH_INDEX + 1;
+  checkpoint.result.plans[0].plan.evidenceKeys = ["forged-evidence-key"];
+  port.checkpoints.set(checkpoint.batchIndex, checkpoint);
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port),
+    /durable action-plan checkpoint is invalid/,
+  );
+  assert.equal(actionCalls, 1);
 });
 
 test("a final non-crawl failure records one terminal orchestration event", async () => {
@@ -2505,6 +2813,24 @@ test("the HTTP action adapter uses the internal route, bounded budget, and beare
   assert.equal(calls[0].init.headers.Authorization, "Bearer callback_secret_with_enough_entropy_123456");
   assert.equal(OPERATION_BUDGETS_MS.actions, 35_000);
   assert.ok(OPERATION_BUDGETS_MS.actions >= AI_ACTION_PLANNER_LIMITS.totalBudgetMs + 5_000, "action transport must preserve serialization headroom above the planner budget");
+});
+
+test("the HTTP action adapter never repeats an ambiguous paid POST", async () => {
+  let calls = 0;
+  const port = createReportOrchestrationHttpPort({
+    appOrigin: "https://market.example",
+    callbackToken: "callback_secret_with_enough_entropy_123456",
+    async fetchImpl() {
+      calls += 1;
+      return new Response("temporarily unavailable", { status: 503 });
+    },
+  });
+  await assert.rejects(() => port.actions({ inputs: [] }), (error) => {
+    assert.equal(error instanceof OrchestrationHttpError, true);
+    assert.equal(error.retryable, true);
+    return true;
+  });
+  assert.equal(calls, 1);
 });
 
 test("the HTTP report adapter sends authenticated fact chunks and the final manifest", async () => {
