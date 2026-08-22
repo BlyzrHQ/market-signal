@@ -39,6 +39,7 @@ import { babanujScaleDocument } from "./fixtures/babanuj-report-document.mjs";
 import { createWorkerApiManifest } from "../src/shared/worker-api-contract.ts";
 import { AI_ACTION_PLANNER_LIMITS, deterministicProductActionResult } from "../app/lib/ai-action-planner.ts";
 import { publishPricedProductComparison } from "../app/lib/product-match-lifecycle.ts";
+import { judgeBatchKey } from "../app/lib/ai-product-matching.ts";
 
 const payload = {
   contractVersion: "4",
@@ -199,6 +200,29 @@ function comparison({ withPair = false, count = withPair ? 20 : 1 } = {}) {
       attempts: 1,
     },
   };
+}
+
+async function persistJudgeEvidence(port, value, envelopeBatchIndex = 1_400) {
+  const row = value.rows.find((candidate) => candidate.matches.some((match) => match.product));
+  const rival = row?.matches.find((match) => match.product)?.product;
+  assert.ok(row && rival);
+  const groups = [{ primary: row.primary, candidates: [{ product: rival, retrievalScore: 1, lexicalScore: 1, lexicalEligible: true, semanticScore: 1, identitySignal: true }] }];
+  const key = judgeBatchKey(value.matching.model, groups, 0, 1);
+  await port.saveCheckpoint(payload.publicId, {
+    attemptNumber: 1,
+    batchIndex: envelopeBatchIndex,
+    inputHash: key.batchHash,
+    result: {
+      version: 2,
+      batchHash: key.batchHash,
+      batchIndex: key.batchIndex,
+      batchCount: key.batchCount,
+      model: key.model,
+      promptVersion: key.promptVersion,
+      evidenceGroups: [{ primary: row.primary, candidates: [rival] }],
+      assessments: [{ primaryId: row.primary.id, candidateId: rival.id, verdict: "same_product", confidence: 0.98, reason: "Observed product identity aligns.", contradiction: "" }],
+    },
+  });
 }
 
 test("published checkpoint validation rejects any evidence edge lost during revalidation", () => {
@@ -2225,13 +2249,16 @@ test("a permanent adapter limitation terminalizes without a task retry or paid a
 });
 
 test("a transient adapter failure gets one retry and never repeats paid action planning while incomplete", async () => {
+  let matchCalls = 0;
   let enrichCalls = 0;
   let actionCalls = 0;
   const port = mockPort({
     async match() {
+      matchCalls += 1;
       const value = comparison({ withPair: true, count: 1 });
       value.rows[0].primary.priceSignals = [];
       value.rows[0].matches[0].product.priceSignals = [];
+      await persistJudgeEvidence(port, value);
       return { ok: true, comparison: value };
     },
     async enrich({ targets }) {
@@ -2253,11 +2280,58 @@ test("a transient adapter failure gets one retry and never repeats paid action p
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/);
   const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
   assert.equal(result.reportStatus, "limited");
+  assert.equal(matchCalls, 1);
   assert.equal(enrichCalls, 2);
   assert.equal(actionCalls, 0);
   const lastCheckpoint = [...port.checkpoints.values()].find((checkpoint) => checkpoint.batchIndex === 300 + MAX_FINAL_ENRICHMENT_BATCHES);
   assert.equal(lastCheckpoint.result.coverage.gaps[0].failureKind, "adapter");
   assert.match(lastCheckpoint.result.coverage.gaps[0].reason, /single bounded adapter retry was exhausted/i);
+});
+
+test("an adapter retry transport failure is durably exhausted before a third task replay", async () => {
+  let terminal = false;
+  let matchCalls = 0;
+  let enrichCalls = 0;
+  let actionCalls = 0;
+  const port = mockPort({
+    async loadReport() {
+      return {
+        run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: terminal ? "limited" : "queued", attemptCount: 1, createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T10:00:00.000Z", productPlan: "starter", productLimit: 20 },
+        events: port.events,
+      };
+    },
+    async match() {
+      matchCalls += 1;
+      const value = comparison({ withPair: true, count: 1 });
+      value.rows[0].primary.priceSignals = [];
+      value.rows[0].matches[0].product.priceSignals = [];
+      await persistJudgeEvidence(port, value);
+      return { ok: true, comparison: value };
+    },
+    async enrich({ targets }) {
+      enrichCalls += 1;
+      if (enrichCalls === 2) throw new Error("adapter transport unavailable");
+      const primaryTarget = targets.find((target) => target.role === "primary");
+      const rivalTarget = targets.find((target) => target.role === "rival");
+      return {
+        ok: true,
+        products: [{ ...product(primaryTarget.domain, primaryTarget.productId), name: primaryTarget.expectedName, normalizedName: primaryTarget.expectedName.toLowerCase(), sourceUrl: primaryTarget.sourceUrl, priceSignals: [{ raw: "GBP 9", currency: "GBP", amount: 9 }] }],
+        coverage: { pagesRequested: targets.length, pagesFetched: 1, maxPages: 64, gaps: [{ url: rivalTarget.sourceUrl, productId: rivalTarget.productId, role: rivalTarget.role, reason: "Price adapter temporarily unavailable.", code: "adapter_limited", failureKind: "network", httpStatus: 0 }] },
+      };
+    },
+    async actions() { actionCalls += 1; throw new Error("must not run while no pair is publishable"); },
+    async saveDocument(_publicId, value) { port.saves.push(value); terminal = true; },
+  });
+
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/);
+  assert.equal((await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port)).reportStatus, "limited");
+  assert.equal((await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 3, isFinalAttempt: false }, port)).reportStatus, "limited");
+  assert.equal(matchCalls, 1);
+  assert.equal(enrichCalls, 2);
+  assert.equal(actionCalls, 0);
+  const exhausted = [...port.checkpoints.values()].find((checkpoint) => checkpoint.batchIndex === 300 + MAX_FINAL_ENRICHMENT_BATCHES);
+  assert.equal(exhausted.result.coverage.gaps[0].failureKind, "adapter");
+  assert.match(exhausted.result.coverage.gaps[0].reason, /single bounded adapter retry was exhausted/i);
 });
 
 test("a failed transient retry preserves prior successful pages and published pairs", async () => {
