@@ -23,8 +23,8 @@ export type D1PreparedStatementLike = DatabasePreparedStatement;
 export type D1DatabaseLike = ApplicationDatabase;
 
 const MEMORY_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
-const MAX_INVESTIGATIONS = 20;
-const MAX_REMEMBERED_CANDIDATES = 20;
+const MAX_INVESTIGATIONS = 152;
+const MAX_REMEMBERED_CANDIDATES = 152;
 const schemaReady = new WeakMap<object, Promise<void>>();
 
 function clean(value: unknown, limit = 1_000) {
@@ -144,7 +144,7 @@ export async function loadRememberedCompetitors(primaryDomain: string, now = new
       FROM verified_competitors
       WHERE primary_domain = ? AND last_verified_at >= ?
       ORDER BY last_verification_score DESC, last_verified_at DESC
-      LIMIT 20`).bind(canonicalDomain(primaryDomain), cutoff).all<VerifiedCompetitorMemory>();
+      LIMIT 152`).bind(canonicalDomain(primaryDomain), cutoff).all<VerifiedCompetitorMemory>();
     const candidates = (response.results || []).flatMap((record) => {
       const candidate = candidateFromRecord(record);
       return candidate ? [candidate] : [];

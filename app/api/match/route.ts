@@ -6,7 +6,9 @@ import { canonicalGtin, parseCanonicalQuantity, type ProductIdentifiers } from "
 import { publicHttpUrl } from "../../lib/public-url.ts";
 import { loadReportMatchBatchCheckpoints, loadReportProductEntitlement, saveReportMatchBatchCheckpoint } from "../../lib/report-store.ts";
 
-const MAX_CATALOGS = 7;
+// One primary catalog plus the complete bounded discovery wave (132 fresh and
+// 152 remembered verified rivals). Never silently discard a rival.
+const MAX_CATALOGS = 285;
 const MAX_PRIMARY_PRODUCTS = 1_000;
 const MAX_RIVAL_PRODUCTS = 600;
 const MAX_SUBMITTED_PRODUCTS_PER_CATALOG = 5_000;
@@ -128,12 +130,12 @@ async function boundedJsonBody(request: Request) {
 }
 
 export function parseCatalogs(value: unknown, primaryDomain = "", requestedPins?: unknown) {
-  if (!Array.isArray(value)) return [];
+  if (!Array.isArray(value) || value.length > MAX_CATALOGS) return [];
   const pinIds = requestedPinIds(requestedPins);
   const rawProductDomains = new Map<string, string>();
   const catalogDomains = new Set<string>();
   let invalidIdentity = false;
-  const catalogs = value.slice(0, MAX_CATALOGS).flatMap((entry) => {
+  const catalogs = value.flatMap((entry) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
     const item = entry as Record<string, unknown>;
     const domain = canonicalDomain(text(item.domain, 300));

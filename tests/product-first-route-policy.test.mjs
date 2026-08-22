@@ -297,4 +297,14 @@ test("discovery exhaustion fails closed on candidate truncation or nonterminal v
   assert.equal(terminal.verificationComplete, true);
   assert.equal(terminal.complete, true);
   assert.equal(competitorInvestigationComplete(terminal404), true);
+
+  const seededTimeout = {
+    ...verified,
+    discovery: { matchedProductUrl: "https://verified.example/products/beef-cubes" },
+    gaps: [{ url: "https://verified.example/products/beef-cubes", reason: "request timed out", observedAt: "2026-08-07T00:00:00.000Z" }],
+  };
+  assert.equal(competitorInvestigationComplete(seededTimeout), false);
+  const persistenceFailed = finalizedDiscoveryCoverage(coverage, 1, 1, ["fulfilled"], [verified], true, false);
+  assert.equal(persistenceFailed.batchComplete, false);
+  assert.equal(persistenceFailed.complete, false);
 });

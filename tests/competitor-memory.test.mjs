@@ -46,13 +46,18 @@ class FakeDatabase {
   async batch(statements) { this.batches.push(statements); return statements.map(() => ({})); }
 }
 
-test("remembered leads preserve the full fresh and remembered sets within the 20-domain bound", () => {
+test("remembered leads preserve the full bounded fresh and remembered investigation set", () => {
   const fresh = Array.from({ length: 5 }, (_, index) => candidate(`fresh-${index}.test`));
   const remembered = Array.from({ length: 5 }, (_, index) => ({ ...candidate(`old-${index}.test`, "remembered-reverified"), rememberedVerifiedAt: "2026-07-14T00:00:00.000Z" }));
   const merged = mergeRememberedCandidates(fresh, remembered);
   assert.equal(merged.length, 10);
   assert.equal(merged.filter((item) => item.provenance === "remembered-reverified").length, 5);
   assert.equal(merged.filter((item) => item.provenance === "discovered-this-run").length, 5);
+});
+
+test("remembered continuity retains more than the former twenty-domain cutoff", () => {
+  const remembered = Array.from({ length: 100 }, (_, index) => ({ ...candidate(`old-${index}.test`, "remembered-reverified"), rememberedVerifiedAt: "2026-07-14T00:00:00.000Z" }));
+  assert.equal(mergeRememberedCandidates([], remembered).length, 100);
 });
 
 test("remembered leads remain available when fresh discovery is sparse", () => {

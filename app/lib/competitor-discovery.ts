@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { inferBusinessProfile, profileTerms, type BusinessProfile, type BusinessProfileInput } from "./business-profile.ts";
 import { canonicalDomain } from "./domain.ts";
 import type { ProductRecord } from "./product-intelligence.ts";
@@ -59,6 +60,7 @@ export type DiscoveryResult = {
   gap?: string;
   productSearchCoverage: {
     eligibleAnchors: number;
+    anchorSetHash: string;
     searchedAnchors: number;
     startIndex: number;
     endIndex: number;
@@ -633,6 +635,37 @@ export function mergeCandidates(candidates: DiscoveryCandidate[], maxCandidates 
     .slice(0, maxCandidates);
 }
 
+function completedWebSearch(payload: Record<string, unknown>) {
+  return (Array.isArray(payload.output) ? payload.output : []).some((item) => {
+    if (!item || typeof item !== "object" || (item as { type?: unknown }).type !== "web_search_call") return false;
+    const action = (item as { action?: unknown }).action;
+    if (!action || typeof action !== "object" || Array.isArray(action)) return false;
+    const query = (action as { query?: unknown }).query;
+    const queries = (action as { queries?: unknown }).queries;
+    return (typeof query === "string" && Boolean(query.trim()))
+      || (Array.isArray(queries) && queries.some((value) => typeof value === "string" && Boolean(value.trim())));
+  });
+}
+
+function structurallyValidDiscovery(value: Record<string, unknown>) {
+  if (typeof value.category !== "string" || !value.category.trim() || typeof value.region !== "string" || !value.region.trim()) return false;
+  if (!Array.isArray(value.queries) || !value.queries.every((item) => typeof item === "string")) return false;
+  if (!Array.isArray(value.candidates)) return false;
+  const strings = ["domain", "companyName", "reason", "searchQuery", "websiteUrl", "evidenceUrl", "evidenceTitle", "marketCategory", "matchedPrimaryProductName", "matchedProductUrl"];
+  return value.candidates.every((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return false;
+    const item = candidate as Record<string, unknown>;
+    return strings.every((key) => typeof item[key] === "string")
+      && (item.relationship === "direct" || item.relationship === "adjacent")
+      && Array.isArray(item.sharedOfferings)
+      && item.sharedOfferings.every((offering) => typeof offering === "string");
+  });
+}
+
+function discoveryAnchorSetHash(products: ProductRecord[]) {
+  return createHash("sha256").update(JSON.stringify(products.map((product) => ({ id: product.id, name: product.normalizedName || product.name, sourceUrl: product.sourceUrl })))).digest("hex");
+}
+
 export function publicDiscoveryCandidate<T extends DiscoveryCandidate>(candidate: T): T {
   const privateOnly = !candidate.observedAdmission && Boolean(candidate.inferredProductLeads?.length);
   const published = { ...candidate };
@@ -749,7 +782,7 @@ async function runLane(endpoint: string, apiKey: string, model: string, lane: Se
           && Array.isArray((value as Record<string, unknown>).candidates)) parsed = value as Record<string, unknown>;
       } catch { parsed = null; }
     }
-    if (!parsed) return { lane, category: business.category, region: business.region, queries: [], candidates: [], completed: false, gap: `${lane} search returned an incomplete provider response; it cannot count as an exhausted search.` };
+    if (!parsed || !completedWebSearch(payload) || !structurallyValidDiscovery(parsed)) return { lane, category: business.category, region: business.region, queries: [], candidates: [], completed: false, gap: `${lane} search returned an incomplete provider response or no completed web search; it cannot count as an exhausted search.` };
     const queries = (Array.isArray(parsed.queries) ? parsed.queries : []).map(String).filter(Boolean).slice(0, 8);
     const rawCandidates = Array.isArray(parsed.candidates) ? parsed.candidates : [];
     let privateStructuredLeads = 0;
@@ -789,15 +822,18 @@ async function runLane(endpoint: string, apiKey: string, model: string, lane: Se
   }
 }
 
-export async function discoverCompetitors(profile: DiscoveryProfile, options: { searchOffset?: number; priorCoverageComplete?: boolean } = {}): Promise<DiscoveryResult> {
+export async function discoverCompetitors(profile: DiscoveryProfile, options: { searchOffset?: number; priorCoverageComplete?: boolean; expectedAnchorSetHash?: string } = {}): Promise<DiscoveryResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   const model = process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini";
   const business = inferBusinessProfile(profile);
   const eligibleAnchors = business.businessType === "ecommerce" ? productSearchAnchors(business.offerings, MAX_PRODUCT_SEARCH_ANCHORS, business.brandName) : [];
-  const startIndex = Math.max(0, Math.min(eligibleAnchors.length, Math.floor(options.searchOffset || 0)));
+  const anchorSetHash = discoveryAnchorSetHash(eligibleAnchors);
+  const requestedOffset = Math.max(0, Math.min(eligibleAnchors.length, Math.floor(options.searchOffset || 0)));
+  const anchorSetMatches = requestedOffset === 0 || (Boolean(options.expectedAnchorSetHash) && options.expectedAnchorSetHash === anchorSetHash);
+  const startIndex = anchorSetMatches ? requestedOffset : 0;
   const anchors = eligibleAnchors.slice(startIndex, startIndex + MAX_PRODUCT_SEARCHES);
   const endIndex = startIndex + anchors.length;
-  const baseCoverage = { eligibleAnchors: eligibleAnchors.length, searchedAnchors: 0, startIndex, endIndex, truncated: endIndex < eligibleAnchors.length, searchesComplete: false, candidateDomainsFound: 0, candidateDomainsInvestigated: 0, candidateTruncated: false, verificationComplete: false, batchComplete: false, complete: false };
+  const baseCoverage = { eligibleAnchors: eligibleAnchors.length, anchorSetHash, searchedAnchors: 0, startIndex, endIndex, truncated: endIndex < eligibleAnchors.length, searchesComplete: false, candidateDomainsFound: 0, candidateDomainsInvestigated: 0, candidateTruncated: false, verificationComplete: false, batchComplete: false, complete: false };
   if (!apiKey) return { available: false, provider: "unavailable", model, category: business.category, region: business.region, businessType: business.businessType, strategy: "not-run", queries: [], candidates: [], gaps: ["Web discovery is not configured."], gap: "Web discovery is not configured. A search-capable provider is required before competitors can be discovered automatically.", productSearchCoverage: baseCoverage };
 
   const endpoint = `${(process.env.OPENAI_RESPONSES_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "")}/responses`;
@@ -823,6 +859,7 @@ export async function discoverCompetitors(profile: DiscoveryProfile, options: { 
   const gap = candidates.length ? undefined : gaps[0] || "Product and fallback searches completed, but no attributable seller candidate was returned.";
   const productSearchCoverage = {
     eligibleAnchors: eligibleAnchors.length,
+    anchorSetHash,
     searchedAnchors: productResults.filter((result) => result.completed).length,
     startIndex,
     endIndex,

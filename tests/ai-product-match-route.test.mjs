@@ -147,6 +147,14 @@ test("rejects duplicate canonical catalog domains", () => {
   ], "shop.test"), []);
 });
 
+test("rejects an oversized rival catalog set instead of silently dropping later rivals", () => {
+  const catalogs = Array.from({ length: 286 }, (_, index) => ({
+    domain: `rival-${index}.test`,
+    products: [{ id: `r${index}`, name: `Product ${index}`, sourceUrl: `https://rival-${index}.test/products/${index}` }],
+  }));
+  assert.deepEqual(parseCatalogs(catalogs, "rival-0.test"), []);
+});
+
 test("rejects conflicting pins instead of silently dropping assignment contention", () => {
   const catalogs = parseCatalogs([
     { domain: "shop.test", products: [

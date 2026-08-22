@@ -235,7 +235,7 @@ test("a retry advances to the next discovery anchor batch only after a complete 
       return {
         ...stored,
         events: [
-          { idempotencyKey: "prior", phase: "competitors", status: "running", metadata: { discoveryStartIndex: 0, discoveryEndIndex: 20, discoveryBatchComplete: true } },
+          { idempotencyKey: "prior", phase: "competitors", status: "running", metadata: { discoveryStartIndex: 0, discoveryEndIndex: 20, discoveryBatchComplete: true, discoveryAnchorSetHash: "a".repeat(64) } },
           { idempotencyKey: "failed-next", phase: "competitors", status: "running", metadata: { discoveryStartIndex: 20, discoveryEndIndex: 40, discoveryBatchComplete: false } },
         ],
       };
@@ -245,6 +245,7 @@ test("a retry advances to the next discovery anchor batch only after a complete 
   await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
   assert.equal(crawlInput.discoverySearchOffset, 20);
   assert.equal(crawlInput.discoveryPriorCoverageComplete, true);
+  assert.equal(crawlInput.discoveryExpectedAnchorSetHash, "a".repeat(64));
 });
 
 test("the matcher can publish a valid pair found after the first 20 primary catalog products", async () => {

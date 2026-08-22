@@ -36,6 +36,20 @@ const profile = {
   ],
 };
 
+function searchResponse(value, query = value.queries?.[0] || "bounded public web search") {
+  const candidates = (value.candidates || []).map((candidate) => ({
+    domain: "", companyName: "", reason: "", searchQuery: "",
+    websiteUrl: candidate.websiteUrl || candidate.sourceUrl || "",
+    evidenceUrl: candidate.evidenceUrl || candidate.sourceUrl || "",
+    evidenceTitle: "", marketCategory: "", relationship: "adjacent", sharedOfferings: [],
+    matchedPrimaryProductName: "", matchedProductUrl: "", ...candidate,
+  }));
+  return Response.json({ output: [
+    { type: "web_search_call", action: { query, sources: [] } },
+    { type: "message", content: [{ type: "output_text", text: JSON.stringify({ ...value, candidates }) }] },
+  ] });
+}
+
 test("returns an explicit coverage gap when web discovery is not configured", async () => {
   const previous = process.env.OPENAI_API_KEY;
   delete process.env.OPENAI_API_KEY;
@@ -59,14 +73,14 @@ test("sanitizes, deduplicates, and excludes the primary domain from model candid
     const request = JSON.parse(init.body);
     assert.deepEqual(request.tools, [{ type: "web_search" }]);
     assert.equal(request.text.format.type, "json_schema");
-    return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "International grocery delivery", region: "United Kingdom", queries: ["international grocery delivery UK"], candidates: [
+    return searchResponse({ category: "International grocery delivery", region: "United Kingdom", queries: ["international grocery delivery UK"], candidates: [
       { domain: "https://rival.example/shop", companyName: "Rival", reason: "Sells Halal Lamb Chops 500g", searchQuery: "Halal Lamb Chops 500g UK", sourceUrl: "https://rival.example/products/halal-lamb-chops", evidenceTitle: "Halal Lamb Chops 500g", matchedPrimaryProductName: "Halal Lamb Chops 500g", matchedProductUrl: "https://rival.example/products/halal-lamb-chops" },
       { domain: "myjam.us", companyName: "MyJam US", reason: "Same brand storefront", searchQuery: "same", sourceUrl: "https://myjam.us/products/beef-sirloin-steak-halal-500g", matchedPrimaryProductName: "Beef Sirloin Steak Halal 500g", matchedProductUrl: "https://myjam.us/products/beef-sirloin-steak-halal-500g" },
       { domain: "which.co.uk", companyName: "Which?", reason: "Review publisher", searchQuery: "same", websiteUrl: "https://which.co.uk/", evidenceUrl: "https://which.co.uk/reviews/food-and-drink/article/best-grocery-delivery", evidenceTitle: "Best grocery delivery services reviewed" },
       { domain: "rival.example", companyName: "Duplicate", reason: "Duplicate", searchQuery: "same", sourceUrl: "https://rival.example/", matchedPrimaryProductName: "", matchedProductUrl: "https://rival.example/" },
       { domain: "myjam.co.uk", companyName: "Primary", reason: "Self", searchQuery: "same", sourceUrl: "https://myjam.co.uk/", matchedPrimaryProductName: "", matchedProductUrl: "https://myjam.co.uk/" },
       { domain: "bad.example", companyName: "Bad source", reason: "No evidence", searchQuery: "same", sourceUrl: "javascript:alert(1)", matchedPrimaryProductName: "", matchedProductUrl: "javascript:alert(1)" },
-    ] }) }] }] });
+    ] });
   };
   try {
     const result = await discoverCompetitors(profile);
@@ -130,9 +144,9 @@ test("retains a successful company fallback after product searches return no sel
   globalThis.fetch = async (_url, init) => {
     const request = JSON.parse(init.body);
     const input = JSON.parse(request.input[1].content);
-    if (input.lane === "product") return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: [], candidates: [] }) }] }] });
+    if (input.lane === "product") return searchResponse({ category: "Halal grocery", region: "United Kingdom", queries: [], candidates: [] });
     if (input.lane === "category") return new Response("<!DOCTYPE html><title>Gateway error</title>", { status: 200, headers: { "content-type": "text/html" } });
-    return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: ["MyJam alternatives UK"], candidates: [{ domain: "rival.example", companyName: "Rival", reason: "Same grocery market", searchQuery: "MyJam alternatives UK", websiteUrl: "https://rival.example/", evidenceUrl: "https://rival.example/", evidenceTitle: "Rival halal grocery", marketCategory: "Halal grocery", relationship: "direct", sharedOfferings: ["halal grocery"], matchedPrimaryProductName: "", matchedProductUrl: "" }] }) }] }] });
+    return searchResponse({ category: "Halal grocery", region: "United Kingdom", queries: ["MyJam alternatives UK"], candidates: [{ domain: "rival.example", companyName: "Rival", reason: "Same grocery market", searchQuery: "MyJam alternatives UK", websiteUrl: "https://rival.example/", evidenceUrl: "https://rival.example/", evidenceTitle: "Rival halal grocery", marketCategory: "Halal grocery", relationship: "direct", sharedOfferings: ["halal grocery"], matchedPrimaryProductName: "", matchedProductUrl: "" }] });
   };
   try {
     const result = await discoverCompetitors(profile);
@@ -724,7 +738,7 @@ test("runs company lanes even when a product-backed ecommerce candidate exists",
       { type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Baklava", region: "United Kingdom", queries: ["Pistachio Baklava UK product"], candidates: [] }) }] },
     ] });
     const candidate = { domain: "company.example", companyName: "Company Rival", reason: "Same bakery market", searchQuery: "baklava competitors UK", websiteUrl: "https://company.example/", evidenceUrl: "https://company.example/baklava", evidenceTitle: "Baklava shop and delivery", marketCategory: "Baklava", relationship: "direct", sharedOfferings: ["baklava"], matchedPrimaryProductName: "", matchedProductUrl: "" };
-    return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Baklava", region: "United Kingdom", queries: ["baklava competitors UK"], candidates: [candidate] }) }] }] });
+    return searchResponse({ category: "Baklava", region: "United Kingdom", queries: ["baklava competitors UK"], candidates: [candidate] });
   };
   try {
     const result = await discoverCompetitors(searchProfile);
@@ -750,7 +764,7 @@ test("keeps a Noor-shaped product candidate private even when it satisfies obser
     const input = JSON.parse(request.input[1].content);
     const productName = input.profile.offerings[0]?.name || "Product";
     const candidate = { domain: "health.example", companyName: "Untrusted name", reason: "Untrusted reason", searchQuery: "MODEL INVENTED QUERY", websiteUrl: "https://health.example/", evidenceUrl: "https://health.example/products/sku-8472", evidenceTitle: `${productName} | Health`, marketCategory: "wellness", relationship: "direct", sharedOfferings: [productName], matchedPrimaryProductName: productName, matchedProductUrl: "https://health.example/products/sku-8472" };
-    return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Organic food", region: "Kuwait", queries: ["reishi honey kuwait"], candidates: input.lane === "product" ? [candidate, { ...candidate, domain: "second.example", websiteUrl: "https://second.example/", evidenceUrl: "https://second.example/products/sku-2", matchedProductUrl: "https://second.example/products/sku-2" }] : [] }) }] }] });
+    return searchResponse({ category: "Organic food", region: "Kuwait", queries: ["reishi honey kuwait"], candidates: input.lane === "product" ? [candidate, { ...candidate, domain: "second.example", websiteUrl: "https://second.example/", evidenceUrl: "https://second.example/products/sku-2", matchedProductUrl: "https://second.example/products/sku-2" }] : [] });
   };
   try {
     const result = await discoverCompetitors(searchProfile);
@@ -790,7 +804,7 @@ test("runs one bounded search request per selected ecommerce product", async () 
       assert.match(input.task, /target-market-language and English bridge translations/i);
       searchedProducts.push(input.profile.offerings[0].name);
     }
-    return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: [], candidates: [] }) }] }] });
+    return searchResponse({ category: "Halal grocery", region: "United Kingdom", queries: [], candidates: [] });
   };
   try {
     await discoverCompetitors(searchProfile);
@@ -817,6 +831,24 @@ test("does not count schema-incomplete HTTP 200 model output as exhausted discov
   }
 });
 
+test("does not count a web-search response with malformed structured candidates as exhausted", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  globalThis.fetch = async () => Response.json({ output: [
+    { type: "web_search_call", action: { query: "halal meat UK", sources: [] } },
+    { type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: ["halal meat UK"], candidates: [{}] }) }] },
+  ] });
+  try {
+    const result = await discoverCompetitors(profile);
+    assert.equal(result.productSearchCoverage.searchesComplete, false);
+    assert.match(result.gaps.join(" "), /incomplete provider response/i);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
 test("searches 20 distinct ecommerce anchors and reports the remaining catalog as unsearched", async () => {
   const previousKey = process.env.OPENAI_API_KEY;
   const previousFetch = globalThis.fetch;
@@ -833,14 +865,16 @@ test("searches 20 distinct ecommerce anchors and reports the remaining catalog a
     const request = JSON.parse(init.body);
     const input = JSON.parse(request.input[1].content);
     if (input.lane === "product") searchedProducts.push(input.profile.offerings[0].name);
-    return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: [], candidates: [] }) }] }] });
+    return searchResponse({ category: "Halal grocery", region: "United Kingdom", queries: [], candidates: [] });
   };
   try {
     const result = await discoverCompetitors(searchProfile);
     assert.equal(searchedProducts.length, 20);
     assert.equal(new Set(searchedProducts).size, 20);
-    assert.deepEqual(result.productSearchCoverage, {
+    assert.match(result.productSearchCoverage.anchorSetHash, /^[a-f0-9]{64}$/);
+    assert.deepEqual({ ...result.productSearchCoverage, anchorSetHash: undefined }, {
       eligibleAnchors: 25,
+      anchorSetHash: undefined,
       searchedAnchors: 20,
       startIndex: 0,
       endIndex: 20,
@@ -875,13 +909,17 @@ test("continues product discovery from the supplied completed-batch cursor", asy
     const request = JSON.parse(init.body);
     const input = JSON.parse(request.input[1].content);
     if (input.lane === "product") searchedProducts.push(input.profile.offerings[0].name);
-    return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: [], candidates: [] }) }] }] });
+    return searchResponse({ category: "Halal grocery", region: "United Kingdom", queries: [], candidates: [] });
   };
   try {
-    const result = await discoverCompetitors(searchProfile, { searchOffset: 20, priorCoverageComplete: true });
+    const first = await discoverCompetitors(searchProfile);
+    searchedProducts.length = 0;
+    const result = await discoverCompetitors(searchProfile, { searchOffset: 20, priorCoverageComplete: true, expectedAnchorSetHash: first.productSearchCoverage.anchorSetHash });
     assert.equal(searchedProducts.length, 5);
-    assert.deepEqual(result.productSearchCoverage, {
+    assert.equal(result.productSearchCoverage.anchorSetHash, first.productSearchCoverage.anchorSetHash);
+    assert.deepEqual({ ...result.productSearchCoverage, anchorSetHash: undefined }, {
       eligibleAnchors: 25,
+      anchorSetHash: undefined,
       searchedAnchors: 5,
       startIndex: 20,
       endIndex: 25,
@@ -894,6 +932,23 @@ test("continues product discovery from the supplied completed-batch cursor", asy
       batchComplete: false,
       complete: false,
     });
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
+test("resets a stale cursor when the ranked anchor set changes", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  globalThis.fetch = async () => searchResponse({ category: "Halal grocery", region: "United Kingdom", queries: [], candidates: [] });
+  const firstProfile = { ...profile, products: Array.from({ length: 25 }, (_, index) => product(`Beef Sirloin Steak Halal ${500 + index}g`, `https://myjam.co.uk/products/beef-${index}`)) };
+  try {
+    const first = await discoverCompetitors(firstProfile);
+    const changed = await discoverCompetitors({ ...firstProfile, products: [...firstProfile.products].reverse() }, { searchOffset: 20, expectedAnchorSetHash: first.productSearchCoverage.anchorSetHash });
+    assert.equal(changed.productSearchCoverage.startIndex, 0);
+    assert.notEqual(changed.productSearchCoverage.anchorSetHash, first.productSearchCoverage.anchorSetHash);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
@@ -915,12 +970,14 @@ test("marks ecommerce discovery complete only when every eligible product search
     const request = JSON.parse(init.body);
     const input = JSON.parse(request.input[1].content);
     if (input.lane === "product" && input.profile.offerings[0].name.includes("Beef Cubes")) throw new Error("temporary search failure");
-    return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: [], candidates: [] }) }] }] });
+    return searchResponse({ category: "Halal grocery", region: "United Kingdom", queries: [], candidates: [] });
   };
   try {
     const result = await discoverCompetitors(searchProfile);
-    assert.deepEqual(result.productSearchCoverage, {
+    assert.match(result.productSearchCoverage.anchorSetHash, /^[a-f0-9]{64}$/);
+    assert.deepEqual({ ...result.productSearchCoverage, anchorSetHash: undefined }, {
       eligibleAnchors: 2,
+      anchorSetHash: undefined,
       searchedAnchors: 1,
       startIndex: 0,
       endIndex: 2,
@@ -1047,7 +1104,7 @@ test("ranks product-backed sellers ahead of company-first results", async () => 
       ] });
     }
     const candidate = { domain: "company-only.example", companyName: "Company only", reason: "Same grocery market", searchQuery: "halal grocery competitors UK", websiteUrl: "https://company-only.example/", evidenceUrl: "https://company-only.example/", evidenceTitle: "Halal grocery company", marketCategory: "Halal grocery", relationship: "direct", sharedOfferings: ["halal grocery"], matchedPrimaryProductName: "", matchedProductUrl: "" };
-    return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: ["halal grocery competitors UK"], candidates: [candidate] }) }] }] });
+    return searchResponse({ category: "Halal grocery", region: "United Kingdom", queries: ["halal grocery competitors UK"], candidates: [candidate] });
   };
   try {
     const result = await discoverCompetitors(searchProfile);
@@ -1074,9 +1131,9 @@ test("retains company discovery when product searches return no attributable sel
     const request = JSON.parse(init.body);
     const input = JSON.parse(request.input[1].content);
     calls.push(input.lane);
-    if (input.lane === "product") return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Baklava", region: "United Kingdom", queries: ["Pistachio Baklava UK"], candidates: [] }) }] }] });
+    if (input.lane === "product") return searchResponse({ category: "Baklava", region: "United Kingdom", queries: ["Pistachio Baklava UK"], candidates: [] });
     const candidate = { domain: "fallback.example", companyName: "Fallback", reason: "Same grocery market", searchQuery: "baklava competitors UK", websiteUrl: "https://fallback.example/", evidenceUrl: "https://fallback.example/", evidenceTitle: "Fallback baklava shop", marketCategory: "Baklava", relationship: "direct", sharedOfferings: ["baklava"], matchedPrimaryProductName: "", matchedProductUrl: "" };
-    return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Baklava", region: "United Kingdom", queries: ["baklava competitors UK"], candidates: [candidate] }) }] }] });
+    return searchResponse({ category: "Baklava", region: "United Kingdom", queries: ["baklava competitors UK"], candidates: [candidate] });
   };
   try {
     const result = await discoverCompetitors(searchProfile);
