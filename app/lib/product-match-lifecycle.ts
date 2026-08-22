@@ -298,16 +298,15 @@ export function limitPublishedProductComparison(comparison: ProductComparison, r
   };
 }
 
-export function mergePublishedProductComparisons(current: ProductComparison, prior: ProductComparison | null, resultTarget: number, referenceTimeMs = Date.now()) {
+export function mergePublishedProductComparisonState(current: ProductComparison, prior: ProductComparison | null, resultTarget: number, referenceTimeMs = Date.now()) {
   const evaluated = (comparison: ProductComparison) => comparison.rows.some((row) => row.matches.some((match) => match.publication !== undefined))
     ? comparison
     : publishPricedProductComparison(comparison, referenceTimeMs);
   const publishedCurrent = evaluated(current);
-  if (!prior) return limitPublishedProductComparison(publishedCurrent, resultTarget);
-  const publishedPrior = evaluated(prior);
+  const publishedPrior = prior ? evaluated(prior) : null;
   const publishable = (row: ProductComparison["rows"][number]) => row.matches.some((match) => match.product && match.publication?.priceEligible === true);
   const currentRows = publishedCurrent.rows.filter(publishable);
-  const priorRows = publishedPrior.rows.filter(publishable);
+  const priorRows = publishedPrior?.rows.filter(publishable) || [];
   const candidateRows: ProductComparison["rows"] = [];
   const rowByPrimary = new Map<string, number>();
   for (const row of [...currentRows, ...priorRows]) {
@@ -352,7 +351,7 @@ export function mergePublishedProductComparisons(current: ProductComparison, pri
     }];
   });
   const currentMatching = publishedCurrent.matching;
-  const priorMatching = publishedPrior.matching;
+  const priorMatching = publishedPrior?.matching;
   const union = (left: string[] = [], right: string[] = []) => [...new Set([...left, ...right])];
   const merged: ProductComparison = {
     ...publishedCurrent,
@@ -363,7 +362,7 @@ export function mergePublishedProductComparisons(current: ProductComparison, pri
       rowsReturned: rows.length,
       assignedPairCount: rows.reduce((sum, row) => sum + row.matches.filter((match) => match.product).length, 0),
       verifiedPairCount: rows.reduce((sum, row) => sum + row.matches.filter((match) => match.product && match.confidence === "Medium").length, 0),
-      truncated: Boolean(publishedCurrent.coverage.truncated || publishedPrior.coverage.truncated),
+      truncated: Boolean(publishedCurrent.coverage.truncated || publishedPrior?.coverage.truncated),
     },
     matching: currentMatching ? {
       ...currentMatching,
@@ -373,5 +372,40 @@ export function mergePublishedProductComparisons(current: ProductComparison, pri
       processedPrimaryIds: union(currentMatching.processedPrimaryIds, priorMatching?.processedPrimaryIds).sort(),
     } : currentMatching,
   };
-  return limitPublishedProductComparison(publishPricedProductComparison(merged, referenceTimeMs), resultTarget);
+  const limitedComparison = limitPublishedProductComparison(publishPricedProductComparison(merged, referenceTimeMs), resultTarget);
+  const comparison = limitedComparison.matching && currentMatching?.publication
+    ? { ...limitedComparison, matching: { ...limitedComparison.matching, publication: currentMatching.publication } }
+    : limitedComparison;
+  const selectedPrimaryIds = new Set(comparison.rows.map((row) => row.primary.id));
+  const evidenceCandidates = [
+    ...candidateRows.filter((row) => selectedPrimaryIds.has(row.primary.id)),
+    ...candidateRows.filter((row) => !selectedPrimaryIds.has(row.primary.id)),
+  ].slice(0, Math.max(1, Math.floor(resultTarget)));
+  const evidenceRows = evidenceCandidates.map((row) => {
+    const seenRivals = new Set<string>();
+    const matches = row.matches.filter((match): match is ProductMatch & { product: ProductRecord } => {
+      if (!match.product || match.publication?.priceEligible !== true) return false;
+      const key = productIdentityKey(match.product);
+      if (seenRivals.has(key)) return false;
+      seenRivals.add(key);
+      return true;
+    });
+    return { ...row, matches };
+  });
+  const evidence: ProductComparison = {
+    ...comparison,
+    rows: evidenceRows,
+    coverage: {
+      ...comparison.coverage,
+      primaryProductFamiliesCompared: evidenceRows.length,
+      rowsReturned: evidenceRows.length,
+      assignedPairCount: evidenceRows.reduce((sum, row) => sum + row.matches.length, 0),
+      verifiedPairCount: evidenceRows.reduce((sum, row) => sum + row.matches.filter((match) => match.confidence === "Medium").length, 0),
+    },
+  };
+  return { comparison, evidence };
+}
+
+export function mergePublishedProductComparisons(current: ProductComparison, prior: ProductComparison | null, resultTarget: number, referenceTimeMs = Date.now()) {
+  return mergePublishedProductComparisonState(current, prior, resultTarget, referenceTimeMs).comparison;
 }

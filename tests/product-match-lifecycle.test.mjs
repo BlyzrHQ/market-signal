@@ -4,6 +4,7 @@ import {
   composeProductMatchAttempts,
   hasProductMatchCoverageDefect,
   limitPublishedProductComparison,
+  mergePublishedProductComparisonState,
   mergePublishedProductComparisons,
   publishPricedProductComparison,
   shouldRetryProductMatch,
@@ -402,6 +403,26 @@ test("priced result backfill keeps historical alternatives when a primary is obs
   assert.equal(result.matching.publishedPrimaryProducts, 2);
   assert.equal(result.matching.resultShortfall, 0);
   assert.deepEqual(new Set(result.rows.flatMap((item) => item.matches.flatMap((match) => match.product ? [match.product.id] : []))), new Set(["r-old", "r-shared"]));
+});
+
+test("durable priced evidence preserves backup rivals until a later global assignment", () => {
+  const pricedRow = (primaryId, rivalId, score = 0.9) => {
+    const item = row(primaryId, rivalId);
+    item.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+    item.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+    item.matches[0].score = score;
+    return item;
+  };
+  const firstRow = pricedRow("p1", "r-shared", 0.99);
+  firstRow.matches.push(pricedRow("p1", "r-backup", 0.9).matches[0]);
+  const first = mergePublishedProductComparisonState(comparison({ selected: ["p1"], assessed: ["p1"], rows: [firstRow], accepted: 2 }), null, 2);
+  assert.equal(first.comparison.rows.length, 1);
+  assert.equal(first.evidence.rows[0].matches.length, 2);
+
+  const second = mergePublishedProductComparisonState(comparison({ selected: ["p2"], assessed: ["p2"], rows: [pricedRow("p2", "r-shared", 0.95)], accepted: 1 }), first.evidence, 2);
+  assert.equal(second.comparison.rows.length, 2);
+  assert.equal(second.comparison.matching.publishedPrimaryProducts, 2);
+  assert.deepEqual(new Set(second.comparison.rows.flatMap((item) => item.matches.flatMap((match) => match.product ? [match.product.id] : []))), new Set(["r-shared", "r-backup"]));
 });
 
 test("a later unpriced observation does not evict an earlier valid priced comparison", () => {

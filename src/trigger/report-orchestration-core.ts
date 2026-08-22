@@ -2,6 +2,7 @@ import {
   composeProductMatchAttempts,
   hasProductMatchCoverageDefect,
   limitPublishedProductComparison,
+  mergePublishedProductComparisonState,
   mergePublishedProductComparisons,
   publishPricedProductComparison,
   shouldRetryProductMatch,
@@ -93,10 +94,14 @@ function primaryCatalogProductKeys(products: ProductRecord[]) {
 function validPublishedResultCheckpoint(value: unknown, resultTarget: number, referenceTimeMs: number, allowedPrimaryProductKeys: Set<string>) {
   try {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-    const checkpoint = value as { version?: unknown; comparison?: ProductComparison };
-    if (checkpoint.version !== 1 || !checkpoint.comparison || !Array.isArray(checkpoint.comparison.rows) || checkpoint.comparison.rows.length > resultTarget) return null;
+    const checkpoint = value as { version?: unknown; comparison?: ProductComparison; evidence?: ProductComparison };
+    if ((checkpoint.version !== 1 && checkpoint.version !== 2) || !checkpoint.comparison || !Array.isArray(checkpoint.comparison.rows) || checkpoint.comparison.rows.length > resultTarget) return null;
+    const evidence = checkpoint.version === 2 ? checkpoint.evidence : null;
+    if (checkpoint.version === 2 && (!evidence || !Array.isArray(evidence.rows) || evidence.rows.length > resultTarget)) return null;
     if (new Set(checkpoint.comparison.rows.map((row) => row?.primary?.id)).size !== checkpoint.comparison.rows.length) return null;
-    if (!checkpoint.comparison.rows.every((row) => allowedPrimaryProductKeys.has(`${row.primary.id}\n${canonicalDomain(row.primary.domain)}`))) return null;
+    if (evidence && new Set(evidence.rows.map((row) => row?.primary?.id)).size !== evidence.rows.length) return null;
+    if (![...checkpoint.comparison.rows, ...(evidence?.rows || [])].every((row) => allowedPrimaryProductKeys.has(`${row.primary.id}\n${canonicalDomain(row.primary.domain)}`))) return null;
+    if (evidence && !evidence.rows.every((row) => row.matches.length > 0 && row.matches.every((match) => match.product && match.publication?.priceEligible === true))) return null;
     if (checkpoint.comparison.matching?.resultShortfallReason === "processing-incomplete") return null;
     if (checkpoint.comparison.enrichment?.pagesTruncated === true || (checkpoint.comparison.enrichment?.failedBatchCount || 0) > 0) return null;
     const comparisonForValidation = checkpoint.comparison.matching ? {
@@ -108,7 +113,11 @@ function validPublishedResultCheckpoint(value: unknown, resultTarget: number, re
     } : checkpoint.comparison;
     const validated = limitPublishedProductComparison(publishPricedProductComparison(comparisonForValidation, referenceTimeMs), resultTarget);
     if (validated.matching?.resultShortfallReason === "processing-incomplete") return null;
-    return validated.rows.length === checkpoint.comparison.rows.length ? validated : null;
+    const revalidatedEvidence = evidence
+      ? publishPricedProductComparison(evidence, referenceTimeMs)
+      : mergePublishedProductComparisonState(validated, null, resultTarget, referenceTimeMs).evidence;
+    if (revalidatedEvidence.rows.some((row) => row.matches.some((match) => match.product && match.publication?.priceEligible !== true))) return null;
+    return validated.rows.length === checkpoint.comparison.rows.length ? { comparison: validated, evidence: revalidatedEvidence } : null;
   } catch { return null; }
 }
 
@@ -648,7 +657,7 @@ export async function orchestrateReport(
       if (!saved || saved.inputHash !== publishedResultInputHash) continue;
       const validated = validPublishedResultCheckpoint(saved.result, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys);
       if (!validated) throw new Error("The durable published-result checkpoint is invalid.");
-      accumulatedPublished = mergePublishedProductComparisons(validated, accumulatedPublished, payload.productLimit, reportReferenceTimeMs);
+      accumulatedPublished = mergePublishedProductComparisonState(validated.evidence, accumulatedPublished, payload.productLimit, reportReferenceTimeMs).evidence;
     }
     let requestCount = 0;
     let transportFailed = false;
@@ -884,9 +893,10 @@ export async function orchestrateReport(
       ), allowedPrimaryProductKeys);
       screenedComparison = mergeAccumulatedPublishedIntoScreenedComparison(comparison, judgeEvidence);
       screenedComparison = mergeAccumulatedPublishedIntoScreenedComparison(screenedComparison, accumulatedPublished);
-      comparison = mergePublishedProductComparisons(comparison, accumulatedPublished, payload.productLimit, reportReferenceTimeMs);
+      const publishedState = mergePublishedProductComparisonState(comparison, accumulatedPublished, payload.productLimit, reportReferenceTimeMs);
+      comparison = publishedState.comparison;
       const publishedCheckpointIndex = publishedResultCheckpointIndex(taskAttemptNumber);
-      const publishedCheckpoint = { version: 1, comparison };
+      const publishedCheckpoint = { version: 2, comparison, evidence: publishedState.evidence };
       const checkpointIsComplete = comparison.matching?.resultShortfallReason !== "processing-incomplete"
         && comparison.enrichment?.pagesTruncated !== true
         && (comparison.enrichment?.failedBatchCount || 0) === 0;
@@ -901,7 +911,7 @@ export async function orchestrateReport(
           const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: publishedCheckpointIndex }))[0];
           const validated = committed?.inputHash === publishedResultInputHash ? validPublishedResultCheckpoint(committed.result, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys) : null;
           if (!validated) throw saveError;
-          comparison = validated;
+          comparison = validated.comparison;
         }
       }
       if ((comparison.matching?.resultShortfall || 0) > 0 && crawl.discovery?.productSearchCoverage?.complete !== true) {

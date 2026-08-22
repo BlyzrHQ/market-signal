@@ -394,7 +394,7 @@ test("the priced table is capped while suppressed screened evidence remains in r
   const matchFacts = port.factChunks.filter((chunk) => chunk.kind === "matches").flatMap((chunk) => chunk.items);
   assert.equal(matchFacts.length, 22);
   assert.equal(matchFacts.filter((fact) => fact.evidence.publication?.priceEligible === true).length, 20);
-  assert.ok(matchFacts.some((fact) => fact.evidence.publication?.priceEligible === false && fact.evidence.publication?.reason === "outside-result-target"));
+  assert.ok(matchFacts.some((fact) => fact.evidence.publication?.priceEligible === false && fact.evidence.publication?.reason === "outside-result-target"), JSON.stringify(matchFacts.map((fact) => fact.evidence.publication)));
   assert.ok(matchFacts.some((fact) => fact.evidence.publication?.priceEligible === false && fact.evidence.publication?.reason === "missing-valid-rival-price"));
 });
 
