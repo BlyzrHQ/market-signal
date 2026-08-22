@@ -302,7 +302,7 @@ export interface ReportOrchestrationPort {
   crawl(input: { primary: string; domains: string[]; productLimit: number; catalogProductLimit: number; discoverySearchOffset: number; discoveryPriorCoverageComplete: boolean; discoveryExpectedAnchorSetHash: string }): Promise<CrawlOutcome>;
   brief(input: { primary: string; domains: string[] }): Promise<unknown>;
   ads(input: unknown): Promise<{ ok: true; block: JsonBlock }>;
-  match(input: { publicId: string; reportAttempt: number; reportObservedAt: string; primaryDomain: string; marketCountryCode?: string; productLimit: number; catalogs: Array<{ domain: string; products: ProductRecord[] }>; pinnedPairs?: PinnedProductPair[] }): Promise<{ ok: true; comparison: ProductComparison }>;
+  match(input: { publicId: string; reportAttempt: number; taskAttemptNumber: number; reportObservedAt: string; primaryDomain: string; marketCountryCode?: string; productLimit: number; catalogs: Array<{ domain: string; products: ProductRecord[] }>; pinnedPairs?: PinnedProductPair[] }): Promise<{ ok: true; comparison: ProductComparison }>;
   enrich(input: { targets: unknown[] }): Promise<{ ok: true; products: ProductRecord[]; coverage: NonNullable<ProductComparison["enrichment"]> }>;
   loadCheckpoint(publicId: string, input: { attemptNumber: number; batchIndex: number }): Promise<Array<{ batchIndex: number; inputHash: string; result: unknown }>>;
   saveCheckpoint(publicId: string, input: { attemptNumber: number; batchIndex: number; inputHash: string; result: unknown }): Promise<void>;
@@ -523,7 +523,7 @@ export async function orchestrateReport(
     let transportFailed = false;
     try {
       requestCount += 1;
-      const first = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, reportObservedAt: stored.run.createdAt, primaryDomain: crawl.primaryDomain, marketCountryCode, productLimit: payload.productLimit, catalogs, pinnedPairs: crawl.matchHints });
+      const first = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, taskAttemptNumber: attempt.taskAttemptNumber || 1, reportObservedAt: stored.run.createdAt, primaryDomain: crawl.primaryDomain, marketCountryCode, productLimit: payload.productLimit, catalogs, pinnedPairs: crawl.matchHints });
       attempts.push({ ...first.comparison, ...(marketCountryCode ? { marketCountryCode } : {}) });
     } catch {
       transportFailed = true;
@@ -532,7 +532,7 @@ export async function orchestrateReport(
       try {
         await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "matching-retry-started"), "matching", "Resuming only incomplete product judge batches from durable checkpoints."));
         requestCount += 1;
-        const retry = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, reportObservedAt: stored.run.createdAt, primaryDomain: crawl.primaryDomain, marketCountryCode, productLimit: payload.productLimit, catalogs, pinnedPairs: crawl.matchHints });
+        const retry = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, taskAttemptNumber: attempt.taskAttemptNumber || 1, reportObservedAt: stored.run.createdAt, primaryDomain: crawl.primaryDomain, marketCountryCode, productLimit: payload.productLimit, catalogs, pinnedPairs: crawl.matchHints });
         attempts.push({ ...retry.comparison, ...(marketCountryCode ? { marketCountryCode } : {}) });
       } catch { /* the bounded second application attempt remains a visible gap */ }
     }

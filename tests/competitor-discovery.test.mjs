@@ -849,14 +849,14 @@ test("does not count a web-search response with malformed structured candidates 
   }
 });
 
-test("searches 100 distinct ecommerce anchors and reports the remaining catalog as unsearched", async () => {
+test("searches 200 distinct ecommerce anchors and reports the remaining catalog as unsearched", async () => {
   const previousKey = process.env.OPENAI_API_KEY;
   const previousFetch = globalThis.fetch;
   process.env.OPENAI_API_KEY = "test-only";
   const searchedProducts = [];
   const searchProfile = {
     ...profile,
-    products: Array.from({ length: 125 }, (_, index) => product(
+    products: Array.from({ length: 225 }, (_, index) => product(
       `Beef Sirloin Steak Halal ${500 + index}g`,
       `https://myjam.co.uk/products/beef-sirloin-steak-${index + 1}`,
     )),
@@ -869,15 +869,15 @@ test("searches 100 distinct ecommerce anchors and reports the remaining catalog 
   };
   try {
     const result = await discoverCompetitors(searchProfile);
-    assert.equal(searchedProducts.length, 100);
-    assert.equal(new Set(searchedProducts).size, 100);
+    assert.equal(searchedProducts.length, 200);
+    assert.equal(new Set(searchedProducts).size, 200);
     assert.match(result.productSearchCoverage.anchorSetHash, /^[a-f0-9]{64}$/);
     assert.deepEqual({ ...result.productSearchCoverage, anchorSetHash: undefined }, {
-      eligibleAnchors: 125,
+      eligibleAnchors: 225,
       anchorSetHash: undefined,
-      searchedAnchors: 100,
+      searchedAnchors: 200,
       startIndex: 0,
-      endIndex: 100,
+      endIndex: 200,
       truncated: true,
       searchesComplete: true,
       candidateDomainsFound: 0,
@@ -931,7 +931,7 @@ test("continues product discovery from the supplied completed-batch cursor", asy
   const searchedProducts = [];
   const searchProfile = {
     ...profile,
-    products: Array.from({ length: 125 }, (_, index) => product(
+    products: Array.from({ length: 225 }, (_, index) => product(
       `Lamb Shoulder Steak Halal ${700 + index}g`,
       `https://myjam.co.uk/products/lamb-shoulder-steak-${index + 1}`,
     )),
@@ -945,15 +945,15 @@ test("continues product discovery from the supplied completed-batch cursor", asy
   try {
     const first = await discoverCompetitors(searchProfile);
     searchedProducts.length = 0;
-    const result = await discoverCompetitors(searchProfile, { searchOffset: 100, priorCoverageComplete: true, expectedAnchorSetHash: first.productSearchCoverage.anchorSetHash });
+    const result = await discoverCompetitors(searchProfile, { searchOffset: 200, priorCoverageComplete: true, expectedAnchorSetHash: first.productSearchCoverage.anchorSetHash });
     assert.equal(searchedProducts.length, 25);
     assert.equal(result.productSearchCoverage.anchorSetHash, first.productSearchCoverage.anchorSetHash);
     assert.deepEqual({ ...result.productSearchCoverage, anchorSetHash: undefined }, {
-      eligibleAnchors: 125,
+      eligibleAnchors: 225,
       anchorSetHash: undefined,
       searchedAnchors: 25,
-      startIndex: 100,
-      endIndex: 125,
+      startIndex: 200,
+      endIndex: 225,
       truncated: false,
       searchesComplete: true,
       candidateDomainsFound: 0,
@@ -974,10 +974,10 @@ test("resets a stale cursor when the ranked anchor set changes", async () => {
   const previousFetch = globalThis.fetch;
   process.env.OPENAI_API_KEY = "test-only";
   globalThis.fetch = async () => searchResponse({ category: "Halal grocery", region: "United Kingdom", queries: [], candidates: [] });
-  const firstProfile = { ...profile, products: Array.from({ length: 125 }, (_, index) => product(`Beef Sirloin Steak Halal ${500 + index}g`, `https://myjam.co.uk/products/beef-${index}`)) };
+  const firstProfile = { ...profile, products: Array.from({ length: 225 }, (_, index) => product(`Beef Sirloin Steak Halal ${500 + index}g`, `https://myjam.co.uk/products/beef-${index}`)) };
   try {
     const first = await discoverCompetitors(firstProfile);
-    const changed = await discoverCompetitors({ ...firstProfile, products: [...firstProfile.products].reverse() }, { searchOffset: 100, expectedAnchorSetHash: first.productSearchCoverage.anchorSetHash });
+    const changed = await discoverCompetitors({ ...firstProfile, products: [...firstProfile.products].reverse() }, { searchOffset: 200, expectedAnchorSetHash: first.productSearchCoverage.anchorSetHash });
     assert.equal(changed.productSearchCoverage.startIndex, 0);
     assert.notEqual(changed.productSearchCoverage.anchorSetHash, first.productSearchCoverage.anchorSetHash);
   } finally {

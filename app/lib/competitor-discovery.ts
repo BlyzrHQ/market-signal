@@ -80,9 +80,10 @@ type SearchSource = { url: string; title: string; query: string; queries: string
 type LaneResult = { lane: SearchLane; category: string; region: string; queries: string[]; candidates: DiscoveryCandidate[]; completed: boolean; gap?: string };
 
 const MAX_CANDIDATES = 6;
-const MAX_PRODUCT_SEARCHES = 100;
+const MAX_PRODUCT_SEARCHES = 200;
 const PRODUCT_SEARCH_CONCURRENCY = 10;
 const MAX_PRODUCT_SEARCH_ANCHORS = 1_000;
+const MAX_DISCOVERY_CANDIDATES_PER_ATTEMPT = (MAX_PRODUCT_SEARCHES * MAX_CANDIDATES) + (2 * MAX_CANDIDATES);
 const MAX_SOURCE_FIRST_LEADS_PER_SEARCH = 2;
 const MAX_SOURCE_FIRST_CANDIDATES = 2;
 const MAX_MODEL_STRUCTURED_LEADS_PER_LANE = 1;
@@ -864,7 +865,7 @@ export async function discoverCompetitors(profile: DiscoveryProfile, options: { 
 
   const endpoint = `${(process.env.OPENAI_RESPONSES_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "")}/responses`;
   const productResults = await mapConcurrent(anchors, PRODUCT_SEARCH_CONCURRENCY, (anchor) => runLane(endpoint, apiKey, model, "product", { ...business, offerings: [anchor] }, { ...profile, products: [anchor] }));
-  const productCandidates = mergeCandidates(productResults.flatMap((result) => result.candidates), MAX_PRODUCT_SEARCH_ANCHORS, MAX_PRODUCT_SEARCH_ANCHORS);
+  const productCandidates = mergeCandidates(productResults.flatMap((result) => result.candidates), MAX_DISCOVERY_CANDIDATES_PER_ATTEMPT, MAX_DISCOVERY_CANDIDATES_PER_ATTEMPT);
   const companyResults = await Promise.all((["entity", "category"] as SearchLane[]).map((lane) => runLane(endpoint, apiKey, model, lane, business, profile)));
   const strategy: DiscoveryResult["strategy"] = business.businessType !== "ecommerce"
     ? "company-first"
@@ -876,7 +877,7 @@ export async function discoverCompetitors(profile: DiscoveryProfile, options: { 
     ? [anchors.length ? (productSearchesCompleted ? "Product searches completed with no attributable seller, so company/category discovery ran as a fallback; every ecommerce lead still requires current product overlap before inclusion." : "Product search did not produce an attributable seller because one or more searches failed or returned no usable product page, so company/category discovery ran as a fallback; every ecommerce lead still requires current product overlap before inclusion.") : "No attributable ecommerce product was available for search, so company/category discovery ran as a fallback; every ecommerce lead still requires current product overlap before inclusion."]
     : [];
   const settled = [...productResults, ...companyResults];
-  const candidates = mergeCandidates(settled.flatMap((result) => result.candidates), MAX_PRODUCT_SEARCH_ANCHORS, MAX_PRODUCT_SEARCH_ANCHORS);
+  const candidates = mergeCandidates(settled.flatMap((result) => result.candidates), MAX_DISCOVERY_CANDIDATES_PER_ATTEMPT, MAX_DISCOVERY_CANDIDATES_PER_ATTEMPT);
   const queries = [...new Set(settled.flatMap((result) => result.queries))].slice(0, 16);
   const gaps = [...fallbackGap, ...settled.flatMap((result) => result.gap ? [result.gap] : [])];
   const completed = settled.filter((result) => result.completed);

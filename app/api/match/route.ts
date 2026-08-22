@@ -1,4 +1,4 @@
-import { buildAIProductComparison, type JudgeBatchCheckpoint, type JudgeBatchCheckpointKey, type PinnedProductPair, type ProductCandidatePlan, type ProductCandidatePlanKey } from "../../lib/ai-product-matching.ts";
+import { buildAIProductComparison, PRODUCT_CANDIDATE_PLAN_BATCH_INDEX, type JudgeBatchCheckpoint, type JudgeBatchCheckpointKey, type PinnedProductPair, type ProductCandidatePlan, type ProductCandidatePlanKey } from "../../lib/ai-product-matching.ts";
 import { canonicalDomain, normalizeDomain } from "../../lib/domain.ts";
 import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../lib/internal-auth.ts";
 import type { ProductRecord } from "../../lib/product-intelligence.ts";
@@ -6,16 +6,26 @@ import { canonicalGtin, parseCanonicalQuantity, type ProductIdentifiers } from "
 import { publicHttpUrl } from "../../lib/public-url.ts";
 import { loadReportMatchBatchCheckpoints, loadReportProductEntitlement, saveReportMatchBatchCheckpoint } from "../../lib/report-store.ts";
 
-// One primary catalog plus the complete bounded attempt wave: up to 600
-// product-lane sellers, 12 company-lane sellers, and 152 remembered rivals.
+// One primary catalog plus the complete bounded attempt wave: up to 1,200
+// product-lane sellers, 12 company-lane sellers, and 500 remembered rivals.
 // Never silently discard a rival.
-const MAX_CATALOGS = 765;
+const MAX_CATALOGS = 1_713;
 const MAX_PRIMARY_PRODUCTS = 1_000;
 const MAX_RIVAL_PRODUCTS = 5_000;
 const MAX_SUBMITTED_PRODUCTS_PER_CATALOG = 5_000;
 export const MAX_MATCH_BODY_BYTES = 64 * 1_024 * 1_024;
 const DEFAULT_PRODUCT_ANALYSIS_LIMIT = 20;
 const PLAN_PRODUCT_LIMITS = new Set([20, 50, 500, 1_000]);
+const MAX_TASK_ATTEMPTS = 10;
+const MAX_JUDGE_BATCHES_PER_TASK_ATTEMPT = 200;
+const JUDGE_CHECKPOINT_BASE = 1_400;
+const PLAN_CHECKPOINT_BASE = 3_400;
+
+export function persistedCheckpointIndex(taskAttemptNumber: number, batchIndex: number) {
+  if (batchIndex === PRODUCT_CANDIDATE_PLAN_BATCH_INDEX) return PLAN_CHECKPOINT_BASE + taskAttemptNumber - 1;
+  if (!Number.isInteger(batchIndex) || batchIndex < 0 || batchIndex >= MAX_JUDGE_BATCHES_PER_TASK_ATTEMPT) throw new Error("The product judge checkpoint index exceeds its bounded task-attempt namespace.");
+  return JUDGE_CHECKPOINT_BASE + ((taskAttemptNumber - 1) * MAX_JUDGE_BATCHES_PER_TASK_ATTEMPT) + batchIndex;
+}
 
 function text(value: unknown, limit: number) {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
@@ -264,9 +274,10 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
   return async function matchHandler(request: Request) {
     if (!await hasValidInternalAuthorization(request.headers.get("authorization"), expectedToken)) return unauthorizedInternalResponse();
     try {
-      const body = await boundedJsonBody(request) as { publicId?: unknown; reportAttempt?: unknown; reportObservedAt?: unknown; primaryDomain?: unknown; marketCountryCode?: unknown; productLimit?: unknown; catalogs?: unknown; pinnedPairs?: unknown };
+      const body = await boundedJsonBody(request) as { publicId?: unknown; reportAttempt?: unknown; taskAttemptNumber?: unknown; reportObservedAt?: unknown; primaryDomain?: unknown; marketCountryCode?: unknown; productLimit?: unknown; catalogs?: unknown; pinnedPairs?: unknown };
       const publicId = text(body.publicId, 32);
       const reportAttempt = Number(body.reportAttempt);
+      const taskAttemptNumber = Number(body.taskAttemptNumber);
       const primaryDomain = canonicalDomain(text(body.primaryDomain, 300));
       const reportObservedAt = text(body.reportObservedAt, 40);
       const marketCountryCode = text(body.marketCountryCode, 2).toUpperCase();
@@ -275,7 +286,7 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
       const pinnedPairs = parsePinnedPairs(body.pinnedPairs, catalogs, primaryDomain);
       if (Array.isArray(body.pinnedPairs) && body.pinnedPairs.length && !pinnedPairs.length) return Response.json({ ok: false, error: "Pinned product pairs must reference unique catalog records and form one-to-one assignments." }, { status: 400 });
       const hasReportAttempt = Boolean(publicId || body.reportAttempt !== undefined);
-      if (hasReportAttempt && (!/^[a-f0-9]{32}$/.test(publicId) || !Number.isInteger(reportAttempt) || reportAttempt < 1)) return Response.json({ ok: false, error: "A complete active report attempt is required for checkpointed matching." }, { status: 400 });
+      if (hasReportAttempt && (!/^[a-f0-9]{32}$/.test(publicId) || !Number.isInteger(reportAttempt) || reportAttempt < 1 || !Number.isInteger(taskAttemptNumber) || taskAttemptNumber < 1 || taskAttemptNumber > MAX_TASK_ATTEMPTS)) return Response.json({ ok: false, error: "A complete active report and task attempt are required for checkpointed matching." }, { status: 400 });
       if (!primaryDomain || !catalogs.some((catalog) => catalog.domain === primaryDomain && catalog.products.length)) return Response.json({ ok: false, error: "A crawled primary product catalog is required." }, { status: 400 });
       const entitlement = hasReportAttempt ? await services.loadEntitlement(publicId, reportAttempt) : null;
       const resultTarget = entitlement?.productLimit || DEFAULT_PRODUCT_ANALYSIS_LIMIT;
@@ -286,22 +297,22 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
       const maxPrimaryProducts = Math.min(productBackfillPoolSize(resultTarget), primaryCatalogSize);
       const checkpointOptions = hasReportAttempt ? {
         loadCandidatePlan: async (key: ProductCandidatePlanKey) => {
-          const checkpoints = await services.loadCheckpoints(publicId, { attemptNumber: reportAttempt, batchIndex: key.batchIndex });
+          const checkpoints = await services.loadCheckpoints(publicId, { attemptNumber: reportAttempt, batchIndex: persistedCheckpointIndex(taskAttemptNumber, key.batchIndex) });
           const checkpoint = checkpoints[0];
           return checkpoint?.inputHash === key.planHash ? checkpoint.result : null;
         },
         saveCandidatePlan: async (key: ProductCandidatePlanKey, plan: ProductCandidatePlan) => {
-          await services.saveCheckpoint(publicId, { attemptNumber: reportAttempt, batchIndex: key.batchIndex, inputHash: key.planHash, result: plan });
+          await services.saveCheckpoint(publicId, { attemptNumber: reportAttempt, batchIndex: persistedCheckpointIndex(taskAttemptNumber, key.batchIndex), inputHash: key.planHash, result: plan });
         },
         loadJudgeBatchCheckpoint: async (key: JudgeBatchCheckpointKey) => {
-          const checkpoints = await services.loadCheckpoints(publicId, { attemptNumber: reportAttempt, batchIndex: key.batchIndex });
+          const checkpoints = await services.loadCheckpoints(publicId, { attemptNumber: reportAttempt, batchIndex: persistedCheckpointIndex(taskAttemptNumber, key.batchIndex) });
           const checkpoint = checkpoints[0];
           return checkpoint?.inputHash === key.batchHash ? checkpoint.result : null;
         },
         saveJudgeBatchCheckpoint: async (key: JudgeBatchCheckpointKey, checkpoint: JudgeBatchCheckpoint) => {
           await services.saveCheckpoint(publicId, {
             attemptNumber: reportAttempt,
-            batchIndex: key.batchIndex,
+            batchIndex: persistedCheckpointIndex(taskAttemptNumber, key.batchIndex),
             inputHash: key.batchHash,
             result: checkpoint,
           });

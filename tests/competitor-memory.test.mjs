@@ -60,6 +60,15 @@ test("remembered continuity retains more than the former twenty-domain cutoff", 
   assert.equal(mergeRememberedCandidates([], remembered).length, 100);
 });
 
+test("remembered persistence exposes overflow instead of claiming complete carry-forward", async () => {
+  const observedAt = "2026-07-14T00:00:00.000Z";
+  const database = new FakeDatabase(Array.from({ length: 501 }, (_, index) => record("myjam.co.uk", `remembered-${index}.test`, observedAt)));
+  const loaded = await loadRememberedCompetitors("myjam.co.uk", new Date("2026-07-15T00:00:00.000Z"), database);
+  assert.equal(loaded.candidates.length, 500);
+  assert.equal(loaded.truncated, true);
+  assert.match(loaded.gap, /cannot claim full market exhaustion/i);
+});
+
 test("remembered leads remain available when fresh discovery is sparse", () => {
   const remembered = Array.from({ length: 5 }, (_, index) => ({ ...candidate(`old-${index}.test`, "remembered-reverified"), rememberedVerifiedAt: "2026-07-14T00:00:00.000Z" }));
   const merged = mergeRememberedCandidates([candidate("fresh.test")], remembered);

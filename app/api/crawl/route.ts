@@ -101,9 +101,9 @@ type ReportBlock = Record<string, unknown> & { type: string; id: string };
 
 const MAX_DOMAINS = 4;
 const MAX_HTML_PAGES = 5;
-// A merged rival can carry one exact seed for each of the 100 primary-product
+// A merged rival can carry one exact seed for each of the 200 primary-product
 // anchors in a discovery attempt. Include the homepage plus every bounded seed.
-const MAX_DISCOVERED_HTML_PAGES = 101;
+const MAX_DISCOVERED_HTML_PAGES = 201;
 const MAX_SITEMAP_DOCUMENTS = 4;
 const MAX_DISCOVERED_SITEMAP_DOCUMENTS = 2;
 const MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES = 16;
@@ -112,10 +112,11 @@ export const MAX_PRIMARY_CATALOG_PRODUCTS = 1_000;
 const MAX_CATALOG_RECONCILIATION_PAGES = 64;
 const MAX_DOCUMENT_BYTES = 1_500_000;
 const MAX_HTML_EXTRACTION_BYTES = 400_000;
-const COMPETITOR_CRAWL_CONCURRENCY = 24;
-// One hundred product lanes and two company lanes can each contribute six
-// fresh domains, plus up to 152 remembered rivals.
-const MAX_COMPETITOR_INVESTIGATIONS = 764;
+const COMPETITOR_CRAWL_CONCURRENCY = 48;
+const COMPETITOR_PAGE_CONCURRENCY = 3;
+// Two hundred product lanes and two company lanes can each contribute six
+// fresh domains, plus the 500 strongest remembered rivals.
+const MAX_COMPETITOR_INVESTIGATIONS = 1_712;
 const REQUEST_TIMEOUT_MS = 6_000;
 const USER_AGENT = "MarketSignalPublicScanner/0.1";
 const PRIORITY_PATHS = ["/pricing", "/plans", "/products", "/features", "/compare", "/integrations", "/about", "/customers", "/blog"];
@@ -694,7 +695,7 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
   const expandablePaths = unique([...seededPaths, ...sortedObservedPaths], maxHtmlPages - 1);
   const paths = expandablePaths.filter((path) => robots.allows(new URL(path, base).pathname));
   for (const path of expandablePaths) if (!robots.allows(new URL(path, base).pathname)) gaps.push({ url: new URL(path, base).toString(), reason: "robots.txt disallows this crawl path.", observedAt: startedAt });
-  const fetchedPages = await Promise.all(paths.map(async (path) => {
+  const fetchedPageResults = await settleWithConcurrency(paths, COMPETITOR_PAGE_CONCURRENCY, async (path) => {
     const url = new URL(path, base).toString();
     const result = await fetchPage(url, "text/html,application/xhtml+xml", domain);
     if (!result.ok || !/text\/html|application\/xhtml\+xml/i.test(result.contentType)) { gaps.push({ url, reason: result.error || `page returned HTTP ${result.status} or non-HTML content.`, observedAt: startedAt }); return null; }
@@ -702,7 +703,12 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
     if (finalHost !== domain.replace(/^www\./, "")) { gaps.push({ url, reason: "redirected off the submitted domain.", observedAt: startedAt }); return null; }
     const page = await parsePage(result.text, result.url, new Date().toISOString(), domain, result.truncated, result);
     return { ...page, requestedSourceUrl: url };
-  }));
+  });
+  const fetchedPages = fetchedPageResults.map((result, index) => {
+    if (result.status === "fulfilled") return result.value;
+    gaps.push({ url: new URL(paths[index], base).toString(), reason: "page processing failed before verification completed.", observedAt: startedAt });
+    return null;
+  });
   const seenUrls = new Set<string>();
   const seenHashes = new Set<string>();
   const pages: CrawlPage[] = [homepage, ...(fetchedPages.filter(Boolean) as CrawlPage[])].filter((page) => {
@@ -1133,7 +1139,7 @@ export async function POST(request: Request) {
     const allInvestigationCandidates = mergeRememberedCandidates(
       discovery.candidates.filter((candidate) => !domains.includes(candidate.domain)),
       memory.candidates.filter((candidate) => !domains.includes(candidate.domain)),
-      MAX_PRIMARY_CATALOG_PRODUCTS,
+      MAX_COMPETITOR_INVESTIGATIONS,
     );
     const investigationCandidates = allInvestigationCandidates.slice(0, MAX_COMPETITOR_INVESTIGATIONS);
     discovery = {
@@ -1154,7 +1160,7 @@ export async function POST(request: Request) {
       ...discovery,
       productSearchCoverage: finalizedDiscoveryCoverage(
         discovery.productSearchCoverage,
-        allInvestigationCandidates.length,
+        allInvestigationCandidates.length + Number(memory.truncated),
         investigationCandidates.length,
         investigatedSettled.map((result) => result.status),
         discoveredResults,

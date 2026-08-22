@@ -1,7 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { createMatchHandler, MAX_MATCH_BODY_BYTES, parseCatalogs, parsePinnedPairs, productAnalysisBudgetMs, productAnalysisConcurrency, productAnalysisLimit, productBackfillPoolSize } from "../app/api/match/route.ts";
+import { createMatchHandler, MAX_MATCH_BODY_BYTES, parseCatalogs, parsePinnedPairs, persistedCheckpointIndex, productAnalysisBudgetMs, productAnalysisConcurrency, productAnalysisLimit, productBackfillPoolSize } from "../app/api/match/route.ts";
+
+test("matching checkpoints have disjoint task-attempt namespaces", () => {
+  assert.equal(persistedCheckpointIndex(1, 0), 1_400);
+  assert.equal(persistedCheckpointIndex(1, 199), 1_599);
+  assert.equal(persistedCheckpointIndex(2, 0), 1_600);
+  assert.equal(persistedCheckpointIndex(10, 199), 3_399);
+  assert.equal(persistedCheckpointIndex(1, 999), 3_400);
+  assert.equal(persistedCheckpointIndex(10, 999), 3_409);
+  assert.throws(() => persistedCheckpointIndex(1, 200), /exceeds/i);
+});
 
 test("AI matching input keeps a broad but bounded first-party catalog", () => {
   const products = Array.from({ length: 605 }, (_, index) => ({
@@ -148,7 +158,7 @@ test("rejects duplicate canonical catalog domains", () => {
 });
 
 test("rejects an oversized rival catalog set instead of silently dropping later rivals", () => {
-  const catalogs = Array.from({ length: 766 }, (_, index) => ({
+  const catalogs = Array.from({ length: 1_714 }, (_, index) => ({
     domain: `rival-${index}.test`,
     products: [{ id: `r${index}`, name: `Product ${index}`, sourceUrl: `https://rival-${index}.test/products/${index}` }],
   }));
@@ -211,8 +221,8 @@ test("authenticated matching binds durable judge checkpoints to the active repor
     },
     async loadCheckpoints(publicId, input) {
       assert.equal(publicId, "b".repeat(32));
-      if (input.batchIndex === 999) return [];
-      assert.deepEqual(input, { attemptNumber: 2, batchIndex: 3 });
+      if (input.batchIndex === 3_402) return [];
+      assert.deepEqual(input, { attemptNumber: 2, batchIndex: 1_803 });
       return [{ inputHash: "a".repeat(64), result: { version: 1 } }];
     },
     async saveCheckpoint(publicId, input) {
@@ -228,7 +238,7 @@ test("authenticated matching binds durable judge checkpoints to the active repor
   const response = await handler(new Request("https://signal.test/api/match", {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, reportObservedAt: "2026-07-20T09:00:00.000Z", primaryDomain: "shop.test", marketCountryCode: "GB", productLimit: 1_000, catalogs: [{ domain: "shop.test", products: fullPrimaryCatalog }] }),
+    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, taskAttemptNumber: 3, reportObservedAt: "2026-07-20T09:00:00.000Z", primaryDomain: "shop.test", marketCountryCode: "GB", productLimit: 1_000, catalogs: [{ domain: "shop.test", products: fullPrimaryCatalog }] }),
   }));
 
   assert.equal(response.status, 200);
@@ -237,16 +247,23 @@ test("authenticated matching binds durable judge checkpoints to the active repor
   assert.equal(receivedOptions.concurrency, 12);
   assert.equal(receivedOptions.referenceTimeMs, Date.parse("2026-07-20T09:00:00.000Z"));
   assert.equal(receivedOptions.marketCountryCode, "GB");
-  const savedJudge = saved.find((item) => item.input.batchIndex === 3);
-  const savedPlan = saved.find((item) => item.input.batchIndex === 999);
+  const savedJudge = saved.find((item) => item.input.batchIndex === 1_803);
+  const savedPlan = saved.find((item) => item.input.batchIndex === 3_402);
   assert.equal(savedJudge.publicId, "b".repeat(32));
   assert.equal(savedJudge.input.attemptNumber, 2);
   assert.equal(savedPlan.input.inputHash, "c".repeat(64));
 
+  const missingTaskAttempt = await handler(new Request("https://signal.test/api/match", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, reportObservedAt: "2026-07-20T09:00:00.000Z", primaryDomain: "shop.test", productLimit: 1_000, catalogs: [{ domain: "shop.test", products: fullPrimaryCatalog }] }),
+  }));
+  assert.equal(missingTaskAttempt.status, 400);
+
   const mismatch = await handler(new Request("https://signal.test/api/match", {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, reportObservedAt: "2026-07-20T09:00:00.000Z", primaryDomain: "shop.test", productLimit: 50, catalogs: [{ domain: "shop.test", products: [{ name: "Honey", sourceUrl: "https://shop.test/products/honey" }] }] }),
+    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, taskAttemptNumber: 3, reportObservedAt: "2026-07-20T09:00:00.000Z", primaryDomain: "shop.test", productLimit: 50, catalogs: [{ domain: "shop.test", products: [{ name: "Honey", sourceUrl: "https://shop.test/products/honey" }] }] }),
   }));
   assert.equal(mismatch.status, 409);
   assert.equal(savedJudge.input.inputHash, "a".repeat(64));
@@ -254,7 +271,7 @@ test("authenticated matching binds durable judge checkpoints to the active repor
   const malformedPins = await handler(new Request("https://signal.test/api/match", {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, primaryDomain: "shop.test", productLimit: 1_000, pinnedPairs: { primaryId: "p1" }, catalogs: [{ domain: "shop.test", products: [{ name: "Honey", sourceUrl: "https://shop.test/products/honey" }] }] }),
+    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, taskAttemptNumber: 3, primaryDomain: "shop.test", productLimit: 1_000, pinnedPairs: { primaryId: "p1" }, catalogs: [{ domain: "shop.test", products: [{ name: "Honey", sourceUrl: "https://shop.test/products/honey" }] }] }),
   }));
   assert.equal(malformedPins.status, 400);
 

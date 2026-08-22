@@ -17,6 +17,7 @@ import {
 import {
   OPERATION_BUDGETS_MS,
   ORCHESTRATION_FETCH_TIMEOUT_MS,
+  MAX_SUCCESS_BODY_BYTES,
   OrchestrationHttpError,
   WORST_CASE_CRITICAL_PATH_MS,
   createOrchestrationFetch,
@@ -791,6 +792,7 @@ test("stored run identity drift hard-fails before any mutation", async () => {
 });
 
 test("all operation deadlines keep a two-minute margin below the stale marker", () => {
+  assert.equal(MAX_SUCCESS_BODY_BYTES, 64 * 1_024 * 1_024);
   assert.equal(MAX_OPERATION_TIMEOUT_MS, 780_000);
   for (const timeout of Object.values(OPERATION_BUDGETS_MS)) assert.ok(timeout <= MAX_OPERATION_TIMEOUT_MS);
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS > OPERATION_BUDGETS_MS.match, "Undici must not preempt the match operation deadline");

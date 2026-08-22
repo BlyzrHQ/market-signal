@@ -7,6 +7,7 @@ import { Agent, fetch as undiciFetch } from "undici";
 
 type FetchLike = typeof fetch;
 const MAX_ACCEPTED_ERROR_BODY_BYTES = 1_000_000;
+export const MAX_SUCCESS_BODY_BYTES = 64 * 1_024 * 1_024;
 
 // Node's built-in fetch gives up while waiting for response headers after five
 // minutes, independently of a longer AbortSignal. Discovery and matching are
@@ -231,7 +232,11 @@ async function requestJson(fetchImpl: FetchLike, url: string, token: string, ope
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
-      if (response.ok) return await response.json() as unknown;
+      if (response.ok) {
+        const responseText = await readBoundedText(response, MAX_SUCCESS_BODY_BYTES);
+        if (responseText === null) throw new OrchestrationHttpError(operation, 502, true, "The successful worker response exceeded the orchestration transport bound.");
+        try { return JSON.parse(responseText) as unknown; } catch { throw new OrchestrationHttpError(operation, 502, true, "The successful worker response was not valid JSON."); }
+      }
       const accepted = acceptError ? await acceptError(response) : undefined;
       if (accepted !== undefined) return accepted;
       const retryable = isRetryableHttpStatus(response.status);
