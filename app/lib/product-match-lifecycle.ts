@@ -69,7 +69,6 @@ function compactPricedEvidenceProduct(product: ProductRecord): ProductRecord {
 
 function compactPricedEvidenceMatch(primary: ProductRecord, match: ProductMatch & { product: ProductRecord }): ProductMatch {
   const rival = compactPricedEvidenceProduct(match.product);
-  const exactProduct = match.assessment?.verdict !== "close_substitute";
   return {
     domain: match.domain,
     product: rival,
@@ -77,16 +76,22 @@ function compactPricedEvidenceMatch(primary: ProductRecord, match: ProductMatch 
     confidence: match.confidence,
     sharedTerms: [],
     claimIds: [],
-    decision: productDecision(primary, rival, match.score, exactProduct),
+    // Decision prose is reproducible from the retained products and score. It
+    // is restored only for the globally selected edge, instead of being
+    // duplicated across every durable backup edge.
+    decision: null,
     ...(match.assessment ? { assessment: {
-      ...match.assessment,
-      model: compactEvidenceText(match.assessment.model, 80),
-      promptVersion: compactEvidenceText(match.assessment.promptVersion, 80),
-       reasons: [],
-       contradictions: [],
-       normalizedCategory: compactEvidenceText(match.assessment.normalizedCategory, 60),
-       normalizedVariant: compactEvidenceText(match.assessment.normalizedVariant, 60),
-       normalizedSize: compactEvidenceText(match.assessment.normalizedSize, 60),
+      method: match.assessment.method,
+      claimType: match.assessment.claimType,
+      verdict: match.assessment.verdict,
+      confidence: match.assessment.confidence,
+      model: "",
+      promptVersion: "",
+      reasons: [],
+      contradictions: [],
+      normalizedCategory: "",
+      normalizedVariant: "",
+      normalizedSize: "",
       primarySourceUrl: "",
       rivalSourceUrl: "",
     } } : {}),
@@ -534,7 +539,12 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
     return [{
       ...row,
       matches: row.matches.map((match) => match === selected
-        ? match
+        ? {
+          ...match,
+          decision: match.product
+            ? (match.decision || productDecision(row.primary, match.product, match.score, match.assessment?.verdict !== "close_substitute"))
+            : null,
+        }
         : { domain: match.domain, product: null, score: 0, confidence: null, sharedTerms: [], claimIds: row.primary.claimIds, decision: null }),
     }];
   });

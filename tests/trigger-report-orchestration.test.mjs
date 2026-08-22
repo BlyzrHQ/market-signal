@@ -62,6 +62,38 @@ test("a late recovery validates prices against the fresh crawl observation rathe
   ), Date.parse(current.observedAt));
 });
 
+test("a late recovery reference never advances beyond its production wall clock", () => {
+  const wallClock = Date.parse("2026-08-22T12:05:00.000Z");
+  const future = product("shop.example", "future-price");
+  future.observedAt = "2026-08-23T12:05:00.000Z";
+  assert.equal(productEvidenceReferenceTimeMs(
+    [{ products: [future] }],
+    "2026-08-19T12:00:00.000Z",
+    wallClock,
+  ), Date.parse("2026-08-19T12:00:00.000Z"));
+  assert.ok(productEvidenceReferenceTimeMs(
+    [{ products: [future] }],
+    "2026-08-24T12:00:00.000Z",
+    wallClock,
+  ) <= wallClock);
+});
+
+test("orchestration recovers judge checkpoints from every task-attempt namespace", async () => {
+  const reads = [];
+  const port = mockPort({
+    async loadCheckpoint(_publicId, input) {
+      reads.push(input);
+      return [];
+    },
+  });
+  await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
+  const judgeReads = reads.filter((input) => input.batchIndexStart >= 1_400);
+  for (let taskAttemptOffset = 0; taskAttemptOffset < 10; taskAttemptOffset += 1) {
+    const start = 1_400 + (taskAttemptOffset * 250);
+    assert.ok(judgeReads.some((input) => input.batchIndexStart === start && input.batchIndexEnd === start + 249 && input.latestPerBatch === true), JSON.stringify(judgeReads));
+  }
+});
+
 test("adopted judge evidence requires the exact current primary product identity", () => {
   const current = product("shop.example", "stable-id");
   current.quantity = { value: 500, unit: "g", normalized: "500g" };

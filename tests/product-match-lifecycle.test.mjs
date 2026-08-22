@@ -449,12 +449,18 @@ test("durable priced evidence preserves backup rivals until a later global assig
 });
 
 test("checkpoint compaction preserves the late edge required by a 20-row augmenting path", () => {
+  const legalId = (prefix) => `${prefix}-${"i".repeat(Math.max(0, 299 - prefix.length))}`.slice(0, 300);
+  const legalUrl = (domain, prefix) => {
+    const head = `https://${domain}/products/${prefix}/`;
+    const tail = "?country=US";
+    return `${head}${"x".repeat(2_000 - head.length - tail.length)}${tail}`;
+  };
   const priced = (primaryId, rivalId, rivalIndex) => {
-    const item = row(primaryId, rivalId);
+    const item = row(legalId(primaryId), legalId(rivalId));
     item.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
-    item.primary.sourceUrl = `https://shop.test/products/${primaryId}/${"p".repeat(900)}?country=US`;
+    item.primary.sourceUrl = legalUrl("shop.test", primaryId);
     item.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
-    item.matches[0].product.sourceUrl = `https://rival.test/products/${rivalId}/${"r".repeat(900)}?country=US`;
+    item.matches[0].product.sourceUrl = legalUrl("rival.test", rivalId);
     item.matches[0].score = 1 - (rivalIndex / 1_000);
     return item;
   };
@@ -471,9 +477,9 @@ test("checkpoint compaction preserves the late edge required by a 20-row augment
   const recovered = mergePublishedProductComparisonState(checkpoint, null, 20);
 
   assert.equal(state.comparison.rows.length, 20);
-  assert.equal(checkpoint.rows.find((item) => item.primary.id === "p00").matches.length, 20);
+  assert.equal(checkpoint.rows.find((item) => item.primary.id === legalId("p00")).matches.length, 20);
   assert.equal(recovered.comparison.rows.length, 20);
-  assert.ok(recovered.comparison.rows.some((item) => item.matches.some((match) => match.product?.id === "r19")));
+  assert.ok(recovered.comparison.rows.some((item) => item.matches.some((match) => match.product?.id === legalId("r19"))));
 });
 
 test("global assignment counts a merchant product id only once when its URL and name drift", () => {

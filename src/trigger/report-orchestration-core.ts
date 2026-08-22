@@ -57,11 +57,13 @@ export const MAX_MATCH_JUDGE_CHECKPOINTS_PER_TASK_ATTEMPT = 250;
 
 export function productEvidenceReferenceTimeMs(catalogs: Array<{ products: ProductRecord[] }>, reportCreatedAt: string, wallClockMs = Date.now()) {
   const fallback = Date.parse(reportCreatedAt);
-  let reference = Number.isFinite(fallback) ? fallback : wallClockMs;
-  const latestAllowed = wallClockMs + (24 * 60 * 60 * 1_000);
+  // The publication gate already permits an observation up to 24 hours after
+  // its reference time. Never advance that reference beyond the production
+  // wall clock or the two allowances would compose into a 48-hour window.
+  let reference = Number.isFinite(fallback) ? Math.min(fallback, wallClockMs) : wallClockMs;
   for (const product of catalogs.flatMap((catalog) => catalog.products)) {
     const observedAt = Date.parse(product.observedAt);
-    if (Number.isFinite(observedAt) && observedAt <= latestAllowed) reference = Math.max(reference, observedAt);
+    if (Number.isFinite(observedAt) && observedAt <= wallClockMs) reference = Math.max(reference, observedAt);
   }
   return reference;
 }
@@ -715,12 +717,21 @@ export async function orchestrateReport(
     // prices as being "future" relative to its original creation timestamp.
     const updatedAtMs = Date.parse(stored.run.updatedAt);
     const reportReferenceTimeMs = productEvidenceReferenceTimeMs(catalogs, stored.run.createdAt, Number.isFinite(updatedAtMs) ? updatedAtMs : Date.now());
+    const judgeCheckpointRanges = Array.from({ length: MAX_ORCHESTRATION_TASK_ATTEMPTS }, (_, taskAttemptOffset) => {
+      const start = MATCH_JUDGE_CHECKPOINT_BATCH_INDEX_BASE + (taskAttemptOffset * MAX_MATCH_JUDGE_CHECKPOINTS_PER_TASK_ATTEMPT);
+      return { start, end: start + MAX_MATCH_JUDGE_CHECKPOINTS_PER_TASK_ATTEMPT - 1 };
+    });
     const judgeCheckpointStart = MATCH_JUDGE_CHECKPOINT_BATCH_INDEX_BASE + ((taskAttemptNumber - 1) * MAX_MATCH_JUDGE_CHECKPOINTS_PER_TASK_ATTEMPT);
     const judgeCheckpointEnd = judgeCheckpointStart + MAX_MATCH_JUDGE_CHECKPOINTS_PER_TASK_ATTEMPT - 1;
-    const [stateCheckpoints, adoptedJudgeCheckpoints] = await Promise.all([
+    // Every task attempt owns a disjoint judge namespace. Read all ten bounded
+    // namespaces concurrently so crash recovery retains accepted edges from
+    // every adopted attempt without turning the critical path into a single
+    // 2,500-batch sequential scan.
+    const [stateCheckpoints, ...judgeCheckpointPages] = await Promise.all([
       port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: 270, batchIndexEnd: MATCH_JUDGE_CHECKPOINT_BATCH_INDEX_BASE - 1, latestPerBatch: true }),
-      port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: judgeCheckpointStart, batchIndexEnd: judgeCheckpointEnd, latestPerBatch: true }),
+      ...judgeCheckpointRanges.map((range) => port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: range.start, batchIndexEnd: range.end, latestPerBatch: true })),
     ]);
+    const adoptedJudgeCheckpoints = judgeCheckpointPages.flat();
     const loadedCheckpoints = [...stateCheckpoints, ...adoptedJudgeCheckpoints];
     const allDurableCheckpoints = new Map(loadedCheckpoints.map((checkpoint) => [`${checkpoint.attemptNumber}:${checkpoint.batchIndex}`, checkpoint]));
     const durableCheckpoints = new Map<number, (typeof loadedCheckpoints)[number]>();
