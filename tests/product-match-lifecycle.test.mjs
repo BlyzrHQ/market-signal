@@ -290,23 +290,23 @@ test("the final publication gate excludes a country-path rival outside the repor
   assert.equal(publishPricedProductComparison(candidate).rows[0].matches[0].publication.reason, "incompatible-market");
 });
 
-test("the final publication gate does not infer a market from a genericized country TLD", () => {
+test("the final publication gate rejects an unknown genericized country TLD for a known market", () => {
   const candidate = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "r1")], accepted: 1 });
   candidate.marketCountryCode = "US";
   candidate.rows[0].primary.priceSignals = [{ raw: "USD 90", currency: "USD", amount: 90 }];
   candidate.rows[0].matches[0].product.domain = "rival.la";
   candidate.rows[0].matches[0].product.sourceUrl = "https://rival.la/products/r1";
   candidate.rows[0].matches[0].product.priceSignals = [{ raw: "USD 80", currency: "USD", amount: 80 }];
-  assert.equal(publishPricedProductComparison(candidate).rows[0].matches[0].publication.priceEligible, true);
+  assert.equal(publishPricedProductComparison(candidate).rows[0].matches[0].publication.reason, "incompatible-market");
 });
 
-test("the final publication gate does not treat a region grouping as a country market", () => {
+test("the final publication gate rejects a region grouping without country proof", () => {
   const candidate = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "r1")], accepted: 1 });
   candidate.marketCountryCode = "US";
   candidate.rows[0].primary.priceSignals = [{ raw: "USD 90", currency: "USD", amount: 90 }];
   candidate.rows[0].matches[0].product.sourceUrl = "https://rival.test/en-eu/products/r1?region=EU";
   candidate.rows[0].matches[0].product.priceSignals = [{ raw: "USD 80", currency: "USD", amount: 80 }];
-  assert.equal(publishPricedProductComparison(candidate).rows[0].matches[0].publication.priceEligible, true);
+  assert.equal(publishPricedProductComparison(candidate).rows[0].matches[0].publication.reason, "incompatible-market");
 });
 
 test("the final publication gate keeps complete same-currency observations", () => {

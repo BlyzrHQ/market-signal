@@ -208,8 +208,8 @@ export function productAnalysisBudgetMs(limit: number) {
 }
 
 export function productBackfillPoolSize(resultTarget: number) {
-  const boundedTarget = Math.max(1, Math.min(MAX_PRIMARY_PRODUCTS, Math.floor(resultTarget)));
-  return Math.min(MAX_PRIMARY_PRODUCTS, Math.max(boundedTarget, boundedTarget * 4));
+  void resultTarget;
+  return MAX_PRIMARY_PRODUCTS;
 }
 
 export function parsePinnedPairs(value: unknown, catalogs: Array<{ domain: string; products: ProductRecord[] }>, primaryDomain: string): PinnedProductPair[] {
@@ -275,7 +275,8 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
       if (hasReportAttempt && Number(body.productLimit) !== resultTarget) return Response.json({ ok: false, error: "The report product limit does not match its persisted entitlement." }, { status: 409 });
       if (hasReportAttempt && reportObservedAt !== entitlement?.reportObservedAt) return Response.json({ ok: false, error: "The report observation timestamp does not match its persisted identity." }, { status: 409 });
       if (body.marketCountryCode !== undefined && !/^[A-Z]{2}$/.test(marketCountryCode)) return Response.json({ ok: false, error: "The report market country code must be a two-letter country code." }, { status: 400 });
-      const maxPrimaryProducts = productBackfillPoolSize(resultTarget);
+      const primaryCatalogSize = catalogs.find((catalog) => catalog.domain === primaryDomain)?.products.length || 0;
+      const maxPrimaryProducts = Math.min(productBackfillPoolSize(resultTarget), primaryCatalogSize);
       const checkpointOptions = hasReportAttempt ? {
         loadJudgeBatchCheckpoint: async (key: JudgeBatchCheckpointKey) => {
           const checkpoints = await services.loadCheckpoints(publicId, { attemptNumber: reportAttempt, batchIndex: key.batchIndex });

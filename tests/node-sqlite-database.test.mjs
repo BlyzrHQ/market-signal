@@ -8,7 +8,7 @@ import { Worker } from "node:worker_threads";
 
 import { loadRememberedCompetitors, rememberVerifiedCompetitors } from "../app/lib/competitor-memory.ts";
 import { NodeSqliteDatabase } from "../app/lib/node-sqlite-database.ts";
-import { appendReportEvent, createReportRun, evaluateStoredReport, finalizeReportFactManifest, getReportEvaluation, getStoredReport, recoverInterruptedReport, saveReportDocument, saveReportFactChunk } from "../app/lib/report-store.ts";
+import { appendReportEvent, createReportRun, evaluateStoredReport, finalizeReportFactManifest, getReportEvaluation, getStoredReport, recoverInterruptedReport, saveReportDocument, saveReportFactChunk, saveReportMatchBatchCheckpoint } from "../app/lib/report-store.ts";
 import { buildReportFactBundle, canonicalReportFact, reportFactHash } from "../src/shared/report-facts.ts";
 import { closeRuntimeDatabases, runtimeDatabase } from "../app/lib/runtime-database.ts";
 import { publicHttpUrl } from "../app/lib/public-url.ts";
@@ -659,6 +659,7 @@ test("recovery adopts an immutable completed fact snapshot for the new attempt",
     const created = await createReportRun({ primaryDomain: "recoverable.example" }, started, database);
     await appendReportEvent(created.publicId, { attemptNumber: 1, idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Collecting public pages." }, started, database);
     const bundle = await buildReportFactBundle({ publicId: created.publicId, crawlResults: [{ domain: "recoverable.example", role: "primary", homepage: { sourceUrl: "https://recoverable.example/" }, products: [], fetchedAt: started.toISOString() }], comparison: null, adBlock: null, observedAt: started.toISOString(), attemptNumber: 1 });
+    await saveReportMatchBatchCheckpoint(created.publicId, { attemptNumber: 1, batchIndex: 0, inputHash: "a".repeat(64), result: { assessments: [] } }, started, database);
     for (const chunk of bundle.chunks) await saveReportFactChunk(created.publicId, chunk, started, database);
     await finalizeReportFactManifest(created.publicId, bundle.manifest, started, database);
     const interrupted = await getStoredReport(created.publicId, new Date("2026-08-16T10:20:00.000Z"), database);
@@ -668,6 +669,7 @@ test("recovery adopts an immutable completed fact snapshot for the new attempt",
     assert.equal(recovered.attemptCount, 2);
     assert.deepEqual((await database.prepare("SELECT DISTINCT attempt_number FROM report_fact_chunks WHERE run_id = ?").bind(recovered.id).all()).results, [{ attempt_number: 2 }]);
     assert.deepEqual((await database.prepare("SELECT attempt_number, status FROM report_fact_manifests WHERE run_id = ?").bind(recovered.id).all()).results, [{ attempt_number: 2, status: "complete" }]);
+    assert.deepEqual((await database.prepare("SELECT attempt_number, batch_index FROM report_match_batch_checkpoints WHERE run_id = ?").bind(recovered.id).all()).results, [{ attempt_number: 2, batch_index: 0 }]);
   } finally {
     database.close();
     await rm(value.directory, { recursive: true, force: true });
@@ -688,7 +690,9 @@ test("report fact manifests use the stable report observation across retry times
   const retry = await make("2026-08-22T03:06:00.000Z");
   assert.equal(retry.manifest.manifestId, first.manifest.manifestId);
   assert.equal(retry.manifest.manifestHash, first.manifest.manifestHash);
-  assert.ok(retry.chunks.every((chunk) => chunk.items.every((item) => item.observedAt === reportObservedAt)));
+  assert.ok(retry.chunks.every((chunk) => chunk.items.every((item) => item.snapshotObservedAt === reportObservedAt)));
+  const retryProduct = retry.chunks.find((chunk) => chunk.kind === "products").items[0];
+  assert.equal(retryProduct.observedAt, "2026-08-22T03:06:00.000Z");
 });
 
 test("document persistence CAS rejects a fact manifest finalized after the worker snapshot", async () => {

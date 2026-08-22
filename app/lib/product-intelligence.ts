@@ -1812,7 +1812,7 @@ export function hasComparablePublicPricePair(primary: ProductRecord, rival: Prod
   if (primaryMarket.conflict || rivalMarket.conflict) return false;
   if ((primaryMarket.explicit && !primaryMarket.countryCode) || (rivalMarket.explicit && !rivalMarket.countryCode)) return false;
   const normalizedTarget = /^[A-Z]{2}$/.test(targetMarket.toUpperCase()) ? targetMarket.toUpperCase() : "";
-  if (normalizedTarget && ((primaryMarket.countryCode && primaryMarket.countryCode !== normalizedTarget) || (rivalMarket.countryCode && rivalMarket.countryCode !== normalizedTarget))) return false;
+  if (normalizedTarget && (primaryMarket.countryCode !== normalizedTarget || rivalMarket.countryCode !== normalizedTarget)) return false;
   return !(primaryMarket.countryCode && rivalMarket.countryCode && primaryMarket.countryCode !== rivalMarket.countryCode);
 }
 
@@ -1920,7 +1920,7 @@ export function planPreliminaryCatalogReconciliation(comparison: ProductComparis
   return { targets, totalEligible: eligible.length, truncated: eligible.length > targets.length };
 }
 
-export function planFinalProductEnrichmentTargets(comparison: ProductComparison, maxPages = 24) {
+export function planFinalProductEnrichmentTargets(comparison: ProductComparison, maxPages = 24, referenceTimeMs = Date.now()) {
   const boundedMax = Math.max(0, Math.min(1_000, Math.floor(maxPages)));
   const marketCountryCode = /^[A-Z]{2}$/.test(String(comparison.marketCountryCode || "").toUpperCase())
     ? String(comparison.marketCountryCode).toUpperCase()
@@ -1932,7 +1932,7 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
   const add = (product: ProductRecord, role: ProductEnrichmentTarget["role"], pairScore: number, need: "price" | "image") => {
     if (product.jsonLdType !== "Product") return;
     const sourceUrl = safeProductSource(product);
-    const needsPrice = !hasComparablePublicPrice(product);
+    const needsPrice = !hasComparablePublicPrice(product, referenceTimeMs);
     const needsSecureImage = !/^https:\/\//i.test(product.imageUrl);
     const key = targetKey(product, sourceUrl);
     if (!sourceUrl || (need === "price" ? !needsPrice : !needsSecureImage) || seenTargets.has(key)) return;
@@ -1960,7 +1960,7 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
       { product: pair.match.product, role: "rival" as const },
       { product: pair.row.primary, role: "primary" as const },
     ].flatMap((candidate) => {
-      if (hasComparablePublicPrice(candidate.product)) return [];
+      if (hasComparablePublicPrice(candidate.product, referenceTimeMs)) return [];
       const sourceUrl = safeProductSource(candidate.product);
       return sourceUrl && !seenTargets.has(targetKey(candidate.product, sourceUrl)) ? [{ ...candidate, sourceUrl }] : [];
     });

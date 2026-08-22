@@ -55,8 +55,8 @@ test("product analysis limits are server-controlled, clamped, and receive scaled
   assert.equal(productAnalysisBudgetMs(60), 90_000);
   assert.equal(productAnalysisBudgetMs(500), 360_000);
   assert.equal(productAnalysisBudgetMs(1_000), 720_000);
-  assert.equal(productBackfillPoolSize(20), 80);
-  assert.equal(productBackfillPoolSize(50), 200);
+  assert.equal(productBackfillPoolSize(20), 1_000);
+  assert.equal(productBackfillPoolSize(50), 1_000);
   assert.equal(productBackfillPoolSize(500), 1_000);
   assert.equal(productBackfillPoolSize(1_000), 1_000);
 });
@@ -178,6 +178,11 @@ test("authenticated matching binds durable judge checkpoints to the active repor
   const token = "test-callback-token-that-is-at-least-32-characters";
   const saved = [];
   let receivedOptions;
+  const fullPrimaryCatalog = Array.from({ length: 1_000 }, (_, index) => ({
+    id: `p${index}`,
+    name: `Product ${index}`,
+    sourceUrl: `https://shop.test/products/${index}`,
+  }));
   const handler = createMatchHandler({
     async build(_domain, _catalogs, options) {
       receivedOptions = options;
@@ -204,7 +209,7 @@ test("authenticated matching binds durable judge checkpoints to the active repor
   const response = await handler(new Request("https://signal.test/api/match", {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, reportObservedAt: "2026-07-20T09:00:00.000Z", primaryDomain: "shop.test", marketCountryCode: "GB", productLimit: 1_000, catalogs: [{ domain: "shop.test", products: [{ name: "Honey", sourceUrl: "https://shop.test/products/honey" }] }] }),
+    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, reportObservedAt: "2026-07-20T09:00:00.000Z", primaryDomain: "shop.test", marketCountryCode: "GB", productLimit: 1_000, catalogs: [{ domain: "shop.test", products: fullPrimaryCatalog }] }),
   }));
 
   assert.equal(response.status, 200);

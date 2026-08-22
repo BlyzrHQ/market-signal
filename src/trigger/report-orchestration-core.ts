@@ -40,7 +40,8 @@ export const MAX_FINAL_ENRICHMENT_TARGETS = 1_000;
 export const MAX_FINAL_ENRICHMENT_BATCH_WAVES = Math.ceil(MAX_FINAL_ENRICHMENT_TARGETS / FINAL_ENRICHMENT_BATCH_SIZE / FINAL_ENRICHMENT_BATCH_CONCURRENCY);
 
 export function pricedResultEnrichmentBudget(resultTarget: number) {
-  return Math.min(MAX_FINAL_ENRICHMENT_TARGETS, Math.max(1, Math.floor(resultTarget)) * 8);
+  void resultTarget;
+  return MAX_FINAL_ENRICHMENT_TARGETS;
 }
 
 function mergePublishedSelectionIntoScreenedComparison(screened: ProductComparison, published: ProductComparison) {
@@ -299,7 +300,7 @@ export async function orchestrateReport(
     comparison = composeProductMatchAttempts(baseline, attempts, requestCount);
     if (comparison && marketCountryCode) comparison = { ...comparison, marketCountryCode };
     if (comparison) {
-      const enrichmentPlan = planFinalProductEnrichmentTargets(comparison, pricedResultEnrichmentBudget(payload.productLimit));
+      const enrichmentPlan = planFinalProductEnrichmentTargets(comparison, pricedResultEnrichmentBudget(payload.productLimit), Date.parse(stored.run.createdAt));
       const targets = enrichmentPlan.targets;
       if (targets.length) {
         const batches = Array.from({ length: Math.ceil(targets.length / FINAL_ENRICHMENT_BATCH_SIZE) }, (_, index) => targets.slice(index * FINAL_ENRICHMENT_BATCH_SIZE, (index + 1) * FINAL_ENRICHMENT_BATCH_SIZE));

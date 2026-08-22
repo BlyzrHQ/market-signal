@@ -138,7 +138,7 @@ export function publishPricedProductComparison(comparison: ProductComparison, re
     if ((primaryEvidence.explicit && !primaryEvidence.countryCode) || (rivalEvidence.explicit && !rivalEvidence.countryCode)) return false;
     const primaryMarket = publicSourceMarketCountryCode(primary.sourceUrl);
     const rivalMarket = publicSourceMarketCountryCode(rival.sourceUrl);
-    if (targetMarket && ((primaryMarket && primaryMarket !== targetMarket) || (rivalMarket && rivalMarket !== targetMarket))) return false;
+    if (targetMarket && (primaryMarket !== targetMarket || rivalMarket !== targetMarket)) return false;
     return !(primaryMarket && rivalMarket && primaryMarket !== rivalMarket);
   };
   const validPublicSource = (product: ProductRecord) => {

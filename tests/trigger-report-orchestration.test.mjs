@@ -7,8 +7,10 @@ import {
   parseReportOrchestrationPayload,
 } from "../src/trigger/contracts/report-orchestration.ts";
 import {
+  MAX_FINAL_ENRICHMENT_TARGETS,
   MAX_OPERATION_TIMEOUT_MS,
   orchestrateReport,
+  pricedResultEnrichmentBudget,
 } from "../src/trigger/report-orchestration-core.ts";
 import {
   OPERATION_BUDGETS_MS,
@@ -33,6 +35,12 @@ const payload = {
   productPlan: "starter",
   productLimit: 20,
 };
+
+test("priced-result enrichment can exhaust the full bounded catalog regardless of publication target", () => {
+  assert.equal(pricedResultEnrichmentBudget(20), MAX_FINAL_ENRICHMENT_TARGETS);
+  assert.equal(pricedResultEnrichmentBudget(200), MAX_FINAL_ENRICHMENT_TARGETS);
+  assert.equal(pricedResultEnrichmentBudget(1_000), MAX_FINAL_ENRICHMENT_TARGETS);
+});
 const recoveryPayload = { ...payload, reportAttempt: 2 };
 
 function product(domain = "shop.example", id = "p1") {

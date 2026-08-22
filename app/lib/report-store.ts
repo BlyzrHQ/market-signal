@@ -1,7 +1,7 @@
 import { canonicalDomain } from "./domain.ts";
 import type { ApplicationDatabase, DatabasePreparedStatement } from "./database-contract.ts";
 import { runtimeDatabaseResult } from "./runtime-database.ts";
-import { canonicalReportFact, reportFactHash } from "../../src/shared/report-facts.ts";
+import { canonicalReportFact, reportFactContentHash, reportFactHash } from "../../src/shared/report-facts.ts";
 import { publicHttpUrl } from "./public-url.ts";
 import { officialAdRecordUrl } from "./ad-intelligence.ts";
 import { DETERMINISTIC_EVALUATOR_VERSION, DETERMINISTIC_RUBRIC_VERSION, profileDeterministicEvaluation } from "./report-evaluator.ts";
@@ -1131,7 +1131,7 @@ export async function saveReportDocument(publicReportId: string, document: unkno
   const attemptNumber = options.attemptNumber ?? run.attemptCount;
   if (!Number.isInteger(attemptNumber) || attemptNumber < 1 || attemptNumber !== run.attemptCount) throw new Error("Report callback attempt is stale or invalid.");
   if (["complete", "limited", "failed", "interrupted"].includes(run.status)) throw new Error("A terminal report cannot be overwritten.");
-  const manifestRows = await database.prepare(`SELECT manifest_hash, company_count, product_count, match_count, ad_count, status FROM report_fact_manifests WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>();
+  const manifestRows = await database.prepare(`SELECT manifest_hash, company_count, product_count, match_count, ad_count, status, attempt_number FROM report_fact_manifests WHERE run_id = ? AND attempt_number = ? LIMIT 1`).bind(run.id, attemptNumber).all<Record<string, unknown>>();
   const manifest = manifestRows.results?.[0];
   const completeManifest = manifest?.status === "complete" && /^[a-f0-9]{64}$/.test(String(manifest.manifest_hash || ""));
   const expectedFactManifestHash = options.expectedFactManifestHash;
@@ -1141,9 +1141,9 @@ export async function saveReportDocument(publicReportId: string, document: unkno
   const hasFactArtifacts = Boolean(manifestRows.results?.length) || Number(chunkRows.results?.[0]?.count || 0) > 0;
   if ((expectedFactManifestHash && actualFactManifestHash !== expectedFactManifestHash) || (!expectedFactManifestHash && hasFactArtifacts)) throw new Error("The report document fact manifest binding conflicts with the persisted evidence snapshot.");
   const factManifestGuard = expectedFactManifestHash
-    ? "EXISTS (SELECT 1 FROM report_fact_manifests WHERE run_id = ? AND status = 'complete' AND manifest_hash = ?)"
+    ? "EXISTS (SELECT 1 FROM report_fact_manifests WHERE run_id = ? AND status = 'complete' AND manifest_hash = ? AND attempt_number = ?)"
     : "NOT EXISTS (SELECT 1 FROM report_fact_manifests WHERE run_id = ?) AND NOT EXISTS (SELECT 1 FROM report_fact_chunks WHERE run_id = ?)";
-  const factManifestBindings = expectedFactManifestHash ? [run.id, expectedFactManifestHash] : [run.id, run.id];
+  const factManifestBindings = expectedFactManifestHash ? [run.id, expectedFactManifestHash, attemptNumber] : [run.id, run.id];
   const factCounts = completeManifest ? { companies: Number(manifest?.company_count || 0), products: Number(manifest?.product_count || 0), matches: Number(manifest?.match_count || 0), ads: Number(manifest?.ad_count || 0) } : null;
   const compactedDocument = compactTerminalReportDocument(document, undefined, { factsAuthoritative: completeManifest, factCounts });
   const documentJson = JSON.stringify(compactedDocument);
@@ -1172,7 +1172,7 @@ export async function saveReportDocument(publicReportId: string, document: unkno
   }
   const persistedRun = await findRun(database, publicReportId);
   if (!persistedRun || persistedRun.attemptCount !== attemptNumber || persistedRun.status !== status) throw new Error("Report callback attempt is stale or invalid.");
-  const persistedManifest = (await database.prepare(`SELECT manifest_hash, status FROM report_fact_manifests WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>()).results?.[0];
+  const persistedManifest = (await database.prepare(`SELECT manifest_hash, status FROM report_fact_manifests WHERE run_id = ? AND attempt_number = ? LIMIT 1`).bind(run.id, attemptNumber).all<Record<string, unknown>>()).results?.[0];
   const persistedFactManifestHash = persistedManifest?.status === "complete" ? String(persistedManifest.manifest_hash || "") : "";
   if (persistedFactManifestHash !== expectedFactManifestHash) throw new Error("The report document fact manifest binding conflicts with the persisted evidence snapshot.");
   if (evaluationCreated && completeManifest) {
@@ -1212,7 +1212,7 @@ export async function evaluateStoredReport(publicReportId: string, expected: { i
   if (["deterministic", "rubric_unavailable", "insufficient_facts", "failed", "complete", "agent_rejected", "needs_human_review", "call_outcome_unknown"].includes(evaluation.status)) return { evaluation, replayed: true as const };
   if (evaluation.status !== "pending") throw new Error("Report evaluation is not available for deterministic profiling.");
   const documentRows = await database.prepare(`SELECT document_json FROM report_documents WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>();
-  const manifestRows = await database.prepare(`SELECT manifest_hash, company_count, product_count, match_count, ad_count, status FROM report_fact_manifests WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>();
+  const manifestRows = await database.prepare(`SELECT manifest_hash, company_count, product_count, match_count, ad_count, status FROM report_fact_manifests WHERE run_id = ? AND attempt_number = ? LIMIT 1`).bind(run.id, run.attemptCount).all<Record<string, unknown>>();
   const documentJson = String(documentRows.results?.[0]?.document_json || "");
   const manifest = manifestRows.results?.[0];
   if (!documentJson || manifest?.status !== "complete") throw new Error("Report evaluation facts are incomplete.");
@@ -1494,7 +1494,7 @@ export async function createReportSearchChallenge(publicReportId: string, now = 
   const existing = await database.prepare(`SELECT * FROM report_evaluations WHERE run_id = ? AND evaluation_type = 'search_challenge' AND evaluator_version = ? ORDER BY created_at DESC LIMIT 1`).bind(run.id, REPORT_SEARCH_CHALLENGER_VERSION).all<Record<string, unknown>>();
   if (existing.results?.[0]) return rowEvaluation(existing.results[0]);
   const [manifestRows, documentRows, productsRows, matchesRows] = await Promise.all([
-    database.prepare(`SELECT manifest_hash, status FROM report_fact_manifests WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>(),
+    database.prepare(`SELECT manifest_hash, status FROM report_fact_manifests WHERE run_id = ? AND attempt_number = ? LIMIT 1`).bind(run.id, run.attemptCount).all<Record<string, unknown>>(),
     database.prepare(`SELECT document_json FROM report_documents WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>(),
     database.prepare(`SELECT * FROM report_products WHERE run_id = ? AND domain = ? ORDER BY product_id`).bind(run.id, run.primaryDomain).all<Record<string, unknown>>(),
     database.prepare(`SELECT * FROM report_matches WHERE run_id = ? ORDER BY id`).bind(run.id).all<Record<string, unknown>>(),
@@ -1930,7 +1930,7 @@ export async function saveReportFactChunk(publicReportId: string, input: ReportF
       if (value.id !== expectedId) throw new Error("Report fact id is not attributable to this report.");
     }
   }
-  const calculatedHash = await reportFactHash(items);
+  const calculatedHash = await reportFactContentHash(input.kind, items);
   if (calculatedHash !== input.contentHash) throw new Error("Report fact chunk hash does not match its content.");
   if (new TextEncoder().encode(JSON.stringify(items)).byteLength > MAX_REPORT_FACT_CHUNK_BYTES) throw new Error("Report fact chunk canonical content is too large.");
   const existing = await database.prepare(`SELECT attempt_number, chunk_count, item_count, content_hash FROM report_fact_chunks WHERE run_id = ? AND manifest_id = ? AND kind = ? AND chunk_index = ? LIMIT 1`).bind(run.id, input.manifestId, input.kind, input.chunkIndex).all<Record<string, unknown>>();
@@ -2104,7 +2104,7 @@ export async function getStoredReport(publicReportId: string, now = new Date(), 
   const [eventsResult, documentResult, manifestResult] = await Promise.all([
     database.prepare(`SELECT sequence, idempotency_key, phase, status, message, metadata_json, observed_at FROM report_events WHERE run_id = ? ORDER BY sequence ASC LIMIT 100`).bind(run.id).all<Record<string, unknown>>(),
     database.prepare(`SELECT schema_version, document_json, observed_at, updated_at FROM report_documents WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>(),
-    database.prepare(`SELECT manifest_id, attempt_number, manifest_hash, company_count, product_count, match_count, ad_count, status, completed_at FROM report_fact_manifests WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>(),
+    database.prepare(`SELECT manifest_id, attempt_number, manifest_hash, company_count, product_count, match_count, ad_count, status, completed_at FROM report_fact_manifests WHERE run_id = ? AND attempt_number = ? LIMIT 1`).bind(run.id, run.attemptCount).all<Record<string, unknown>>(),
   ]);
   const events = (eventsResult.results || []).map((row): StoredReportEvent => {
     let metadata: Record<string, unknown> = {};
@@ -2371,6 +2371,7 @@ export async function recoverInterruptedReport(publicReportId: string, now = new
     database.prepare(`DELETE FROM report_fact_manifests WHERE run_id = ? AND status = 'finalizing' AND attempt_number = ? AND EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND status = 'interrupted' AND attempt_count = ?)`).bind(run.id, run.attemptCount, run.id, run.attemptCount),
     database.prepare(`UPDATE report_fact_chunks SET attempt_number = ? WHERE run_id = ? AND attempt_number = ? AND EXISTS (SELECT 1 FROM report_fact_manifests WHERE run_id = ? AND status = 'complete' AND attempt_number = ?) AND NOT EXISTS (SELECT 1 FROM report_documents WHERE run_id = ?) AND EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND status = 'interrupted' AND attempt_count = ?)`).bind(attemptCount, run.id, run.attemptCount, run.id, run.attemptCount, run.id, run.id, run.attemptCount),
     database.prepare(`UPDATE report_fact_manifests SET attempt_number = ? WHERE run_id = ? AND status = 'complete' AND attempt_number = ? AND NOT EXISTS (SELECT 1 FROM report_documents WHERE run_id = ?) AND EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND status = 'interrupted' AND attempt_count = ?)`).bind(attemptCount, run.id, run.attemptCount, run.id, run.id, run.attemptCount),
+    database.prepare(`UPDATE report_match_batch_checkpoints SET attempt_number = ? WHERE run_id = ? AND attempt_number = ? AND NOT EXISTS (SELECT 1 FROM report_documents WHERE run_id = ?) AND EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND status = 'interrupted' AND attempt_count = ?)`).bind(attemptCount, run.id, run.attemptCount, run.id, run.id, run.attemptCount),
     database.prepare(`UPDATE report_runs SET status = 'queued', current_phase = 'queued', attempt_count = ?, updated_at = ?, heartbeat_at = ?, error_code = '', error_message = '' WHERE id = ? AND status = 'interrupted' AND attempt_count = ?`).bind(attemptCount, observedAt, observedAt, run.id, run.attemptCount),
     database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE((SELECT MAX(sequence) FROM report_events WHERE run_id = ?), 0) + 1, ?, 'queued', 'queued', 'The interrupted background report was authorized for another attempt.', ?, ? FROM report_runs WHERE id = ? AND status = 'queued' AND attempt_count = ? ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, run.id, eventKey, JSON.stringify({ attempt: attemptCount }), observedAt, run.id, attemptCount),
   ]);
