@@ -782,7 +782,7 @@ test("partial and failed selected enrichment remain visibly limited", async () =
       return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: 24, gaps: [] } };
     },
   });
-  const successResult = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, success);
+  const successResult = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, success);
   assert.equal(successfulCalls, 1);
   assert.equal(successResult.reportStatus, "limited");
   assert.ok(successResult.limitedPhases.includes("enrichment"));
@@ -791,10 +791,33 @@ test("partial and failed selected enrichment remain visibly limited", async () =
     async match() { return { ok: true, comparison: comparison({ withPair: true, count: 1 }) }; },
     async enrich() { throw new Error("selected page timeout"); },
   });
-  const failureResult = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, failure);
+  const failureResult = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, failure);
   assert.equal(failureResult.reportStatus, "limited");
   assert.ok(failureResult.limitedPhases.includes("enrichment"));
   assert.ok(failure.events.some((item) => item.idempotencyKey === "enrichment-limited"));
+});
+
+test("unschedulable accepted price gaps remain processing-incomplete instead of claiming exhaustion", async () => {
+  const accepted = comparison({ withPair: true, count: 1 });
+  accepted.rows[0].primary = { ...accepted.rows[0].primary, jsonLdType: "Service", priceSignals: [] };
+  accepted.rows[0].matches[0].product = { ...accepted.rows[0].matches[0].product, jsonLdType: "Service", priceSignals: [] };
+  let enrichCalls = 0;
+  const port = mockPort({
+    async match() { return { ok: true, comparison: accepted }; },
+    async enrich() { enrichCalls += 1; throw new Error("unschedulable targets must not be fetched"); },
+  });
+
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/);
+  assert.equal(port.saves.length, 0);
+  assert.ok(port.events.some((item) => item.idempotencyKey === "matching-task-retry-1"));
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port);
+  assert.equal(enrichCalls, 0);
+  assert.equal(result.reportStatus, "limited");
+  assert.ok(result.limitedPhases.includes("enrichment"));
+  const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
+  assert.equal(block.matching.resultShortfallReason, "processing-incomplete");
+  assert.doesNotMatch(block.matching.gaps.join(" "), /exhausted/i);
+  assert.ok(port.events.some((item) => item.idempotencyKey === "enrichment-limited" && item.metadata?.pagesPlanned === 0));
 });
 
 test("publication-ineligible pairs are re-read on both sides and successful batches survive a failure", async () => {
@@ -819,7 +842,7 @@ test("publication-ineligible pairs are re-read on both sides and successful batc
       return { ok: true, products: targets.map((target) => ({ ...product(target.domain, target.productId), name: target.expectedName, normalizedName: target.expectedName.toLowerCase(), sourceUrl: target.sourceUrl, priceSignals: [{ raw: "GBP 7", currency: "GBP", amount: 7 }] })), coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: 64, gaps: [] } };
     },
   });
-  const result = await orchestrateReport({ ...payload, contractVersion: "3", productPlan: "growth", productLimit: 500 }, { attemptNumber: 1, isFinalAttempt: false }, port);
+  const result = await orchestrateReport({ ...payload, contractVersion: "3", productPlan: "growth", productLimit: 500 }, { attemptNumber: 1, isFinalAttempt: true }, port);
   assert.deepEqual(batchSizes, [64, 64, 12]);
   assert.equal(result.reportStatus, "limited");
   const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
@@ -897,7 +920,6 @@ test("an ambiguous checkpoint-save response reloads and uses the committed enric
 
 test("a shape-valid but semantically incomplete enrichment checkpoint is rejected", async () => {
   let enrichCalls = 0;
-  let saveCalls = 0;
   const port = mockPort({
     async match() {
       const value = comparison({ withPair: true, count: 1 });
@@ -909,15 +931,11 @@ test("a shape-valid but semantically incomplete enrichment checkpoint is rejecte
       enrichCalls += 1;
       return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: 64, gaps: targets.map((target) => ({ url: target.sourceUrl, productId: target.productId, role: target.role, reason: "Test fixture page gap." })) } };
     },
-    async saveDocument() {
-      saveCalls += 1;
-      if (saveCalls === 1) throw new Error("terminal callback lost");
-    },
   });
-  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/);
   const checkpoint = port.checkpoints.values().next().value;
   checkpoint.result.coverage.gaps = [];
-  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port);
   assert.equal(enrichCalls, 1);
   assert.equal(result.reportStatus, "limited");
   assert.ok(result.limitedPhases.includes("enrichment"));
@@ -938,7 +956,7 @@ test("a conflicting enrichment checkpoint fails closed without fetching or publi
     async enrich() { enrichCalls += 1; throw new Error("must not fetch after a checkpoint conflict"); },
   });
 
-  const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
+  const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, port);
   assert.equal(enrichCalls, 0);
   assert.equal(result.reportStatus, "limited");
   assert.ok(result.limitedPhases.includes("enrichment"));

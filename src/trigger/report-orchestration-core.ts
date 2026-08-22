@@ -511,6 +511,28 @@ export async function orchestrateReport(
             batches: batchesProcessed,
           }));
         }
+      } else if (!targetSatisfied && enrichmentPlan.truncated) {
+        const gaps = [{
+          url: "",
+          reason: `${enrichmentPlan.totalEligible} accepted price-gap records could not be represented as safe product-page enrichment targets.`,
+          code: "unschedulable_targets",
+        }];
+        comparison = applyFinalProductEnrichment(comparison, [], {
+          pagesRequested: 0,
+          pagesFetched: 0,
+          maxPages: 0,
+          pagesEligible: enrichmentPlan.totalEligible,
+          pagesTruncated: true,
+          batchCount: 0,
+          failedBatchCount: 0,
+          gaps,
+        });
+        limitedPhases.push("enrichment");
+        await port.appendEvent(payload.publicId, event("enrichment-limited", "enrichment", "Accepted price gaps could not be safely scheduled as product-page enrichment targets.", {
+          pagesEligible: enrichmentPlan.totalEligible,
+          pagesPlanned: 0,
+          truncated: true,
+        }));
       }
       comparison = publishPricedProductComparison(comparison, Date.parse(stored.run.createdAt));
       screenedComparison = comparison;
@@ -542,6 +564,10 @@ export async function orchestrateReport(
       document = upsertProductComparisonBlock(document, comparison) as JsonDocument;
     }
     const limited = attempts.length === 0 || hasProductMatchCoverageDefect(comparison);
+    if (!attempt.isFinalAttempt && (attempts.length === 0 || comparison?.matching?.resultShortfallReason === "processing-incomplete")) {
+      await port.appendEvent(payload.publicId, event(`matching-task-retry-${attempt.taskAttemptNumber || 1}`, "matching", "Product matching or enrichment remained incomplete; durable checkpoints will resume on the bounded task retry.", { attempts: requestCount }));
+      throw new Error("Product matching or enrichment remained incomplete before the final task attempt.");
+    }
     (limited ? limitedPhases : completedPhases).push("matching");
     await port.appendEvent(payload.publicId, event("matching-complete", "matching", limited ? "Product matching finished with a visible coverage limitation." : "Product matching finished and accepted comparisons were source-linked.", { limited, attempts: requestCount }));
   })();

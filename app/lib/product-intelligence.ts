@@ -1929,6 +1929,7 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
   const eligible: ProductEnrichmentTarget[] = [];
   const seenTargets = new Set<string>();
   const deferredPriceTargets = new Set<string>();
+  const unschedulablePriceTargets = new Set<string>();
   const targetKey = (product: ProductRecord, sourceUrl: string) => `${canonicalHost(product.domain)}\n${product.id}\n${sourceUrl}`;
   const add = (product: ProductRecord, role: ProductEnrichmentTarget["role"], pairScore: number, need: "price" | "image" | "comparison") => {
     if (product.jsonLdType !== "Product") return;
@@ -1957,19 +1958,26 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
     .filter((group): group is typeof group & { accepted: Array<ProductMatch & { product: ProductRecord }> } => group.accepted.some((match) => Boolean(match.product)))
     .sort((left, right) => (right.accepted[0]?.score || 0) - (left.accepted[0]?.score || 0) || left.rowIndex - right.rowIndex);
   const missingForPair = (pair: { row: ProductComparison["rows"][number]; match: ProductMatch & { product: ProductRecord } }) => {
-    if (marketCountryCode && hasComparablePublicPricePair(pair.row.primary, pair.match.product, referenceTimeMs, marketCountryCode)) return [];
+    if (marketCountryCode && hasComparablePublicPricePair(pair.row.primary, pair.match.product, referenceTimeMs, marketCountryCode)) return { targets: [], blocked: false };
+    let blocked = false;
     const missing = [
       { product: pair.match.product, role: "rival" as const },
       { product: pair.row.primary, role: "primary" as const },
     ].flatMap((candidate) => {
       if (!marketCountryCode && hasComparablePublicPrice(candidate.product, referenceTimeMs)) return [];
       const sourceUrl = safeProductSource(candidate.product);
-      return sourceUrl && !seenTargets.has(targetKey(candidate.product, sourceUrl)) ? [{ ...candidate, sourceUrl }] : [];
+      if (candidate.product.jsonLdType !== "Product" || !sourceUrl) {
+        blocked = true;
+        unschedulablePriceTargets.add(`${canonicalHost(candidate.product.domain)}\n${candidate.product.id}\n${sourceUrl || "unsafe-source"}`);
+        return [];
+      }
+      return !seenTargets.has(targetKey(candidate.product, sourceUrl)) ? [{ ...candidate, sourceUrl }] : [];
     });
-    return missing.filter((candidate, index) => missing.findIndex((other) => targetKey(other.product, other.sourceUrl) === targetKey(candidate.product, candidate.sourceUrl)) === index);
+    return { targets: missing.filter((candidate, index) => missing.findIndex((other) => targetKey(other.product, other.sourceUrl) === targetKey(candidate.product, candidate.sourceUrl)) === index), blocked };
   };
   const schedulePair = (pair: { row: ProductComparison["rows"][number]; match: ProductMatch & { product: ProductRecord } }) => {
-    const uniqueMissing = missingForPair(pair);
+    const { targets: uniqueMissing, blocked } = missingForPair(pair);
+    if (blocked) return false;
     if (eligible.length + uniqueMissing.length > boundedMax) return false;
     const before = eligible.length;
     uniqueMissing.forEach((candidate) => add(candidate.product, candidate.role, pair.match.score, "comparison"));
@@ -1985,7 +1993,7 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
       .map((match) => ({ row: group.row, match }));
     const selected = candidates.find((pair) => schedulePair(pair));
     if (selected) selectedPairs.push(selected);
-    else missingForPair(candidates[0]).forEach((candidate) => deferredPriceTargets.add(targetKey(candidate.product, candidate.sourceUrl)));
+    else missingForPair(candidates[0]).targets.forEach((candidate) => deferredPriceTargets.add(targetKey(candidate.product, candidate.sourceUrl)));
   }
   const selectedKeys = new Set(selectedPairs.map((pair) => `${pair.row.primary.id}\n${pair.match.domain}\n${pair.match.product.id}`));
   const secondaryPairs = rowGroups.flatMap((group) => group.accepted
@@ -1996,7 +2004,7 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
       || left.row.primary.id.localeCompare(right.row.primary.id)
       || left.match.domain.localeCompare(right.match.domain));
   for (const pair of secondaryPairs) {
-    if (!schedulePair(pair)) missingForPair(pair).forEach((candidate) => deferredPriceTargets.add(targetKey(candidate.product, candidate.sourceUrl)));
+    if (!schedulePair(pair)) missingForPair(pair).targets.forEach((candidate) => deferredPriceTargets.add(targetKey(candidate.product, candidate.sourceUrl)));
   }
   if (deferredPriceTargets.size === 0) {
     for (const pair of selectedPairs) {
@@ -2006,7 +2014,7 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
   }
 
   const targets = eligible.slice(0, boundedMax);
-  const totalEligible = eligible.length + deferredPriceTargets.size;
+  const totalEligible = eligible.length + deferredPriceTargets.size + unschedulablePriceTargets.size;
   return { targets, totalEligible, truncated: totalEligible > targets.length };
 }
 
