@@ -1,4 +1,4 @@
-import { canonicalProductSourceKey, hasValidObservedRivalPrice, isSupportedCurrency, productDecision, productIdentityKey, publicSourceMarketCountryCode, publicSourceMarketEvidence, type ProductComparison, type ProductMatch, type ProductRecord } from "./product-intelligence.ts";
+import { canonicalProductSourceKey, hasPriceCurrencyIntegrity, hasValidObservedRivalPrice, isSupportedCurrency, productDecision, productIdentityKey, publicSourceMarketCountryCode, publicSourceMarketEvidence, type ProductComparison, type ProductMatch, type ProductRecord } from "./product-intelligence.ts";
 import { canonicalDomain } from "./domain.ts";
 import { publicHttpUrl } from "./public-url.ts";
 
@@ -315,6 +315,7 @@ export function publishPricedProductComparison(comparison: ProductComparison, re
       && Boolean(String(signal.raw || "").trim())
       && isSupportedCurrency(signal.currency))
     && hasValidObservedRivalPrice(product)
+    && hasPriceCurrencyIntegrity(product)
     && validPublicSource(product)
     && validObservedAt(product.observedAt);
   const suppress = (reason: string) => {

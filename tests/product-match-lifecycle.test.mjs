@@ -327,6 +327,24 @@ test("the final publication gate keeps complete same-currency observations", () 
   assert.deepEqual(published.matching.publication.reasons, {});
 });
 
+test("the final publication gate rejects currency evidence that contradicts its source selector or raw price", () => {
+  const sourceConflict = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "r1")], accepted: 1 });
+  sourceConflict.marketCountryCode = "US";
+  sourceConflict.rows[0].primary.sourceUrl = "https://shop.test/products/honey?country=US&currency=CAD";
+  sourceConflict.rows[0].matches[0].product.sourceUrl = "https://rival.test/products/honey?country=US&currency=CAD";
+  sourceConflict.rows[0].primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+  sourceConflict.rows[0].matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+  assert.equal(publishPricedProductComparison(sourceConflict).coverage.assignedPairCount, 0);
+
+  const rawConflict = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "r1")], accepted: 1 });
+  rawConflict.marketCountryCode = "US";
+  rawConflict.rows[0].primary.sourceUrl = "https://shop.test/products/honey?country=US&currency=USD";
+  rawConflict.rows[0].matches[0].product.sourceUrl = "https://rival.test/products/honey?country=US&currency=USD";
+  rawConflict.rows[0].primary.priceSignals = [{ raw: "CAD 10", currency: "USD", amount: 10 }];
+  rawConflict.rows[0].matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+  assert.equal(publishPricedProductComparison(rawConflict).coverage.assignedPairCount, 0);
+});
+
 test("publication freshness is stable against the report observation timestamp", () => {
   const primary = { ...product("p1"), observedAt: "2025-08-01T00:00:00.000Z", priceSignals: [{ raw: "GBP 10", currency: "GBP", amount: 10 }] };
   const rival = { ...product("r1", "rival.test"), observedAt: "2025-08-01T00:00:00.000Z", priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }] };

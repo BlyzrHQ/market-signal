@@ -1267,6 +1267,27 @@ test("report recovery restores priced results accumulated by a later task attemp
   assert.deepEqual(block.rows.map((item) => item.primary.id).sort(), Array.from({ length: 20 }, (_, index) => `recovered-p${index + 1}`).sort());
 });
 
+test("a committed publication checkpoint with a lost response retains rich decisions and actions", async () => {
+  const port = mockPort();
+  const saveCheckpoint = port.saveCheckpoint.bind(port);
+  let lostResponse = false;
+  port.saveCheckpoint = async (publicId, input) => {
+    await saveCheckpoint(publicId, input);
+    if (!lostResponse && input.batchIndex === PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX) {
+      lostResponse = true;
+      throw new Error("publication checkpoint response lost");
+    }
+  };
+
+  await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: true }, port);
+  const block = port.saves.at(-1).document.document.blocks.find((item) => item.type === "product-comparison");
+  const selected = block.rows.flatMap((item) => item.matches.filter((match) => match.product));
+  assert.ok(lostResponse);
+  assert.ok(selected.length > 0);
+  assert.ok(selected.every((match) => match.decision?.recommendedMove));
+  assert.ok(selected.every((match) => match.decision?.actionPlan));
+});
+
 test("an ambiguous publication save cannot adopt an older report attempt checkpoint", async () => {
   let matchCall = 0;
   const wave = (offset) => {

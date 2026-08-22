@@ -1809,12 +1809,30 @@ export function hasComparablePublicPrice(product: ProductRecord, now = Date.now(
   if (!Number.isFinite(observedAt) || new Date(observedAt).toISOString() !== product.observedAt) return false;
   const age = now - observedAt;
   if (age < -(24 * 60 * 60 * 1_000) || age > (366 * 24 * 60 * 60 * 1_000)) return false;
+  return hasPriceCurrencyIntegrity(product);
+}
+
+export function hasPriceCurrencyIntegrity(product: ProductRecord) {
   const currencies = new Set<string>();
   for (const signal of product.priceSignals) {
     if (typeof signal.amount !== "number" || !Number.isFinite(signal.amount) || signal.amount <= 0 || !String(signal.raw || "").trim() || !isSupportedCurrency(signal.currency)) return false;
-    currencies.add(String(signal.currency).trim().toUpperCase());
+    const currency = String(signal.currency).trim().toUpperCase();
+    const parsed = priceSignal(signal.raw, currency);
+    if (!parsed || parsed.currency !== currency) return false;
+    currencies.add(currency);
   }
-  return currencies.size === 1;
+  if (currencies.size !== 1) return false;
+  try {
+    const source = new URL(product.sourceUrl);
+    const selectors = [...source.searchParams.entries()]
+      .filter(([key]) => CURRENCY_QUERY_KEYS.has(key.toLowerCase()))
+      .map(([, value]) => clean(value).toUpperCase());
+    if (selectors.some((currency) => !isSupportedCurrency(currency))) return false;
+    const selectedCurrencies = new Set(selectors);
+    return selectedCurrencies.size <= 1 && (!selectedCurrencies.size || selectedCurrencies.has([...currencies][0]));
+  } catch {
+    return false;
+  }
 }
 
 export function hasComparablePublicPricePair(primary: ProductRecord, rival: ProductRecord, now = Date.now(), targetMarket = "") {

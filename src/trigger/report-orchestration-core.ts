@@ -1030,7 +1030,12 @@ export async function orchestrateReport(
           const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: publishedCheckpointIndex }))[0];
           const validated = committed?.attemptNumber === attempt.attemptNumber && committed.inputHash === publishedResultInputHash ? validPublishedResultCheckpoint(committed.result, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys, allowedPrimaryRecoveryIdentities) : null;
           if (!validated) throw saveError;
-          comparison = validated.comparison;
+          // The committed compact graph is proof that this exact save reached
+          // durable storage. Keep the already validated rich in-memory result;
+          // replacing it with the compact representation would discard
+          // reproducible decision/action inputs after a lost response.
+          durableCheckpoints.set(publishedCheckpointIndex, committed);
+          allDurableCheckpoints.set(`${committed.attemptNumber}:${publishedCheckpointIndex}`, committed);
         }
       }
       if ((comparison.matching?.resultShortfall || 0) > 0 && crawl.discovery?.productSearchCoverage?.complete !== true) {
