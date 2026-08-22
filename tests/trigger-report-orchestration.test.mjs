@@ -830,6 +830,7 @@ test("partial and failed selected enrichment fail closed even on the final task 
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, success), /remained incomplete after the final task attempt/);
   assert.equal(successfulCalls, 1);
   assert.equal(success.saves.length, 0);
+  assert.equal(success.events.some((item) => item.idempotencyKey === "orchestration-failed"), false);
 
   const failure = mockPort({
     async match() { return { ok: true, comparison: comparison({ withPair: true, count: 1 }) }; },
@@ -837,6 +838,7 @@ test("partial and failed selected enrichment fail closed even on the final task 
   });
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, failure), /remained incomplete after the final task attempt/);
   assert.equal(failure.saves.length, 0);
+  assert.equal(failure.events.some((item) => item.idempotencyKey === "orchestration-failed"), false);
   assert.ok(failure.events.some((item) => item.idempotencyKey.endsWith("-limited") && item.phase === "enrichment"));
 });
 

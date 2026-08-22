@@ -681,6 +681,32 @@ test("recovery adopts an immutable completed fact snapshot for the new attempt",
   }
 });
 
+test("final task-attempt processing incompleteness remains recoverable instead of becoming failed", async () => {
+  const value = await fixture();
+  const database = await NodeSqliteDatabase.open(value.databasePath);
+  try {
+    const started = new Date("2026-08-22T04:00:00.000Z");
+    const created = await createReportRun({ primaryDomain: "recoverable-incomplete.example" }, started, database);
+    await appendReportEvent(created.publicId, {
+      attemptNumber: 1,
+      idempotencyKey: "report-1-task-2-matching-task-retry",
+      phase: "matching",
+      status: "running",
+      message: "Product matching remained incomplete after the final bounded task attempt; no terminal report was published.",
+    }, new Date("2026-08-22T04:01:00.000Z"), database);
+
+    const interrupted = await getStoredReport(created.publicId, new Date("2026-08-22T04:20:00.000Z"), database);
+    assert.equal(interrupted.run.status, "interrupted");
+    assert.equal(interrupted.events.some((event) => event.status === "failed"), false);
+    const recovered = await recoverInterruptedReport(created.publicId, new Date("2026-08-22T04:21:00.000Z"), database);
+    assert.equal(recovered.status, "queued");
+    assert.equal(recovered.attemptCount, 2);
+  } finally {
+    database.close();
+    await rm(value.directory, { recursive: true, force: true });
+  }
+});
+
 test("report fact manifests use the stable report observation across retry timestamps", async () => {
   const reportObservedAt = "2026-08-22T03:00:00.000Z";
   const base = {

@@ -35,6 +35,7 @@ import type { PinnedProductPair } from "../../app/lib/ai-product-matching.ts";
 import { createHash } from "node:crypto";
 
 class CompletedFactManifestConflict extends Error {}
+class RecoverableProcessingIncompleteError extends Error {}
 
 export const MAX_OPERATION_TIMEOUT_MS = 13 * 60 * 1000;
 export const FINAL_ENRICHMENT_BATCH_SIZE = 64;
@@ -748,7 +749,7 @@ export async function orchestrateReport(
       await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "matching-task-retry"), "matching", attempt.isFinalAttempt
         ? "Product matching or enrichment remained incomplete after the final bounded task attempt; no terminal report was published."
         : "Product matching or enrichment remained incomplete; durable checkpoints will resume on the bounded task retry.", { attempts: requestCount }));
-      throw new Error(attempt.isFinalAttempt
+      throw new RecoverableProcessingIncompleteError(attempt.isFinalAttempt
         ? "Product matching or enrichment remained incomplete after the final task attempt."
         : "Product matching or enrichment remained incomplete before the final task attempt.");
     }
@@ -803,7 +804,7 @@ export async function orchestrateReport(
   completedPhases.push("persistence");
   return { ok: true, contractVersion: REPORT_ORCHESTRATION_CONTRACT_VERSION, publicId: payload.publicId, reportStatus, completedPhases: [...new Set(completedPhases)], limitedPhases: [...new Set(limitedPhases)], startedAt, finishedAt };
   } catch (error) {
-    if (attempt.isFinalAttempt && !terminalFailureRecorded) {
+    if (attempt.isFinalAttempt && !terminalFailureRecorded && !(error instanceof RecoverableProcessingIncompleteError)) {
       try {
         await port.appendEvent(payload.publicId, {
           idempotencyKey: "orchestration-failed",
