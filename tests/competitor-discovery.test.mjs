@@ -800,6 +800,71 @@ test("runs one bounded search request per selected ecommerce product", async () 
   }
 });
 
+test("searches 20 distinct ecommerce anchors and reports the remaining catalog as unsearched", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  const searchedProducts = [];
+  const searchProfile = {
+    ...profile,
+    products: Array.from({ length: 25 }, (_, index) => product(
+      `Beef Sirloin Steak Halal ${500 + index}g`,
+      `https://myjam.co.uk/products/beef-sirloin-steak-${index + 1}`,
+    )),
+  };
+  globalThis.fetch = async (_url, init) => {
+    const request = JSON.parse(init.body);
+    const input = JSON.parse(request.input[1].content);
+    if (input.lane === "product") searchedProducts.push(input.profile.offerings[0].name);
+    return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: [], candidates: [] }) }] }] });
+  };
+  try {
+    const result = await discoverCompetitors(searchProfile);
+    assert.equal(searchedProducts.length, 20);
+    assert.equal(new Set(searchedProducts).size, 20);
+    assert.deepEqual(result.productSearchCoverage, {
+      eligibleAnchors: 25,
+      searchedAnchors: 20,
+      truncated: true,
+      complete: false,
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
+test("marks ecommerce discovery complete only when every eligible product search completes", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  const searchProfile = {
+    ...profile,
+    products: [
+      product("Lamb Ribs Halal 500g", "https://myjam.co.uk/products/lamb-ribs"),
+      product("Beef Cubes Halal 500g", "https://myjam.co.uk/products/beef-cubes"),
+    ],
+  };
+  globalThis.fetch = async (_url, init) => {
+    const request = JSON.parse(init.body);
+    const input = JSON.parse(request.input[1].content);
+    if (input.lane === "product" && input.profile.offerings[0].name.includes("Beef Cubes")) throw new Error("temporary search failure");
+    return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: [], candidates: [] }) }] }] });
+  };
+  try {
+    const result = await discoverCompetitors(searchProfile);
+    assert.deepEqual(result.productSearchCoverage, {
+      eligibleAnchors: 2,
+      searchedAnchors: 1,
+      truncated: false,
+      complete: false,
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
 test("excludes marketplaces and stockists carrying the primary brand", () => {
   const payload = {
     output: [{

@@ -151,6 +151,7 @@ function mockPort(overrides = {}) {
         ok: true,
         primaryDomain: payload.primaryDomain,
         results: [{ domain: payload.primaryDomain, homepage: { sourceUrl: "https://shop.example" }, products: [product()] }],
+        discovery: { productSearchCoverage: { eligibleAnchors: 1, searchedAnchors: 1, truncated: false, complete: true } },
         adRequest: { companies: [{ domain: payload.primaryDomain }], region: "GB" },
         document: { version: "1", blocks: [] },
       };
@@ -257,6 +258,25 @@ test("the matcher can publish a valid pair found after the first 20 primary cata
   const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
   assert.ok(block.rows.some((row) => row.primary.id === "p-25"));
   assert.equal(block.rows.flatMap((row) => row.matches).filter((match) => match.product).length, 20);
+});
+
+test("a priced shortfall cannot claim exhaustion while competitor discovery left primary anchors unsearched", async () => {
+  const base = mockPort();
+  const port = mockPort({
+    async crawl() {
+      const value = await base.crawl();
+      return { ...value, discovery: { productSearchCoverage: { eligibleAnchors: 25, searchedAnchors: 20, truncated: true, complete: false } } };
+    },
+    async match() {
+      const value = comparison({ withPair: true, count: 1 });
+      value.matching.resultShortfallReason = "bounded-candidate-pool-exhausted";
+      return { ok: true, comparison: value };
+    },
+  });
+
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port), /remained incomplete after the final task attempt/);
+  assert.equal(port.saves.length, 0);
+  assert.equal(port.events.some((item) => item.idempotencyKey === "orchestration-failed"), false);
 });
 
 test("enrichment checkpoints require one exact source-bound outcome per target", () => {

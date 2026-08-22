@@ -1078,7 +1078,7 @@ export async function POST(request: Request) {
       discovery = await discoverCompetitors(discoveryPolicy.input);
     } catch (error) {
       const gap = error instanceof Error ? error.message : "Web competitor discovery failed.";
-      discovery = { available: false, provider: "unavailable", model: process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini", category: "", region: primary.homepage.region, businessType: discoveryPolicy.businessType, strategy: discoveryPolicy.intendedStrategy, queries: [], candidates: [], gaps: [gap], gap };
+      discovery = { available: false, provider: "unavailable", model: process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini", category: "", region: primary.homepage.region, businessType: discoveryPolicy.businessType, strategy: discoveryPolicy.intendedStrategy, queries: [], candidates: [], gaps: [gap], gap, productSearchCoverage: { eligibleAnchors: primary.products.length, searchedAnchors: 0, truncated: primary.products.length > 0, complete: false } };
     }
     const memory = await loadRememberedCompetitors(primary.domain);
     const investigationCandidates = mergeRememberedCandidates(

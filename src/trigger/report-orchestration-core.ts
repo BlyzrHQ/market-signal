@@ -287,7 +287,7 @@ type StoredReport = {
 type JsonBlock = { type: string; id: string } & Record<string, unknown>;
 type JsonDocument = { blocks: JsonBlock[] } & Record<string, unknown>;
 type CrawlResult = { domain: string; homepage?: unknown; products: ProductRecord[]; role?: string; discovery?: { verificationScore?: number } };
-type CrawlSuccess = { ok: true; primaryDomain: string; results: CrawlResult[]; adRequest: unknown; matchHints?: PinnedProductPair[]; document: JsonDocument };
+type CrawlSuccess = { ok: true; primaryDomain: string; results: CrawlResult[]; discovery?: { productSearchCoverage?: { eligibleAnchors?: number; searchedAnchors?: number; truncated?: boolean; complete?: boolean } }; adRequest: unknown; matchHints?: PinnedProductPair[]; document: JsonDocument };
 type ParkedDomainOutcome = { ok: false; code: "parked-domain"; primaryDomain: string; error: string; document: JsonDocument };
 type UnavailableDomainOutcome = { ok: false; code: "unavailable-domain"; primaryDomain: string; error: string; document: JsonDocument };
 type CrawlOutcome = CrawlSuccess | ParkedDomainOutcome | UnavailableDomainOutcome;
@@ -718,6 +718,17 @@ export async function orchestrateReport(
       comparison = publishPricedProductComparison(comparison, Date.parse(stored.run.createdAt));
       screenedComparison = comparison;
       comparison = limitPublishedProductComparison(comparison, payload.productLimit);
+      if ((comparison.matching?.resultShortfall || 0) > 0 && crawl.discovery?.productSearchCoverage?.complete !== true) {
+        const coverage = crawl.discovery?.productSearchCoverage;
+        comparison = {
+          ...comparison,
+          matching: comparison.matching ? {
+            ...comparison.matching,
+            resultShortfallReason: "processing-incomplete",
+            gaps: [...new Set([...comparison.matching.gaps, `Competitor product discovery searched ${coverage?.searchedAnchors || 0} of ${coverage?.eligibleAnchors || primary.products.length} eligible primary-product anchors; the bounded discovery pool was not exhausted.`])],
+          } : comparison.matching,
+        };
+      }
       const actionInputs = collectProductActionInputs(comparison);
       if (actionInputs.length) {
         await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "actions-started"), "actions", "Drafting evidence-grounded next moves for the accepted product pairs.", { pairs: actionInputs.length }));

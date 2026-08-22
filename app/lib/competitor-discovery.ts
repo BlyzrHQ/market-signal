@@ -57,6 +57,7 @@ export type DiscoveryResult = {
   candidates: DiscoveryCandidate[];
   gaps: string[];
   gap?: string;
+  productSearchCoverage: { eligibleAnchors: number; searchedAnchors: number; truncated: boolean; complete: boolean };
 };
 
 type SearchLane = "entity" | "category" | "product";
@@ -64,7 +65,8 @@ type SearchSource = { url: string; title: string; query: string; queries: string
 type LaneResult = { lane: SearchLane; category: string; region: string; queries: string[]; candidates: DiscoveryCandidate[]; gap?: string };
 
 const MAX_CANDIDATES = 6;
-const MAX_PRODUCT_SEARCHES = 4;
+const MAX_PRODUCT_SEARCHES = 20;
+const MAX_PRODUCT_SEARCH_ANCHORS = 1_000;
 const MAX_SOURCE_FIRST_LEADS_PER_SEARCH = 2;
 const MAX_SOURCE_FIRST_CANDIDATES = 2;
 const MAX_MODEL_STRUCTURED_LEADS_PER_LANE = 1;
@@ -304,7 +306,7 @@ function sourceFirstLeadFromSource(source: SearchSource, url: string, profile: D
 }
 
 export function productSearchAnchors(products: ProductRecord[], maxSearches = MAX_PRODUCT_SEARCHES, brandName = "") {
-  const limit = Math.max(0, Math.min(6, Math.floor(maxSearches)));
+  const limit = Math.max(0, Math.min(MAX_PRODUCT_SEARCH_ANCHORS, Math.floor(maxSearches)));
   if (!limit) return [];
   const compactBrand = brandName.normalize("NFKD").replace(/[^\p{L}\p{N}]+/gu, "").toLowerCase();
   const brandTokens = new Set([...normalizedTokens(brandName), ...(compactBrand.length >= 3 ? [compactBrand] : [])]);
@@ -771,10 +773,12 @@ export async function discoverCompetitors(profile: DiscoveryProfile): Promise<Di
   const apiKey = process.env.OPENAI_API_KEY;
   const model = process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini";
   const business = inferBusinessProfile(profile);
-  if (!apiKey) return { available: false, provider: "unavailable", model, category: business.category, region: business.region, businessType: business.businessType, strategy: "not-run", queries: [], candidates: [], gaps: ["Web discovery is not configured."], gap: "Web discovery is not configured. A search-capable provider is required before competitors can be discovered automatically." };
+  const eligibleAnchors = business.businessType === "ecommerce" ? productSearchAnchors(business.offerings, MAX_PRODUCT_SEARCH_ANCHORS, business.brandName) : [];
+  const anchors = eligibleAnchors.slice(0, MAX_PRODUCT_SEARCHES);
+  const baseCoverage = { eligibleAnchors: eligibleAnchors.length, searchedAnchors: 0, truncated: eligibleAnchors.length > anchors.length, complete: false };
+  if (!apiKey) return { available: false, provider: "unavailable", model, category: business.category, region: business.region, businessType: business.businessType, strategy: "not-run", queries: [], candidates: [], gaps: ["Web discovery is not configured."], gap: "Web discovery is not configured. A search-capable provider is required before competitors can be discovered automatically.", productSearchCoverage: baseCoverage };
 
   const endpoint = `${(process.env.OPENAI_RESPONSES_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "")}/responses`;
-  const anchors = business.businessType === "ecommerce" ? productSearchAnchors(business.offerings, MAX_PRODUCT_SEARCHES, business.brandName) : [];
   const productResults = await Promise.all(anchors.map((anchor) => runLane(endpoint, apiKey, model, "product", { ...business, offerings: [anchor] }, { ...profile, products: [anchor] })));
   const productCandidates = mergeCandidates(productResults.flatMap((result) => result.candidates));
   const companyResults = await Promise.all((["entity", "category"] as SearchLane[]).map((lane) => runLane(endpoint, apiKey, model, lane, business, profile)));
@@ -795,5 +799,11 @@ export async function discoverCompetitors(profile: DiscoveryProfile): Promise<Di
   const category = business.category;
   const region = completed.find((result) => result.region && result.region !== business.region)?.region || business.region;
   const gap = candidates.length ? undefined : gaps[0] || "Product and fallback searches completed, but no attributable seller candidate was returned.";
-  return { available: completed.length > 0, provider: "openai-web-search", model, category, region, businessType: business.businessType, strategy, queries, candidates, gaps, ...(gap ? { gap } : {}) };
+  const productSearchCoverage = {
+    eligibleAnchors: eligibleAnchors.length,
+    searchedAnchors: productResults.filter((result) => !result.gap || /no attributable|none survived attributable/i.test(result.gap)).length,
+    truncated: eligibleAnchors.length > anchors.length,
+    complete: eligibleAnchors.length <= anchors.length && productSearchesCompleted,
+  };
+  return { available: completed.length > 0, provider: "openai-web-search", model, category, region, businessType: business.businessType, strategy, queries, candidates, gaps, productSearchCoverage, ...(gap ? { gap } : {}) };
 }
