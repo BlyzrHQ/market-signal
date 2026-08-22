@@ -515,15 +515,24 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
     }
   });
   const componentConstraints = new Map<number, Set<string>>();
+  const componentAssignmentHashes = new Map<number, Set<string>>();
   allCandidates.forEach((match, index) => {
     const root = findRoot(index);
     const constraints = componentConstraints.get(root) || new Set<string>();
     rivalConstraintKeys(match.product).forEach((key) => constraints.add(key));
     componentConstraints.set(root, constraints);
+    const priorHash = match.product.assignmentComponentHash || "";
+    if (/^[a-f0-9]{64}$/.test(priorHash)) {
+      const hashes = componentAssignmentHashes.get(root) || new Set<string>();
+      hashes.add(priorHash);
+      componentAssignmentHashes.set(root, hashes);
+    }
   });
   const componentHashByRoot = new Map([...componentConstraints.entries()].map(([root, constraints]) => [
     root,
-    createHash("sha256").update(JSON.stringify([...constraints].sort())).digest("hex"),
+    componentAssignmentHashes.get(root)?.size === 1
+      ? [...componentAssignmentHashes.get(root)!][0]
+      : createHash("sha256").update(JSON.stringify([...constraints].sort())).digest("hex"),
   ]));
   const candidateIndex = new Map(allCandidates.map((match, index) => [match, index]));
   const rivalAssignmentKey = (match: ProductMatch) => {

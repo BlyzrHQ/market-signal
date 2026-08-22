@@ -729,7 +729,13 @@ test("global alias collapse retains a locally duplicate bridge edge", () => {
   const state = mergePublishedProductComparisonState(screened, null, 2);
   assert.equal(state.comparison.rows.length, 1);
   const checkpoint = JSON.parse(JSON.stringify(compactPublishedProductComparisonCheckpoint(state.evidence)));
-  assert.equal(mergePublishedProductComparisonState(checkpoint, null, 2).comparison.rows.length, 1);
+  const recovered = mergePublishedProductComparisonState(checkpoint, null, 2);
+  assert.equal(recovered.comparison.rows.length, 1);
+  const recoveredCheckpoint = JSON.parse(JSON.stringify(compactPublishedProductComparisonCheckpoint(recovered.evidence)));
+  assert.deepEqual(
+    recoveredCheckpoint.rows.flatMap((item) => item.matches.map((match) => match.product?.assignmentComponentHash)),
+    checkpoint.rows.flatMap((item) => item.matches.map((match) => match.product?.assignmentComponentHash)),
+  );
 });
 
 test("global assignment maximizes exact products after cardinality", () => {
