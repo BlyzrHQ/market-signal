@@ -840,6 +840,7 @@ export async function orchestrateReport(
             } catch (saveError) {
               const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: planCheckpointIndex }))[0];
               if (!committed || committed.attemptNumber !== attempt.attemptNumber || committed.inputHash !== inputHash) throw saveError;
+              if (JSON.stringify(stableCheckpointValue(committed.result)) !== JSON.stringify(stableCheckpointValue(durablePlan))) throw saveError;
               const checkpoint = validEnrichmentPlanCheckpoint(committed.result);
               if (!checkpoint) throw saveError;
               enrichmentPlan = checkpoint;

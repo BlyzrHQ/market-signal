@@ -183,24 +183,22 @@ export function parseCatalogs(value: unknown, primaryDomain = "", requestedPins?
     }
     const catalogLimit = domain === canonicalDomain(primaryDomain) ? MAX_PRIMARY_PRODUCTS : MAX_RIVAL_PRODUCTS;
     const wanted = pinIds.get(domain === canonicalDomain(primaryDomain) ? "$primary" : domain) || new Set<string>();
-    const pinned: unknown[] = [];
-    const ordinary: unknown[] = [];
+    const pinned: ProductRecord[] = [];
+    const ordinary: ProductRecord[] = [];
     const retainedPinnedIds = new Set<string>();
     for (const value of deduplicatedValues) {
       if (!value) continue;
+      const parsed = product(value, domain);
+      if (!parsed) continue;
       const id = value && typeof value === "object" && !Array.isArray(value) ? text((value as Record<string, unknown>).id, 300) : "";
       if (id && wanted.has(id)) {
         if (!retainedPinnedIds.has(id)) {
           retainedPinnedIds.add(id);
-          pinned.push(value);
+          pinned.push(parsed);
         }
-      } else if (ordinary.length < catalogLimit) ordinary.push(value);
+      } else if (ordinary.length < catalogLimit) ordinary.push(parsed);
     }
-    const selected = [...pinned, ...ordinary].slice(0, catalogLimit);
-    const products = selected.flatMap((value) => {
-      const parsed = product(value, domain);
-      return parsed ? [parsed] : [];
-    });
+    const products = [...pinned, ...ordinary].slice(0, catalogLimit);
     return [{ domain, products }];
   });
   if (invalidIdentity) return [];

@@ -650,6 +650,23 @@ test("global assignment counts one shop-route rival source only once when ids an
   assert.equal(mergePublishedProductComparisonState(JSON.parse(JSON.stringify(state.evidence)), null, 2).comparison.rows.length, 1);
 });
 
+test("global assignment keeps a product slug named store distinct from its parent product", () => {
+  const pricedRow = (primaryId, rivalId, sourceUrl) => {
+    const item = row(primaryId, rivalId);
+    item.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+    item.matches[0].product.sourceUrl = sourceUrl;
+    item.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+    return item;
+  };
+  const rows = [
+    pricedRow("p1", "r1", "https://rival.test/products/store/widget?country=US"),
+    pricedRow("p2", "r2", "https://rival.test/products/widget?country=US"),
+  ];
+  const state = mergePublishedProductComparisonState(comparison({ selected: ["p1", "p2"], assessed: ["p1", "p2"], rows, accepted: 2 }), null, 2);
+
+  assert.equal(state.comparison.rows.length, 2);
+});
+
 test("global assignment and compact recovery count a rival once when observations share the ninth GTIN", () => {
   const validGtin = (seed) => {
     const body = String(seed).padStart(13, "0").slice(-13);

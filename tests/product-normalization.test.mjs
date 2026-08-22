@@ -11,7 +11,7 @@ import {
   sharedValidGtin,
 } from "../app/lib/product-normalization.ts";
 import { extractProductsFromHtml } from "../app/lib/product-intelligence.ts";
-import { identifiers as matchIdentifiers } from "../app/api/match/route.ts";
+import { identifiers as matchIdentifiers, parseCatalogs } from "../app/api/match/route.ts";
 
 test("normalizes Arabic presentation forms without changing Latin product text", () => {
   const arabic = "\u0640\u0625\u0650\u0646\u062a\u0627\u062c \u0665\u0660\u0660 \u062c\u0631\u0627\u0645 \u0641\u0626\u0629";
@@ -90,4 +90,17 @@ test("match ingress validates and deduplicates GTINs before applying its twenty-
 
   assert.equal(bounded.gtins.length, 20);
   assert.equal(bounded.gtins.at(-1), canonicalGtin(valid.at(-1)));
+});
+
+test("match ingress applies the primary catalog bound after product validation", () => {
+  const invalid = Array.from({ length: 1_000 }, (_, index) => ({ id: `invalid-${index}` }));
+  const valid = Array.from({ length: 20 }, (_, index) => ({
+    id: `valid-${index}`,
+    name: `Valid product ${index}`,
+    sourceUrl: `https://shop.example/products/valid-${index}`,
+  }));
+  const catalogs = parseCatalogs([{ domain: "shop.example", products: [...invalid, ...valid] }], "shop.example");
+
+  assert.equal(catalogs[0].products.length, 20);
+  assert.equal(catalogs[0].products[0].id, "valid-0");
 });
