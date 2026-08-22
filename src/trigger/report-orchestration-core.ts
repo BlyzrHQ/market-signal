@@ -42,6 +42,7 @@ export const FINAL_ENRICHMENT_BATCH_CONCURRENCY = 2;
 export const MAX_FINAL_ENRICHMENT_TARGETS = 6_000;
 export const MAX_FINAL_ENRICHMENT_BATCHES = Math.ceil(MAX_FINAL_ENRICHMENT_TARGETS / FINAL_ENRICHMENT_BATCH_SIZE);
 export const MAX_FINAL_ENRICHMENT_BATCH_WAVES = Math.ceil(MAX_FINAL_ENRICHMENT_TARGETS / FINAL_ENRICHMENT_BATCH_SIZE / FINAL_ENRICHMENT_BATCH_CONCURRENCY);
+export const ENRICHMENT_PLAN_CHECKPOINT_BATCH_INDEX = 299;
 export const ENRICHMENT_CHECKPOINT_BATCH_INDEX_BASE = 300;
 
 export function pricedResultEnrichmentBudget(resultTarget: number) {
@@ -161,6 +162,57 @@ export function validEnrichmentCheckpoint(value: unknown, targets: ProductEnrich
 
 function enrichmentBatchHash(targets: unknown[], reportReferenceTimeMs: number) {
   return createHash("sha256").update(JSON.stringify({ version: 1, reportReferenceTimeMs, targets })).digest("hex");
+}
+
+type DurableEnrichmentPlan = { version: 1; contentHash: string; targets: ProductEnrichmentTarget[]; totalEligible: number; truncated: boolean };
+
+function enrichmentPlanContentHash(plan: Pick<DurableEnrichmentPlan, "targets" | "totalEligible" | "truncated">) {
+  return createHash("sha256").update(JSON.stringify({ targets: plan.targets, totalEligible: plan.totalEligible, truncated: plan.truncated })).digest("hex");
+}
+
+function enrichmentPlanInputHash(comparison: ProductComparison, maxPages: number, reportReferenceTimeMs: number) {
+  const productIdentity = (product: ProductRecord) => ({
+    id: product.id,
+    domain: canonicalDomain(product.domain),
+    name: product.normalizedName,
+    type: product.jsonLdType,
+    sourceUrl: product.sourceUrl,
+    quantity: product.quantity || null,
+  });
+  const rows = comparison.rows.map((row) => ({
+    primary: productIdentity(row.primary),
+    matches: row.matches.flatMap((match) => match.product && match.confidence === "Medium"
+      ? [{ domain: canonicalDomain(match.domain), product: productIdentity(match.product), verdict: match.assessment?.verdict || "" }]
+      : []).sort((left, right) => left.domain.localeCompare(right.domain) || left.product.id.localeCompare(right.product.id)),
+  })).sort((left, right) => left.primary.domain.localeCompare(right.primary.domain) || left.primary.id.localeCompare(right.primary.id));
+  return createHash("sha256").update(JSON.stringify({ version: 1, reportReferenceTimeMs, maxPages, marketCountryCode: comparison.marketCountryCode || "", rows })).digest("hex");
+}
+
+function validEnrichmentPlanCheckpoint(value: unknown): DurableEnrichmentPlan | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const plan = value as Partial<DurableEnrichmentPlan>;
+  if (plan.version !== 1
+    || !/^[a-f0-9]{64}$/.test(String(plan.contentHash || ""))
+    || !Array.isArray(plan.targets)
+    || plan.targets.length > MAX_FINAL_ENRICHMENT_TARGETS
+    || !Number.isInteger(plan.totalEligible) || Number(plan.totalEligible) < plan.targets.length || Number(plan.totalEligible) > MAX_FINAL_ENRICHMENT_TARGETS * 2
+    || typeof plan.truncated !== "boolean"
+    || plan.truncated !== (Number(plan.totalEligible) > plan.targets.length)) return null;
+  const seen = new Set<string>();
+  for (const target of plan.targets) {
+    if (!target || typeof target !== "object" || (target.role !== "primary" && target.role !== "rival") || typeof target.productId !== "string" || !target.productId) return null;
+    try {
+      const source = new URL(target.sourceUrl);
+      const domain = canonicalDomain(target.domain);
+      if (!domain || canonicalDomain(source.hostname) !== domain || !/^https:$/.test(source.protocol) || source.username || source.password) return null;
+      const key = `${domain}\n${target.productId}\n${target.sourceUrl}`;
+      if (seen.has(key)) return null;
+      seen.add(key);
+    } catch { return null; }
+  }
+  const complete = { targets: plan.targets, totalEligible: Number(plan.totalEligible), truncated: plan.truncated };
+  if (plan.contentHash !== enrichmentPlanContentHash(complete)) return null;
+  return { version: 1, contentHash: plan.contentHash, ...complete };
 }
 
 type RunStatus = "queued" | "running" | "complete" | "limited" | "failed" | "interrupted";
@@ -394,9 +446,31 @@ export async function orchestrateReport(
     if (comparison && marketCountryCode) comparison = { ...comparison, marketCountryCode };
     if (comparison) {
       const reportReferenceTimeMs = Date.parse(stored.run.createdAt);
-      const enrichmentPlan = planFinalProductEnrichmentTargets(comparison, pricedResultEnrichmentBudget(payload.productLimit), reportReferenceTimeMs);
-      const targets = enrichmentPlan.targets;
+      const maxEnrichmentPages = pricedResultEnrichmentBudget(payload.productLimit);
+      let enrichmentPlan = planFinalProductEnrichmentTargets(comparison, maxEnrichmentPages, reportReferenceTimeMs);
       let targetSatisfied = publishedPricedPrimaryCount(comparison, reportReferenceTimeMs) >= payload.productLimit;
+      if (!targetSatisfied) {
+        const inputHash = enrichmentPlanInputHash(comparison, maxEnrichmentPages, reportReferenceTimeMs);
+        const saved = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: ENRICHMENT_PLAN_CHECKPOINT_BATCH_INDEX }))[0];
+        if (saved) {
+          if (saved.inputHash !== inputHash) throw new Error("The durable enrichment plan conflicts with the current accepted product identities.");
+          const checkpoint = validEnrichmentPlanCheckpoint(saved.result);
+          if (!checkpoint) throw new Error("The durable enrichment plan is invalid.");
+          enrichmentPlan = checkpoint;
+        } else {
+          const durablePlan: DurableEnrichmentPlan = { version: 1, contentHash: enrichmentPlanContentHash(enrichmentPlan), ...enrichmentPlan };
+          try {
+            await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: ENRICHMENT_PLAN_CHECKPOINT_BATCH_INDEX, inputHash, result: durablePlan });
+          } catch (saveError) {
+            const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: ENRICHMENT_PLAN_CHECKPOINT_BATCH_INDEX }))[0];
+            if (!committed || committed.inputHash !== inputHash) throw saveError;
+            const checkpoint = validEnrichmentPlanCheckpoint(committed.result);
+            if (!checkpoint) throw saveError;
+            enrichmentPlan = checkpoint;
+          }
+        }
+      }
+      const targets = enrichmentPlan.targets;
       if (targets.length && !targetSatisfied) {
         const batches = Array.from({ length: Math.ceil(targets.length / FINAL_ENRICHMENT_BATCH_SIZE) }, (_, index) => targets.slice(index * FINAL_ENRICHMENT_BATCH_SIZE, (index + 1) * FINAL_ENRICHMENT_BATCH_SIZE));
         await port.appendEvent(payload.publicId, event("enrichment-started", "enrichment", "Re-reading accepted product pages in bounded batches for attributable prices and images.", {

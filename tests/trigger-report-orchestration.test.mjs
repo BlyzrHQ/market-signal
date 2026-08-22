@@ -858,11 +858,15 @@ test("publication-ineligible pairs are re-read on both sides and successful batc
 test("a task retry reuses durable enrichment batches instead of fetching product pages again", async () => {
   let enrichCalls = 0;
   let saveCalls = 0;
+  let matchCalls = 0;
   const port = mockPort({
     async match() {
+      matchCalls += 1;
       const value = comparison({ withPair: true, count: 1 });
-      value.rows[0].primary.priceSignals = [];
-      value.rows[0].matches[0].product.priceSignals = [];
+      value.rows[0].primary.priceSignals = matchCalls === 1 ? [] : [{ raw: "GBP 0", currency: "GBP", amount: 0 }];
+      value.rows[0].primary.imageUrl = matchCalls === 1 ? "" : "https://shop.example/images/changed.jpg";
+      value.rows[0].matches[0].product.priceSignals = matchCalls === 1 ? [] : [{ raw: "GBP 0", currency: "GBP", amount: 0 }];
+      value.rows[0].matches[0].product.imageUrl = matchCalls === 1 ? "" : "https://rival.example/images/changed.jpg";
       return { ok: true, comparison: value };
     },
     async enrich({ targets }) {
@@ -882,7 +886,8 @@ test("a task retry reuses durable enrichment batches instead of fetching product
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
   await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
   assert.equal(enrichCalls, 1);
-  assert.equal(port.checkpoints.size, 1);
+  assert.equal(port.checkpoints.size, 2);
+  assert.ok(port.checkpoints.has(299));
 });
 
 test("an ambiguous checkpoint-save response reloads and uses the committed enrichment batch", async () => {
@@ -933,7 +938,8 @@ test("a shape-valid but semantically incomplete enrichment checkpoint is rejecte
     },
   });
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/);
-  const checkpoint = port.checkpoints.values().next().value;
+  const checkpoint = [...port.checkpoints.values()].find((value) => value.result?.coverage);
+  assert.ok(checkpoint);
   checkpoint.result.coverage.gaps = [];
   const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port);
   assert.equal(enrichCalls, 1);
@@ -950,11 +956,12 @@ test("a conflicting enrichment checkpoint fails closed without fetching or publi
       value.rows[0].matches[0].product.priceSignals = [];
       return { ok: true, comparison: value };
     },
-    async loadCheckpoint(_publicId, input) {
-      return [{ batchIndex: input.batchIndex, inputHash: "0".repeat(64), result: { ok: true, products: [], coverage: { pagesRequested: 2, pagesFetched: 0, maxPages: 64, gaps: [] } } }];
-    },
     async enrich() { enrichCalls += 1; throw new Error("must not fetch after a checkpoint conflict"); },
   });
+  const loadCheckpoint = port.loadCheckpoint.bind(port);
+  port.loadCheckpoint = async (publicId, input) => input.batchIndex >= 300
+    ? [{ batchIndex: input.batchIndex, inputHash: "0".repeat(64), result: { ok: true, products: [], coverage: { pagesRequested: 2, pagesFetched: 0, maxPages: 64, gaps: [] } } }]
+    : loadCheckpoint(publicId, input);
 
   const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, port);
   assert.equal(enrichCalls, 0);
