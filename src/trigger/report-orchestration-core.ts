@@ -12,6 +12,7 @@ import {
 import {
   applyFinalProductEnrichment,
   planFinalProductEnrichmentTargets,
+  publicSourceMarketContext,
   type ProductComparison,
   type ProductEnrichmentTarget,
   type ProductRecord,
@@ -339,6 +340,9 @@ export function validEnrichmentCheckpoint(value: unknown, targets: ProductEnrich
       const source = new URL(sourceUrl);
       const requested = new URL(target.sourceUrl);
       if (canonicalDomain(source.hostname) !== canonicalDomain(target.domain) || canonicalDomain(requested.hostname) !== canonicalDomain(target.domain)) return false;
+      const sourceMarket = publicSourceMarketContext(sourceUrl);
+      const requestedMarket = publicSourceMarketContext(target.sourceUrl);
+      if (sourceMarket.conflict || requestedMarket.conflict || (requestedMarket.countryCode && sourceMarket.countryCode !== requestedMarket.countryCode)) return false;
       if (JSON.stringify(comparableSearch(sourceUrl)) !== JSON.stringify(comparableSearch(target.sourceUrl))) return false;
       return target.allowCatalogReplacement === true || comparablePath(sourceUrl) === comparablePath(target.sourceUrl);
     } catch { return false; }

@@ -448,6 +448,7 @@ export function limitPublishedProductComparison(comparison: ProductComparison, r
 }
 
 export function mergePublishedProductComparisonState(current: ProductComparison, prior: ProductComparison | null, resultTarget: number, referenceTimeMs = Date.now()) {
+  const boundedResultTarget = Math.min(MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY, Math.max(1, Math.floor(resultTarget)));
   const evaluated = (comparison: ProductComparison) => comparison.rows.some((row) => row.matches.some((match) => match.publication !== undefined))
     ? comparison
     : publishPricedProductComparison(comparison, referenceTimeMs);
@@ -572,7 +573,7 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
     return forward;
   };
   const componentNodeByKey = new Map(componentKeys.map((key, index) => [key, componentNodeStart + index]));
-  const flowTarget = Math.min(Math.max(1, Math.floor(resultTarget)), candidateRows.length);
+  const flowTarget = Math.min(boundedResultTarget, candidateRows.length);
   const exactBonus = flowTarget + 1;
   const assignmentEdges: ResidualEdge[] = [];
   for (let rowIndex = 0; rowIndex < candidateRows.length; rowIndex += 1) {
@@ -658,7 +659,7 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
       processedPrimaryIds: union(currentMatching.processedPrimaryIds, priorMatching?.processedPrimaryIds).sort(),
     } : currentMatching,
   };
-  const limited = limitPublishedProductComparison(publishPricedProductComparison(merged, referenceTimeMs), resultTarget);
+  const limited = limitPublishedProductComparison(publishPricedProductComparison(merged, referenceTimeMs), boundedResultTarget);
   const limitedComparison: ProductComparison = {
     ...limited,
     rows: limited.rows.map((row) => ({ ...row, matches: row.matches.filter((match) => match.product) })),
@@ -670,7 +671,7 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
   const evidenceCandidates = [
     ...candidateRows.filter((row) => selectedPrimaryIds.has(row.primary.id)),
     ...candidateRows.filter((row) => !selectedPrimaryIds.has(row.primary.id)),
-  ].slice(0, Math.max(1, Math.floor(resultTarget)));
+  ].slice(0, boundedResultTarget);
   const uncompactedEvidenceRows = evidenceCandidates.map((row) => {
     const compactPrimary = compactPricedEvidenceProduct(row.primary);
     const seenComponents = new Set<string>();

@@ -747,6 +747,20 @@ test("durable priced evidence stays below the checkpoint limit for a legal 6000-
   assert.ok(Buffer.byteLength(JSON.stringify(checkpoint), "utf8") < REPORT_CALLBACK_ENVELOPE_BYTES - 100_000);
 });
 
+test("durable publication and evidence remain capped at twenty rows for legacy larger targets", () => {
+  const rows = Array.from({ length: 50 }, (_, index) => {
+    const item = row(`legacy-p${index}`, `legacy-r${index}`);
+    item.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+    item.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+    return item;
+  });
+  const ids = rows.map((item) => item.primary.id);
+  const state = mergePublishedProductComparisonState(comparison({ selected: ids, assessed: ids, rows, accepted: 50 }), null, 1_000);
+
+  assert.equal(state.comparison.rows.length, 20);
+  assert.equal(state.evidence.rows.length, 20);
+});
+
 test("a later unpriced observation does not evict an earlier valid priced comparison", () => {
   const priorRow = row("p1", "r1");
   priorRow.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];

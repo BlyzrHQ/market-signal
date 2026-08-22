@@ -47,7 +47,7 @@ function publicUrl(value: unknown, domain: string) {
 
 function publicImageUrl(value: unknown) {
   try {
-    const url = new URL(text(value, 1_000));
+    const url = new URL(publicHttpUrl(value, true, 1_000));
     normalizeDomain(url.hostname);
     return url.protocol === "https:" && !url.username && !url.password ? url.toString() : "";
   } catch {

@@ -218,6 +218,14 @@ test("published checkpoint validation rejects any evidence edge lost during reva
   ), null);
 });
 
+test("enrichment checkpoint validation rejects an outcome from a different explicit market", () => {
+  const target = { domain: "rival.example", productId: "r1", sourceUrl: "https://rival.example/en-US/products/honey", expectedName: "Honey", role: "rival" };
+  const outcome = { ...product("rival.example", "r1"), sourceUrl: "https://rival.example/ar-SA/products/honey", priceSignals: [{ raw: "SAR 30", currency: "SAR", amount: 30 }] };
+  const checkpoint = { ok: true, products: [outcome], coverage: { pagesRequested: 1, pagesFetched: 1, maxPages: 1, gaps: [] } };
+
+  assert.equal(validEnrichmentCheckpoint(checkpoint, [target]), null);
+});
+
 function mockPort(overrides = {}) {
   const events = [];
   const saves = [];
@@ -1172,7 +1180,7 @@ test("access-blocked product pages remain processing-incomplete", async () => {
   assert.equal(port.saves.length, 0);
 });
 
-test("publication-ineligible pairs are re-read on both sides and successful batches survive a failure", async () => {
+test("successful enrichment batches can satisfy the twenty-row target despite a later batch failure", async () => {
   const batched = comparison({ withPair: true });
   const template = batched.rows[0];
   batched.rows = Array.from({ length: 70 }, (_, index) => {
@@ -1194,9 +1202,10 @@ test("publication-ineligible pairs are re-read on both sides and successful batc
       return { ok: true, products: targets.map((target) => ({ ...product(target.domain, target.productId), name: target.expectedName, normalizedName: target.expectedName.toLowerCase(), sourceUrl: target.sourceUrl, priceSignals: [{ raw: "GBP 7", currency: "GBP", amount: 7 }] })), coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: 64, gaps: [] } };
     },
   });
-  await assert.rejects(() => orchestrateReport({ ...payload, contractVersion: "3", productPlan: "growth", productLimit: 500 }, { attemptNumber: 1, isFinalAttempt: true }, port), /remained incomplete after the final task attempt/);
+  const result = await orchestrateReport({ ...payload, contractVersion: "3", productPlan: "growth", productLimit: 500 }, { attemptNumber: 1, isFinalAttempt: true }, port);
   assert.deepEqual(batchSizes, [64, 64, 12]);
-  assert.equal(port.saves.length, 0);
+  assert.equal(result.reportStatus, "limited");
+  assert.equal(port.saves.at(-1).document.document.blocks.find((item) => item.type === "product-comparison").rows.length, 20);
   const checkpoints = port.events.filter((event) => /^enrichment-report-\d+-task-\d+-wave-\d+-checkpoint$/.test(event.idempotencyKey));
   assert.equal(checkpoints.length, 1);
   assert.equal(checkpoints[0].metadata.pagesRequested, 140);

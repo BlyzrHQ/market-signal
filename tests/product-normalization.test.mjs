@@ -104,3 +104,15 @@ test("match ingress applies the primary catalog bound after product validation",
   assert.equal(catalogs[0].products.length, 20);
   assert.equal(catalogs[0].products[0].id, "valid-0");
 });
+
+test("match ingress rejects rather than truncates an oversized image URL", () => {
+  const imageUrl = `https://shop.example/images/${"x".repeat(1_000)}`;
+  const catalogs = parseCatalogs([{ domain: "shop.example", products: [{
+    id: "image-product",
+    name: "Image product",
+    sourceUrl: "https://shop.example/products/image-product",
+    imageUrl,
+  }] }], "shop.example");
+
+  assert.equal(catalogs[0].products[0].imageUrl, "");
+});
