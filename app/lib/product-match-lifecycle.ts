@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { canonicalProductSourceKey, hasPriceCurrencyIntegrity, hasValidObservedRivalPrice, isSupportedCurrency, productDecision, productIdentityKey, publicSourceMarketCountryCode, publicSourceMarketEvidence, type ProductComparison, type ProductMatch, type ProductRecord } from "./product-intelligence.ts";
 import { canonicalDomain } from "./domain.ts";
+import { canonicalGtin } from "./product-normalization.ts";
 import { publicHttpUrl } from "./public-url.ts";
 
 export type ProductMatchLifecycle = "idle" | "matching" | "retrying" | "complete" | "limited";
@@ -29,8 +30,9 @@ function durablePrimaryIdentity(product: ProductRecord) {
 }
 
 function compactPricedEvidenceProduct(product: ProductRecord): ProductRecord {
+  const durableGtins = [...new Set(product.identifiers?.gtins.map(canonicalGtin).filter((gtin): gtin is string => Boolean(gtin)) || [])].slice(0, 8);
   const identifiers = product.identifiers ? {
-    gtins: product.identifiers.gtins.slice(0, 1),
+    gtins: durableGtins,
     ...(product.identifiers.sku ? { sku: compactEvidenceText(product.identifiers.sku, 100) } : {}),
     ...(product.identifiers.mpn ? { mpn: compactEvidenceText(product.identifiers.mpn, 100) } : {}),
     ...(product.identifiers.brand ? { brand: compactEvidenceText(product.identifiers.brand, 100) } : {}),
@@ -484,10 +486,14 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
     || left.primary.sourceUrl.localeCompare(right.primary.sourceUrl));
   const rivalConstraintKeys = (product: ProductRecord) => {
     const source = canonicalProductSourceKey(product);
+    const domain = canonicalDomain(product.domain);
+    const market = publicSourceMarketCountryCode(product.sourceUrl) || "";
+    const gtins = [...new Set((product.identifiers?.gtins || []).map(canonicalGtin).filter((gtin): gtin is string => Boolean(gtin)))];
     return [
       `physical:${productIdentityKey(product)}`,
+      ...gtins.map((gtin) => `gtin:${domain}|${market}|${gtin}`),
       ...(source ? [`source:${source}`] : []),
-      `merchant:${canonicalDomain(product.domain)}|${product.id}`,
+      `merchant:${domain}|${product.id}`,
       ...(/^[a-f0-9]{64}$/.test(product.assignmentComponentHash || "") ? [`assignment:${product.assignmentComponentHash}`] : []),
     ];
   };

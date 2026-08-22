@@ -590,6 +590,26 @@ test("global assignment counts one canonical rival source only once when ids and
   assert.equal(state.comparison.matching.resultShortfall, 1);
 });
 
+test("global assignment counts a rival only once when observations share a secondary GTIN", () => {
+  const rows = Array.from({ length: 20 }, (_, index) => {
+    const item = row(`p${index}`, `r${index}`);
+    item.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+    item.matches[0].product.sourceUrl = `https://rival.test/products/r${index}?country=US`;
+    item.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+    item.matches[0].product.identifiers = { gtins: index === 0
+      ? ["00036000291452", "04006381333931"]
+      : index === 1 ? ["04006381333931"] : [] };
+    return item;
+  });
+  const ids = rows.map((item) => item.primary.id);
+  const live = mergePublishedProductComparisonState(comparison({ selected: ids, assessed: ids, rows, accepted: 20 }), null, 20);
+
+  assert.equal(live.comparison.rows.length, 19);
+  const checkpoint = JSON.parse(JSON.stringify(compactPublishedProductComparisonCheckpoint(live.evidence)));
+  assert.equal(checkpoint.rows[0].matches[0].product.identifiers.gtins.length, 2);
+  assert.equal(mergePublishedProductComparisonState(checkpoint, null, 20).comparison.rows.length, 19);
+});
+
 test("global assignment is invariant to equivalent primary row ordering", () => {
   const pricedRow = (primaryId) => {
     const item = row(primaryId, "shared-rival");
