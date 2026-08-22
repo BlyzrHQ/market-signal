@@ -33,6 +33,7 @@ import {
   createReportOrchestrationHttpPort,
   isRetryableHttpStatus,
 } from "../src/trigger/report-orchestration-http.ts";
+import { planFinalProductEnrichmentTargets } from "../app/lib/product-intelligence.ts";
 import { encodedJsonBytes, REPORT_CALLBACK_ENVELOPE_BYTES, REPORT_PRESENTATION_TARGET_BYTES } from "../src/shared/report-document-compaction.ts";
 import { babanujScaleDocument } from "./fixtures/babanuj-report-document.mjs";
 import { createWorkerApiManifest } from "../src/shared/worker-api-contract.ts";
@@ -1048,6 +1049,24 @@ test("a retry reuses a completed fact manifest only when its current bundle hash
 
 test("completed fact recovery selects the newest owned terminal presentation", async () => {
   const manifestHash = "b".repeat(64);
+  const presentation = (version, taskAttemptNumber, status, observedAt, marker) => ({
+    version,
+    ...(version === 2 ? { taskAttemptNumber } : {}),
+    manifestHash,
+    status,
+    observedAt,
+    document: { primaryDomain: payload.primaryDomain, marker, document: { blocks: [{ type: "presentation-compaction", id: "presentation-compaction" }] }, marketBrief: null },
+  });
+  const checkpoint = (attemptNumber, batchIndex, result) => ({
+    attemptNumber,
+    batchIndex,
+    inputHash: createHash("sha256").update(JSON.stringify(result)).digest("hex"),
+    result,
+  });
+  const oldPresentation = presentation(2, 1, "limited", "2026-07-20T09:58:00.000Z", "old");
+  const newPresentation = presentation(2, 2, "complete", "2026-07-20T10:00:00.000Z", "new");
+  const tamperedPresentation = presentation(2, 3, "limited", "2026-07-20T10:00:30.000Z", "tampered");
+  const malformedPresentation = { ...presentation(1, 0, "limited", "2026-07-20T10:01:00.000Z", "unowned-newer"), document: { marker: "not-a-report-document" } };
   const port = mockPort({
     async loadReport() {
       return {
@@ -1058,9 +1077,10 @@ test("completed fact recovery selects the newest owned terminal presentation", a
     },
     async loadCheckpoint() {
       return [
-        { attemptNumber: 1, batchIndex: 280, inputHash: "a".repeat(64), result: { version: 2, taskAttemptNumber: 1, manifestHash, status: "limited", observedAt: "2026-07-20T09:58:00.000Z", document: { marker: "old" } } },
-        { attemptNumber: 2, batchIndex: 281, inputHash: "b".repeat(64), result: { version: 2, taskAttemptNumber: 2, manifestHash, status: "complete", observedAt: "2026-07-20T10:00:00.000Z", document: { marker: "new" } } },
-        { attemptNumber: 3, batchIndex: 289, inputHash: "c".repeat(64), result: { version: 1, manifestHash, status: "limited", observedAt: "2026-07-20T10:01:00.000Z", document: { marker: "unowned-newer" } } },
+        checkpoint(1, 280, oldPresentation),
+        checkpoint(2, 281, newPresentation),
+        { attemptNumber: 2, batchIndex: 282, inputHash: "0".repeat(64), result: tamperedPresentation },
+        checkpoint(3, 289, malformedPresentation),
       ];
     },
   });
@@ -1609,6 +1629,7 @@ test("the final bounded task does not misreport total matcher failure as zero-ro
   );
   assert.equal(port.saves.length, 0);
   assert.equal(port.factChunks.length, 0);
+  assert.ok(port.events.some((event) => event.idempotencyKey === "orchestration-failed" && event.status === "failed"));
 });
 
 test("terminal product-page rejections permit truthful bounded exhaustion while preserving their gaps", async () => {
@@ -1799,6 +1820,7 @@ test("report recovery restores priced results accumulated by a later task attemp
   port.checkpoints.set(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX - 1, { ...accumulated, batchIndex: PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX - 1 });
   port.checkpoints.delete(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX);
   for (let index = CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE; index <= CRAWL_RESULT_CHECKPOINT_BATCH_INDEX; index += 1) port.checkpoints.delete(index);
+  for (let index = 290; index <= 299; index += 1) port.checkpoints.delete(index);
   const loadPriorReport = port.loadReport.bind(port);
   port.loadReport = async () => {
     const stored = await loadPriorReport();
@@ -1884,6 +1906,7 @@ test("an ambiguous publication save cannot adopt an older report attempt checkpo
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/i);
   assert.equal(port.checkpoints.get(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX).attemptNumber, 1);
   for (let index = CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE; index <= CRAWL_RESULT_CHECKPOINT_BATCH_INDEX; index += 1) port.checkpoints.delete(index);
+  for (let index = 290; index <= 299; index += 1) port.checkpoints.delete(index);
   const loadPriorReport = port.loadReport.bind(port);
   port.loadReport = async () => { const stored = await loadPriorReport(); return { ...stored, run: { ...stored.run, attemptCount: 2 } }; };
   const saveCheckpoint = port.saveCheckpoint.bind(port);
@@ -2235,24 +2258,29 @@ test("a conflicting enrichment checkpoint fails closed without fetching or publi
     { ...row.primary, priceSignals: [{ raw: "GBP 10", currency: "GBP", amount: 10 }] },
     { ...row.matches[0].product, priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }] },
   ]);
+  const enrichmentPlan = planFinalProductEnrichmentTargets(accepted, pricedResultEnrichmentBudget(payload.productLimit), Date.parse("2026-07-20T10:00:00.000Z"));
+  const batchTargets = enrichmentPlan.targets.slice(0, 64);
   const conflictingCheckpoint = {
     batchIndex: 300,
     attemptNumber: 1,
-    inputHash: "0".repeat(64),
+    inputHash: createHash("sha256").update(JSON.stringify({ version: 2, targets: batchTargets })).digest("hex"),
     result: { ok: true, products: recoveredProducts, coverage: { pagesRequested: recoveredProducts.length, pagesFetched: recoveredProducts.length, maxPages: 64, gaps: [] } },
   };
+  const conflictingPlan = { batchIndex: 299, attemptNumber: 1, inputHash: "0".repeat(64), result: { version: 2, contentHash: "0".repeat(64), targetHashes: [], totalEligible: 0, truncated: false } };
   const port = mockPort({
     async match() { return { ok: true, comparison: accepted }; },
     async enrich() { enrichCalls += 1; throw new Error("must not fetch after a checkpoint conflict"); },
   });
   const loadCheckpoint = port.loadCheckpoint.bind(port);
-  port.loadCheckpoint = async (publicId, input) => input.batchIndex === undefined && input.batchIndexStart <= 300 && input.batchIndexEnd >= 300
-    ? [conflictingCheckpoint]
+  port.loadCheckpoint = async (publicId, input) => input.batchIndex === undefined && input.batchIndexStart <= 299 && input.batchIndexEnd >= 300
+    ? [conflictingPlan, conflictingCheckpoint]
+    : input.batchIndex === undefined && input.batchIndexStart <= 300 && input.batchIndexEnd >= 300
+      ? [conflictingCheckpoint]
     : input.batchIndex !== undefined && input.batchIndex >= 300
       ? [{ ...conflictingCheckpoint, batchIndex: input.batchIndex }]
       : loadCheckpoint(publicId, input);
 
-  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, port), /durable enrichment checkpoint conflicts/);
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, port), /durable enrichment plan conflicts/);
   assert.equal(enrichCalls, 0);
   assert.equal(port.saves.length, 0);
 });

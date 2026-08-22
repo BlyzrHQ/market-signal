@@ -100,6 +100,9 @@ function validTerminalPresentationCheckpoint(value: unknown, manifestHash: strin
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const item = value as { version?: unknown; taskAttemptNumber?: unknown; manifestHash?: unknown; status?: unknown; observedAt?: unknown; document?: unknown };
   if ((item.version !== 1 && item.version !== 2) || item.manifestHash !== manifestHash || (item.status !== "complete" && item.status !== "limited") || typeof item.observedAt !== "string" || !Number.isFinite(Date.parse(item.observedAt)) || !item.document || typeof item.document !== "object" || Array.isArray(item.document)) return null;
+  const nestedDocument = (item.document as { document?: unknown }).document;
+  if (!nestedDocument || typeof nestedDocument !== "object" || Array.isArray(nestedDocument) || !Array.isArray((nestedDocument as { blocks?: unknown }).blocks)) return null;
+  if (!(nestedDocument as { blocks: unknown[] }).blocks.every((block) => block && typeof block === "object" && !Array.isArray(block) && typeof (block as { type?: unknown }).type === "string" && typeof (block as { id?: unknown }).id === "string")) return null;
   if (item.version === 2 && (!Number.isInteger(item.taskAttemptNumber) || item.taskAttemptNumber !== expectedTaskAttemptNumber)) return null;
   return { status: item.status, observedAt: new Date(item.observedAt).toISOString(), document: item.document } as const;
 }
@@ -817,7 +820,9 @@ export async function orchestrateReport(
       .sort((left, right) => right.attemptNumber - left.attemptNumber || right.batchIndex - left.batchIndex)
       .map((checkpoint) => ({
         version: Number((checkpoint.result as { version?: unknown })?.version),
-        presentation: validTerminalPresentationCheckpoint(checkpoint.result, stored.factManifest!.manifestHash, checkpoint.batchIndex - TERMINAL_PRESENTATION_CHECKPOINT_BATCH_INDEX_BASE + 1),
+        presentation: checkpoint.inputHash === createHash("sha256").update(JSON.stringify(checkpoint.result)).digest("hex")
+          ? validTerminalPresentationCheckpoint(checkpoint.result, stored.factManifest!.manifestHash, checkpoint.batchIndex - TERMINAL_PRESENTATION_CHECKPOINT_BATCH_INDEX_BASE + 1)
+          : null,
       }))
       .filter((candidate) => candidate.presentation !== null);
     const presentation = (presentationCandidates.find((candidate) => candidate.version === 2) || presentationCandidates.find((candidate) => candidate.version === 1))?.presentation || null;
@@ -1081,6 +1086,44 @@ export async function orchestrateReport(
       comparison = mergeAccumulatedPublishedIntoScreenedComparison(comparison, adoptedJudgeEvidence);
       const maxEnrichmentPages = pricedResultEnrichmentBudget(payload.productLimit);
       let enrichmentPlan = planFinalProductEnrichmentTargets(comparison, maxEnrichmentPages, reportReferenceTimeMs);
+      const enrichmentPlanHash = enrichmentPlanInputHash(comparison, maxEnrichmentPages);
+      const planCheckpointIndex = enrichmentPlanCheckpointIndex(taskAttemptNumber);
+      const savedPlan = durableCheckpoints.get(planCheckpointIndex);
+      if (savedPlan?.attemptNumber === attempt.attemptNumber) {
+        if (savedPlan.inputHash !== enrichmentPlanHash) throw new Error("The durable enrichment plan conflicts with the current accepted product identities.");
+        const checkpoint = validEnrichmentPlanCheckpoint(savedPlan.result, enrichmentPlan);
+        if (!checkpoint) throw new Error("The durable enrichment plan is invalid.");
+        enrichmentPlan = checkpoint;
+      } else {
+        let reusedPriorPlan = false;
+        const priorPlans = [savedPlan, ...Array.from({ length: MAX_ORCHESTRATION_TASK_ATTEMPTS }, (_, index) => MAX_ORCHESTRATION_TASK_ATTEMPTS - index)
+          .filter((priorTaskAttempt) => priorTaskAttempt !== taskAttemptNumber)
+          .map((priorTaskAttempt) => durableCheckpoints.get(enrichmentPlanCheckpointIndex(priorTaskAttempt)))];
+        for (const prior of priorPlans) {
+          if (!prior || prior.inputHash !== enrichmentPlanHash) continue;
+          const checkpoint = validEnrichmentPlanCheckpoint(prior.result, enrichmentPlan);
+          if (!checkpoint) throw new Error("The durable enrichment plan is invalid.");
+          enrichmentPlan = checkpoint;
+          reusedPriorPlan = true;
+          break;
+        }
+        if (!reusedPriorPlan) {
+          const durablePlan = compactEnrichmentPlan(enrichmentPlan);
+          try {
+            await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: planCheckpointIndex, inputHash: enrichmentPlanHash, result: durablePlan });
+            const savedCheckpoint = { attemptNumber: attempt.attemptNumber, batchIndex: planCheckpointIndex, inputHash: enrichmentPlanHash, result: durablePlan };
+            durableCheckpoints.set(planCheckpointIndex, savedCheckpoint);
+            allDurableCheckpoints.set(`${attempt.attemptNumber}:${planCheckpointIndex}`, savedCheckpoint);
+          } catch (saveError) {
+            const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: planCheckpointIndex }))[0];
+            if (!committed || committed.attemptNumber !== attempt.attemptNumber || committed.inputHash !== enrichmentPlanHash) throw saveError;
+            if (JSON.stringify(stableCheckpointValue(committed.result)) !== JSON.stringify(stableCheckpointValue(durablePlan))) throw saveError;
+            const checkpoint = validEnrichmentPlanCheckpoint(committed.result, enrichmentPlan);
+            if (!checkpoint) throw saveError;
+            enrichmentPlan = checkpoint;
+          }
+        }
+      }
       const recoveredEnrichmentResults: EnrichmentResult[] = [];
       for (const checkpoint of [...allDurableCheckpoints.values()].filter((candidate) => candidate.batchIndex >= ENRICHMENT_CHECKPOINT_BATCH_INDEX_BASE && candidate.batchIndex < MATCH_JUDGE_CHECKPOINT_BATCH_INDEX_BASE)) {
         const checkpointOffset = checkpoint.batchIndex - ENRICHMENT_CHECKPOINT_BATCH_INDEX_BASE;
@@ -1111,46 +1154,6 @@ export async function orchestrateReport(
         gaps: [],
       });
       let targetSatisfied = mergePublishedProductComparisons(comparison, accumulatedPublished, payload.productLimit, reportReferenceTimeMs).rows.length >= payload.productLimit;
-      if (!targetSatisfied) {
-        const inputHash = enrichmentPlanInputHash(comparison, maxEnrichmentPages);
-        const planCheckpointIndex = enrichmentPlanCheckpointIndex(taskAttemptNumber);
-        const saved = durableCheckpoints.get(planCheckpointIndex);
-        if (saved) {
-          if (saved.inputHash !== inputHash) throw new Error("The durable enrichment plan conflicts with the current accepted product identities.");
-          const checkpoint = validEnrichmentPlanCheckpoint(saved.result, enrichmentPlan);
-          if (!checkpoint) throw new Error("The durable enrichment plan is invalid.");
-          enrichmentPlan = checkpoint;
-        } else {
-          let reusedPriorPlan = false;
-          for (let priorTaskAttempt = MAX_ORCHESTRATION_TASK_ATTEMPTS; priorTaskAttempt >= 1; priorTaskAttempt -= 1) {
-            if (priorTaskAttempt === taskAttemptNumber) continue;
-            const priorIndex = enrichmentPlanCheckpointIndex(priorTaskAttempt);
-            const prior = durableCheckpoints.get(priorIndex);
-            if (!prior || prior.inputHash !== inputHash) continue;
-            const checkpoint = validEnrichmentPlanCheckpoint(prior.result, enrichmentPlan);
-            if (!checkpoint) throw new Error("The durable enrichment plan is invalid.");
-            enrichmentPlan = checkpoint;
-            reusedPriorPlan = true;
-            break;
-          }
-          if (!reusedPriorPlan) {
-            const durablePlan = compactEnrichmentPlan(enrichmentPlan);
-            try {
-              await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: planCheckpointIndex, inputHash, result: durablePlan });
-              const savedCheckpoint = { attemptNumber: attempt.attemptNumber, batchIndex: planCheckpointIndex, inputHash, result: durablePlan };
-              durableCheckpoints.set(planCheckpointIndex, savedCheckpoint);
-              allDurableCheckpoints.set(`${attempt.attemptNumber}:${planCheckpointIndex}`, savedCheckpoint);
-            } catch (saveError) {
-              const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: planCheckpointIndex }))[0];
-              if (!committed || committed.attemptNumber !== attempt.attemptNumber || committed.inputHash !== inputHash) throw saveError;
-              if (JSON.stringify(stableCheckpointValue(committed.result)) !== JSON.stringify(stableCheckpointValue(durablePlan))) throw saveError;
-              const checkpoint = validEnrichmentPlanCheckpoint(committed.result, enrichmentPlan);
-              if (!checkpoint) throw saveError;
-              enrichmentPlan = checkpoint;
-            }
-          }
-        }
-      }
       const targets = enrichmentPlan.targets;
       if (targets.length && !targetSatisfied) {
         const batches = Array.from({ length: Math.ceil(targets.length / FINAL_ENRICHMENT_BATCH_SIZE) }, (_, index) => targets.slice(index * FINAL_ENRICHMENT_BATCH_SIZE, (index + 1) * FINAL_ENRICHMENT_BATCH_SIZE));
@@ -1497,7 +1500,7 @@ export async function orchestrateReport(
   completedPhases.push("persistence");
   return { ok: true, contractVersion: REPORT_ORCHESTRATION_CONTRACT_VERSION, publicId: payload.publicId, reportStatus, completedPhases: [...new Set(completedPhases)], limitedPhases: [...new Set(limitedPhases)], startedAt, finishedAt };
   } catch (error) {
-    if (attempt.isFinalAttempt && !terminalFailureRecorded && !(error instanceof RecoverableProcessingIncompleteError)) {
+    if (attempt.isFinalAttempt && !terminalFailureRecorded) {
       try {
         await port.appendEvent(payload.publicId, {
           idempotencyKey: "orchestration-failed",
