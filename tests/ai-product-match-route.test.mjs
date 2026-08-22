@@ -242,6 +242,8 @@ test("authenticated matching binds durable judge checkpoints to the active repor
   const priorCandidateKey = "r".repeat(43);
   const priorGroups = [{ primaryKey: priorPrimaryKey, candidateKeys: [priorCandidateKey] }];
   const priorPlan = { version: 3, planHash: "d".repeat(64), contentHash: createHash("sha256").update(JSON.stringify({ groups: priorGroups, candidatePairPoolTruncated: false })).digest("hex"), primaryCatalogCount: 1_000, selectedPrimaryCount: 1, candidatePairCount: 1, candidatePairPoolTruncated: false, groups: priorGroups };
+  const adoptedCurrentGroups = [{ primaryKey: "q".repeat(43), candidateKeys: ["s".repeat(43)] }];
+  const adoptedCurrentPlan = { ...priorPlan, planHash: "e".repeat(64), contentHash: createHash("sha256").update(JSON.stringify({ groups: adoptedCurrentGroups, candidatePairPoolTruncated: false })).digest("hex"), groups: adoptedCurrentGroups };
   const fullPrimaryCatalog = Array.from({ length: 1_000 }, (_, index) => ({
     id: `p${index}`,
     name: `Product ${index}`,
@@ -260,7 +262,10 @@ test("authenticated matching binds durable judge checkpoints to the active repor
     },
     async loadCheckpoints(publicId, input) {
       assert.equal(publicId, "b".repeat(32));
-      if (input.batchIndexStart === 3_900) return [{ attemptNumber: 2, batchIndex: 3_900, inputHash: priorPlan.planHash, result: priorPlan }];
+      if (input.batchIndexStart === 3_900) return [
+        { attemptNumber: 1, batchIndex: 3_900, inputHash: priorPlan.planHash, result: priorPlan },
+        { attemptNumber: 1, batchIndex: 3_902, inputHash: adoptedCurrentPlan.planHash, result: adoptedCurrentPlan },
+      ];
       if (input.batchIndex === 3_902) return [];
       assert.deepEqual(input, { attemptNumber: 2, batchIndex: 1_903 });
       return [{ inputHash: "a".repeat(64), result: { version: 1 } }];
@@ -287,7 +292,7 @@ test("authenticated matching binds durable judge checkpoints to the active repor
   assert.equal(receivedOptions.concurrency, 12);
   assert.equal(receivedOptions.referenceTimeMs, Date.parse("2026-07-20T09:00:00.000Z"));
   assert.equal(receivedOptions.marketCountryCode, "GB");
-  assert.deepEqual(receivedOptions.priorCandidatePairKeys, [`${priorPrimaryKey}\n${priorCandidateKey}`]);
+  assert.deepEqual(receivedOptions.priorCandidatePairKeys, [`${priorPrimaryKey}\n${priorCandidateKey}`, `${"q".repeat(43)}\n${"s".repeat(43)}`]);
   const savedJudge = saved.find((item) => item.input.batchIndex === 1_903);
   const savedPlan = saved.find((item) => item.input.batchIndex === 3_902);
   assert.equal(savedJudge.publicId, "b".repeat(32));

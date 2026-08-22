@@ -303,10 +303,10 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
         const checkpoints = await services.loadCheckpoints(publicId, { attemptNumber: reportAttempt, batchIndexStart: PLAN_CHECKPOINT_BASE, batchIndexEnd: PLAN_CHECKPOINT_BASE + MAX_TASK_ATTEMPTS - 1, latestPerBatch: true });
         const keys = new Set<string>();
         for (const checkpoint of checkpoints) {
-          if (checkpoint.batchIndex === currentPlanIndex) continue;
+          if (checkpoint.batchIndex === currentPlanIndex && checkpoint.attemptNumber === reportAttempt) continue;
           const planKeys = candidatePairKeysFromPlan(checkpoint.result);
           const plan = checkpoint.result as Partial<ProductCandidatePlan>;
-          if (checkpoint.attemptNumber !== reportAttempt || !planKeys || checkpoint.inputHash !== plan.planHash) throw new Error("A durable report-global candidate plan is invalid.");
+          if (!planKeys || checkpoint.inputHash !== plan.planHash) throw new Error("A durable report-global candidate plan is invalid.");
           for (const key of planKeys) keys.add(key);
         }
         if (keys.size > MAX_JUDGE_CANDIDATE_PAIRS) throw new Error("Legacy candidate plans exceed the report-global 6,000-pair frontier.");
