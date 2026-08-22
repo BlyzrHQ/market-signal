@@ -488,7 +488,7 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
       `merchant:${canonicalDomain(product.domain)}|${product.id}`,
     ];
   };
-  const candidates = candidateRows.map((row) => {
+  const rankedCandidates = candidateRows.map((row) => {
     const seen = new Set<string>();
     return row.matches
       .filter((match): match is ProductMatch & { product: ProductRecord } => Boolean(match.product && match.publication?.priceEligible === true))
@@ -500,10 +500,9 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
         if (keys.some((key) => seen.has(key))) return false;
         keys.forEach((key) => seen.add(key));
         return true;
-      })
-      .slice(0, MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY);
+      });
   });
-  const allCandidates = candidates.flat();
+  const allCandidates = rankedCandidates.flat();
   const parents = allCandidates.map((_match, index) => index);
   const findRoot = (index: number): number => parents[index] === index ? index : (parents[index] = findRoot(parents[index]));
   const unionCandidateComponents = (left: number, right: number) => {
@@ -524,22 +523,83 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
     const index = candidateIndex.get(match as ProductMatch & { product: ProductRecord });
     return index === undefined ? "missing-candidate" : `component:${findRoot(index)}`;
   };
-  const rivalOwners = new Map<string, number>();
-  const selectedByRow = new Map<number, ProductMatch>();
-  const assignUniqueRival = (rowIndex: number, visitedRivals: Set<string>): boolean => {
-    for (const match of candidates[rowIndex]) {
-      const rivalKey = rivalAssignmentKey(match);
-      if (visitedRivals.has(rivalKey)) continue;
-      visitedRivals.add(rivalKey);
-      const owner = rivalOwners.get(rivalKey);
-      if (owner !== undefined && !assignUniqueRival(owner, visitedRivals)) continue;
-      rivalOwners.set(rivalKey, rowIndex);
-      selectedByRow.set(rowIndex, match);
+  // Collapse transitive source/merchant/physical aliases before applying the
+  // per-primary cap. Twenty distinct rival components are sufficient for a
+  // twenty-row assignment; twenty raw edges are not when aliases collapse.
+  const candidates = rankedCandidates.map((matches) => {
+    const seenComponents = new Set<string>();
+    return matches.filter((match) => {
+      const component = rivalAssignmentKey(match);
+      if (seenComponents.has(component)) return false;
+      seenComponents.add(component);
       return true;
-    }
-    return false;
+    }).slice(0, MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY);
+  });
+
+  type ResidualEdge = { to: number; reverse: number; capacity: number; cost: number; match?: ProductMatch; rowIndex?: number };
+  const componentKeys = [...new Set(candidates.flatMap((matches) => matches.map(rivalAssignmentKey)))];
+  const rowNodeStart = 1;
+  const componentNodeStart = rowNodeStart + candidateRows.length;
+  const sink = componentNodeStart + componentKeys.length;
+  const graph: ResidualEdge[][] = Array.from({ length: sink + 1 }, () => []);
+  const addEdge = (from: number, to: number, capacity: number, cost: number, metadata: Pick<ResidualEdge, "match" | "rowIndex"> = {}) => {
+    const forward: ResidualEdge = { to, reverse: graph[to].length, capacity, cost, ...metadata };
+    const reverse: ResidualEdge = { to: from, reverse: graph[from].length, capacity: 0, cost: -cost };
+    graph[from].push(forward);
+    graph[to].push(reverse);
+    return forward;
   };
-  candidateRows.forEach((_row, rowIndex) => assignUniqueRival(rowIndex, new Set()));
+  const componentNodeByKey = new Map(componentKeys.map((key, index) => [key, componentNodeStart + index]));
+  const flowTarget = Math.min(Math.max(1, Math.floor(resultTarget)), candidateRows.length);
+  const scoreScale = 1_000_000;
+  const exactBonus = (flowTarget + 1) * (scoreScale + 1);
+  const assignmentEdges: ResidualEdge[] = [];
+  for (let rowIndex = 0; rowIndex < candidateRows.length; rowIndex += 1) {
+    const rowNode = rowNodeStart + rowIndex;
+    addEdge(0, rowNode, 1, 0);
+    for (const match of candidates[rowIndex]) {
+      const componentNode = componentNodeByKey.get(rivalAssignmentKey(match));
+      if (componentNode === undefined) continue;
+      const benefit = (exactProductPriority(match) * exactBonus) + Math.round(Math.max(0, Math.min(1, match.score)) * scoreScale);
+      assignmentEdges.push(addEdge(rowNode, componentNode, 1, -benefit, { match, rowIndex }));
+    }
+  }
+  for (const componentNode of componentNodeByKey.values()) addEdge(componentNode, sink, 1, 0);
+
+  for (let flow = 0; flow < flowTarget; flow += 1) {
+    const distance = Array(graph.length).fill(Number.POSITIVE_INFINITY);
+    const previousNode = Array(graph.length).fill(-1);
+    const previousEdge = Array(graph.length).fill(-1);
+    const queued = Array(graph.length).fill(false);
+    const queue = [0];
+    distance[0] = 0;
+    queued[0] = true;
+    for (let head = 0; head < queue.length; head += 1) {
+      const node = queue[head];
+      queued[node] = false;
+      for (let edgeIndex = 0; edgeIndex < graph[node].length; edgeIndex += 1) {
+        const edge = graph[node][edgeIndex];
+        const nextDistance = distance[node] + edge.cost;
+        if (edge.capacity <= 0 || nextDistance >= distance[edge.to]) continue;
+        distance[edge.to] = nextDistance;
+        previousNode[edge.to] = node;
+        previousEdge[edge.to] = edgeIndex;
+        if (!queued[edge.to]) {
+          queued[edge.to] = true;
+          queue.push(edge.to);
+        }
+      }
+    }
+    if (previousNode[sink] < 0) break;
+    for (let node = sink; node !== 0; node = previousNode[node]) {
+      const edge = graph[previousNode[node]][previousEdge[node]];
+      edge.capacity -= 1;
+      graph[node][edge.reverse].capacity += 1;
+    }
+  }
+
+  const selectedByRow = new Map<number, ProductMatch>();
+  for (const edge of assignmentEdges) if (edge.capacity === 0 && edge.match !== undefined && edge.rowIndex !== undefined) selectedByRow.set(edge.rowIndex, edge.match);
   const rows = candidateRows.flatMap((row, rowIndex) => {
     const selected = selectedByRow.get(rowIndex);
     if (!selected) return [];

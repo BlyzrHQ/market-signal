@@ -742,6 +742,35 @@ test("recovery adopts an immutable completed fact snapshot for the new attempt",
   }
 });
 
+test("recovery discards partial finalizing facts before an empty limited terminal save", async () => {
+  const value = await fixture();
+  const database = await NodeSqliteDatabase.open(value.databasePath);
+  try {
+    const started = new Date("2026-08-22T07:00:00.000Z");
+    const created = await createReportRun({ primaryDomain: "partial-facts.example" }, started, database);
+    await appendReportEvent(created.publicId, { attemptNumber: 1, idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Collecting public pages." }, started, database);
+    const bundle = await buildReportFactBundle({ publicId: created.publicId, crawlResults: [{ domain: "partial-facts.example", role: "primary", homepage: { sourceUrl: "https://partial-facts.example/" }, products: [], fetchedAt: started.toISOString() }], comparison: null, adBlock: null, observedAt: started.toISOString(), attemptNumber: 1 });
+    await saveReportFactChunk(created.publicId, bundle.chunks[0], started, database);
+    await database.prepare("INSERT INTO report_fact_manifests (run_id, manifest_id, attempt_number, manifest_hash, company_count, product_count, match_count, ad_count, status, lock_owner, locked_at, completed_at) VALUES (?, ?, 1, ?, ?, ?, ?, ?, 'finalizing', 'lost-worker', ?, '')")
+      .bind(created.id, bundle.manifest.manifestId, bundle.manifest.manifestHash, bundle.manifest.counts.companies, bundle.manifest.counts.products, bundle.manifest.counts.matches, bundle.manifest.counts.ads, started.toISOString()).run();
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM report_fact_chunks WHERE run_id = ?").bind(created.id).all()).results[0].count, 1);
+    assert.equal((await database.prepare("SELECT COUNT(*) AS count FROM report_companies WHERE run_id = ?").bind(created.id).all()).results[0].count, 1);
+    const interrupted = await getStoredReport(created.publicId, new Date("2026-08-22T07:45:00.000Z"), database);
+    assert.equal(interrupted.run.status, "interrupted");
+
+    const recovered = await recoverInterruptedReport(created.publicId, new Date("2026-08-22T07:46:00.000Z"), database);
+    assert.equal(recovered.attemptCount, 2);
+    for (const table of ["report_fact_chunks", "report_fact_manifests", "report_companies", "report_products", "report_matches", "report_ads"]) {
+      assert.equal((await database.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE run_id = ?`).bind(created.id).all()).results[0].count, 0, table);
+    }
+    const saved = await saveReportDocument(created.publicId, { blocks: [] }, { attemptNumber: 2, status: "limited", expectedFactManifestHash: "" }, new Date("2026-08-22T07:47:00.000Z"), database);
+    assert.equal(saved.status, "limited");
+  } finally {
+    database.close();
+    await rm(value.directory, { recursive: true, force: true });
+  }
+});
+
 test("final task-attempt processing incompleteness remains recoverable instead of becoming failed", async () => {
   const value = await fixture();
   const database = await NodeSqliteDatabase.open(value.databasePath);

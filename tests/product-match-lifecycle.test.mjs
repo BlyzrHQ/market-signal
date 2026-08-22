@@ -677,6 +677,70 @@ test("compact recovery preserves exact-product priority over a higher-scored sub
   assert.equal(recovered.comparison.rows[0].matches.find((match) => match.product)?.product.id, "r-exact");
 });
 
+test("global alias collapse retains the twenty-first raw edge required for twenty rows", () => {
+  const primaryRow = row("p-main");
+  primaryRow.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+  primaryRow.matches = Array.from({ length: 21 }, (_, index) => {
+    const rival = product(index === 20 ? "late-unique" : `alias-${index}`, "rival.test");
+    rival.sourceUrl = `https://rival.test/products/${index === 20 ? "late-unique" : `source-${index}`}?country=US`;
+    rival.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+    return { domain: rival.domain, product: rival, score: index === 20 ? 0.5 : 0.99 - (index / 1_000), confidence: "Medium", sharedTerms: [], claimIds: [], decision: null };
+  });
+  const connectorRows = Array.from({ length: 20 }, (_, index) => {
+    const item = row(`p-connector-${index}`, "shared-alias");
+    item.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+    item.matches[0].product.sourceUrl = `https://rival.test/products/source-${index}?country=US`;
+    item.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+    return item;
+  });
+  const uniqueRows = Array.from({ length: 18 }, (_, index) => {
+    const item = row(`p-unique-${index}`, `r-unique-${index}`);
+    item.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+    item.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+    return item;
+  });
+  const rows = [primaryRow, ...connectorRows, ...uniqueRows];
+  const ids = rows.map((item) => item.primary.id);
+  const screened = comparison({ selected: ids, assessed: ids, rows, accepted: rows.length });
+
+  const result = mergePublishedProductComparisonState(screened, null, 20);
+
+  assert.equal(result.comparison.rows.length, 20);
+  assert.equal(result.comparison.rows.find((item) => item.primary.id === "p-main")?.matches.find((match) => match.product)?.product.id, "late-unique");
+});
+
+test("global assignment maximizes exact products after cardinality", () => {
+  const first = row("p1", "shared");
+  first.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+  first.matches[0].score = 0.99;
+  first.matches[0].assessment = { verdict: "same_product" };
+  first.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+  const firstBackup = structuredClone(first.matches[0]);
+  firstBackup.product = product("a", "rival.test");
+  firstBackup.product.priceSignals = [{ raw: "USD 7", currency: "USD", amount: 7 }];
+  firstBackup.score = 0.8;
+  firstBackup.assessment = { verdict: "close_substitute" };
+  first.matches.push(firstBackup);
+
+  const second = row("p2", "shared");
+  second.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+  second.matches[0].score = 0.95;
+  second.matches[0].assessment = { verdict: "close_substitute" };
+  second.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+  const secondBackup = structuredClone(second.matches[0]);
+  secondBackup.product = product("b", "rival.test");
+  secondBackup.product.priceSignals = [{ raw: "USD 6", currency: "USD", amount: 6 }];
+  secondBackup.score = 0.7;
+  second.matches.push(secondBackup);
+  const screened = comparison({ selected: ["p1", "p2"], assessed: ["p1", "p2"], rows: [first, second], accepted: 4 });
+
+  const result = mergePublishedProductComparisonState(screened, null, 2).comparison;
+
+  assert.equal(result.rows.length, 2);
+  assert.equal(result.rows.find((item) => item.primary.id === "p1")?.matches.find((match) => match.product)?.product.id, "shared");
+  assert.equal(result.rows.find((item) => item.primary.id === "p2")?.matches.find((match) => match.product)?.product.id, "b");
+});
+
 test("priced result backfill records an explicit bounded-pool shortfall", () => {
   const priced = row("p1", "r1");
   priced.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
