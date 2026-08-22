@@ -46,20 +46,20 @@ class FakeDatabase {
   async batch(statements) { this.batches.push(statements); return statements.map(() => ({})); }
 }
 
-test("remembered leads consume bounded slots while preserving three fresh investigations", () => {
+test("remembered leads preserve the full fresh and remembered sets within the 20-domain bound", () => {
   const fresh = Array.from({ length: 5 }, (_, index) => candidate(`fresh-${index}.test`));
   const remembered = Array.from({ length: 5 }, (_, index) => ({ ...candidate(`old-${index}.test`, "remembered-reverified"), rememberedVerifiedAt: "2026-07-14T00:00:00.000Z" }));
   const merged = mergeRememberedCandidates(fresh, remembered);
-  assert.equal(merged.length, 6);
-  assert.equal(merged.filter((item) => item.provenance === "remembered-reverified").length, 3);
-  assert.equal(merged.filter((item) => item.provenance === "discovered-this-run").length, 3);
+  assert.equal(merged.length, 10);
+  assert.equal(merged.filter((item) => item.provenance === "remembered-reverified").length, 5);
+  assert.equal(merged.filter((item) => item.provenance === "discovered-this-run").length, 5);
 });
 
-test("remembered leads never exceed three when fresh discovery is sparse", () => {
+test("remembered leads remain available when fresh discovery is sparse", () => {
   const remembered = Array.from({ length: 5 }, (_, index) => ({ ...candidate(`old-${index}.test`, "remembered-reverified"), rememberedVerifiedAt: "2026-07-14T00:00:00.000Z" }));
   const merged = mergeRememberedCandidates([candidate("fresh.test")], remembered);
-  assert.equal(merged.length, 4);
-  assert.equal(merged.filter((item) => item.provenance === "remembered-reverified").length, 3);
+  assert.equal(merged.length, 6);
+  assert.equal(merged.filter((item) => item.provenance === "remembered-reverified").length, 5);
 });
 
 test("memory is isolated, expires old rows, and ignores malformed records", async () => {

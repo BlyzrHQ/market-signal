@@ -116,6 +116,7 @@ test("retains a visible lane gap instead of exposing an upstream JSON parser err
     assert.ok(result.gaps.length >= 1);
     assert.match(result.gaps.join(" "), /unreadable response/i);
     assert.doesNotMatch(result.gaps.join(" "), /Unexpected token|JSON/i);
+    assert.equal(result.productSearchCoverage.searchesComplete, false);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
@@ -800,6 +801,22 @@ test("runs one bounded search request per selected ecommerce product", async () 
   }
 });
 
+test("does not count schema-incomplete HTTP 200 model output as exhausted discovery", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  globalThis.fetch = async () => Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: "{}" }] }] });
+  try {
+    const result = await discoverCompetitors(profile);
+    assert.equal(result.productSearchCoverage.searchesComplete, false);
+    assert.equal(result.productSearchCoverage.complete, false);
+    assert.match(result.gaps.join(" "), /incomplete provider response/i);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
 test("searches 20 distinct ecommerce anchors and reports the remaining catalog as unsearched", async () => {
   const previousKey = process.env.OPENAI_API_KEY;
   const previousFetch = globalThis.fetch;
@@ -825,7 +842,56 @@ test("searches 20 distinct ecommerce anchors and reports the remaining catalog a
     assert.deepEqual(result.productSearchCoverage, {
       eligibleAnchors: 25,
       searchedAnchors: 20,
+      startIndex: 0,
+      endIndex: 20,
       truncated: true,
+      searchesComplete: true,
+      candidateDomainsFound: 0,
+      candidateDomainsInvestigated: 0,
+      candidateTruncated: false,
+      verificationComplete: false,
+      batchComplete: false,
+      complete: false,
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
+test("continues product discovery from the supplied completed-batch cursor", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  const searchedProducts = [];
+  const searchProfile = {
+    ...profile,
+    products: Array.from({ length: 25 }, (_, index) => product(
+      `Lamb Shoulder Steak Halal ${700 + index}g`,
+      `https://myjam.co.uk/products/lamb-shoulder-steak-${index + 1}`,
+    )),
+  };
+  globalThis.fetch = async (_url, init) => {
+    const request = JSON.parse(init.body);
+    const input = JSON.parse(request.input[1].content);
+    if (input.lane === "product") searchedProducts.push(input.profile.offerings[0].name);
+    return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: [], candidates: [] }) }] }] });
+  };
+  try {
+    const result = await discoverCompetitors(searchProfile, { searchOffset: 20, priorCoverageComplete: true });
+    assert.equal(searchedProducts.length, 5);
+    assert.deepEqual(result.productSearchCoverage, {
+      eligibleAnchors: 25,
+      searchedAnchors: 5,
+      startIndex: 20,
+      endIndex: 25,
+      truncated: false,
+      searchesComplete: true,
+      candidateDomainsFound: 0,
+      candidateDomainsInvestigated: 0,
+      candidateTruncated: false,
+      verificationComplete: false,
+      batchComplete: false,
       complete: false,
     });
   } finally {
@@ -856,7 +922,15 @@ test("marks ecommerce discovery complete only when every eligible product search
     assert.deepEqual(result.productSearchCoverage, {
       eligibleAnchors: 2,
       searchedAnchors: 1,
+      startIndex: 0,
+      endIndex: 2,
       truncated: false,
+      searchesComplete: false,
+      candidateDomainsFound: 0,
+      candidateDomainsInvestigated: 0,
+      candidateTruncated: false,
+      verificationComplete: false,
+      batchComplete: false,
       complete: false,
     });
   } finally {

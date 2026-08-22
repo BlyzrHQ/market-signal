@@ -57,12 +57,25 @@ export type DiscoveryResult = {
   candidates: DiscoveryCandidate[];
   gaps: string[];
   gap?: string;
-  productSearchCoverage: { eligibleAnchors: number; searchedAnchors: number; truncated: boolean; complete: boolean };
+  productSearchCoverage: {
+    eligibleAnchors: number;
+    searchedAnchors: number;
+    startIndex: number;
+    endIndex: number;
+    truncated: boolean;
+    searchesComplete: boolean;
+    candidateDomainsFound: number;
+    candidateDomainsInvestigated: number;
+    candidateTruncated: boolean;
+    verificationComplete: boolean;
+    batchComplete: boolean;
+    complete: boolean;
+  };
 };
 
 type SearchLane = "entity" | "category" | "product";
 type SearchSource = { url: string; title: string; query: string; queries: string[] };
-type LaneResult = { lane: SearchLane; category: string; region: string; queries: string[]; candidates: DiscoveryCandidate[]; gap?: string };
+type LaneResult = { lane: SearchLane; category: string; region: string; queries: string[]; candidates: DiscoveryCandidate[]; completed: boolean; gap?: string };
 
 const MAX_CANDIDATES = 6;
 const MAX_PRODUCT_SEARCHES = 20;
@@ -565,7 +578,7 @@ export function structuredProductLeadCandidate(value: unknown, primaryDomain: st
   }
 }
 
-export function mergeCandidates(candidates: DiscoveryCandidate[]) {
+export function mergeCandidates(candidates: DiscoveryCandidate[], maxCandidates = MAX_CANDIDATES, maxPrivateCandidates = MAX_SOURCE_FIRST_CANDIDATES) {
   const merged = new Map<string, DiscoveryCandidate>();
   for (const candidate of candidates) {
     const current = merged.get(candidate.domain);
@@ -616,8 +629,8 @@ export function mergeCandidates(candidates: DiscoveryCandidate[]) {
       || right.mentionCount - left.mentionCount
       || Number(right.relationship === "direct") - Number(left.relationship === "direct")
       || left.domain.localeCompare(right.domain),
-  ).filter((candidate) => !boundedPrivateOnly(candidate) || boundedPrivateCandidates++ < MAX_SOURCE_FIRST_CANDIDATES)
-    .slice(0, MAX_CANDIDATES);
+  ).filter((candidate) => !boundedPrivateOnly(candidate) || boundedPrivateCandidates++ < maxPrivateCandidates)
+    .slice(0, maxCandidates);
 }
 
 export function publicDiscoveryCandidate<T extends DiscoveryCandidate>(candidate: T): T {
@@ -674,7 +687,7 @@ function lanePrompt(lane: SearchLane, business: BusinessProfile) {
 }
 
 async function runLane(endpoint: string, apiKey: string, model: string, lane: SearchLane, business: BusinessProfile, profile: DiscoveryProfile): Promise<LaneResult> {
-  if (lane === "product" && business.offerings.length === 0) return { lane, category: business.category, region: business.region, queries: [], candidates: [], gap: "Product lane skipped because no attributable offering records were observed." };
+  if (lane === "product" && business.offerings.length === 0) return { lane, category: business.category, region: business.region, queries: [], candidates: [], completed: true, gap: "Product lane skipped because no attributable offering records were observed." };
   const prompt = lanePrompt(lane, business);
   const controller = new AbortController();
   const timeoutMs = Number(process.env.MARKET_SIGNAL_DISCOVERY_TIMEOUT_MS || SEARCH_TIMEOUT_MS);
@@ -718,19 +731,25 @@ async function runLane(endpoint: string, apiKey: string, model: string, lane: Se
       }),
       signal: controller.signal,
     });
-    if (!response.ok) return { lane, category: business.category, region: business.region, queries: [], candidates: [], gap: `${lane} search returned HTTP ${response.status}.` };
+    if (!response.ok) return { lane, category: business.category, region: business.region, queries: [], candidates: [], completed: false, gap: `${lane} search returned HTTP ${response.status}.` };
     let payload: Record<string, unknown>;
     try {
       payload = await response.json() as Record<string, unknown>;
       if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("invalid payload");
     } catch {
-      return { lane, category: business.category, region: business.region, queries: [], candidates: [], gap: `${lane} search returned an unreadable response.` };
+      return { lane, category: business.category, region: business.region, queries: [], candidates: [], completed: false, gap: `${lane} search returned an unreadable response.` };
     }
     const raw = outputText(payload);
-    let parsed: Record<string, unknown> = {};
+    let parsed: Record<string, unknown> | null = null;
     if (raw) {
-      try { parsed = JSON.parse(raw) as Record<string, unknown>; } catch { parsed = {}; }
+      try {
+        const value = JSON.parse(raw) as unknown;
+        if (value && typeof value === "object" && !Array.isArray(value)
+          && Array.isArray((value as Record<string, unknown>).queries)
+          && Array.isArray((value as Record<string, unknown>).candidates)) parsed = value as Record<string, unknown>;
+      } catch { parsed = null; }
     }
+    if (!parsed) return { lane, category: business.category, region: business.region, queries: [], candidates: [], completed: false, gap: `${lane} search returned an incomplete provider response; it cannot count as an exhausted search.` };
     const queries = (Array.isArray(parsed.queries) ? parsed.queries : []).map(String).filter(Boolean).slice(0, 8);
     const rawCandidates = Array.isArray(parsed.candidates) ? parsed.candidates : [];
     let privateStructuredLeads = 0;
@@ -759,51 +778,62 @@ async function runLane(endpoint: string, apiKey: string, model: string, lane: Se
       region: String(parsed.region || business.region).slice(0, 160),
       queries,
       candidates,
+      completed: true,
       ...(rejectedGap ? { gap: rejectedGap } : {}),
     };
   } catch (error) {
     const timedOut = error instanceof Error && error.name === "AbortError";
-    return { lane, category: business.category, region: business.region, queries: [], candidates: [], gap: timedOut ? `${lane} search timed out after ${Math.round(timeoutMs / 1000)} seconds; completed lanes were retained.` : `${lane} search failed; completed lanes were retained.` };
+    return { lane, category: business.category, region: business.region, queries: [], candidates: [], completed: false, gap: timedOut ? `${lane} search timed out after ${Math.round(timeoutMs / 1000)} seconds; completed lanes were retained.` : `${lane} search failed; completed lanes were retained.` };
   } finally {
     clearTimeout(timeout);
   }
 }
 
-export async function discoverCompetitors(profile: DiscoveryProfile): Promise<DiscoveryResult> {
+export async function discoverCompetitors(profile: DiscoveryProfile, options: { searchOffset?: number; priorCoverageComplete?: boolean } = {}): Promise<DiscoveryResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   const model = process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini";
   const business = inferBusinessProfile(profile);
   const eligibleAnchors = business.businessType === "ecommerce" ? productSearchAnchors(business.offerings, MAX_PRODUCT_SEARCH_ANCHORS, business.brandName) : [];
-  const anchors = eligibleAnchors.slice(0, MAX_PRODUCT_SEARCHES);
-  const baseCoverage = { eligibleAnchors: eligibleAnchors.length, searchedAnchors: 0, truncated: eligibleAnchors.length > anchors.length, complete: false };
+  const startIndex = Math.max(0, Math.min(eligibleAnchors.length, Math.floor(options.searchOffset || 0)));
+  const anchors = eligibleAnchors.slice(startIndex, startIndex + MAX_PRODUCT_SEARCHES);
+  const endIndex = startIndex + anchors.length;
+  const baseCoverage = { eligibleAnchors: eligibleAnchors.length, searchedAnchors: 0, startIndex, endIndex, truncated: endIndex < eligibleAnchors.length, searchesComplete: false, candidateDomainsFound: 0, candidateDomainsInvestigated: 0, candidateTruncated: false, verificationComplete: false, batchComplete: false, complete: false };
   if (!apiKey) return { available: false, provider: "unavailable", model, category: business.category, region: business.region, businessType: business.businessType, strategy: "not-run", queries: [], candidates: [], gaps: ["Web discovery is not configured."], gap: "Web discovery is not configured. A search-capable provider is required before competitors can be discovered automatically.", productSearchCoverage: baseCoverage };
 
   const endpoint = `${(process.env.OPENAI_RESPONSES_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "")}/responses`;
   const productResults = await Promise.all(anchors.map((anchor) => runLane(endpoint, apiKey, model, "product", { ...business, offerings: [anchor] }, { ...profile, products: [anchor] })));
-  const productCandidates = mergeCandidates(productResults.flatMap((result) => result.candidates));
+  const productCandidates = mergeCandidates(productResults.flatMap((result) => result.candidates), MAX_PRODUCT_SEARCH_ANCHORS, MAX_PRODUCT_SEARCH_ANCHORS);
   const companyResults = await Promise.all((["entity", "category"] as SearchLane[]).map((lane) => runLane(endpoint, apiKey, model, lane, business, profile)));
   const strategy: DiscoveryResult["strategy"] = business.businessType !== "ecommerce"
     ? "company-first"
     : productCandidates.length
       ? "product-first"
       : "company-fallback";
-  const productSearchesCompleted = productResults.every((result) => !result.gap || /no attributable|none survived attributable/i.test(result.gap));
+  const productSearchesCompleted = productResults.every((result) => result.completed);
   const fallbackGap = strategy === "company-fallback"
     ? [anchors.length ? (productSearchesCompleted ? "Product searches completed with no attributable seller, so company/category discovery ran as a fallback; every ecommerce lead still requires current product overlap before inclusion." : "Product search did not produce an attributable seller because one or more searches failed or returned no usable product page, so company/category discovery ran as a fallback; every ecommerce lead still requires current product overlap before inclusion.") : "No attributable ecommerce product was available for search, so company/category discovery ran as a fallback; every ecommerce lead still requires current product overlap before inclusion."]
     : [];
   const settled = [...productResults, ...companyResults];
-  const candidates = mergeCandidates(settled.flatMap((result) => result.candidates));
+  const candidates = mergeCandidates(settled.flatMap((result) => result.candidates), MAX_PRODUCT_SEARCH_ANCHORS, MAX_PRODUCT_SEARCH_ANCHORS);
   const queries = [...new Set(settled.flatMap((result) => result.queries))].slice(0, 16);
   const gaps = [...fallbackGap, ...settled.flatMap((result) => result.gap ? [result.gap] : [])];
-  const completed = settled.filter((result) => !result.gap || result.candidates.length > 0);
+  const completed = settled.filter((result) => result.completed);
   const category = business.category;
   const region = completed.find((result) => result.region && result.region !== business.region)?.region || business.region;
   const gap = candidates.length ? undefined : gaps[0] || "Product and fallback searches completed, but no attributable seller candidate was returned.";
   const productSearchCoverage = {
     eligibleAnchors: eligibleAnchors.length,
-    searchedAnchors: productResults.filter((result) => !result.gap || /no attributable|none survived attributable/i.test(result.gap)).length,
-    truncated: eligibleAnchors.length > anchors.length,
-    complete: eligibleAnchors.length <= anchors.length && productSearchesCompleted,
+    searchedAnchors: productResults.filter((result) => result.completed).length,
+    startIndex,
+    endIndex,
+    truncated: endIndex < eligibleAnchors.length,
+    searchesComplete: settled.every((result) => result.completed),
+    candidateDomainsFound: candidates.length,
+    candidateDomainsInvestigated: 0,
+    candidateTruncated: false,
+    verificationComplete: false,
+    batchComplete: false,
+    complete: Boolean(options.priorCoverageComplete !== false && startIndex === 0 && endIndex >= eligibleAnchors.length && productSearchesCompleted && settled.every((result) => result.completed)),
   };
   return { available: completed.length > 0, provider: "openai-web-search", model, category, region, businessType: business.businessType, strategy, queries, candidates, gaps, productSearchCoverage, ...(gap ? { gap } : {}) };
 }

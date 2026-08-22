@@ -110,7 +110,11 @@ export const MAX_PRIMARY_CATALOG_PRODUCTS = 1_000;
 const MAX_CATALOG_RECONCILIATION_PAGES = 64;
 const MAX_DOCUMENT_BYTES = 1_500_000;
 const MAX_HTML_EXTRACTION_BYTES = 400_000;
-const COMPETITOR_CRAWL_CONCURRENCY = 3;
+const COMPETITOR_CRAWL_CONCURRENCY = 6;
+// Twenty product lanes can each contribute at most three candidates, plus six
+// from each company lane and up to twenty previously verified domains.
+// Investigating all 92 avoids a hidden domain cutoff inside the bounded batch.
+const MAX_COMPETITOR_INVESTIGATIONS = 92;
 const REQUEST_TIMEOUT_MS = 6_000;
 const USER_AGENT = "MarketSignalPublicScanner/0.1";
 const PRIORITY_PATHS = ["/pricing", "/plans", "/products", "/features", "/compare", "/integrations", "/about", "/customers", "/blog"];
@@ -352,6 +356,32 @@ export async function verifyDiscoveredCompetitorWithInferredLeads(
 
 export function rememberedReverificationFailures(candidates: MemoryCandidate[], results: Array<DomainCrawl | null>) {
   return candidates.filter((candidate, index) => candidate.provenance === "remembered-reverified" && !results[index]?.discovery?.accepted);
+}
+
+export function competitorInvestigationComplete(result: Pick<DomainCrawl, "homepage" | "gaps"> | null) {
+  return Boolean(result?.homepage || result?.gaps.some((gap) => /(?:HTTP|status)\s+(?:404|410)\b/i.test(gap.reason)));
+}
+
+export function finalizedDiscoveryCoverage(
+  coverage: DiscoveryResult["productSearchCoverage"],
+  candidateDomainsFound: number,
+  candidateDomainsInvestigated: number,
+  settledStatuses: Array<"fulfilled" | "rejected">,
+  results: Array<Pick<DomainCrawl, "homepage" | "gaps"> | null>,
+  priorCoverageComplete: boolean,
+) {
+  const verificationComplete = settledStatuses.every((status, index) => status === "fulfilled" && competitorInvestigationComplete(results[index]));
+  const candidateTruncated = candidateDomainsFound > candidateDomainsInvestigated;
+  const batchComplete = coverage.searchesComplete && !candidateTruncated && verificationComplete;
+  return {
+    ...coverage,
+    candidateDomainsFound,
+    candidateDomainsInvestigated,
+    candidateTruncated,
+    verificationComplete,
+    batchComplete,
+    complete: priorCoverageComplete && coverage.endIndex >= coverage.eligibleAnchors && batchComplete,
+  };
 }
 
 export function verifiedExactMatchHints(confirmed: DomainCrawl[]) {
@@ -997,7 +1027,9 @@ function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?
 export async function POST(request: Request) {
   if (!await hasValidAnalysisAuthorization(request.headers.get("authorization"))) return unauthorizedInternalResponse();
   try {
-    const payload = await request.json() as { primary?: unknown; domains?: unknown; productLimit?: unknown; catalogProductLimit?: unknown };
+    const payload = await request.json() as { primary?: unknown; domains?: unknown; productLimit?: unknown; catalogProductLimit?: unknown; discoverySearchOffset?: unknown; discoveryPriorCoverageComplete?: unknown };
+    const discoverySearchOffset = Number.isInteger(Number(payload.discoverySearchOffset)) ? Math.max(0, Math.min(MAX_PRIMARY_CATALOG_PRODUCTS, Number(payload.discoverySearchOffset))) : 0;
+    const discoveryPriorCoverageComplete = payload.discoveryPriorCoverageComplete !== false;
     const rawDomains = Array.isArray(payload.domains) ? payload.domains.filter((domain): domain is string => typeof domain === "string" && Boolean(domain.trim())).map((domain) => canonicalDomain(domain)) : [];
     const domains = [...new Set(rawDomains)].slice(0, MAX_DOMAINS);
     if (!domains.length) return Response.json({ ok: false, live: false, error: "Enter at least one public domain to crawl." }, { status: 400 });
@@ -1075,16 +1107,18 @@ export async function POST(request: Request) {
     const discoveryPolicy = resolvePrimaryDiscoveryPolicy(primary);
     let discovery: DiscoveryResult;
     try {
-      discovery = await discoverCompetitors(discoveryPolicy.input);
+      discovery = await discoverCompetitors(discoveryPolicy.input, { searchOffset: discoverySearchOffset, priorCoverageComplete: discoveryPriorCoverageComplete });
     } catch (error) {
       const gap = error instanceof Error ? error.message : "Web competitor discovery failed.";
-      discovery = { available: false, provider: "unavailable", model: process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini", category: "", region: primary.homepage.region, businessType: discoveryPolicy.businessType, strategy: discoveryPolicy.intendedStrategy, queries: [], candidates: [], gaps: [gap], gap, productSearchCoverage: { eligibleAnchors: primary.products.length, searchedAnchors: 0, truncated: primary.products.length > 0, complete: false } };
+      discovery = { available: false, provider: "unavailable", model: process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini", category: "", region: primary.homepage.region, businessType: discoveryPolicy.businessType, strategy: discoveryPolicy.intendedStrategy, queries: [], candidates: [], gaps: [gap], gap, productSearchCoverage: { eligibleAnchors: primary.products.length, searchedAnchors: 0, startIndex: discoverySearchOffset, endIndex: discoverySearchOffset, truncated: primary.products.length > discoverySearchOffset, searchesComplete: false, candidateDomainsFound: 0, candidateDomainsInvestigated: 0, candidateTruncated: false, verificationComplete: false, batchComplete: false, complete: false } };
     }
     const memory = await loadRememberedCompetitors(primary.domain);
-    const investigationCandidates = mergeRememberedCandidates(
+    const allInvestigationCandidates = mergeRememberedCandidates(
       discovery.candidates.filter((candidate) => !domains.includes(candidate.domain)),
       memory.candidates.filter((candidate) => !domains.includes(candidate.domain)),
+      MAX_PRIMARY_CATALOG_PRODUCTS,
     );
+    const investigationCandidates = allInvestigationCandidates.slice(0, MAX_COMPETITOR_INVESTIGATIONS);
     discovery = {
       ...discovery,
       candidates: investigationCandidates,
@@ -1099,6 +1133,17 @@ export async function POST(request: Request) {
       return verifyDiscoveredCompetitorWithInferredLeads(primary, await crawlDomain(candidate.domain, "discovered-competitor", seedUrls.length ? seedUrls : [candidate.websiteUrl]), candidate, verificationMarket, discoveryPolicy.requireProductOverlap);
     });
     const discoveredResults = investigatedSettled.map((result) => result.status === "fulfilled" ? result.value : null);
+    discovery = {
+      ...discovery,
+      productSearchCoverage: finalizedDiscoveryCoverage(
+        discovery.productSearchCoverage,
+        allInvestigationCandidates.length,
+        investigationCandidates.length,
+        investigatedSettled.map((result) => result.status),
+        discoveredResults,
+        discoveryPriorCoverageComplete,
+      ),
+    };
     const confirmed: DomainCrawl[] = discoveredResults.filter((result): result is NonNullable<typeof result> => Boolean(result?.homepage && result.discovery?.accepted)).sort((left, right) => compareVerifiedCompetitors(left.discovery!, right.discovery!));
     const rememberedFailures = rememberedReverificationFailures(investigationCandidates, discoveredResults);
     const forgotten = await forgetRememberedCompetitors(primary.domain, rememberedFailures.map((candidate) => candidate.domain));

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { investigationGapSourceUrl, MAX_PRIMARY_CATALOG_PRODUCTS, rememberedReverificationFailures, resolvePrimaryDiscoveryPolicy, verifiedExactMatchHints, verifyDiscoveredCompetitor, verifyDiscoveredCompetitorWithInferredLeads, verifyInferredProductLead } from "../app/api/crawl/route.ts";
+import { competitorInvestigationComplete, finalizedDiscoveryCoverage, investigationGapSourceUrl, MAX_PRIMARY_CATALOG_PRODUCTS, rememberedReverificationFailures, resolvePrimaryDiscoveryPolicy, verifiedExactMatchHints, verifyDiscoveredCompetitor, verifyDiscoveredCompetitorWithInferredLeads, verifyInferredProductLead } from "../app/api/crawl/route.ts";
 import { resolveVerificationMarket } from "../app/lib/competitor-verification.ts";
 
 function product(domain, name) {
@@ -272,4 +272,29 @@ test("failed inference-only investigations never publish provisional search-resu
   assert.equal(investigationGapSourceUrl(candidate), "");
   candidate.discovery.observedAdmission = true;
   assert.equal(investigationGapSourceUrl(candidate), "https://health.example/products/unverified-honey");
+});
+
+test("discovery exhaustion fails closed on candidate truncation or nonterminal verification failure", () => {
+  const coverage = {
+    eligibleAnchors: 20, searchedAnchors: 20, startIndex: 0, endIndex: 20, truncated: false,
+    searchesComplete: true, candidateDomainsFound: 0, candidateDomainsInvestigated: 0,
+    candidateTruncated: false, verificationComplete: false, batchComplete: false, complete: false,
+  };
+  const verified = crawl("verified.example", []);
+  const timedOut = { ...crawl("timeout.example", []), homepage: null, gaps: [{ url: "https://timeout.example/", reason: "request timed out", observedAt: "2026-08-07T00:00:00.000Z" }] };
+  const terminal404 = { ...timedOut, gaps: [{ ...timedOut.gaps[0], reason: "homepage returned HTTP 404." }] };
+
+  const truncated = finalizedDiscoveryCoverage(coverage, 21, 20, Array(20).fill("fulfilled"), Array(20).fill(verified), true);
+  assert.equal(truncated.candidateTruncated, true);
+  assert.equal(truncated.complete, false);
+
+  const transient = finalizedDiscoveryCoverage(coverage, 2, 2, ["fulfilled", "fulfilled"], [verified, timedOut], true);
+  assert.equal(transient.verificationComplete, false);
+  assert.equal(transient.complete, false);
+  assert.equal(competitorInvestigationComplete(timedOut), false);
+
+  const terminal = finalizedDiscoveryCoverage(coverage, 2, 2, ["fulfilled", "fulfilled"], [verified, terminal404], true);
+  assert.equal(terminal.verificationComplete, true);
+  assert.equal(terminal.complete, true);
+  assert.equal(competitorInvestigationComplete(terminal404), true);
 });

@@ -151,7 +151,7 @@ function mockPort(overrides = {}) {
         ok: true,
         primaryDomain: payload.primaryDomain,
         results: [{ domain: payload.primaryDomain, homepage: { sourceUrl: "https://shop.example" }, products: [product()] }],
-        discovery: { productSearchCoverage: { eligibleAnchors: 1, searchedAnchors: 1, truncated: false, complete: true } },
+        discovery: { productSearchCoverage: { eligibleAnchors: 1, searchedAnchors: 1, startIndex: 0, endIndex: 1, truncated: false, searchesComplete: true, candidateDomainsFound: 1, candidateDomainsInvestigated: 1, candidateTruncated: false, verificationComplete: true, batchComplete: true, complete: true } },
         adRequest: { companies: [{ domain: payload.primaryDomain }], region: "GB" },
         document: { version: "1", blocks: [] },
       };
@@ -198,6 +198,8 @@ test("successful orchestration persists ordered heartbeats and a complete docume
     async crawl(input) {
       assert.equal(input.productLimit, 20);
       assert.equal(input.catalogProductLimit, 1_000);
+      assert.equal(input.discoverySearchOffset, 0);
+      assert.equal(input.discoveryPriorCoverageComplete, true);
       return base.crawl();
     },
     async match(input) {
@@ -222,6 +224,27 @@ test("successful orchestration persists ordered heartbeats and a complete docume
   const compaction = port.saves[0].document.document.blocks.find((block) => block.type === "presentation-compaction");
   assert.equal(compaction.relationalFactsAuthoritative, true);
   assert.deepEqual(compaction.factCounts, { companies: 2, products: 40, matches: 20, ads: 0 });
+});
+
+test("a retry advances to the next discovery anchor batch only after a complete prior batch", async () => {
+  const base = mockPort();
+  let crawlInput;
+  const port = mockPort({
+    async loadReport() {
+      const stored = await base.loadReport();
+      return {
+        ...stored,
+        events: [
+          { idempotencyKey: "prior", phase: "competitors", status: "running", metadata: { discoveryStartIndex: 0, discoveryEndIndex: 20, discoveryBatchComplete: true } },
+          { idempotencyKey: "failed-next", phase: "competitors", status: "running", metadata: { discoveryStartIndex: 20, discoveryEndIndex: 40, discoveryBatchComplete: false } },
+        ],
+      };
+    },
+    async crawl(input) { crawlInput = input; return base.crawl(); },
+  });
+  await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
+  assert.equal(crawlInput.discoverySearchOffset, 20);
+  assert.equal(crawlInput.discoveryPriorCoverageComplete, true);
 });
 
 test("the matcher can publish a valid pair found after the first 20 primary catalog products", async () => {

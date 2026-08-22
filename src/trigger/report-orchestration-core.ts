@@ -281,13 +281,14 @@ type RunStatus = "queued" | "running" | "complete" | "limited" | "failed" | "int
 type ReportEvent = { idempotencyKey: string; phase: string; status: RunStatus; message: string; metadata?: Record<string, unknown> };
 type StoredReport = {
   run: { publicId: string; primaryDomain: string; locale: "en" | "ar"; status: RunStatus; attemptCount: number; createdAt: string; updatedAt: string; productPlan?: "starter" | "solo" | "growth" | "agency"; productLimit?: number };
-  events: Array<{ idempotencyKey?: string; phase: string; status: RunStatus }>;
+  events: Array<{ idempotencyKey?: string; phase: string; status: RunStatus; metadata?: Record<string, unknown> }>;
   factManifest?: { manifestId: string; attemptNumber: number; manifestHash: string; counts: Record<"companies" | "products" | "matches" | "ads", number>; status: string; completedAt: string } | null;
 };
 type JsonBlock = { type: string; id: string } & Record<string, unknown>;
 type JsonDocument = { blocks: JsonBlock[] } & Record<string, unknown>;
 type CrawlResult = { domain: string; homepage?: unknown; products: ProductRecord[]; role?: string; discovery?: { verificationScore?: number } };
-type CrawlSuccess = { ok: true; primaryDomain: string; results: CrawlResult[]; discovery?: { productSearchCoverage?: { eligibleAnchors?: number; searchedAnchors?: number; truncated?: boolean; complete?: boolean } }; adRequest: unknown; matchHints?: PinnedProductPair[]; document: JsonDocument };
+type DiscoveryCoverage = { eligibleAnchors?: number; searchedAnchors?: number; startIndex?: number; endIndex?: number; truncated?: boolean; searchesComplete?: boolean; candidateDomainsFound?: number; candidateDomainsInvestigated?: number; candidateTruncated?: boolean; verificationComplete?: boolean; batchComplete?: boolean; complete?: boolean };
+type CrawlSuccess = { ok: true; primaryDomain: string; results: CrawlResult[]; discovery?: { productSearchCoverage?: DiscoveryCoverage }; adRequest: unknown; matchHints?: PinnedProductPair[]; document: JsonDocument };
 type ParkedDomainOutcome = { ok: false; code: "parked-domain"; primaryDomain: string; error: string; document: JsonDocument };
 type UnavailableDomainOutcome = { ok: false; code: "unavailable-domain"; primaryDomain: string; error: string; document: JsonDocument };
 type CrawlOutcome = CrawlSuccess | ParkedDomainOutcome | UnavailableDomainOutcome;
@@ -298,7 +299,7 @@ export interface ReportOrchestrationPort {
   preflight(): Promise<void>;
   loadReport(publicId: string): Promise<StoredReport | null>;
   appendEvent(publicId: string, event: ReportEvent & { attemptNumber?: number }): Promise<void>;
-  crawl(input: { primary: string; domains: string[]; productLimit: number; catalogProductLimit: number }): Promise<CrawlOutcome>;
+  crawl(input: { primary: string; domains: string[]; productLimit: number; catalogProductLimit: number; discoverySearchOffset: number; discoveryPriorCoverageComplete: boolean }): Promise<CrawlOutcome>;
   brief(input: { primary: string; domains: string[] }): Promise<unknown>;
   ads(input: unknown): Promise<{ ok: true; block: JsonBlock }>;
   match(input: { publicId: string; reportAttempt: number; reportObservedAt: string; primaryDomain: string; marketCountryCode?: string; productLimit: number; catalogs: Array<{ domain: string; products: ProductRecord[] }>; pinnedPairs?: PinnedProductPair[] }): Promise<{ ok: true; comparison: ProductComparison }>;
@@ -312,6 +313,23 @@ export interface ReportOrchestrationPort {
 }
 
 const MAX_PRIMARY_CATALOG_PRODUCTS = 1_000;
+
+function completedDiscoveryCursor(events: StoredReport["events"]) {
+  const batches = events.flatMap((item) => {
+    const metadata = item.metadata;
+    const startIndex = Number(metadata?.discoveryStartIndex);
+    const endIndex = Number(metadata?.discoveryEndIndex);
+    return metadata?.discoveryBatchComplete === true && Number.isInteger(startIndex) && Number.isInteger(endIndex) && startIndex >= 0 && endIndex > startIndex
+      ? [{ startIndex, endIndex }]
+      : [];
+  });
+  let cursor = 0;
+  for (;;) {
+    const next = batches.filter((batch) => batch.startIndex === cursor).sort((left, right) => right.endIndex - left.endIndex)[0];
+    if (!next) return cursor;
+    cursor = next.endIndex;
+  }
+}
 
 function progressEventKey(attempt: ReportAttemptContext, key: string) {
   return `report-${attempt.attemptNumber}-task-${attempt.taskAttemptNumber || 1}-${key}`;
@@ -403,7 +421,8 @@ export async function orchestrateReport(
 
   let crawl: CrawlOutcome;
   try {
-    crawl = await port.crawl({ primary: payload.primaryDomain, domains: [payload.primaryDomain], productLimit: payload.productLimit, catalogProductLimit: MAX_PRIMARY_CATALOG_PRODUCTS });
+    const discoverySearchOffset = completedDiscoveryCursor(stored.events);
+    crawl = await port.crawl({ primary: payload.primaryDomain, domains: [payload.primaryDomain], productLimit: payload.productLimit, catalogProductLimit: MAX_PRIMARY_CATALOG_PRODUCTS, discoverySearchOffset, discoveryPriorCoverageComplete: true });
     if (!crawl || (crawl.ok !== true && crawl.code !== "parked-domain" && crawl.code !== "unavailable-domain")) throw new Error("The public crawl could not be completed.");
   } catch (error) {
     const detail = message(error, "The public crawl could not be completed.");
@@ -456,6 +475,9 @@ export async function orchestrateReport(
   await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "crawl-complete"), "competitors", "The primary catalog was collected and competitor websites were verified.", {
     primaryProducts: primary.products.length,
     verifiedCompetitors: crawl.results.filter((result) => result.role === "discovered-competitor" && result.homepage && (result.discovery?.verificationScore || 0) >= 55).length,
+    discoveryStartIndex: crawl.discovery?.productSearchCoverage?.startIndex || 0,
+    discoveryEndIndex: crawl.discovery?.productSearchCoverage?.endIndex || 0,
+    discoveryBatchComplete: crawl.discovery?.productSearchCoverage?.batchComplete === true,
   }));
 
   let document = ensureDocument(crawl.document);
