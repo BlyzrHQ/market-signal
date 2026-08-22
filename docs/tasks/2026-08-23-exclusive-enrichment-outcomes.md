@@ -12,6 +12,7 @@ Production report `4d5bce140f124478b951ed1846ef2edf` found valid judged product 
 - Preserve adapter failure metadata, but treat adapter failures as terminal for the current report so a task crash cannot repeat paid matcher/API work. A user may explicitly start a fresh report.
 - Treat permanent adapter limitations (robots denial, 4xx/non-JSON output, unsupported or missing currency evidence) as terminal gaps so they cannot multiply paid matching or action-planning calls.
 - Validate every durable gap's role, reason, code, failure kind, and HTTP status before it can influence retry classification.
+- Persist exact matcher metadata, judged evidence, and the enrichment plan before enrichment starts, so a task replay after any process crash cannot repeat the paid matcher call.
 - Add regression coverage for the mutually exclusive product/gap contract, invalid source schemes, and adapter recovery.
 
 ## Validation
@@ -23,6 +24,8 @@ Production report `4d5bce140f124478b951ed1846ef2edf` found valid judged product 
 ## Review
 
 Two independent fallback reviewers found blockers on earlier heads: invalid URL schemes could suppress valid products; cross-task adapter recovery could repeat paid calls across crash windows; and durable gap metadata was not fully validated. The implementation now preserves valid independent products, treats adapter failures as terminal for the current report, and validates all retry-relevant gap metadata. Fresh exact-head reviews are required before merge.
+
+The cost-bound regression proves that a task replay after a terminal adapter gap performs one matcher request and one enrichment request in total, with no action-planning request for an unpublished pair.
 
 ## Data boundary
 
