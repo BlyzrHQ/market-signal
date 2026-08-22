@@ -1057,6 +1057,7 @@ export async function orchestrateReport(
       if (!validated) throw new Error("The durable published-result checkpoint is invalid.");
       accumulatedPublished = mergePublishedProductComparisonState(validated.evidence, accumulatedPublished, payload.productLimit, reportReferenceTimeMs).evidence;
     }
+    const recoveredPublishedMatcherResult = accumulatedPublished !== null;
     let requestCount = 0;
     let transportFailed = false;
     try {
@@ -1075,6 +1076,11 @@ export async function orchestrateReport(
       } catch { /* the bounded second application attempt remains a visible gap */ }
     }
     comparison = composeProductMatchAttempts(baseline, attempts, requestCount);
+    // A validated published-result checkpoint is durable proof that an earlier
+    // task parsed matcher output and passed the publication boundary. If both
+    // live calls in the final task fail, retain that verified graph instead of
+    // discarding it solely because this task has no fresh response.
+    if (!comparison && accumulatedPublished) comparison = accumulatedPublished;
     if (comparison && marketCountryCode) comparison = { ...comparison, marketCountryCode };
     if (comparison) {
       comparison = bindComparisonPrimaryRecoveryIdentities(comparison, primary.products);
@@ -1428,7 +1434,7 @@ export async function orchestrateReport(
     // honest zero-row coverage results in `running`, while accepting zero
     // successful matcher responses would mislabel transport/auth/contract
     // failure as bounded exhaustion.
-    const publishBestFinalResult = attempt.isFinalAttempt && attempts.length > 0;
+    const publishBestFinalResult = attempt.isFinalAttempt && (attempts.length > 0 || recoveredPublishedMatcherResult);
     if (processingIncomplete && !publishBestFinalResult) {
       await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "matching-task-retry"), "matching", attempt.isFinalAttempt
         ? "Product matching or enrichment remained incomplete after the final bounded task attempt; no terminal report was published."

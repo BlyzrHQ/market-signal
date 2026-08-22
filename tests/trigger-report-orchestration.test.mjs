@@ -1632,6 +1632,51 @@ test("the final bounded task does not misreport total matcher failure as zero-ro
   assert.ok(port.events.some((event) => event.idempotencyKey === "orchestration-failed" && event.status === "failed"));
 });
 
+test("the final bounded task publishes a validated durable matcher result when both live matcher calls fail", async () => {
+  const base = mockPort();
+  let matcherAvailable = true;
+  const port = mockPort({
+    async crawl() {
+      const result = await base.crawl();
+      result.discovery.productSearchCoverage = {
+        ...result.discovery.productSearchCoverage,
+        searchedAnchors: 1,
+        eligibleAnchors: 20,
+        truncated: true,
+        searchesComplete: false,
+        complete: false,
+      };
+      return result;
+    },
+    async match() {
+      if (!matcherAvailable) throw new Error("matcher transport unavailable");
+      const value = comparison({ withPair: true, count: 1 });
+      value.rows[0].primary.imageUrl = "https://shop.example/images/honey.jpg";
+      value.rows[0].matches[0].product.imageUrl = "https://rival.example/images/honey.jpg";
+      value.rows[0].matches[0].assessment.priceComparable = true;
+      value.matching.processedPrimaryIds = [...value.matching.assessedPrimaryIds];
+      return { ok: true, comparison: value };
+    },
+  });
+
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port),
+    /remained incomplete before the final task attempt/,
+  );
+  assert.ok(port.checkpoints.has(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX));
+
+  matcherAvailable = false;
+  const terminal = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 10, isFinalAttempt: true }, port);
+
+  assert.equal(terminal.reportStatus, "limited");
+  assert.equal(port.saves.length, 1);
+  const terminalBlock = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
+  assert.equal(terminalBlock.rows.length, 1);
+  assert.equal(terminalBlock.matching.resultShortfallReason, "processing-incomplete");
+  assert.ok(port.events.some((item) => item.idempotencyKey === "report-1-task-10-matching-limited"));
+  assert.equal(port.events.some((item) => item.idempotencyKey === "orchestration-failed"), false);
+});
+
 test("terminal product-page rejections permit truthful bounded exhaustion while preserving their gaps", async () => {
   const port = mockPort({
     async match() {
