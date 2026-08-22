@@ -1288,7 +1288,7 @@ export function publicSourceMarketCountryCode(value: string) {
   return publicSourceMarketEvidence(value).countryCode;
 }
 
-function canonicalProductSourceKey(product: ProductRecord) {
+export function canonicalProductSourceKey(product: ProductRecord) {
   try {
     const url = new URL(product.sourceUrl);
     const segments = url.pathname.split("/").filter(Boolean).map((segment) => {

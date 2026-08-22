@@ -1,4 +1,4 @@
-import { hasValidObservedRivalPrice, isSupportedCurrency, productDecision, productIdentityKey, publicSourceMarketCountryCode, publicSourceMarketEvidence, type ProductComparison, type ProductMatch, type ProductRecord } from "./product-intelligence.ts";
+import { canonicalProductSourceKey, hasValidObservedRivalPrice, isSupportedCurrency, productDecision, productIdentityKey, publicSourceMarketCountryCode, publicSourceMarketEvidence, type ProductComparison, type ProductMatch, type ProductRecord } from "./product-intelligence.ts";
 import { canonicalDomain } from "./domain.ts";
 import { publicHttpUrl } from "./public-url.ts";
 
@@ -460,10 +460,14 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
     const existing = candidateRows[existingIndex];
     candidateRows[existingIndex] = { ...existing, matches: [...existing.matches, ...row.matches] };
   }
-  const rivalConstraintKeys = (product: ProductRecord) => [
-    `physical:${productIdentityKey(product)}`,
-    `merchant:${canonicalDomain(product.domain)}|${product.id}`,
-  ];
+  const rivalConstraintKeys = (product: ProductRecord) => {
+    const source = canonicalProductSourceKey(product);
+    return [
+      `physical:${productIdentityKey(product)}`,
+      ...(source ? [`source:${source}`] : []),
+      `merchant:${canonicalDomain(product.domain)}|${product.id}`,
+    ];
+  };
   const candidates = candidateRows.map((row) => {
     const seen = new Set<string>();
     return row.matches
