@@ -1138,6 +1138,11 @@ test("replays complete deterministic judge checkpoints without another judge cal
     { domain: "rival.test", products: rivals },
   ], {}, options);
   const callsAfterFirstRun = judgeCalls;
+  for (const [hash, checkpoint] of checkpoints) {
+    const legacy = structuredClone(checkpoint);
+    delete legacy.evidenceGroups;
+    checkpoints.set(hash, { ...legacy, version: 1 });
+  }
   const second = await buildAIProductComparison("shop.test", [
     { domain: "shop.test", products: primaries.map((item) => ({ ...item, imageUrl: `https://shop.test/images/${item.id}-new.jpg`, priceSignals: [{ raw: "GBP 12", currency: "GBP", amount: 12 }], observedAt: "2026-08-02T00:00:00.000Z" })) },
     { domain: "rival.test", products: rivals.map((item) => ({ ...item, imageUrl: `https://rival.test/images/${item.id}-new.jpg`, priceSignals: [{ raw: "GBP 10", currency: "GBP", amount: 10 }], observedAt: "2026-08-02T00:00:00.000Z" })) },

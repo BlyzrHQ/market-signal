@@ -48,6 +48,7 @@ export const MAX_FINAL_ENRICHMENT_BATCH_WAVES = Math.ceil(MAX_FINAL_ENRICHMENT_T
 export const ENRICHMENT_PLAN_CHECKPOINT_BATCH_INDEX = 299;
 export const ENRICHMENT_CHECKPOINT_BATCH_INDEX_BASE = 300;
 export const PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX = 279;
+export const TERMINAL_PRESENTATION_CHECKPOINT_BATCH_INDEX_BASE = 280;
 
 function enrichmentPlanCheckpointIndex(taskAttemptNumber: number) {
   const index = ENRICHMENT_PLAN_CHECKPOINT_BATCH_INDEX - (taskAttemptNumber - 1);
@@ -59,6 +60,19 @@ function publishedResultCheckpointIndex(taskAttemptNumber: number) {
   const index = PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX - (taskAttemptNumber - 1);
   if (!Number.isInteger(taskAttemptNumber) || taskAttemptNumber < 1 || index < 270) throw new PermanentOrchestrationError("Unsupported published-result task attempt.");
   return index;
+}
+
+function terminalPresentationCheckpointIndex(taskAttemptNumber: number) {
+  const index = TERMINAL_PRESENTATION_CHECKPOINT_BATCH_INDEX_BASE + (taskAttemptNumber - 1);
+  if (!Number.isInteger(taskAttemptNumber) || taskAttemptNumber < 1 || index > 289) throw new PermanentOrchestrationError("Unsupported terminal-presentation task attempt.");
+  return index;
+}
+
+function validTerminalPresentationCheckpoint(value: unknown, manifestHash: string) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const item = value as { version?: unknown; manifestHash?: unknown; status?: unknown; observedAt?: unknown; document?: unknown };
+  if (item.version !== 1 || item.manifestHash !== manifestHash || (item.status !== "complete" && item.status !== "limited") || typeof item.observedAt !== "string" || !Number.isFinite(Date.parse(item.observedAt)) || !item.document || typeof item.document !== "object" || Array.isArray(item.document)) return null;
+  return { status: item.status, observedAt: new Date(item.observedAt).toISOString(), document: item.document } as const;
 }
 
 function primaryCatalogIdentity(products: ProductRecord[]) {
@@ -375,7 +389,7 @@ export interface ReportOrchestrationPort {
 
 const MAX_PRIMARY_CATALOG_PRODUCTS = 1_000;
 
-function completedDiscoveryCursor(events: StoredReport["events"], reportAttempt: number) {
+function completedDiscoveryCursor(events: StoredReport["events"], reportAttempt: number, repeatLatest = false) {
   const adoptedAttempts = new Set([reportAttempt]);
   let cursorAttempt = reportAttempt;
   for (;;) {
@@ -397,10 +411,12 @@ function completedDiscoveryCursor(events: StoredReport["events"], reportAttempt:
   });
   let cursor = 0;
   let anchorSetHash = "";
+  let latestStart = 0;
   for (;;) {
     const next = batches.filter((batch) => batch.startIndex === cursor && (!anchorSetHash || batch.anchorSetHash === anchorSetHash)).sort((left, right) => right.endIndex - left.endIndex || right.eventIndex - left.eventIndex)[0];
-    if (!next) return { offset: cursor, anchorSetHash };
+    if (!next) return { offset: repeatLatest && cursor > 0 ? latestStart : cursor, anchorSetHash };
     anchorSetHash = next.anchorSetHash;
+    latestStart = next.startIndex;
     cursor = next.endIndex;
   }
 }
@@ -486,6 +502,29 @@ export async function orchestrateReport(
   };
   await port.preflight();
 
+  let legacyCompletedManifestWithoutPresentation = false;
+  if (stored.factManifest?.status === "complete") {
+    const checkpoints = await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber });
+    const presentation = checkpoints
+      .filter((checkpoint) => checkpoint.batchIndex >= TERMINAL_PRESENTATION_CHECKPOINT_BATCH_INDEX_BASE && checkpoint.batchIndex <= 289)
+      .map((checkpoint) => validTerminalPresentationCheckpoint(checkpoint.result, stored.factManifest!.manifestHash))
+      .find((value) => value !== null);
+    if (presentation) {
+      await port.saveDocument(payload.publicId, {
+        status: presentation.status,
+        observedAt: presentation.observedAt,
+        expectedFactManifestHash: stored.factManifest.manifestHash,
+        document: presentation.document,
+      });
+      const finishedAt = now().toISOString();
+      return { ok: true, contractVersion: REPORT_ORCHESTRATION_CONTRACT_VERSION, publicId: payload.publicId, reportStatus: presentation.status, completedPhases: ["persistence"], limitedPhases: presentation.status === "limited" ? ["matching"] : [], startedAt: stored.run.createdAt, finishedAt };
+    }
+    // Compatibility for manifests completed before terminal-presentation
+    // checkpoints existed: repeat the last completed discovery wave rather than
+    // advancing into different evidence.
+    legacyCompletedManifestWithoutPresentation = true;
+  }
+
   let terminalFailureRecorded = false;
   try {
   const startedAt = now().toISOString();
@@ -495,7 +534,7 @@ export async function orchestrateReport(
 
   let crawl: CrawlOutcome;
   try {
-    const discoveryCursor = completedDiscoveryCursor(stored.events, attempt.attemptNumber);
+    const discoveryCursor = completedDiscoveryCursor(stored.events, attempt.attemptNumber, legacyCompletedManifestWithoutPresentation);
     crawl = await port.crawl({ primary: payload.primaryDomain, domains: [payload.primaryDomain], productLimit: payload.productLimit, catalogProductLimit: MAX_PRIMARY_CATALOG_PRODUCTS, discoverySearchOffset: discoveryCursor.offset, discoveryPriorCoverageComplete: true, discoveryExpectedAnchorSetHash: discoveryCursor.anchorSetHash });
     if (!crawl || (crawl.ok !== true && crawl.code !== "parked-domain" && crawl.code !== "unavailable-domain")) throw new Error("The public crawl could not be completed.");
   } catch (error) {
@@ -915,8 +954,10 @@ export async function orchestrateReport(
 
   await Promise.all([adsWork, matchWork]);
   const finishedAt = now().toISOString();
+  const reportStatus = limitedPhases.length ? "limited" : "complete";
   let persistedCounts: Record<"companies" | "products" | "matches" | "ads", number> | null = null;
   let persistedFactManifestHash = "";
+  let terminalDocument: unknown = null;
   try {
     let priorManifest = stored.factManifest || null;
     if (priorManifest?.status === "finalizing") {
@@ -929,6 +970,10 @@ export async function orchestrateReport(
       }
     }
     const facts = await buildReportFactBundle({ publicId: payload.publicId, crawlResults: crawl.results, comparison: screenedComparison || comparison, adBlock, observedAt: stored.run.createdAt, attemptNumber: attempt.attemptNumber });
+    terminalDocument = compactTerminalReportDocument({ primaryDomain: crawl.primaryDomain, document, marketBrief: null }, 430_000, { factsAuthoritative: true, factCounts: facts.manifest.counts });
+    const presentationCheckpoint = { version: 1, manifestHash: facts.manifest.manifestHash, status: reportStatus, observedAt: finishedAt, document: terminalDocument };
+    const presentationInputHash = createHash("sha256").update(JSON.stringify(presentationCheckpoint)).digest("hex");
+    await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: terminalPresentationCheckpointIndex(attempt.taskAttemptNumber || 1), inputHash: presentationInputHash, result: presentationCheckpoint });
     const reusableManifest = priorManifest?.status === "complete"
       && priorManifest.manifestId === facts.manifest.manifestId
       && priorManifest.manifestHash === facts.manifest.manifestHash;
@@ -952,12 +997,11 @@ export async function orchestrateReport(
       : "Relational fact persistence remained incomplete before the final task attempt.");
   }
   if (persistedCounts) try { await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "facts-complete"), "persistence", "The complete company, product, match, and attributable ad facts were saved for evaluation.", persistedCounts)); } catch { /* the manifest is authoritative and the terminal document still saves */ }
-  const reportStatus = limitedPhases.length ? "limited" : "complete";
   await port.saveDocument(payload.publicId, {
     status: reportStatus,
     observedAt: finishedAt,
     expectedFactManifestHash: persistedFactManifestHash,
-    document: compactTerminalReportDocument({ primaryDomain: crawl.primaryDomain, document, marketBrief: null }, undefined, { factsAuthoritative: Boolean(persistedCounts), factCounts: persistedCounts }),
+    document: terminalDocument || compactTerminalReportDocument({ primaryDomain: crawl.primaryDomain, document, marketBrief: null }, undefined, { factsAuthoritative: Boolean(persistedCounts), factCounts: persistedCounts }),
   });
   completedPhases.push("persistence");
   return { ok: true, contractVersion: REPORT_ORCHESTRATION_CONTRACT_VERSION, publicId: payload.publicId, reportStatus, completedPhases: [...new Set(completedPhases)], limitedPhases: [...new Set(limitedPhases)], startedAt, finishedAt };

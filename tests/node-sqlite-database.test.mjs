@@ -8,7 +8,7 @@ import { Worker } from "node:worker_threads";
 
 import { loadRememberedCompetitors, rememberVerifiedCompetitors } from "../app/lib/competitor-memory.ts";
 import { NodeSqliteDatabase } from "../app/lib/node-sqlite-database.ts";
-import { appendReportEvent, createReportRun, evaluateStoredReport, finalizeReportFactManifest, getReportEvaluation, getStoredReport, recoverInterruptedReport, saveReportDocument, saveReportFactChunk, saveReportMatchBatchCheckpoint } from "../app/lib/report-store.ts";
+import { appendReportEvent, createReportRun, evaluateStoredReport, finalizeReportFactManifest, getReportEvaluation, getStoredReport, loadReportMatchBatchCheckpoints, recoverInterruptedReport, saveReportDocument, saveReportFactChunk, saveReportMatchBatchCheckpoint } from "../app/lib/report-store.ts";
 import { buildReportFactBundle, canonicalReportFact, reportFactHash } from "../src/shared/report-facts.ts";
 import { closeRuntimeDatabases, runtimeDatabase } from "../app/lib/runtime-database.ts";
 import { publicHttpUrl } from "../app/lib/public-url.ts";
@@ -645,8 +645,33 @@ test("manifest finalization rejects missing chunks and conflicting completed rep
     const productChunks = bulky.chunks.filter((chunk) => chunk.kind === "products");
     assert.ok(productChunks.length > 1);
     assert.ok(productChunks.every((chunk) => new TextEncoder().encode(JSON.stringify(chunk)).byteLength <= 250_000));
-    const callbackOverflowProducts = Array.from({ length: 16_001 }, (_, index) => ({ ...sparse, id: `overflow-${index}`, name: `Overflow ${index}`, normalizedName: `overflow ${index}`, sourceUrl: `https://large.example/p/overflow-${index}` }));
-    await assert.rejects(buildReportFactBundle({ publicId: "c".repeat(32), crawlResults: [{ domain: "large.example", role: "primary", homepage: { sourceUrl: "https://large.example/" }, products: callbackOverflowProducts }], comparison: null, adBlock: null, observedAt: now.toISOString() }), /above the 320-callback orchestration budget/);
+    const legalPrimary = Array.from({ length: 1_000 }, (_, index) => ({ ...sparse, id: `legal-p${index}`, name: `Legal primary ${index}`, normalizedName: `legal primary ${index}`, description: "p".repeat(12_000), sourceUrl: `https://large.example/p/legal-${index}` }));
+    const legalRivals = Array.from({ length: 6_000 }, (_, index) => ({ ...sparse, id: `legal-r${index}`, domain: "rival.example", name: `Legal rival ${index}`, normalizedName: `legal rival ${index}`, description: "r".repeat(12_000), sourceUrl: `https://rival.example/p/legal-${index}` }));
+    const legalComparison = {
+      type: "product-comparison",
+      id: "products",
+      rows: legalPrimary.map((primary, primaryIndex) => ({
+        primary,
+        matches: legalRivals.slice(primaryIndex * 6, (primaryIndex + 1) * 6).map((rival) => ({
+          domain: rival.domain,
+          product: rival,
+          excludedProduct: null,
+          score: 0.99,
+          confidence: "High",
+          sharedTerms: ["same observed product"],
+          claimIds: [],
+          decision: null,
+          publication: { priceEligible: false, reason: "outside-result-target" },
+          assessment: { method: "ai-hybrid", claimType: "Inferred", verdict: "same_product", confidence: 0.99, model: "test", promptVersion: "test", reasons: ["Same observed sellable identity."], contradictions: [], primarySourceUrl: primary.sourceUrl, rivalSourceUrl: rival.sourceUrl },
+        })),
+      })),
+    };
+    const legalBundle = await buildReportFactBundle({ publicId: "d".repeat(32), crawlResults: [{ domain: "large.example", role: "primary", homepage: { sourceUrl: "https://large.example/" }, products: legalPrimary }], comparison: legalComparison, adBlock: null, observedAt: now.toISOString() });
+    assert.equal(legalBundle.manifest.counts.products, 7_000);
+    assert.equal(legalBundle.manifest.counts.matches, 6_000);
+    assert.ok(legalBundle.chunks.length > 320 && legalBundle.chunks.length <= 512);
+    const callbackOverflowProducts = Array.from({ length: 26_001 }, (_, index) => ({ ...sparse, id: `overflow-${index}`, name: `Overflow ${index}`, normalizedName: `overflow ${index}`, sourceUrl: `https://large.example/p/overflow-${index}` }));
+    await assert.rejects(buildReportFactBundle({ publicId: "c".repeat(32), crawlResults: [{ domain: "large.example", role: "primary", homepage: { sourceUrl: "https://large.example/" }, products: callbackOverflowProducts }], comparison: null, adBlock: null, observedAt: now.toISOString() }), /above the 512-callback orchestration budget/);
   } finally {
     database.close();
     await rm(directory, { recursive: true, force: true });
@@ -702,7 +727,8 @@ test("recovery adopts an immutable completed fact snapshot for the new attempt",
     assert.equal(heartbeat.results[0].heartbeat_at, "2026-08-16T10:48:00.000Z");
     assert.deepEqual((await database.prepare("SELECT DISTINCT attempt_number FROM report_fact_chunks WHERE run_id = ?").bind(recovered.id).all()).results, [{ attempt_number: 2 }]);
     assert.deepEqual((await database.prepare("SELECT attempt_number, status FROM report_fact_manifests WHERE run_id = ?").bind(recovered.id).all()).results, [{ attempt_number: 2, status: "complete" }]);
-    assert.deepEqual((await database.prepare("SELECT attempt_number, batch_index FROM report_match_batch_checkpoints WHERE run_id = ? ORDER BY attempt_number, batch_index").bind(recovered.id).all()).results, [{ attempt_number: 1, batch_index: 0 }, { attempt_number: 1, batch_index: 299 }, { attempt_number: 1, batch_index: 1400 }, { attempt_number: 1, batch_index: 3900 }, { attempt_number: 2, batch_index: 0 }, { attempt_number: 2, batch_index: 1400 }, { attempt_number: 2, batch_index: 1650 }, { attempt_number: 2, batch_index: 3900 }]);
+    assert.deepEqual((await database.prepare("SELECT attempt_number, batch_index FROM report_match_batch_checkpoints WHERE run_id = ? ORDER BY attempt_number, batch_index").bind(recovered.id).all()).results, [{ attempt_number: 1, batch_index: 0 }, { attempt_number: 1, batch_index: 299 }, { attempt_number: 1, batch_index: 1400 }, { attempt_number: 1, batch_index: 3900 }, { attempt_number: 2, batch_index: 1650 }]);
+    assert.deepEqual((await loadReportMatchBatchCheckpoints(created.publicId, { attemptNumber: 2 }, database)).map((checkpoint) => [checkpoint.attemptNumber, checkpoint.batchIndex]), [[1, 0], [1, 299], [1, 1400], [2, 1650], [1, 3900]]);
   } finally {
     database.close();
     await rm(value.directory, { recursive: true, force: true });

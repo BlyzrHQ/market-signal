@@ -479,6 +479,10 @@ test("a retry reuses a completed fact manifest only when its current bundle hash
         factManifest: { ...manifest, status: "complete", completedAt: "2026-07-20T09:59:00.000Z" },
       };
     },
+    async loadCheckpoint(_publicId, input) {
+      if (input.batchIndex !== undefined) return [];
+      return [...first.checkpoints.values()];
+    },
     async actions({ inputs }) {
       const result = deterministicProductActionResult(inputs);
       return { ok: true, result: { ...result, plans: result.plans.map((entry) => ({ ...entry, plan: { ...entry.plan, actionEn: `Retry presentation: ${entry.plan.actionEn}` } })) } };
@@ -489,7 +493,8 @@ test("a retry reuses a completed fact manifest only when its current bundle hash
   assert.equal(result.reportStatus, "complete");
   assert.equal(port.factChunks.length, 0);
   assert.equal(port.factManifests.length, 0);
-  assert.deepEqual(port.events.find((item) => item.idempotencyKey.endsWith("-facts-complete")).metadata, manifest.counts);
+  assert.equal(port.saves.length, 1);
+  assert.equal(port.saves[0].expectedFactManifestHash, manifest.manifestHash);
 });
 
 test("terminal replay validates attempt and entitlement before returning without mutations", async () => {
@@ -543,6 +548,38 @@ test("a lost finalization response fails closed when the reloaded authoritative 
   assert.equal(loads, 2);
   assert.equal(port.factChunks.length, 0);
   assert.equal(port.saves.length, 0);
+});
+
+test("a completed manifest resumes its exact checkpointed presentation after document-save failure", async () => {
+  let completeManifest = null;
+  let saveAttempts = 0;
+  let crawlCalls = 0;
+  const port = mockPort({
+    async loadReport() {
+      return {
+        run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "running", attemptCount: 1, createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T10:00:00.000Z", productPlan: "starter", productLimit: 20 },
+        events: port.events,
+        factManifest: completeManifest,
+      };
+    },
+    async crawl() { crawlCalls += 1; return mockPort().crawl(); },
+    async finalizeFactManifest(_publicId, manifest) {
+      port.factManifests.push(manifest);
+      completeManifest = { ...manifest, status: "complete", completedAt: "2026-07-20T10:05:00.000Z" };
+    },
+    async saveDocument(_publicId, value) {
+      saveAttempts += 1;
+      if (saveAttempts === 1) throw new Error("document callback unavailable");
+      port.saves.push(value);
+    },
+  });
+
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /document callback unavailable/);
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port);
+  assert.equal(result.reportStatus, "complete");
+  assert.equal(crawlCalls, 1);
+  assert.equal(saveAttempts, 2);
+  assert.equal(port.saves[0].expectedFactManifestHash, completeManifest.manifestHash);
 });
 
 test("crawl failure remains non-terminal before the final task attempt", async () => {
@@ -846,7 +883,7 @@ test("all operation deadlines keep a two-minute margin below the stale marker", 
   for (const timeout of Object.values(OPERATION_BUDGETS_MS)) assert.ok(timeout <= MAX_OPERATION_TIMEOUT_MS);
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS > OPERATION_BUDGETS_MS.match, "Undici must not preempt the match operation deadline");
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS < MAX_OPERATION_TIMEOUT_MS, "the worker deadline must remain inside the outer edge window");
-  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 14_385_000);
+  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 12_219_000);
   assert.ok(WORST_CASE_CRITICAL_PATH_MS <= 14_580_000, "critical path must preserve a two-minute task-ceiling margin");
 });
 
@@ -1176,7 +1213,7 @@ test("a task retry reuses durable enrichment batches instead of fetching product
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
   await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
   assert.equal(enrichCalls, 1);
-  assert.equal(port.checkpoints.size, 4);
+  assert.equal(port.checkpoints.size, 6);
   assert.ok(port.checkpoints.has(299));
   assert.ok(port.checkpoints.has(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX));
   assert.ok(port.checkpoints.has(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX - 1));

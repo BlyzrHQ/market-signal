@@ -986,10 +986,26 @@ export async function loadReportMatchBatchCheckpoints(publicReportId: string, in
   if (!run) throw new Error("Report not found.");
   if (input.attemptNumber !== run.attemptCount) throw new Error("Report match batch checkpoint attempt is stale.");
   if (TERMINAL_REPORT_STATUSES.has(run.status)) throw new Error("A terminal report cannot load report match batch checkpoints.");
+  const recoveryRows = await database.prepare(`SELECT idempotency_key, metadata_json FROM report_events WHERE run_id = ? AND idempotency_key LIKE 'recovery-attempt-%' ORDER BY sequence DESC`).bind(run.id).all<Record<string, unknown>>();
+  const adoptedAttempts = new Set([input.attemptNumber]);
+  let cursor = input.attemptNumber;
+  for (const row of recoveryRows.results || []) {
+    if (String(row.idempotency_key) !== `recovery-attempt-${cursor}`) continue;
+    let metadata: Record<string, unknown> = {};
+    try { metadata = JSON.parse(String(row.metadata_json || "{}")) as Record<string, unknown>; } catch { break; }
+    const adopted = Number(metadata.adoptedAttempt);
+    if (!Number.isInteger(adopted) || adopted < 1 || adopted >= cursor || adoptedAttempts.has(adopted)) break;
+    adoptedAttempts.add(adopted);
+    cursor = adopted;
+  }
+  const attempts = [...adoptedAttempts].sort((left, right) => right - left);
+  const placeholders = attempts.map(() => "?").join(", ");
   const byBatch = input.batchIndex === undefined ? "" : " AND batch_index = ?";
-  const bindings = input.batchIndex === undefined ? [run.id, input.attemptNumber] : [run.id, input.attemptNumber, input.batchIndex];
-  const rows = await database.prepare(`SELECT attempt_number, batch_index, input_hash, result_json, result_hash, created_at, updated_at FROM report_match_batch_checkpoints WHERE run_id = ? AND attempt_number = ?${byBatch} ORDER BY batch_index ASC`).bind(...bindings).all<Record<string, unknown>>();
-  return Promise.all((rows.results || []).map(async (row) => {
+  const bindings = input.batchIndex === undefined ? [run.id, ...attempts] : [run.id, ...attempts, input.batchIndex];
+  const rows = await database.prepare(`SELECT attempt_number, batch_index, input_hash, result_json, result_hash, created_at, updated_at FROM report_match_batch_checkpoints WHERE run_id = ? AND attempt_number IN (${placeholders})${byBatch} ORDER BY attempt_number DESC, batch_index ASC`).bind(...bindings).all<Record<string, unknown>>();
+  const latestByBatch = new Map<number, Record<string, unknown>>();
+  for (const row of rows.results || []) if (!latestByBatch.has(Number(row.batch_index))) latestByBatch.set(Number(row.batch_index), row);
+  return Promise.all([...latestByBatch.values()].sort((left, right) => Number(left.batch_index) - Number(right.batch_index)).map(async (row) => {
     const checkpoint = rowMatchBatchCheckpoint(row);
     const resultJson = boundedCheckpointResult(checkpoint.result);
     const resultHash = await sha256Text(resultJson);
@@ -2379,11 +2395,6 @@ export async function recoverInterruptedReport(publicReportId: string, now = new
     database.prepare(`DELETE FROM report_fact_manifests WHERE run_id = ? AND status = 'finalizing' AND attempt_number = ? AND EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND status = 'interrupted' AND attempt_count = ?)`).bind(run.id, run.attemptCount, run.id, run.attemptCount),
     database.prepare(`UPDATE report_fact_chunks SET attempt_number = ? WHERE run_id = ? AND attempt_number = ? AND EXISTS (SELECT 1 FROM report_fact_manifests WHERE run_id = ? AND status = 'complete' AND attempt_number = ?) AND NOT EXISTS (SELECT 1 FROM report_documents WHERE run_id = ?) AND EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND status = 'interrupted' AND attempt_count = ?)`).bind(attemptCount, run.id, run.attemptCount, run.id, run.attemptCount, run.id, run.id, run.attemptCount),
     database.prepare(`UPDATE report_fact_manifests SET attempt_number = ? WHERE run_id = ? AND status = 'complete' AND attempt_number = ? AND NOT EXISTS (SELECT 1 FROM report_documents WHERE run_id = ?) AND EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND status = 'interrupted' AND attempt_count = ?)`).bind(attemptCount, run.id, run.attemptCount, run.id, run.id, run.attemptCount),
-    database.prepare(`INSERT INTO report_match_batch_checkpoints (run_id, attempt_number, batch_index, input_hash, result_json, result_hash, created_at, updated_at)
-      SELECT run_id, ?, batch_index, input_hash, result_json, result_hash, created_at, ? FROM report_match_batch_checkpoints
-      WHERE run_id = ? AND attempt_number = ? AND ((batch_index BETWEEN 0 AND 279) OR (batch_index BETWEEN 1400 AND 3909))
-      AND EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND status = 'interrupted' AND attempt_count = ?)
-      ON CONFLICT(run_id, attempt_number, batch_index) DO NOTHING`).bind(attemptCount, observedAt, run.id, run.attemptCount, run.id, run.attemptCount),
     database.prepare(`UPDATE report_runs SET status = 'queued', current_phase = 'queued', attempt_count = ?, updated_at = ?, heartbeat_at = ?, error_code = '', error_message = '' WHERE id = ? AND status = 'interrupted' AND attempt_count = ?`).bind(attemptCount, observedAt, observedAt, run.id, run.attemptCount),
     database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE((SELECT MAX(sequence) FROM report_events WHERE run_id = ?), 0) + 1, ?, 'queued', 'queued', 'The interrupted background report was authorized for another attempt.', ?, ? FROM report_runs WHERE id = ? AND status = 'queued' AND attempt_count = ? ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, run.id, eventKey, JSON.stringify({ attempt: attemptCount, adoptedAttempt: run.attemptCount }), observedAt, run.id, attemptCount),
   ]);

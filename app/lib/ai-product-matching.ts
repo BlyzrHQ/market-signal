@@ -482,8 +482,11 @@ export function judgeBatchKey(model: string, groups: CandidateGroup[], batchInde
 function completeCheckpoint(value: unknown, key: JudgeBatchCheckpointKey, groups: CandidateGroup[]): JudgeBatchCheckpoint | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const checkpoint = value as Record<string, unknown>;
-  if (checkpoint.version !== 2 || checkpoint.batchHash !== key.batchHash || checkpoint.batchIndex !== key.batchIndex || checkpoint.batchCount !== key.batchCount || checkpoint.model !== key.model || checkpoint.promptVersion !== key.promptVersion || !Array.isArray(checkpoint.assessments)) return null;
-  const evidenceGroups = candidateGroupsFromCheckpointEvidence(checkpoint.evidenceGroups);
+  if ((checkpoint.version !== 1 && checkpoint.version !== 2) || checkpoint.batchHash !== key.batchHash || checkpoint.batchIndex !== key.batchIndex || checkpoint.batchCount !== key.batchCount || checkpoint.model !== key.model || checkpoint.promptVersion !== key.promptVersion || !Array.isArray(checkpoint.assessments)) return null;
+  // Version 1 did not freeze evidence. It remains replayable only against the
+  // exact current groups already bound by batchHash; the returned in-memory v2
+  // shape freezes those groups without attempting to overwrite immutable data.
+  const evidenceGroups = checkpoint.version === 1 ? groups : candidateGroupsFromCheckpointEvidence(checkpoint.evidenceGroups);
   if (!evidenceGroups) return null;
   const evidenceKey = judgeBatchKey(key.model, evidenceGroups, key.batchIndex, key.batchCount);
   if (evidenceKey.batchHash !== key.batchHash || evidenceKey.candidatePairCount !== key.candidatePairCount || JSON.stringify(evidenceKey.primaryIds) !== JSON.stringify(key.primaryIds)) return null;
