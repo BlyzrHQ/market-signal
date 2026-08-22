@@ -1793,7 +1793,7 @@ export function hasComparablePublicPrice(product: ProductRecord, now = Date.now(
   const observedAt = Date.parse(product.observedAt);
   if (!Number.isFinite(observedAt) || new Date(observedAt).toISOString() !== product.observedAt) return false;
   const age = now - observedAt;
-  if (age < -(5 * 60 * 1_000) || age > (366 * 24 * 60 * 60 * 1_000)) return false;
+  if (age < -(24 * 60 * 60 * 1_000) || age > (366 * 24 * 60 * 60 * 1_000)) return false;
   const currencies = new Set<string>();
   for (const signal of product.priceSignals) {
     if (typeof signal.amount !== "number" || !Number.isFinite(signal.amount) || signal.amount <= 0 || !String(signal.raw || "").trim() || !isSupportedCurrency(signal.currency)) return false;
@@ -1802,7 +1802,7 @@ export function hasComparablePublicPrice(product: ProductRecord, now = Date.now(
   return currencies.size === 1;
 }
 
-export function hasComparablePublicPricePair(primary: ProductRecord, rival: ProductRecord, now = Date.now()) {
+export function hasComparablePublicPricePair(primary: ProductRecord, rival: ProductRecord, now = Date.now(), targetMarket = "") {
   if (!hasComparablePublicPrice(primary, now) || !hasComparablePublicPrice(rival, now)) return false;
   const primaryCurrency = String(primary.priceSignals[0]?.currency || "").trim().toUpperCase();
   const rivalCurrency = String(rival.priceSignals[0]?.currency || "").trim().toUpperCase();
@@ -1811,6 +1811,8 @@ export function hasComparablePublicPricePair(primary: ProductRecord, rival: Prod
   const rivalMarket = publicSourceMarketEvidence(rival.sourceUrl);
   if (primaryMarket.conflict || rivalMarket.conflict) return false;
   if ((primaryMarket.explicit && !primaryMarket.countryCode) || (rivalMarket.explicit && !rivalMarket.countryCode)) return false;
+  const normalizedTarget = /^[A-Z]{2}$/.test(targetMarket.toUpperCase()) ? targetMarket.toUpperCase() : "";
+  if (normalizedTarget && ((primaryMarket.countryCode && primaryMarket.countryCode !== normalizedTarget) || (rivalMarket.countryCode && rivalMarket.countryCode !== normalizedTarget))) return false;
   return !(primaryMarket.countryCode && rivalMarket.countryCode && primaryMarket.countryCode !== rivalMarket.countryCode);
 }
 
@@ -1967,8 +1969,9 @@ export function planFinalProductEnrichmentTargets(comparison: ProductComparison,
   const schedulePair = (pair: { row: ProductComparison["rows"][number]; match: ProductMatch & { product: ProductRecord } }) => {
     const uniqueMissing = missingForPair(pair);
     if (eligible.length + uniqueMissing.length > boundedMax) return false;
+    const before = eligible.length;
     uniqueMissing.forEach((candidate) => add(candidate.product, candidate.role, pair.match.score, "price"));
-    return true;
+    return eligible.length - before === uniqueMissing.length;
   };
   // First give every primary row one completable candidate. Then spend the
   // remaining price budget on secondary accepted rivals so a failed strongest

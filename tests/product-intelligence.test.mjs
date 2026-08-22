@@ -2038,6 +2038,23 @@ test("final enrichment re-fetches stale positive prices before publication", () 
   assert.equal(plan.truncated, false);
 });
 
+test("final enrichment reports non-product price gaps as incomplete instead of schedulable", () => {
+  const primary = { ...product("service-primary", "shop.test", "Managed analytics"), jsonLdType: "Service", sourceUrl: "https://shop.test/products/managed-analytics" };
+  const rival = { ...product("service-rival", "rival.test", "Managed analytics"), jsonLdType: "Service", sourceUrl: "https://rival.test/products/managed-analytics" };
+  const comparison = {
+    primaryDomain: primary.domain,
+    comparisonDomains: [rival.domain],
+    rows: [{ primary, matches: [{ domain: rival.domain, product: rival, score: 0.95, confidence: "Medium", sharedTerms: ["managed", "analytics"], claimIds: [], decision: null }] }],
+    unmatched: [],
+    coverage: { primaryProductsAvailable: 1, primaryProductsScanned: 1, primaryProductFamiliesCompared: 1, competitorProductsAvailable: 1, competitorProductsScanned: 1, assignedPairCount: 1, verifiedPairCount: 1, rowsReturned: 1, rowLimit: 1, truncated: false },
+  };
+
+  const plan = planFinalProductEnrichmentTargets(comparison, 2);
+  assert.deepEqual(plan.targets, []);
+  assert.equal(plan.totalEligible, 2);
+  assert.equal(plan.truncated, true);
+});
+
 test("final enrichment never copies same-page sibling evidence across product identities", () => {
   const sharedUrl = "https://shop.test/products/workwear-collection";
   const jacketA = { ...product("a", "shop.test", "Jacket A"), jsonLdType: "Product", sourceUrl: sharedUrl };

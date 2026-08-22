@@ -257,10 +257,12 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
   return async function matchHandler(request: Request) {
     if (!await hasValidInternalAuthorization(request.headers.get("authorization"), expectedToken)) return unauthorizedInternalResponse();
     try {
-      const body = await boundedJsonBody(request) as { publicId?: unknown; reportAttempt?: unknown; primaryDomain?: unknown; productLimit?: unknown; catalogs?: unknown; pinnedPairs?: unknown };
+      const body = await boundedJsonBody(request) as { publicId?: unknown; reportAttempt?: unknown; reportObservedAt?: unknown; primaryDomain?: unknown; marketCountryCode?: unknown; productLimit?: unknown; catalogs?: unknown; pinnedPairs?: unknown };
       const publicId = text(body.publicId, 32);
       const reportAttempt = Number(body.reportAttempt);
       const primaryDomain = canonicalDomain(text(body.primaryDomain, 300));
+      const reportObservedAt = text(body.reportObservedAt, 40);
+      const marketCountryCode = text(body.marketCountryCode, 2).toUpperCase();
       if (body.pinnedPairs !== undefined && !Array.isArray(body.pinnedPairs)) return Response.json({ ok: false, error: "Pinned product pairs must be an array." }, { status: 400 });
       const catalogs = parseCatalogs(body.catalogs, primaryDomain, body.pinnedPairs);
       const pinnedPairs = parsePinnedPairs(body.pinnedPairs, catalogs, primaryDomain);
@@ -271,6 +273,8 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
       const entitlement = hasReportAttempt ? await services.loadEntitlement(publicId, reportAttempt) : null;
       const resultTarget = entitlement?.productLimit || DEFAULT_PRODUCT_ANALYSIS_LIMIT;
       if (hasReportAttempt && Number(body.productLimit) !== resultTarget) return Response.json({ ok: false, error: "The report product limit does not match its persisted entitlement." }, { status: 409 });
+      if (hasReportAttempt && reportObservedAt !== entitlement?.reportObservedAt) return Response.json({ ok: false, error: "The report observation timestamp does not match its persisted identity." }, { status: 409 });
+      if (body.marketCountryCode !== undefined && !/^[A-Z]{2}$/.test(marketCountryCode)) return Response.json({ ok: false, error: "The report market country code must be a two-letter country code." }, { status: 400 });
       const maxPrimaryProducts = productBackfillPoolSize(resultTarget);
       const checkpointOptions = hasReportAttempt ? {
         loadJudgeBatchCheckpoint: async (key: JudgeBatchCheckpointKey) => {
@@ -290,6 +294,8 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
       const comparison = await services.build(primaryDomain, catalogs, {
         maxPrimaryProducts,
         totalBudgetMs: productAnalysisBudgetMs(maxPrimaryProducts),
+        referenceTimeMs: Date.parse(reportObservedAt) || Date.now(),
+        marketCountryCode,
         pinnedPairs,
         ...checkpointOptions,
       });

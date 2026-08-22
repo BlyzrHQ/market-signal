@@ -127,7 +127,7 @@ function mockPort(overrides = {}) {
     async preflight() {},
     async loadReport() {
       return {
-        run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "queued", attemptCount: 1, createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:00:00.000Z" },
+        run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "queued", attemptCount: 1, createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:00:00.000Z", productPlan: "starter", productLimit: 20 },
         events: [],
       };
     },
@@ -301,6 +301,10 @@ test("a retry reuses a completed fact manifest only when its current bundle hash
         factManifest: { ...manifest, status: "complete", completedAt: "2026-07-20T09:59:00.000Z" },
       };
     },
+    async actions({ inputs }) {
+      const result = deterministicProductActionResult(inputs);
+      return { ok: true, result: { ...result, plans: result.plans.map((entry) => ({ ...entry, plan: { ...entry.plan, actionEn: `Retry presentation: ${entry.plan.actionEn}` } })) } };
+    },
   });
 
   const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port);
@@ -308,6 +312,18 @@ test("a retry reuses a completed fact manifest only when its current bundle hash
   assert.equal(port.factChunks.length, 0);
   assert.equal(port.factManifests.length, 0);
   assert.deepEqual(port.events.find((item) => item.idempotencyKey === "facts-complete").metadata, manifest.counts);
+});
+
+test("terminal replay validates attempt and entitlement before returning without mutations", async () => {
+  const port = mockPort({
+    async loadReport() {
+      return { run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "complete", attemptCount: 1, createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:05:00.000Z", productPlan: "starter", productLimit: 20 }, events: [] };
+    },
+  });
+  await assert.rejects(orchestrateReport(recoveryPayload, { attemptNumber: 2, isFinalAttempt: true }, port), /attempt does not match/i);
+  await assert.rejects(orchestrateReport({ ...payload, contractVersion: "3", productPlan: "solo", productLimit: 50 }, { attemptNumber: 1, isFinalAttempt: true }, port), /entitlement does not match/i);
+  assert.equal(port.events.length, 0);
+  assert.equal(port.saves.length, 0);
 });
 
 test("fact telemetry callback failures never prevent the terminal document", async () => {
@@ -599,7 +615,7 @@ test("a replayed parked report preserves the live canonical phase summary", asyn
   const port = mockPort({
     async loadReport() {
       return {
-        run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "limited", createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:05:00.000Z" },
+        run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "limited", attemptCount: 2, createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:05:00.000Z", productPlan: "starter", productLimit: 20 },
         events: [
           { idempotencyKey: "crawl-limited", phase: "crawl", status: "limited" },
           { idempotencyKey: "brief-limited", phase: "brief", status: "limited" },
@@ -623,7 +639,7 @@ test("terminal success replay derives its summary and issues no mutations", asyn
     async preflight() { preflights += 1; },
     async loadReport() {
       return {
-        run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "limited", createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:05:00.000Z" },
+        run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "limited", attemptCount: 2, createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:05:00.000Z", productPlan: "starter", productLimit: 20 },
         events: [{ idempotencyKey: "crawl-complete", phase: "competitors", status: "running" }, { idempotencyKey: "ads-limited", phase: "ads", status: "running" }],
       };
     },
@@ -755,6 +771,9 @@ test("accepted rivals are enriched in 64-page batches and successful batches sur
   batched.matching = { ...batched.matching, primaryProductsAssessed: 70, candidatePairsAssessed: 70, retrievalPairsScored: 70, selectedPrimaryIds: batched.rows.map((row) => row.primary.id), assessedPrimaryIds: batched.rows.map((row) => row.primary.id) };
   const batchSizes = [];
   const port = mockPort({
+    async loadReport() {
+      return { run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "queued", attemptCount: 1, createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:00:00.000Z", productPlan: "growth", productLimit: 500 }, events: [] };
+    },
     async match() { return { ok: true, comparison: batched }; },
     async enrich({ targets }) {
       batchSizes.push(targets.length);

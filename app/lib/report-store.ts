@@ -998,7 +998,7 @@ export async function loadReportProductEntitlement(publicReportId: string, attem
   const run = await findRun(database, publicReportId);
   if (!run) throw new Error("Report not found.");
   if (run.attemptCount !== attemptNumber) throw new Error("Report product entitlement attempt is stale.");
-  return { plan: run.productPlan, productLimit: run.productLimit };
+  return { plan: run.productPlan, productLimit: run.productLimit, reportObservedAt: run.createdAt };
 }
 
 export async function saveReportMatchBatchCheckpoint(publicReportId: string, input: ReportMatchBatchCheckpointInput, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
@@ -2369,6 +2369,8 @@ export async function recoverInterruptedReport(publicReportId: string, now = new
   const eventKey = `recovery-attempt-${attemptCount}`;
   await database.batch([
     database.prepare(`DELETE FROM report_fact_manifests WHERE run_id = ? AND status = 'finalizing' AND attempt_number = ? AND EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND status = 'interrupted' AND attempt_count = ?)`).bind(run.id, run.attemptCount, run.id, run.attemptCount),
+    database.prepare(`UPDATE report_fact_chunks SET attempt_number = ? WHERE run_id = ? AND attempt_number = ? AND EXISTS (SELECT 1 FROM report_fact_manifests WHERE run_id = ? AND status = 'complete' AND attempt_number = ?) AND NOT EXISTS (SELECT 1 FROM report_documents WHERE run_id = ?) AND EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND status = 'interrupted' AND attempt_count = ?)`).bind(attemptCount, run.id, run.attemptCount, run.id, run.attemptCount, run.id, run.id, run.attemptCount),
+    database.prepare(`UPDATE report_fact_manifests SET attempt_number = ? WHERE run_id = ? AND status = 'complete' AND attempt_number = ? AND NOT EXISTS (SELECT 1 FROM report_documents WHERE run_id = ?) AND EXISTS (SELECT 1 FROM report_runs WHERE id = ? AND status = 'interrupted' AND attempt_count = ?)`).bind(attemptCount, run.id, run.attemptCount, run.id, run.id, run.attemptCount),
     database.prepare(`UPDATE report_runs SET status = 'queued', current_phase = 'queued', attempt_count = ?, updated_at = ?, heartbeat_at = ?, error_code = '', error_message = '' WHERE id = ? AND status = 'interrupted' AND attempt_count = ?`).bind(attemptCount, observedAt, observedAt, run.id, run.attemptCount),
     database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) SELECT ?, COALESCE((SELECT MAX(sequence) FROM report_events WHERE run_id = ?), 0) + 1, ?, 'queued', 'queued', 'The interrupted background report was authorized for another attempt.', ?, ? FROM report_runs WHERE id = ? AND status = 'queued' AND attempt_count = ? ON CONFLICT(run_id, idempotency_key) DO NOTHING`).bind(run.id, run.id, eventKey, JSON.stringify({ attempt: attemptCount }), observedAt, run.id, attemptCount),
   ]);

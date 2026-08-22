@@ -234,11 +234,13 @@ function companyFacts(results: CrawlFactResult[], comparison: ProductComparison 
 
 function productFact(product: ProductRecord, fallbackObservedAt: string) {
   const parsedObservedAt = Date.parse(product.observedAt);
-  const age = Date.now() - parsedObservedAt;
+  const reportObservedAt = Date.parse(fallbackObservedAt);
+  const age = reportObservedAt - parsedObservedAt;
   const priceObservationIsFresh = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(product.observedAt)
     && Number.isFinite(parsedObservedAt)
     && new Date(parsedObservedAt).toISOString() === product.observedAt
-    && age >= -(5 * 60 * 1000)
+    && Number.isFinite(reportObservedAt)
+    && age >= -(24 * 60 * 60 * 1000)
     && age <= 366 * 24 * 60 * 60 * 1000;
   const pricesAreValid = product.priceSignals.every((price) => typeof price.amount === "number"
     && Number.isFinite(price.amount)

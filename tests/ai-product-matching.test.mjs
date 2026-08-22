@@ -555,7 +555,7 @@ test("the bounded backfill pool judges already-priced product pairs before unpri
   assert.equal(judgedPrimaryId, "z-priced");
 });
 
-test("the bounded backfill pool does not prioritize stale or cross-market priced pairs", async () => {
+test("the bounded backfill pool prioritizes fresh target-market priced pairs", async () => {
   const viablePrimary = product("z-viable", "shop.test", "Sidr Honey 500g", { price: { raw: "GBP 10", currency: "GBP", amount: 10 }, sourceUrl: "https://shop.test/en-gb/products/viable" });
   const stalePrimary = product("a-stale", "shop.test", "Sidr Honey 500g", { price: { raw: "GBP 10", currency: "GBP", amount: 10 }, observedAt: "2020-01-01T00:00:00.000Z" });
   const ukRival = product("r-uk", "rival.test", "Sidr Honey 500g", { price: { raw: "GBP 8", currency: "GBP", amount: 8 }, sourceUrl: "https://rival.test/en-gb/products/honey" });
@@ -573,7 +573,7 @@ test("the bounded backfill pool does not prioritize stale or cross-market priced
     { domain: "shop.test", products: [stalePrimary, viablePrimary] },
     { domain: "rival.test", products: [ukRival] },
     { domain: "other.test", products: [usRival] },
-  ], {}, { apiKey: "test", fetch, maxPrimaryProducts: 1, maxCandidatesPerPrimary: 2 });
+  ], {}, { apiKey: "test", fetch, maxPrimaryProducts: 1, maxCandidatesPerPrimary: 2, referenceTimeMs: Date.parse("2026-07-20T00:00:00.000Z"), marketCountryCode: "GB" });
 
   assert.equal(judgedPrimaryId, "z-viable");
 });

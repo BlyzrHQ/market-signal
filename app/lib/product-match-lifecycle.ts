@@ -120,10 +120,9 @@ export function upsertProductComparisonBlock<T extends ReportDocument>(document:
   return { ...document, blocks: found ? document.blocks.map((item) => item.type === "product-comparison" ? block : item) : [...document.blocks, block] } as T;
 }
 
-export function publishPricedProductComparison(comparison: ProductComparison): ProductComparison {
-  const now = Date.now();
+export function publishPricedProductComparison(comparison: ProductComparison, referenceTimeMs = Date.now()): ProductComparison {
+  const now = Number.isFinite(referenceTimeMs) ? referenceTimeMs : Date.now();
   const maxObservationAgeMs = 366 * 24 * 60 * 60 * 1000;
-  const maxFutureSkewMs = 5 * 60 * 1000;
   let suppressedAcceptedPairs = 0;
   const reasons: Record<string, number> = {};
   const observedCurrencies = (product: ProductRecord) => new Set(product.priceSignals
@@ -153,7 +152,7 @@ export function publishPricedProductComparison(comparison: ProductComparison): P
     const parsed = Date.parse(value);
     if (!Number.isFinite(parsed) || new Date(parsed).toISOString() !== value) return false;
     const age = now - parsed;
-    return age >= -maxFutureSkewMs && age <= maxObservationAgeMs;
+    return age >= -(24 * 60 * 60 * 1000) && age <= maxObservationAgeMs;
   };
   const completeObservedPrice = (product: ProductRecord) => product.priceSignals.length > 0
     && product.priceSignals.every((signal) => typeof signal.amount === "number"

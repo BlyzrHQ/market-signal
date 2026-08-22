@@ -322,6 +322,15 @@ test("the final publication gate keeps complete same-currency observations", () 
   assert.deepEqual(published.matching.publication.reasons, {});
 });
 
+test("publication freshness is stable against the report observation timestamp", () => {
+  const primary = { ...product("p1"), observedAt: "2025-08-01T00:00:00.000Z", priceSignals: [{ raw: "GBP 10", currency: "GBP", amount: 10 }] };
+  const rival = { ...product("r1", "rival.test"), observedAt: "2025-08-01T00:00:00.000Z", priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }] };
+  const input = comparison({ selected: ["p1"], assessed: ["p1"], rows: [{ primary, matches: [{ domain: rival.domain, product: rival, score: 0.95, confidence: "Medium", sharedTerms: [], claimIds: [], assessment: { verdict: "same_product", priceComparable: true, reasons: [], contradictions: [], claimType: "Inferred" }, decision: null }] }], accepted: 1 });
+
+  const published = publishPricedProductComparison(input, Date.parse("2025-08-02T00:00:00.000Z"));
+  assert.equal(published.rows[0].matches[0].publication.priceEligible, true);
+});
+
 test("priced result backfill exposes exactly the requested number of publishable products", () => {
   const rows = Array.from({ length: 4 }, (_, index) => row(`p${index}`, `r${index}`));
   for (const [index, item] of rows.entries()) {

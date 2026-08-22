@@ -198,18 +198,20 @@ test("authenticated matching binds durable judge checkpoints to the active repor
     async loadEntitlement(publicId, attemptNumber) {
       assert.equal(publicId, "b".repeat(32));
       assert.equal(attemptNumber, 2);
-      return { plan: "agency", productLimit: 1_000 };
+      return { plan: "agency", productLimit: 1_000, reportObservedAt: "2026-07-20T09:00:00.000Z" };
     },
   }, token);
   const response = await handler(new Request("https://signal.test/api/match", {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, primaryDomain: "shop.test", productLimit: 1_000, catalogs: [{ domain: "shop.test", products: [{ name: "Honey", sourceUrl: "https://shop.test/products/honey" }] }] }),
+    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, reportObservedAt: "2026-07-20T09:00:00.000Z", primaryDomain: "shop.test", marketCountryCode: "GB", productLimit: 1_000, catalogs: [{ domain: "shop.test", products: [{ name: "Honey", sourceUrl: "https://shop.test/products/honey" }] }] }),
   }));
 
   assert.equal(response.status, 200);
   assert.equal(receivedOptions.maxPrimaryProducts, 1_000);
   assert.equal(receivedOptions.totalBudgetMs, 720_000);
+  assert.equal(receivedOptions.referenceTimeMs, Date.parse("2026-07-20T09:00:00.000Z"));
+  assert.equal(receivedOptions.marketCountryCode, "GB");
   assert.equal(saved[0].publicId, "b".repeat(32));
   assert.equal(saved[0].input.attemptNumber, 2);
   assert.equal(saved[0].input.batchIndex, 3);
@@ -217,7 +219,7 @@ test("authenticated matching binds durable judge checkpoints to the active repor
   const mismatch = await handler(new Request("https://signal.test/api/match", {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, primaryDomain: "shop.test", productLimit: 50, catalogs: [{ domain: "shop.test", products: [{ name: "Honey", sourceUrl: "https://shop.test/products/honey" }] }] }),
+    body: JSON.stringify({ publicId: "b".repeat(32), reportAttempt: 2, reportObservedAt: "2026-07-20T09:00:00.000Z", primaryDomain: "shop.test", productLimit: 50, catalogs: [{ domain: "shop.test", products: [{ name: "Honey", sourceUrl: "https://shop.test/products/honey" }] }] }),
   }));
   assert.equal(mismatch.status, 409);
   assert.equal(saved[0].input.inputHash, "a".repeat(64));

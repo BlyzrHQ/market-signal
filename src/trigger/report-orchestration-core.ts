@@ -56,7 +56,7 @@ function mergePublishedSelectionIntoScreenedComparison(screened: ProductComparis
           const product = match.product || match.excludedProduct;
           if (!product) return match;
           const publishedMatch = selected.get(`${row.primary.id}\n${match.domain}\n${product.id}`);
-          if (publishedMatch) return publishedMatch;
+          if (publishedMatch) return { ...match, publication: publishedMatch.publication };
           if (match.publication?.priceEligible !== true || !match.product) return match;
           return {
             ...match,
@@ -74,7 +74,7 @@ function mergePublishedSelectionIntoScreenedComparison(screened: ProductComparis
 type RunStatus = "queued" | "running" | "complete" | "limited" | "failed" | "interrupted";
 type ReportEvent = { idempotencyKey: string; phase: string; status: RunStatus; message: string; metadata?: Record<string, unknown> };
 type StoredReport = {
-  run: { publicId: string; primaryDomain: string; locale: "en" | "ar"; status: RunStatus; attemptCount: number; createdAt: string; updatedAt: string };
+  run: { publicId: string; primaryDomain: string; locale: "en" | "ar"; status: RunStatus; attemptCount: number; createdAt: string; updatedAt: string; productPlan?: "starter" | "solo" | "growth" | "agency"; productLimit?: number };
   events: Array<{ idempotencyKey?: string; phase: string; status: RunStatus }>;
   factManifest?: { manifestId: string; attemptNumber: number; manifestHash: string; counts: Record<"companies" | "products" | "matches" | "ads", number>; status: string; completedAt: string } | null;
 };
@@ -95,7 +95,7 @@ export interface ReportOrchestrationPort {
   crawl(input: { primary: string; domains: string[]; productLimit: number }): Promise<CrawlOutcome>;
   brief(input: { primary: string; domains: string[] }): Promise<unknown>;
   ads(input: unknown): Promise<{ ok: true; block: JsonBlock }>;
-  match(input: { publicId: string; reportAttempt: number; primaryDomain: string; productLimit: number; catalogs: Array<{ domain: string; products: ProductRecord[] }>; pinnedPairs?: PinnedProductPair[] }): Promise<{ ok: true; comparison: ProductComparison }>;
+  match(input: { publicId: string; reportAttempt: number; reportObservedAt: string; primaryDomain: string; marketCountryCode?: string; productLimit: number; catalogs: Array<{ domain: string; products: ProductRecord[] }>; pinnedPairs?: PinnedProductPair[] }): Promise<{ ok: true; comparison: ProductComparison }>;
   enrich(input: { targets: unknown[] }): Promise<{ ok: true; products: ProductRecord[]; coverage: NonNullable<ProductComparison["enrichment"]> }>;
   actions(input: { inputs: ProductActionInput[] }): Promise<{ ok: true; result: ProductActionPlanningResult }>;
   persistFactChunk(publicId: string, input: ReportFactChunkInput): Promise<void>;
@@ -166,9 +166,12 @@ export async function orchestrateReport(
   if (stored.run.primaryDomain !== payload.primaryDomain || stored.run.locale !== payload.locale) {
     throw new PermanentOrchestrationError("Stored report identity does not match the orchestration payload.");
   }
+  if (stored.run.attemptCount !== attempt.attemptNumber) throw new PermanentOrchestrationError("Stored report attempt does not match the active worker attempt.");
+  if ((stored.run.productPlan || "starter") !== payload.productPlan || (stored.run.productLimit || 20) !== payload.productLimit) {
+    throw new PermanentOrchestrationError("Stored report entitlement does not match the orchestration payload.");
+  }
   if (stored.run.status === "complete" || stored.run.status === "limited") return replaySummary(stored, now);
   if (stored.run.status === "failed" || stored.run.status === "interrupted") throw new PermanentOrchestrationError(`Stored report is already ${stored.run.status}.`);
-  if (stored.run.attemptCount !== attempt.attemptNumber) throw new PermanentOrchestrationError("Stored report attempt does not match the active worker attempt.");
   const workerPort = port;
   port = {
     ...workerPort,
@@ -280,7 +283,7 @@ export async function orchestrateReport(
     let transportFailed = false;
     try {
       requestCount += 1;
-      const first = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, primaryDomain: crawl.primaryDomain, productLimit: payload.productLimit, catalogs, pinnedPairs: crawl.matchHints });
+      const first = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, reportObservedAt: stored.run.createdAt, primaryDomain: crawl.primaryDomain, marketCountryCode, productLimit: payload.productLimit, catalogs, pinnedPairs: crawl.matchHints });
       attempts.push({ ...first.comparison, ...(marketCountryCode ? { marketCountryCode } : {}) });
     } catch {
       transportFailed = true;
@@ -289,7 +292,7 @@ export async function orchestrateReport(
       try {
         await port.appendEvent(payload.publicId, event("matching-retry-started", "matching", "Resuming only incomplete product judge batches from durable checkpoints."));
         requestCount += 1;
-        const retry = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, primaryDomain: crawl.primaryDomain, productLimit: payload.productLimit, catalogs, pinnedPairs: crawl.matchHints });
+        const retry = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, reportObservedAt: stored.run.createdAt, primaryDomain: crawl.primaryDomain, marketCountryCode, productLimit: payload.productLimit, catalogs, pinnedPairs: crawl.matchHints });
         attempts.push({ ...retry.comparison, ...(marketCountryCode ? { marketCountryCode } : {}) });
       } catch { /* the bounded second application attempt remains a visible gap */ }
     }
@@ -373,7 +376,7 @@ export async function orchestrateReport(
           }));
         }
       }
-      comparison = publishPricedProductComparison(comparison);
+      comparison = publishPricedProductComparison(comparison, Date.parse(stored.run.createdAt));
       screenedComparison = comparison;
       comparison = limitPublishedProductComparison(comparison, payload.productLimit);
       const actionInputs = collectProductActionInputs(comparison);

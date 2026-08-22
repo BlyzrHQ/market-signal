@@ -651,6 +651,29 @@ test("manifest finalization rejects missing chunks and conflicting completed rep
   }
 });
 
+test("recovery adopts an immutable completed fact snapshot for the new attempt", async () => {
+  const value = await fixture();
+  const database = await NodeSqliteDatabase.open(value.databasePath);
+  try {
+    const started = new Date("2026-08-16T10:00:00.000Z");
+    const created = await createReportRun({ primaryDomain: "recoverable.example" }, started, database);
+    await appendReportEvent(created.publicId, { attemptNumber: 1, idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Collecting public pages." }, started, database);
+    const bundle = await buildReportFactBundle({ publicId: created.publicId, crawlResults: [{ domain: "recoverable.example", role: "primary", homepage: { sourceUrl: "https://recoverable.example/" }, products: [], fetchedAt: started.toISOString() }], comparison: null, adBlock: null, observedAt: started.toISOString(), attemptNumber: 1 });
+    for (const chunk of bundle.chunks) await saveReportFactChunk(created.publicId, chunk, started, database);
+    await finalizeReportFactManifest(created.publicId, bundle.manifest, started, database);
+    const interrupted = await getStoredReport(created.publicId, new Date("2026-08-16T10:20:00.000Z"), database);
+    assert.equal(interrupted.run.status, "interrupted");
+
+    const recovered = await recoverInterruptedReport(created.publicId, new Date("2026-08-16T10:21:00.000Z"), database);
+    assert.equal(recovered.attemptCount, 2);
+    assert.deepEqual((await database.prepare("SELECT DISTINCT attempt_number FROM report_fact_chunks WHERE run_id = ?").bind(recovered.id).all()).results, [{ attempt_number: 2 }]);
+    assert.deepEqual((await database.prepare("SELECT attempt_number, status FROM report_fact_manifests WHERE run_id = ?").bind(recovered.id).all()).results, [{ attempt_number: 2, status: "complete" }]);
+  } finally {
+    database.close();
+    await rm(value.directory, { recursive: true, force: true });
+  }
+});
+
 test("report fact manifests use the stable report observation across retry timestamps", async () => {
   const reportObservedAt = "2026-08-22T03:00:00.000Z";
   const base = {

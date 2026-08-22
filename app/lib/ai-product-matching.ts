@@ -86,6 +86,8 @@ export type AIProductMatchingOptions = {
   concurrency?: number;
   timeoutMs?: number;
   totalBudgetMs?: number;
+  referenceTimeMs?: number;
+  marketCountryCode?: string;
   pinnedPairs?: PinnedProductPair[];
   loadJudgeBatchCheckpoint?: (key: JudgeBatchCheckpointKey) => Promise<unknown>;
   saveJudgeBatchCheckpoint?: (key: JudgeBatchCheckpointKey, checkpoint: JudgeBatchCheckpoint) => Promise<void>;
@@ -548,15 +550,15 @@ function candidateStrength(group: CandidateGroup) {
   return group.candidates.reduce((best, candidate) => Math.max(best, candidate.retrievalScore), 0);
 }
 
-function hasPricedCandidate(group: CandidateGroup) {
-  return group.candidates.some((candidate) => hasComparablePublicPricePair(group.primary, candidate.product));
+function hasPricedCandidate(group: CandidateGroup, referenceTimeMs: number, marketCountryCode: string) {
+  return group.candidates.some((candidate) => hasComparablePublicPricePair(group.primary, candidate.product, referenceTimeMs, marketCountryCode));
 }
 
-function selectJudgeGroups(groups: CandidateGroup[], maxPrimary: number, pinnedPrimaryIds = new Set<string>()) {
+function selectJudgeGroups(groups: CandidateGroup[], maxPrimary: number, pinnedPrimaryIds = new Set<string>(), referenceTimeMs = Date.now(), marketCountryCode = "") {
   return [...groups]
     .filter((group) => group.candidates.length)
     .sort((left, right) => Number(pinnedPrimaryIds.has(right.primary.id)) - Number(pinnedPrimaryIds.has(left.primary.id))
-      || Number(hasPricedCandidate(right)) - Number(hasPricedCandidate(left))
+      || Number(hasPricedCandidate(right, referenceTimeMs, marketCountryCode)) - Number(hasPricedCandidate(left, referenceTimeMs, marketCountryCode))
       || candidateStrength(right) - candidateStrength(left)
       || Number(right.primary.priceSignals.length > 0) - Number(left.primary.priceSignals.length > 0)
       || Number(Boolean(right.primary.imageUrl)) - Number(Boolean(left.primary.imageUrl))
@@ -627,7 +629,7 @@ function withoutUnassessedMatches(comparison: ProductComparison) {
 export function buildAIProductComparison(primaryDomain: string, catalogs: ProductCatalog[], options?: AIProductMatchingOptions): Promise<ProductComparison>;
 export function buildAIProductComparison(primaryDomain: string, catalogs: ProductCatalog[], requiredSourceUrls?: Record<string, string[]>, options?: AIProductMatchingOptions): Promise<ProductComparison>;
 export async function buildAIProductComparison(primaryDomain: string, catalogs: ProductCatalog[], requiredSourceUrlsOrOptions: Record<string, string[]> | AIProductMatchingOptions = {}, providedOptions?: AIProductMatchingOptions): Promise<ProductComparison> {
-  const optionKeys = new Set<keyof AIProductMatchingOptions>(["apiKey", "fetch", "baseUrl", "model", "embeddingModel", "maxPrimaryProducts", "maxCandidatesPerPrimary", "maxCandidatesPerDomain", "maxProductsPerCompetitor", "maxRetrievalPoolPerDomain", "primaryProductsPerJudgeCall", "maxPairsPerJudgeCall", "concurrency", "timeoutMs", "totalBudgetMs", "pinnedPairs", "loadJudgeBatchCheckpoint", "saveJudgeBatchCheckpoint"]);
+  const optionKeys = new Set<keyof AIProductMatchingOptions>(["apiKey", "fetch", "baseUrl", "model", "embeddingModel", "maxPrimaryProducts", "maxCandidatesPerPrimary", "maxCandidatesPerDomain", "maxProductsPerCompetitor", "maxRetrievalPoolPerDomain", "primaryProductsPerJudgeCall", "maxPairsPerJudgeCall", "concurrency", "timeoutMs", "totalBudgetMs", "referenceTimeMs", "marketCountryCode", "pinnedPairs", "loadJudgeBatchCheckpoint", "saveJudgeBatchCheckpoint"]);
   const thirdArgumentIsOptions = providedOptions === undefined && Object.keys(requiredSourceUrlsOrOptions).some((key) => optionKeys.has(key as keyof AIProductMatchingOptions));
   const requiredSourceUrls = thirdArgumentIsOptions ? {} : requiredSourceUrlsOrOptions as Record<string, string[]>;
   const options = providedOptions || (thirdArgumentIsOptions ? requiredSourceUrlsOrOptions as AIProductMatchingOptions : {});
@@ -682,7 +684,8 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
 
   const pinnedPairs = requestedPins;
   const retrieved = retrieveGroups(synchronizedPrimary, competitors, embeddings, fallback, maxCandidates, maxPerDomain, maxRetrievalPool, pinnedPairs);
-  const groups = selectJudgeGroups(retrieved.groups, maxPrimary, new Set(pinnedPairs.map((pair) => pair.primaryId)));
+  const referenceTimeMs = Number.isFinite(options.referenceTimeMs) ? Number(options.referenceTimeMs) : Date.now();
+  const groups = selectJudgeGroups(retrieved.groups, maxPrimary, new Set(pinnedPairs.map((pair) => pair.primaryId)), referenceTimeMs, options.marketCountryCode || "");
   matchingBase.selectedPrimaryIds = groups.map((group) => group.primary.id);
   matchingBase.primaryProductsScreened = matchingBase.selectedPrimaryIds.length;
   matchingBase.candidateSlotsByDomain = groups.flatMap((group) => group.candidates).reduce((counts, candidate) => {
