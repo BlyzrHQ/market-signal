@@ -84,6 +84,16 @@ function publishedPricedPrimaryCount(comparison: ProductComparison, referenceTim
 
 type EnrichmentResult = Awaited<ReturnType<ReportOrchestrationPort["enrich"]>>;
 
+function hasRetryableEnrichmentGap(result: EnrichmentResult) {
+  return result.coverage.gaps.some((gap) => gap.failureKind === "network"
+    || gap.code === "robots_unreachable"
+    || gap.httpStatus === 0
+    || gap.httpStatus === 408
+    || gap.httpStatus === 425
+    || gap.httpStatus === 429
+    || (typeof gap.httpStatus === "number" && gap.httpStatus >= 500));
+}
+
 export function validEnrichmentCheckpoint(value: unknown, targets: ProductEnrichmentTarget[]): EnrichmentResult | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const candidate = value as Partial<EnrichmentResult>;
@@ -473,7 +483,7 @@ export async function orchestrateReport(
       const targets = enrichmentPlan.targets;
       if (targets.length && !targetSatisfied) {
         const batches = Array.from({ length: Math.ceil(targets.length / FINAL_ENRICHMENT_BATCH_SIZE) }, (_, index) => targets.slice(index * FINAL_ENRICHMENT_BATCH_SIZE, (index + 1) * FINAL_ENRICHMENT_BATCH_SIZE));
-        await port.appendEvent(payload.publicId, event("enrichment-started", "enrichment", "Re-reading accepted product pages in bounded batches for attributable prices and images.", {
+        await port.appendEvent(payload.publicId, event(`enrichment-task-${attempt.taskAttemptNumber || 1}-started`, "enrichment", "Re-reading accepted product pages in bounded batches for attributable prices and images.", {
           pagesEligible: enrichmentPlan.totalEligible,
           pagesPlanned: targets.length,
           batches: batches.length,
@@ -503,6 +513,11 @@ export async function orchestrateReport(
             const result = await port.enrich({ targets: batch });
             const validatedResult = validEnrichmentCheckpoint(result, batch);
             if (!validatedResult) throw new Error("Product-page enrichment returned an invalid batch result.");
+            // A transient page failure is a valid, visible outcome for this task
+            // attempt, but it must not become durable evidence of exhaustion.
+            // Leaving the batch uncommitted makes the bounded task retry fetch it
+            // again while permanent page outcomes remain checkpointed.
+            if (hasRetryableEnrichmentGap(validatedResult)) return validatedResult;
             try {
               await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointIndex, inputHash, result: validatedResult });
             } catch (saveError) {
@@ -533,7 +548,7 @@ export async function orchestrateReport(
             });
           });
           const waveNumber = Math.floor(waveStart / FINAL_ENRICHMENT_BATCH_CONCURRENCY) + 1;
-          await port.appendEvent(payload.publicId, event(`enrichment-wave-${waveNumber}-checkpoint`, "enrichment", "A bounded selected-product enrichment wave finished.", {
+          await port.appendEvent(payload.publicId, event(`enrichment-task-${attempt.taskAttemptNumber || 1}-wave-${waveNumber}-checkpoint`, "enrichment", "A bounded selected-product enrichment wave finished.", {
             wave: waveNumber,
             waves: Math.ceil(batches.length / FINAL_ENRICHMENT_BATCH_CONCURRENCY),
             pagesRequested,
@@ -570,7 +585,7 @@ export async function orchestrateReport(
         });
         if (enrichmentIncomplete) {
           limitedPhases.push("enrichment");
-          await port.appendEvent(payload.publicId, event("enrichment-limited", "enrichment", "Selected product enrichment finished with explicit batch or plan coverage gaps.", {
+          await port.appendEvent(payload.publicId, event(`enrichment-task-${attempt.taskAttemptNumber || 1}-limited`, "enrichment", "Selected product enrichment finished with explicit batch or plan coverage gaps.", {
             pagesRequested,
             pagesFetched,
             batches: batchesProcessed,
@@ -579,7 +594,7 @@ export async function orchestrateReport(
           }));
         } else {
           completedPhases.push("enrichment");
-          await port.appendEvent(payload.publicId, event("enrichment-complete", "enrichment", targetSatisfied ? "Selected product enrichment filled the priced result target." : "Selected product enrichment finished across all bounded batches.", {
+          await port.appendEvent(payload.publicId, event(`enrichment-task-${attempt.taskAttemptNumber || 1}-complete`, "enrichment", targetSatisfied ? "Selected product enrichment filled the priced result target." : "Selected product enrichment finished across all bounded batches.", {
             pagesRequested,
             pagesFetched,
             batches: batchesProcessed,
@@ -602,7 +617,7 @@ export async function orchestrateReport(
           gaps,
         });
         limitedPhases.push("enrichment");
-        await port.appendEvent(payload.publicId, event("enrichment-limited", "enrichment", "Accepted price gaps could not be safely scheduled as product-page enrichment targets.", {
+        await port.appendEvent(payload.publicId, event(`enrichment-task-${attempt.taskAttemptNumber || 1}-limited`, "enrichment", "Accepted price gaps could not be safely scheduled as product-page enrichment targets.", {
           pagesEligible: enrichmentPlan.totalEligible,
           pagesPlanned: 0,
           truncated: true,

@@ -189,7 +189,15 @@ export type ProductComparison = {
     pagesTruncated?: boolean;
     batchCount?: number;
     failedBatchCount?: number;
-    gaps: Array<{ url: string; reason: string; productId?: string; role?: "primary" | "rival"; code?: string }>;
+    gaps: Array<{
+      url: string;
+      reason: string;
+      productId?: string;
+      role?: "primary" | "rival";
+      code?: string;
+      httpStatus?: number;
+      failureKind?: "robots" | "network" | "http" | "content" | "identity" | "adapter" | "redirect";
+    }>;
   };
   actionPlanning?: {
     method: "ai-grounded" | "deterministic-fallback";

@@ -794,7 +794,7 @@ test("partial and failed selected enrichment remain visibly limited", async () =
   const failureResult = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, failure);
   assert.equal(failureResult.reportStatus, "limited");
   assert.ok(failureResult.limitedPhases.includes("enrichment"));
-  assert.ok(failure.events.some((item) => item.idempotencyKey === "enrichment-limited"));
+  assert.ok(failure.events.some((item) => item.idempotencyKey.endsWith("-limited") && item.phase === "enrichment"));
 });
 
 test("unschedulable accepted price gaps remain processing-incomplete instead of claiming exhaustion", async () => {
@@ -817,7 +817,7 @@ test("unschedulable accepted price gaps remain processing-incomplete instead of 
   const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
   assert.equal(block.matching.resultShortfallReason, "processing-incomplete");
   assert.doesNotMatch(block.matching.gaps.join(" "), /exhausted/i);
-  assert.ok(port.events.some((item) => item.idempotencyKey === "enrichment-limited" && item.metadata?.pagesPlanned === 0));
+  assert.ok(port.events.some((item) => item.idempotencyKey.endsWith("-limited") && item.phase === "enrichment" && item.metadata?.pagesPlanned === 0));
 });
 
 test("publication-ineligible pairs are re-read on both sides and successful batches survive a failure", async () => {
@@ -850,7 +850,7 @@ test("publication-ineligible pairs are re-read on both sides and successful batc
   assert.equal(block.enrichment.pagesRequested, 140);
   assert.equal(block.enrichment.pagesFetched, 76);
   assert.equal(block.enrichment.failedBatchCount, 1);
-  const checkpoints = port.events.filter((event) => /^enrichment-wave-\d+-checkpoint$/.test(event.idempotencyKey));
+  const checkpoints = port.events.filter((event) => /^enrichment-task-\d+-wave-\d+-checkpoint$/.test(event.idempotencyKey));
   assert.equal(checkpoints.length, 2);
   assert.equal(checkpoints[1].metadata.pagesRequested, 140);
 });
@@ -888,6 +888,55 @@ test("a task retry reuses durable enrichment batches instead of fetching product
   assert.equal(enrichCalls, 1);
   assert.equal(port.checkpoints.size, 2);
   assert.ok(port.checkpoints.has(299));
+});
+
+test("a task retry re-fetches transient page gaps and uses attempt-scoped enrichment events", async () => {
+  let enrichCalls = 0;
+  const eventPayloads = new Map();
+  const port = mockPort({
+    async match() {
+      const value = comparison({ withPair: true, count: 1 });
+      value.rows[0].primary.priceSignals = [];
+      value.rows[0].matches[0].product.priceSignals = [];
+      return { ok: true, comparison: value };
+    },
+    async enrich({ targets }) {
+      enrichCalls += 1;
+      if (enrichCalls === 1) {
+        const primaryTarget = targets.find((target) => target.role === "primary");
+        const rivalTarget = targets.find((target) => target.role === "rival");
+        return {
+          ok: true,
+          products: [{ ...product(primaryTarget.domain, primaryTarget.productId), name: primaryTarget.expectedName, normalizedName: primaryTarget.expectedName.toLowerCase(), sourceUrl: primaryTarget.sourceUrl, priceSignals: [{ raw: "GBP 9", currency: "GBP", amount: 9 }] }],
+          coverage: { pagesRequested: targets.length, pagesFetched: 1, maxPages: 64, gaps: [{ url: rivalTarget.sourceUrl, productId: rivalTarget.productId, role: rivalTarget.role, reason: "Temporary network timeout.", code: "fetch_failed", httpStatus: 0, failureKind: "network" }] },
+        };
+      }
+      return {
+        ok: true,
+        products: targets.map((target) => ({ ...product(target.domain, target.productId), name: target.expectedName, normalizedName: target.expectedName.toLowerCase(), sourceUrl: target.sourceUrl, priceSignals: [{ raw: target.role === "primary" ? "GBP 9" : "GBP 7", currency: "GBP", amount: target.role === "primary" ? 9 : 7 }] })),
+        coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: 64, gaps: [] },
+      };
+    },
+    async appendEvent(_publicId, value) {
+      const serialized = JSON.stringify(value);
+      const prior = eventPayloads.get(value.idempotencyKey);
+      if (prior && prior !== serialized) throw new Error(`event conflict: ${value.idempotencyKey}`);
+      eventPayloads.set(value.idempotencyKey, serialized);
+      port.events.push(value);
+    },
+  });
+
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/);
+  assert.equal(port.checkpoints.has(300), false);
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port);
+  assert.equal(enrichCalls, 2);
+  assert.equal(result.reportStatus, "limited");
+  assert.ok(port.checkpoints.has(300));
+  assert.ok(port.events.some((item) => item.idempotencyKey === "enrichment-task-1-wave-1-checkpoint"));
+  assert.ok(port.events.some((item) => item.idempotencyKey === "enrichment-task-2-wave-1-checkpoint"));
+  const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
+  assert.equal(block.rows.length, 1);
+  assert.equal(block.matching.publishedPrimaryProducts, 1);
 });
 
 test("an ambiguous checkpoint-save response reloads and uses the committed enrichment batch", async () => {
@@ -993,7 +1042,7 @@ test("action planning runs after final enrichment and persists source-labelled p
   assert.equal(result.reportStatus, "complete");
   assert.equal(sawEnrichedPrice, true);
   const eventKeys = port.events.map((item) => item.idempotencyKey);
-  assert.ok(eventKeys.indexOf("enrichment-complete") < eventKeys.indexOf("actions-started"));
+  assert.ok(eventKeys.findIndex((key) => key.endsWith("-complete") && key.startsWith("enrichment-task-")) < eventKeys.indexOf("actions-started"));
   assert.ok(eventKeys.indexOf("actions-complete") < eventKeys.indexOf("matching-complete"));
   const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
   assert.equal(block.actionPlanning.fallbackActions, 20);
