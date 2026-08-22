@@ -93,8 +93,8 @@ test("catalog bounds retain valid pinned records beyond both ordinary limits", (
 });
 
 test("rejects an oversized submitted catalog before pin scanning or allocation", () => {
-  const oversized = Array.from({ length: 5_001 }, (_, index) => ({ id: `p${index}`, name: `Product ${index}`, sourceUrl: `https://shop.test/products/${index}` }));
-  assert.deepEqual(parseCatalogs([{ domain: "shop.test", products: oversized }], "shop.test", [{ primaryId: "p5000", rivalDomain: "rival.test", rivalId: "r1" }]), []);
+  const oversized = Array.from({ length: 6_001 }, (_, index) => ({ id: `p${index}`, name: `Product ${index}`, sourceUrl: `https://shop.test/products/${index}` }));
+  assert.deepEqual(parseCatalogs([{ domain: "shop.test", products: oversized }], "shop.test", [{ primaryId: "p6000", rivalDomain: "rival.test", rivalId: "r1" }]), []);
 });
 
 test("bounds nested product arrays before normalization", () => {
@@ -209,6 +209,18 @@ test("the match boundary accepts more than twelve bounded exact-pair pins", () =
   const pins = primaryProducts.map((primary, index) => ({ primaryId: primary.id, rivalDomain: "rival.test", rivalId: rivalProducts[index].id }));
 
   assert.equal(parsePinnedPairs(pins, catalogs, "shop.test").length, 13);
+});
+
+test("a single seller can retain the complete 6000-product pinned universe", () => {
+  const rivalProducts = Array.from({ length: 6_000 }, (_, index) => ({ id: `r${index}`, name: `Product ${index}`, sourceUrl: `https://rival.test/products/${index}` }));
+  const pin = { primaryId: "p1", rivalDomain: "rival.test", rivalId: "r5999" };
+  const catalogs = parseCatalogs([
+    { domain: "shop.test", products: [{ id: "p1", name: "Primary", sourceUrl: "https://shop.test/products/primary" }] },
+    { domain: "rival.test", products: rivalProducts },
+  ], "shop.test", [pin]);
+
+  assert.equal(catalogs.find((catalog) => catalog.domain === "rival.test")?.products.length, 6_000);
+  assert.deepEqual(parsePinnedPairs([pin], catalogs, "shop.test"), [pin]);
 });
 
 test("authenticated matching binds durable judge checkpoints to the active report attempt", async () => {

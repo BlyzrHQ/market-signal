@@ -14,7 +14,7 @@ class FakeStatement {
       return { results: this.database.runs.filter((run) => run.public_id === key || run.id === key).slice(0, 1) };
     }
     if (this.query.startsWith("SELECT sequence")) {
-      return { results: this.database.events.filter((event) => event.run_id === this.values[0]).sort((a, b) => a.sequence - b.sequence).slice(0, 100) };
+      return { results: this.database.events.filter((event) => event.run_id === this.values[0]).sort((a, b) => a.sequence - b.sequence).slice(0, 1_000) };
     }
     if (this.query.startsWith("SELECT schema_version")) {
       return { results: this.database.documents.filter((document) => document.run_id === this.values[0]).slice(0, 1) };
@@ -166,6 +166,26 @@ test("report runs persist ordered idempotent events and a reloadable document", 
   assert.equal(reloaded.document.blocks[1].relationalFactsAuthoritative, false);
   assert.equal(reloaded.document.blocks[1].factCounts, null);
   assert.equal(reloaded.documentSchemaVersion, 1);
+});
+
+test("stored reports retain cursor checkpoints beyond the former 100-event window", async () => {
+  const database = new FakeDatabase();
+  const observedAt = "2026-07-16T00:00:00.000Z";
+  const created = await createReportRun({ primaryDomain: "myjam.co.uk" }, new Date(observedAt), database);
+  for (let sequence = 2; sequence <= 151; sequence += 1) database.events.push({
+    run_id: created.id,
+    sequence,
+    idempotency_key: `event-${sequence}`,
+    phase: "competitors",
+    status: "running",
+    message: "Bounded progress event.",
+    metadata_json: sequence === 151 ? JSON.stringify({ discoveryStartIndex: 800, discoveryEndIndex: 1_000, discoveryBatchComplete: true, discoveryAnchorSetHash: "a".repeat(64) }) : "{}",
+    observed_at: observedAt,
+  });
+
+  const reloaded = await getStoredReport(created.publicId, new Date("2026-07-16T00:01:00.000Z"), database);
+  assert.equal(reloaded.events.length, 151);
+  assert.equal(reloaded.events.at(-1)?.metadata.discoveryEndIndex, 1_000);
 });
 
 test("limited phase events remain visible without making the run terminal before document persistence", async () => {

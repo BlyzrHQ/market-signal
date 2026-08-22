@@ -538,14 +538,18 @@ function packJudgeBatches(groups: CandidateGroup[], maxPairs: number, maxGroups:
   let batch: CandidateGroup[] = [];
   let pairCount = 0;
   for (const group of groups.filter((item) => item.candidates.length)) {
-    const groupPairs = group.candidates.length;
-    if (batch.length && (pairCount + groupPairs > maxPairs || batch.length >= maxGroups)) {
-      batches.push(batch);
-      batch = [];
-      pairCount = 0;
+    let offset = 0;
+    while (offset < group.candidates.length) {
+      if (batch.length && (pairCount >= maxPairs || batch.length >= maxGroups)) {
+        batches.push(batch);
+        batch = [];
+        pairCount = 0;
+      }
+      const take = Math.min(group.candidates.length - offset, maxPairs - pairCount);
+      batch.push({ primary: group.primary, candidates: group.candidates.slice(offset, offset + take) });
+      pairCount += take;
+      offset += take;
     }
-    batch.push(group);
-    pairCount += groupPairs;
   }
   if (batch.length) batches.push(batch);
   return batches;
@@ -805,6 +809,8 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   matchingBase.totalJudgeBatches = judgeBatches.length;
   const successfulPrimaryIds = new Set<string>();
   const processedPrimaryIds = new Set(groups.filter((group) => group.candidates.length === 0).map((group) => group.primary.id));
+  const expectedChunksByPrimary = judgeBatches.flat().reduce((counts, group) => counts.set(group.primary.id, (counts.get(group.primary.id) || 0) + 1), new Map<string, number>());
+  const completedChunksByPrimary = new Map<string, number>();
   const rawAssessments: unknown[] = [];
   let judgeCalls = 0;
   let timedOutPrimary = 0;
@@ -822,8 +828,7 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
           if (checkpoint) {
             reusedJudgeCheckpoints += 1;
             for (const primaryId of checkpointKey.primaryIds) {
-              successfulPrimaryIds.add(primaryId);
-              processedPrimaryIds.add(primaryId);
+              completedChunksByPrimary.set(primaryId, (completedChunksByPrimary.get(primaryId) || 0) + 1);
             }
             rawAssessments.push(...checkpoint.assessments);
             return;
@@ -839,8 +844,7 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
         }
       }
       for (const primaryId of result.assessedPrimaryIds) {
-        successfulPrimaryIds.add(primaryId);
-        processedPrimaryIds.add(primaryId);
+        completedChunksByPrimary.set(primaryId, (completedChunksByPrimary.get(primaryId) || 0) + 1);
       }
       incompletePrimary += result.incompletePrimaryIds.length;
       rawAssessments.push(...result.assessments);
@@ -850,6 +854,10 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
       else failedPrimary += batch.length;
     }
   });
+  for (const [primaryId, expectedChunks] of expectedChunksByPrimary) if (completedChunksByPrimary.get(primaryId) === expectedChunks) {
+    successfulPrimaryIds.add(primaryId);
+    processedPrimaryIds.add(primaryId);
+  }
   if (timedOutPrimary) gaps.push(`AI product judging reached the report deadline for ${timedOutPrimary} primary product${timedOutPrimary === 1 ? "" : "s"}; no pair was accepted for them.`);
   if (failedPrimary) gaps.push(`AI product judging failed for ${failedPrimary} primary product${failedPrimary === 1 ? "" : "s"}; no pair was accepted for them.`);
   if (incompleteOutputPrimary) gaps.push(`AI product judging hit an incomplete model output for ${incompleteOutputPrimary} primary product${incompleteOutputPrimary === 1 ? "" : "s"}; no pair was accepted for them.`);
@@ -863,6 +871,7 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
 
   const pinnedPairKeys = new Set(pinnedPairs.map((pair) => `${pair.primaryId}|${canonicalDomain(pair.rivalDomain)}|${pair.rivalId}`));
   const proposals = sanitized.filter((item): item is typeof item & { verdict: "same_product" | "close_substitute" } => {
+    if (!successfulPrimaryIds.has(item.primary.id)) return false;
     if (item.verdict !== "same_product" && item.verdict !== "close_substitute") return false;
     const pinned = pinnedPairKeys.has(`${item.primary.id}|${canonicalDomain(item.candidate.product.domain)}|${item.candidate.product.id}`);
     return pinned

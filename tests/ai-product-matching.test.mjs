@@ -685,6 +685,35 @@ test("judge batches are bounded by candidate-pair count across many competitor d
   assert.ok(pairCounts.every((count) => count <= 25));
 });
 
+test("one primary with more than 25 pins is split into complete bounded judge batches", async () => {
+  const primary = product("p-many-pins", "shop.test", "Beef Cubes Halal 500g");
+  const rivals = Array.from({ length: 26 }, (_, index) => product(`r-many-${index}`, "rival.test", `Beef Cubes Halal 500g option ${index}`, { price: { raw: `GBP ${index + 1}`, currency: "GBP", amount: index + 1 } }));
+  const pairCounts = [];
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, index / 100] })) });
+    const request = JSON.parse(body.input[1].content);
+    pairCounts.push(request.groups.reduce((sum, group) => sum + group.candidates.length, 0));
+    return response({ output_text: JSON.stringify({ assessments: request.groups.flatMap((group) => group.candidates.map((candidate) => ({ primaryId: group.primary.id, candidateId: candidate.id, verdict: "no_match", confidence: 0.99, reason: "Bounded split test.", contradiction: "" }))) }) });
+  };
+
+  const comparison = await buildAIProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "rival.test", products: rivals }], {}, {
+    apiKey: "test",
+    fetch,
+    maxPrimaryProducts: 1,
+    maxCandidatesPerPrimary: 26,
+    maxCandidatesPerDomain: 26,
+    maxProductsPerCompetitor: 26,
+    maxRetrievalPoolPerDomain: 26,
+    maxPairsPerJudgeCall: 25,
+    pinnedPairs: rivals.map((rival) => ({ primaryId: primary.id, rivalDomain: "rival.test", rivalId: rival.id })),
+  });
+
+  assert.deepEqual(pairCounts, [25, 1]);
+  assert.equal(comparison.matching?.primaryProductsAssessed, 1);
+  assert.equal(comparison.matching?.totalJudgeBatches, 2);
+});
+
 test("the default retrieval budget judges five viable candidates for one primary product", async () => {
   const primary = product("five-p", "shop.test", "Beef Cubes Halal 500g");
   const rivals = Array.from({ length: 5 }, (_, index) => product(

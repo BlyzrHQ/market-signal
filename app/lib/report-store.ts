@@ -264,6 +264,7 @@ const QUEUED_DISPATCH_TIMEOUT_MS = 60 * 60 * 1000;
 export const MAX_REPORT_DOCUMENT_BYTES = REPORT_SNAPSHOT_HARD_BYTES;
 const MAX_REPORT_FACT_CHUNKS = 1_000;
 const MAX_REPORT_MATCH_CHECKPOINTS = 4_000;
+const MAX_STORED_REPORT_EVENTS = 1_000;
 const MAX_REPORT_FACT_CHUNK_BYTES = 1_000_000;
 export const MAX_REPORT_MATCH_BATCH_RESULT_BYTES = 512_000;
 const INVALID_DOMAIN_MESSAGE = "A valid public domain is required.";
@@ -2109,7 +2110,7 @@ export async function getStoredReport(publicReportId: string, now = new Date(), 
   }
   if (run.status === "failed") await ensureRunFailureEvaluation(database, run, now);
   const [eventsResult, documentResult, manifestResult] = await Promise.all([
-    database.prepare(`SELECT sequence, idempotency_key, phase, status, message, metadata_json, observed_at FROM report_events WHERE run_id = ? ORDER BY sequence ASC LIMIT 100`).bind(run.id).all<Record<string, unknown>>(),
+    database.prepare(`SELECT sequence, idempotency_key, phase, status, message, metadata_json, observed_at FROM report_events WHERE run_id = ? ORDER BY sequence ASC LIMIT ${MAX_STORED_REPORT_EVENTS}`).bind(run.id).all<Record<string, unknown>>(),
     database.prepare(`SELECT schema_version, document_json, observed_at, updated_at FROM report_documents WHERE run_id = ? LIMIT 1`).bind(run.id).all<Record<string, unknown>>(),
     database.prepare(`SELECT manifest_id, attempt_number, manifest_hash, company_count, product_count, match_count, ad_count, status, completed_at FROM report_fact_manifests WHERE run_id = ? AND attempt_number = ? LIMIT 1`).bind(run.id, run.attemptCount).all<Record<string, unknown>>(),
   ]);

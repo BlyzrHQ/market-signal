@@ -11,8 +11,8 @@ import { loadReportMatchBatchCheckpoints, loadReportProductEntitlement, saveRepo
 // Never silently discard a rival.
 const MAX_CATALOGS = 1_713;
 const MAX_PRIMARY_PRODUCTS = 1_000;
-const MAX_RIVAL_PRODUCTS = 5_000;
-const MAX_SUBMITTED_PRODUCTS_PER_CATALOG = 5_000;
+const MAX_RIVAL_PRODUCTS = 6_000;
+const MAX_SUBMITTED_PRODUCTS_PER_CATALOG = 6_000;
 const MAX_PINNED_PAIRS = 6_000;
 export const MAX_MATCH_BODY_BYTES = 64 * 1_024 * 1_024;
 const DEFAULT_PRODUCT_ANALYSIS_LIMIT = 20;
