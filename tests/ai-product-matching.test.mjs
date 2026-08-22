@@ -1236,6 +1236,23 @@ test("durable judge evidence preserves accepted backup pairs within the checkpoi
   assert.equal(screened?.rows[0].matches.length, 5);
   assert.deepEqual(screened?.rows[0].matches.map((match) => match.product?.id).sort(), rivals.map((item) => item.id).sort());
   assert.ok(screened?.rows[0].matches.every((match) => match.product && match.publication === undefined));
+
+  const historicalPrimary = { ...primary, name: "Beef Cubes Halal 1kg", normalizedName: "beef cubes halal 1kg", sourceUrl: "https://shop.test/products/beef-cubes-1kg", quantity: { value: 1_000, unit: "g", normalized: "1000g" } };
+  const historicalRival = product("evidence-old-rival", "rival.test", "Beef Cubes Halal 1kg", { price: { raw: "GBP 12", currency: "GBP", amount: 12 } });
+  let historicalCheckpoint = null;
+  await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [historicalPrimary] },
+    { domain: "rival.test", products: [historicalRival] },
+  ], {}, {
+    apiKey: "test",
+    fetch,
+    maxPrimaryProducts: 1,
+    maxCandidatesPerPrimary: 5,
+    saveJudgeBatchCheckpoint: async (_key, checkpoint) => { historicalCheckpoint = checkpoint; },
+  });
+  const separated = screenedComparisonFromJudgeCheckpoints("shop.test", [savedCheckpoint, historicalCheckpoint], "GB");
+  assert.equal(separated?.rows.length, 2);
+  assert.deepEqual(new Set(separated?.rows.map((item) => item.primary.sourceUrl)), new Set([primary.sourceUrl, historicalPrimary.sourceUrl]));
 });
 
 test("rejects malformed judge checkpoints and replaces them only with a complete live result", async () => {

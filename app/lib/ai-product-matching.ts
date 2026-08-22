@@ -774,7 +774,8 @@ export function screenedComparisonFromJudgeCheckpoints(primaryDomain: string, va
       const rival = assessed.candidate.product;
       const domain = canonicalDomain(rival.domain);
       comparisonDomains.add(domain);
-      const row = rows.get(primary.id) || { primary, matches: [] };
+      const primaryKey = candidatePlanProductKey(primary);
+      const row = rows.get(primaryKey) || { primary, matches: [] };
       const pairKey = `${domain}\n${rival.id}`;
       if (!row.matches.some((match) => `${match.domain}\n${(match.product || match.excludedProduct)?.id || ""}` === pairKey)) row.matches.push({
         domain,
@@ -800,7 +801,7 @@ export function screenedComparisonFromJudgeCheckpoints(primaryDomain: string, va
           rivalSourceUrl: rival.sourceUrl,
         },
       });
-      rows.set(primary.id, row);
+      rows.set(primaryKey, row);
     }
   }
   if (!rows.size) return null;
