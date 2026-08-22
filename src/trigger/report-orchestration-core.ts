@@ -490,12 +490,22 @@ export function validEnrichmentCheckpoint(value: unknown, targets: ProductEnrich
     const retryShaped = record.failureKind === "network" || record.httpStatus === 0 || record.code === "robots_unreachable"
       || record.httpStatus === 408 || record.httpStatus === 425 || record.httpStatus === 429
       || (typeof record.httpStatus === "number" && record.httpStatus >= 500);
+    const semanticallyValid = (record.code === "robots_unreachable" && record.failureKind === "robots" && record.httpStatus === undefined)
+      || (record.code === "robots_disallowed" && record.failureKind === "robots" && record.httpStatus === undefined)
+      || (record.code === "fetch_failed" && (
+        (record.failureKind === "network" && record.httpStatus === 0)
+        || (record.failureKind === "http" && typeof record.httpStatus === "number" && record.httpStatus >= 400 && record.httpStatus <= 599)
+        || (["content", "redirect"].includes(String(record.failureKind)) && record.httpStatus === undefined)
+      ))
+      || (record.code === "identity_mismatch" && ["identity", "redirect"].includes(String(record.failureKind)) && record.httpStatus === undefined)
+      || (record.code === "adapter_limited" && ["adapter", "network", "http", "content", "robots"].includes(String(record.failureKind)));
     if (typeof record.url !== "string"
       || typeof record.reason !== "string" || !record.reason.trim() || record.reason.length > 2_000
       || typeof record.code !== "string" || !validCodes.has(record.code)
       || typeof record.failureKind !== "string" || !validFailureKinds.has(record.failureKind)
       || (retryShaped && (typeof record.code !== "string" || typeof record.failureKind !== "string"))
       || (record.httpStatus !== undefined && (!Number.isInteger(record.httpStatus) || Number(record.httpStatus) < 0 || Number(record.httpStatus) > 599))) return false;
+    if (!semanticallyValid) return false;
     try {
       const key = `${canonicalDomain(new URL(record.url).hostname)}\n${String(record.productId || "")}`;
       const target = targetByProduct.get(key);
