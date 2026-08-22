@@ -25,7 +25,7 @@ The live MyJam Agency report `4a9a78f9c4a442cea8d19cf21d2d224e` discovered 1,001
 
 - Regression tests for candidate pool sizing, priced candidate priority, publication capping, and shortfall metadata.
 - Matching route, lifecycle, orchestration, report UI, full test, lint, and build validation.
-- Fresh live MyJam report on the 200-product plan proving 20 publishable priced comparisons, or an explicit bounded-exhaustion shortfall if the public market truly cannot supply 20.
+- Fresh live MyJam paid-plan report proving 20 publishable priced comparisons selected from the catalog-backed screening pool, or an explicit bounded-exhaustion shortfall if the public market truly cannot supply 20.
 
 ## Data boundaries
 
@@ -36,4 +36,5 @@ Only attributable first-party public product pages may be published. Search or m
 - The installed Claude Code `2.1.238` launcher resolved to Bun `1.4.0` before model selection, so no Claude or Fable review was claimed.
 - The required high-risk Codex fallback used two independent, read-only reviewers on the exact PR head.
 - The initial fallback reviews blocked hidden target clamping, repeated-rival enrichment that could starve distinct primary products, stale fact-manifest reuse, deleted suppressed evidence, and misleading assessed-versus-published metrics. The revision keeps the purchased target intact, funds at most one completable rival per primary before optional work, reuses facts only when the current manifest ID and hash match, persists the full screened evidence set for evaluation, and labels the customer-visible count as priced products compared.
-- Revised validation: typechecks and production build passed; all 918 tests passed; VPS packaging assertions passed; lint passed with zero errors and two pre-existing image warnings.
+- The second exact-head fallback review found that screened matches beyond the target could remain price-eligible in the relational API and that a changed retry bundle could not replace a completed stale fact manifest. The revision now marks unselected screened rows as evidence-only with `outside-result-target`, and allows an authenticated current nonterminal retry to atomically replace a stale completed manifest when its first company chunk arrives.
+- Focused regressions prove that only 20 relational matches remain price-eligible while all screened evidence is retained, and that a changed retry bundle replaces stale completed facts. Both focused suites and TypeScript validation pass.

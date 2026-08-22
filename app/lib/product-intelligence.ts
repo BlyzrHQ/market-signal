@@ -124,7 +124,7 @@ export type ProductMatch = {
   };
   publication?: {
     priceEligible: boolean;
-    reason?: "insufficient-match-confidence" | "missing-valid-primary-price" | "missing-valid-rival-price" | "incompatible-price-currency" | "incompatible-market";
+    reason?: "insufficient-match-confidence" | "missing-valid-primary-price" | "missing-valid-rival-price" | "incompatible-price-currency" | "incompatible-market" | "outside-result-target";
   };
   excludedProduct?: ProductRecord;
 };

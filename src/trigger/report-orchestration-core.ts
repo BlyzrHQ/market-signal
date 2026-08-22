@@ -42,17 +42,28 @@ export function pricedResultEnrichmentBudget(resultTarget: number) {
 }
 
 function mergePublishedSelectionIntoScreenedComparison(screened: ProductComparison, published: ProductComparison) {
-  const publishedRows = new Map(published.rows.map((row) => [row.primary.id, row]));
+  const selected = new Map(published.rows.flatMap((row) => row.matches.flatMap((match) => match.product
+    ? [[`${row.primary.id}\n${match.domain}\n${match.product.id}`, match] as const]
+    : [])));
   return {
     ...screened,
     rows: screened.rows.map((row) => {
-      const publishedRow = publishedRows.get(row.primary.id);
-      const selected = publishedRow?.matches.find((match) => match.product);
-      if (!selected?.product) return row;
       return {
         ...row,
-        matches: row.matches.map((match) => match.domain === selected.domain
-          && (match.product?.id || match.excludedProduct?.id) === selected.product?.id ? selected : match),
+        matches: row.matches.map((match) => {
+          const product = match.product || match.excludedProduct;
+          if (!product) return match;
+          const publishedMatch = selected.get(`${row.primary.id}\n${match.domain}\n${product.id}`);
+          if (publishedMatch) return publishedMatch;
+          if (match.publication?.priceEligible !== true || !match.product) return match;
+          return {
+            ...match,
+            excludedProduct: match.product,
+            product: null,
+            decision: null,
+            publication: { priceEligible: false, reason: "outside-result-target" as const },
+          };
+        }),
       };
     }),
   } satisfies ProductComparison;

@@ -197,8 +197,8 @@ test("successful orchestration persists ordered heartbeats and a complete docume
 });
 
 test("the priced table is capped while suppressed screened evidence remains in relational facts", async () => {
-  const screened = comparison({ withPair: true, count: 21 });
-  screened.rows[20].matches[0].product.priceSignals = [];
+  const screened = comparison({ withPair: true, count: 22 });
+  screened.rows[21].matches[0].product.priceSignals = [];
   const port = mockPort({
     async match() { return { ok: true, comparison: screened }; },
   });
@@ -207,11 +207,13 @@ test("the priced table is capped while suppressed screened evidence remains in r
   assert.equal(result.reportStatus, "complete");
   const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
   assert.equal(block.rows.length, 20);
-  assert.equal(block.matching.primaryProductsAssessed, 21);
+  assert.equal(block.matching.primaryProductsAssessed, 22);
   assert.equal(block.matching.publishedPrimaryProducts, 20);
   assert.equal(block.matching.publication.suppressedAcceptedPairs, 1);
   const matchFacts = port.factChunks.filter((chunk) => chunk.kind === "matches").flatMap((chunk) => chunk.items);
-  assert.equal(matchFacts.length, 21);
+  assert.equal(matchFacts.length, 22);
+  assert.equal(matchFacts.filter((fact) => fact.evidence.publication?.priceEligible === true).length, 20);
+  assert.ok(matchFacts.some((fact) => fact.evidence.publication?.priceEligible === false && fact.evidence.publication?.reason === "outside-result-target"));
   assert.ok(matchFacts.some((fact) => fact.evidence.publication?.priceEligible === false && fact.evidence.publication?.reason === "missing-valid-rival-price"));
 });
 
