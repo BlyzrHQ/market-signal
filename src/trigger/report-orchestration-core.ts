@@ -389,7 +389,7 @@ export interface ReportOrchestrationPort {
   ads(input: unknown): Promise<{ ok: true; block: JsonBlock }>;
   match(input: { publicId: string; reportAttempt: number; taskAttemptNumber: number; reportObservedAt: string; primaryDomain: string; marketCountryCode?: string; productLimit: number; catalogs: Array<{ domain: string; products: ProductRecord[] }>; pinnedPairs?: PinnedProductPair[] }): Promise<{ ok: true; comparison: ProductComparison }>;
   enrich(input: { targets: unknown[] }): Promise<{ ok: true; products: ProductRecord[]; coverage: NonNullable<ProductComparison["enrichment"]> }>;
-  loadCheckpoint(publicId: string, input: { attemptNumber: number; batchIndex?: number }): Promise<Array<{ batchIndex: number; inputHash: string; result: unknown }>>;
+  loadCheckpoint(publicId: string, input: { attemptNumber: number; batchIndex?: number }): Promise<Array<{ attemptNumber: number; batchIndex: number; inputHash: string; result: unknown }>>;
   saveCheckpoint(publicId: string, input: { attemptNumber: number; batchIndex: number; inputHash: string; result: unknown }): Promise<void>;
   actions(input: { inputs: ProductActionInput[] }): Promise<{ ok: true; result: ProductActionPlanningResult }>;
   persistFactChunk(publicId: string, input: ReportFactChunkInput): Promise<void>;
@@ -708,10 +708,10 @@ export async function orchestrateReport(
             const durablePlan: DurableEnrichmentPlan = { version: 1, contentHash: enrichmentPlanContentHash(enrichmentPlan), ...enrichmentPlan };
             try {
               await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: planCheckpointIndex, inputHash, result: durablePlan });
-              durableCheckpoints.set(planCheckpointIndex, { batchIndex: planCheckpointIndex, inputHash, result: durablePlan });
+              durableCheckpoints.set(planCheckpointIndex, { attemptNumber: attempt.attemptNumber, batchIndex: planCheckpointIndex, inputHash, result: durablePlan });
             } catch (saveError) {
               const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: planCheckpointIndex }))[0];
-              if (!committed || committed.inputHash !== inputHash) throw saveError;
+              if (!committed || committed.attemptNumber !== attempt.attemptNumber || committed.inputHash !== inputHash) throw saveError;
               const checkpoint = validEnrichmentPlanCheckpoint(committed.result);
               if (!checkpoint) throw saveError;
               enrichmentPlan = checkpoint;
@@ -780,10 +780,10 @@ export async function orchestrateReport(
             }
             try {
               await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointIndex, inputHash, result: mergedResult });
-              durableCheckpoints.set(checkpointIndex, { batchIndex: checkpointIndex, inputHash, result: mergedResult });
+              durableCheckpoints.set(checkpointIndex, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointIndex, inputHash, result: mergedResult });
             } catch (saveError) {
               const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointIndex }))[0];
-              if (!committed || committed.inputHash !== inputHash) throw saveError;
+              if (!committed || committed.attemptNumber !== attempt.attemptNumber || committed.inputHash !== inputHash) throw saveError;
               const checkpoint = validEnrichmentCheckpoint(committed.result, batch);
               if (!checkpoint) throw saveError;
               return checkpoint;
@@ -906,10 +906,10 @@ export async function orchestrateReport(
         }
         try {
           await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: publishedCheckpointIndex, inputHash: publishedResultInputHash, result: publishedCheckpoint });
-          durableCheckpoints.set(publishedCheckpointIndex, { batchIndex: publishedCheckpointIndex, inputHash: publishedResultInputHash, result: publishedCheckpoint });
+          durableCheckpoints.set(publishedCheckpointIndex, { attemptNumber: attempt.attemptNumber, batchIndex: publishedCheckpointIndex, inputHash: publishedResultInputHash, result: publishedCheckpoint });
         } catch (saveError) {
           const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: publishedCheckpointIndex }))[0];
-          const validated = committed?.inputHash === publishedResultInputHash ? validPublishedResultCheckpoint(committed.result, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys) : null;
+          const validated = committed?.attemptNumber === attempt.attemptNumber && committed.inputHash === publishedResultInputHash ? validPublishedResultCheckpoint(committed.result, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys) : null;
           if (!validated) throw saveError;
           comparison = validated.comparison;
         }

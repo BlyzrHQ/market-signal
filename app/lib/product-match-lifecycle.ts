@@ -3,6 +3,7 @@ import { canonicalDomain } from "./domain.ts";
 import { publicHttpUrl } from "./public-url.ts";
 
 export type ProductMatchLifecycle = "idle" | "matching" | "retrying" | "complete" | "limited";
+export const MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY = 20;
 
 type ReportBlock = { type: string; id: string } & Record<string, unknown>;
 type ReportDocument = { blocks: ReportBlock[] } & Record<string, unknown>;
@@ -319,11 +320,21 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
     const existing = candidateRows[existingIndex];
     candidateRows[existingIndex] = { ...existing, matches: [...existing.matches, ...row.matches] };
   }
-  const candidates = candidateRows.map((row) => row.matches
-    .filter((match): match is ProductMatch & { product: ProductRecord } => Boolean(match.product && match.publication?.priceEligible === true))
-    .sort((left, right) => Number(right.assessment?.verdict === "same_product") - Number(left.assessment?.verdict === "same_product")
-      || right.score - left.score
-      || productIdentityKey(left.product).localeCompare(productIdentityKey(right.product))));
+  const candidates = candidateRows.map((row) => {
+    const seen = new Set<string>();
+    return row.matches
+      .filter((match): match is ProductMatch & { product: ProductRecord } => Boolean(match.product && match.publication?.priceEligible === true))
+      .sort((left, right) => Number(right.assessment?.verdict === "same_product") - Number(left.assessment?.verdict === "same_product")
+        || right.score - left.score
+        || productIdentityKey(left.product).localeCompare(productIdentityKey(right.product)))
+      .filter((match) => {
+        const key = productIdentityKey(match.product);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY);
+  });
   const rivalOwners = new Map<string, number>();
   const selectedByRow = new Map<number, ProductMatch>();
   const assignUniqueRival = (rowIndex: number, visitedRivals: Set<string>): boolean => {
@@ -372,7 +383,11 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
       processedPrimaryIds: union(currentMatching.processedPrimaryIds, priorMatching?.processedPrimaryIds).sort(),
     } : currentMatching,
   };
-  const limitedComparison = limitPublishedProductComparison(publishPricedProductComparison(merged, referenceTimeMs), resultTarget);
+  const limited = limitPublishedProductComparison(publishPricedProductComparison(merged, referenceTimeMs), resultTarget);
+  const limitedComparison: ProductComparison = {
+    ...limited,
+    rows: limited.rows.map((row) => ({ ...row, matches: row.matches.filter((match) => match.product) })),
+  };
   const comparison = limitedComparison.matching && currentMatching?.publication
     ? { ...limitedComparison, matching: { ...limitedComparison.matching, publication: currentMatching.publication } }
     : limitedComparison;
@@ -389,7 +404,7 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
       if (seenRivals.has(key)) return false;
       seenRivals.add(key);
       return true;
-    });
+    }).slice(0, MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY);
     return { ...row, matches };
   });
   const evidence: ProductComparison = {

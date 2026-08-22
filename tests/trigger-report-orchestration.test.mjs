@@ -169,7 +169,7 @@ function mockPort(overrides = {}) {
     async saveCheckpoint(_publicId, input) {
       const existing = checkpoints.get(input.batchIndex);
       if (existing && (existing.inputHash !== input.inputHash || JSON.stringify(existing.result) !== JSON.stringify(input.result))) throw new Error("checkpoint conflict");
-      checkpoints.set(input.batchIndex, { batchIndex: input.batchIndex, inputHash: input.inputHash, result: input.result });
+      checkpoints.set(input.batchIndex, { attemptNumber: input.attemptNumber, batchIndex: input.batchIndex, inputHash: input.inputHash, result: input.result });
     },
     async actions({ inputs }) { return { ok: true, result: deterministicProductActionResult(inputs) }; },
     async persistFactChunk(_publicId, value) { factChunks.push(value); },
@@ -1186,6 +1186,45 @@ test("report recovery restores priced results accumulated by a later task attemp
   assert.equal(result.reportStatus, "complete");
   assert.equal(block.rows.length, 20);
   assert.deepEqual(block.rows.map((item) => item.primary.id).sort(), Array.from({ length: 20 }, (_, index) => `recovered-p${index + 1}`).sort());
+});
+
+test("an ambiguous publication save cannot adopt an older report attempt checkpoint", async () => {
+  let matchCall = 0;
+  const wave = (offset) => {
+    const value = comparison({ withPair: true, count: 10 });
+    value.rows.forEach((item, index) => {
+      const number = offset + index + 1;
+      item.primary.id = `owned-p${number}`;
+      item.primary.sourceUrl = `https://shop.example/products/owned-${number}?country=GB`;
+      item.primary.imageUrl = `https://shop.example/images/owned-${number}.jpg`;
+      item.matches[0].product.id = `owned-r${number}`;
+      item.matches[0].product.sourceUrl = `https://rival.example/products/owned-${number}?country=GB`;
+      item.matches[0].product.imageUrl = `https://rival.example/images/owned-${number}.jpg`;
+    });
+    value.matching.selectedPrimaryIds = value.rows.map((item) => item.primary.id);
+    value.matching.assessedPrimaryIds = [...value.matching.selectedPrimaryIds];
+    value.matching.processedPrimaryIds = [...value.matching.selectedPrimaryIds];
+    return value;
+  };
+  const port = mockPort({
+    async crawl() {
+      const products = Array.from({ length: 20 }, (_, index) => ({ ...product("shop.example", `owned-p${index + 1}`), name: `Honey ${index + 1} 500g`, normalizedName: `honey ${index + 1} 500g`, sourceUrl: `https://shop.example/products/owned-${index + 1}?country=GB` }));
+      return { ok: true, primaryDomain: payload.primaryDomain, results: [{ domain: payload.primaryDomain, homepage: { sourceUrl: "https://shop.example", regionCountryCode: "GB" }, products }], discovery: { productSearchCoverage: { eligibleAnchors: 1_000, searchedAnchors: 200, startIndex: 0, endIndex: 200, anchorSetHash: "owned-catalog", truncated: true, searchesComplete: true, candidateDomainsFound: 1, candidateDomainsInvestigated: 1, candidateTruncated: false, verificationComplete: true, batchComplete: true, complete: false } }, adRequest: { companies: [{ domain: payload.primaryDomain }], region: "GB" }, document: { version: "1", blocks: [] } };
+    },
+    async match() { const value = wave(matchCall * 10); matchCall += 1; return { ok: true, comparison: value }; },
+  });
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/i);
+  assert.equal(port.checkpoints.get(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX).attemptNumber, 1);
+  const loadPriorReport = port.loadReport.bind(port);
+  port.loadReport = async () => { const stored = await loadPriorReport(); return { ...stored, run: { ...stored.run, attemptCount: 2 } }; };
+  const saveCheckpoint = port.saveCheckpoint.bind(port);
+  port.saveCheckpoint = async (publicId, input) => {
+    if (input.attemptNumber === 2 && input.batchIndex === PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX) throw new Error("current checkpoint write failed");
+    return saveCheckpoint(publicId, input);
+  };
+
+  await assert.rejects(() => orchestrateReport(recoveryPayload, { attemptNumber: 2, taskAttemptNumber: 1, isFinalAttempt: true }, port), /current checkpoint write failed/);
+  assert.equal(port.saves.length, 0);
 });
 
 test("catalog drift prevents stale priced-result accumulation", async () => {

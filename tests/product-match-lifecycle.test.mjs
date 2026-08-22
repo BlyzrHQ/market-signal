@@ -4,6 +4,7 @@ import {
   composeProductMatchAttempts,
   hasProductMatchCoverageDefect,
   limitPublishedProductComparison,
+  MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY,
   mergePublishedProductComparisonState,
   mergePublishedProductComparisons,
   publishPricedProductComparison,
@@ -423,6 +424,22 @@ test("durable priced evidence preserves backup rivals until a later global assig
   assert.equal(second.comparison.rows.length, 2);
   assert.equal(second.comparison.matching.publishedPrimaryProducts, 2);
   assert.deepEqual(new Set(second.comparison.rows.flatMap((item) => item.matches.flatMap((match) => match.product ? [match.product.id] : []))), new Set(["r-shared", "r-backup"]));
+});
+
+test("durable priced evidence stays below the checkpoint limit for a legal 6000-pair primary", () => {
+  const first = row("p1", "r1");
+  first.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+  first.matches = Array.from({ length: 6_000 }, (_, index) => {
+    const match = row("p1", `r${index + 1}`).matches[0];
+    match.product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+    match.score = 1 - (index / 10_000);
+    return match;
+  });
+  const state = mergePublishedProductComparisonState(comparison({ selected: ["p1"], assessed: ["p1"], rows: [first], accepted: 6_000 }), null, 20);
+  const checkpoint = { version: 2, comparison: state.comparison, evidence: state.evidence };
+
+  assert.equal(state.evidence.rows[0].matches.length, MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY);
+  assert.ok(Buffer.byteLength(JSON.stringify(checkpoint), "utf8") < 512_000);
 });
 
 test("a later unpriced observation does not evict an earlier valid priced comparison", () => {
