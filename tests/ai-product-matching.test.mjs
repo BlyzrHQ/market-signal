@@ -912,16 +912,20 @@ test("a persisted candidate plan makes retries independent of embedding drift", 
     product("plan-r3", "rival.test", "Olive Oil 500ml"),
   ];
   let savedPlan;
+  let savedPlanKey;
   const judged = [];
   const run = async (retry) => buildAIProductComparison("shop.test", [
-    { domain: "shop.test", products: [primary] },
-    { domain: "rival.test", products: rivals },
+    { domain: "shop.test", products: [{ ...primary, observedAt: retry ? "2026-08-02T00:00:00.000Z" : primary.observedAt, imageUrl: retry ? "https://shop.test/new-image.jpg" : "", priceSignals: retry ? [{ raw: "GBP 12", currency: "GBP", amount: 12 }] : [] }] },
+    { domain: "rival.test", products: rivals.map((rival, index) => ({ ...rival, observedAt: retry ? "2026-08-02T00:00:00.000Z" : rival.observedAt, imageUrl: retry ? `https://rival.test/new-${index}.jpg` : "", priceSignals: retry ? [{ raw: `GBP ${8 + index}`, currency: "GBP", amount: 8 + index }] : [] })) },
   ], {}, {
     apiKey: "test",
     maxCandidatesPerPrimary: 2,
     referenceTimeMs: Date.parse("2026-08-01T00:00:00.000Z"),
-    loadCandidatePlan: async () => retry ? savedPlan : null,
-    saveCandidatePlan: async (_key, plan) => { savedPlan = plan; },
+    loadCandidatePlan: async (key) => {
+      if (retry) assert.deepEqual(key, savedPlanKey);
+      return retry ? savedPlan : null;
+    },
+    saveCandidatePlan: async (key, plan) => { savedPlanKey = key; savedPlan = plan; },
     fetch: async (url, init) => {
       const body = JSON.parse(init.body);
       if (String(url).endsWith("/embeddings")) {

@@ -10,8 +10,10 @@ import {
   applyFinalProductEnrichment,
   planFinalProductEnrichmentTargets,
   type ProductComparison,
+  type ProductEnrichmentTarget,
   type ProductRecord,
 } from "../../app/lib/product-intelligence.ts";
+import { canonicalDomain } from "../../app/lib/domain.ts";
 import {
   applyProductActionPlans,
   collectProductActionInputs,
@@ -81,15 +83,24 @@ function publishedPricedPrimaryCount(comparison: ProductComparison, referenceTim
 
 type EnrichmentResult = Awaited<ReturnType<ReportOrchestrationPort["enrich"]>>;
 
-function validEnrichmentCheckpoint(value: unknown): EnrichmentResult | null {
+function validEnrichmentCheckpoint(value: unknown, targets: ProductEnrichmentTarget[]): EnrichmentResult | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const candidate = value as Partial<EnrichmentResult>;
   if (candidate.ok !== true || !Array.isArray(candidate.products) || !candidate.coverage || typeof candidate.coverage !== "object") return null;
   if (candidate.products.length > FINAL_ENRICHMENT_BATCH_SIZE) return null;
+  const targetByProduct = new Map(targets.map((target) => [`${canonicalDomain(target.domain)}\n${target.productId}`, target]));
+  if (targetByProduct.size !== targets.length) return null;
   const validProduct = (product: unknown) => {
     if (!product || typeof product !== "object" || Array.isArray(product)) return false;
     const item = product as Partial<ProductRecord>;
-    return typeof item.id === "string" && item.id.length > 0
+    const domain = canonicalDomain(String(item.domain || ""));
+    const target = targetByProduct.get(`${domain}\n${String(item.id || "")}`);
+    let sourceDomain = "";
+    try { sourceDomain = canonicalDomain(new URL(String(item.sourceUrl || "")).hostname); } catch { return false; }
+    return Boolean(target)
+      && sourceDomain === domain
+      && domain === canonicalDomain(target?.domain || "")
+      && typeof item.id === "string" && item.id.length > 0
       && typeof item.domain === "string" && item.domain.length > 0
       && typeof item.name === "string" && item.name.length > 0
       && typeof item.normalizedName === "string"
@@ -102,12 +113,22 @@ function validEnrichmentCheckpoint(value: unknown): EnrichmentResult | null {
   if (!candidate.products.every(validProduct)) return null;
   const coverage = candidate.coverage as Partial<NonNullable<ProductComparison["enrichment"]>>;
   const boundedCount = (count: unknown) => typeof count === "number" && Number.isInteger(count) && count >= 0 && count <= FINAL_ENRICHMENT_BATCH_SIZE;
-  if (!boundedCount(coverage.pagesRequested)
+  if (coverage.pagesRequested !== targets.length
+    || coverage.pagesFetched !== candidate.products.length
+    || !boundedCount(coverage.pagesRequested)
     || !boundedCount(coverage.pagesFetched)
     || !boundedCount(coverage.maxPages)
+    || (coverage.maxPages || 0) < targets.length
     || (coverage.pagesFetched || 0) > (coverage.pagesRequested || 0)
     || !Array.isArray(coverage.gaps)
     || coverage.gaps.length > FINAL_ENRICHMENT_BATCH_SIZE) return null;
+  if (!coverage.gaps.every((gap) => {
+    if (!gap || typeof gap !== "object") return false;
+    const record = gap as { productId?: unknown; url?: unknown };
+    const target = targets.find((item) => item.productId === record.productId);
+    if (!target || typeof record.url !== "string") return false;
+    try { return canonicalDomain(new URL(record.url).hostname) === canonicalDomain(target.domain); } catch { return false; }
+  })) return null;
   return candidate as EnrichmentResult;
 }
 
@@ -374,13 +395,23 @@ export async function orchestrateReport(
             const saved = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointIndex }))[0];
             if (saved) {
               if (saved.inputHash !== inputHash) throw new Error("A durable enrichment checkpoint conflicts with the current product-page batch.");
-              const checkpoint = validEnrichmentCheckpoint(saved.result);
+              const checkpoint = validEnrichmentCheckpoint(saved.result, batch);
               if (!checkpoint) throw new Error("A durable enrichment checkpoint is invalid.");
               return checkpoint;
             }
             const result = await port.enrich({ targets: batch });
-            await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointIndex, inputHash, result });
-            return result;
+            const validatedResult = validEnrichmentCheckpoint(result, batch);
+            if (!validatedResult) throw new Error("Product-page enrichment returned an invalid batch result.");
+            try {
+              await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointIndex, inputHash, result: validatedResult });
+            } catch (saveError) {
+              const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointIndex }))[0];
+              if (!committed || committed.inputHash !== inputHash) throw saveError;
+              const checkpoint = validEnrichmentCheckpoint(committed.result, batch);
+              if (!checkpoint) throw saveError;
+              return checkpoint;
+            }
+            return validatedResult;
           }));
           results.forEach((result, index) => {
             if (result.status === "fulfilled") {

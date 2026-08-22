@@ -599,11 +599,17 @@ function candidatePlanHash(primary: ProductRecord[], competitors: ProductCatalog
 
 function candidatePlanProductIdentity(product: ProductRecord) {
   return {
-    ...safeProduct(product),
+    id: product.id,
+    domain: canonicalDomain(product.domain),
+    name: clean(product.name, 220),
     normalizedName: product.normalizedName,
-    priceSignals: product.priceSignals,
-    imageUrl: product.imageUrl,
-    observedAt: product.observedAt,
+    category: clean(product.category, 160),
+    type: product.jsonLdType,
+    description: clean(product.description, 500),
+    attributes: product.attributes.map((item) => clean(item, 100)).filter(Boolean).slice(0, 8),
+    sourceUrl: product.sourceUrl,
+    observedIdentifiers: product.identifiers ? { gtins: product.identifiers.gtins, sku: product.identifiers.sku || "", mpn: product.identifiers.mpn || "", brand: product.identifiers.brand || "" } : null,
+    canonicalQuantity: product.quantity || null,
   };
 }
 

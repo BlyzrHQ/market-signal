@@ -155,7 +155,7 @@ function mockPort(overrides = {}) {
     async brief() { return { ok: true, summary: "Observed market" }; },
     async ads() { return { ok: true, block: { type: "ad-intelligence", id: "ad-intelligence" } }; },
     async match() { return { ok: true, comparison: comparison({ withPair: true }) }; },
-    async enrich({ targets }) { return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: targets.length, gaps: [] } }; },
+    async enrich({ targets }) { return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: targets.length, gaps: [] } }; },
     async loadCheckpoint(_publicId, input) { return checkpoints.has(input.batchIndex) ? [checkpoints.get(input.batchIndex)] : []; },
     async saveCheckpoint(_publicId, input) {
       const existing = checkpoints.get(input.batchIndex);
@@ -839,6 +839,67 @@ test("a task retry reuses durable enrichment batches instead of fetching product
   await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
   assert.equal(enrichCalls, 1);
   assert.equal(port.checkpoints.size, 1);
+});
+
+test("an ambiguous checkpoint-save response reloads and uses the committed enrichment batch", async () => {
+  let enrichCalls = 0;
+  const port = mockPort({
+    async match() {
+      const value = comparison({ withPair: true, count: 1 });
+      value.rows[0].primary.priceSignals = [];
+      value.rows[0].matches[0].product.priceSignals = [];
+      return { ok: true, comparison: value };
+    },
+    async enrich({ targets }) {
+      enrichCalls += 1;
+      return {
+        ok: true,
+        products: targets.map((target) => ({ ...product(target.domain, target.productId), name: target.expectedName, normalizedName: target.expectedName.toLowerCase(), sourceUrl: target.sourceUrl, priceSignals: [{ raw: target.role === "primary" ? "GBP 9" : "GBP 7", currency: "GBP", amount: target.role === "primary" ? 9 : 7 }] })),
+        coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: 64, gaps: [] },
+      };
+    },
+  });
+  const saveCheckpoint = port.saveCheckpoint.bind(port);
+  let loseResponse = true;
+  port.saveCheckpoint = async (...args) => {
+    await saveCheckpoint(...args);
+    if (loseResponse) { loseResponse = false; throw new Error("checkpoint response lost"); }
+  };
+
+  const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
+  assert.equal(enrichCalls, 1);
+  assert.equal(result.reportStatus, "limited");
+  assert.equal(result.limitedPhases.includes("enrichment"), false);
+  const productBlock = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
+  assert.equal(productBlock.rows.flatMap((row) => row.matches).filter((match) => match.product).length, 1);
+});
+
+test("a shape-valid but semantically incomplete enrichment checkpoint is rejected", async () => {
+  let enrichCalls = 0;
+  let saveCalls = 0;
+  const port = mockPort({
+    async match() {
+      const value = comparison({ withPair: true, count: 1 });
+      value.rows[0].primary.priceSignals = [];
+      value.rows[0].matches[0].product.priceSignals = [];
+      return { ok: true, comparison: value };
+    },
+    async enrich({ targets }) {
+      enrichCalls += 1;
+      return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: 64, gaps: [] } };
+    },
+    async saveDocument() {
+      saveCalls += 1;
+      if (saveCalls === 1) throw new Error("terminal callback lost");
+    },
+  });
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
+  const checkpoint = port.checkpoints.values().next().value;
+  checkpoint.result.coverage.pagesRequested = 0;
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
+  assert.equal(enrichCalls, 1);
+  assert.equal(result.reportStatus, "limited");
+  assert.ok(result.limitedPhases.includes("enrichment"));
 });
 
 test("a conflicting enrichment checkpoint fails closed without fetching or publishing it", async () => {
