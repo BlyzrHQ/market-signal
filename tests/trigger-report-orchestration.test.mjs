@@ -41,6 +41,8 @@ const payload = {
 };
 
 test("priced-result enrichment can exhaust the full bounded catalog regardless of publication target", () => {
+  assert.equal(MAX_FINAL_ENRICHMENT_TARGETS, 7_000);
+  assert.equal(MAX_FINAL_ENRICHMENT_BATCHES, 110);
   assert.equal(pricedResultEnrichmentBudget(20), MAX_FINAL_ENRICHMENT_TARGETS);
   assert.equal(pricedResultEnrichmentBudget(200), MAX_FINAL_ENRICHMENT_TARGETS);
   assert.equal(pricedResultEnrichmentBudget(1_000), MAX_FINAL_ENRICHMENT_TARGETS);
@@ -797,7 +799,7 @@ test("all operation deadlines keep a two-minute margin below the stale marker", 
   for (const timeout of Object.values(OPERATION_BUDGETS_MS)) assert.ok(timeout <= MAX_OPERATION_TIMEOUT_MS);
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS > OPERATION_BUDGETS_MS.match, "Undici must not preempt the match operation deadline");
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS < MAX_OPERATION_TIMEOUT_MS, "the worker deadline must remain inside the outer edge window");
-  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 14_545_000);
+  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 13_565_000);
   assert.ok(WORST_CASE_CRITICAL_PATH_MS <= 14_580_000, "critical path must preserve a two-minute task-ceiling margin");
 });
 
@@ -938,6 +940,24 @@ test("terminal product-page rejections permit truthful bounded exhaustion while 
   assert.equal(block.enrichment.gaps.length, 2);
 });
 
+test("complete discovery with no verified rival catalog publishes truthful bounded exhaustion", async () => {
+  const port = mockPort({
+    async match() {
+      const value = comparison({ withPair: false, count: 1 });
+      value.matching.primaryProductsScreened = 1;
+      value.matching.selectedPrimaryIds = ["p1"];
+      value.matching.processedPrimaryIds = ["p1"];
+      return { ok: true, comparison: value };
+    },
+  });
+
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port);
+  const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
+  assert.equal(result.reportStatus, "limited");
+  assert.equal(block.matching.resultShortfallReason, "bounded-candidate-pool-exhausted");
+  assert.equal(block.matching.resultShortfall, 20);
+});
+
 test("access-blocked product pages remain processing-incomplete", async () => {
   const port = mockPort({
     async match() {
@@ -981,8 +1001,8 @@ test("publication-ineligible pairs are re-read on both sides and successful batc
   assert.deepEqual(batchSizes, [64, 64, 12]);
   assert.equal(port.saves.length, 0);
   const checkpoints = port.events.filter((event) => /^enrichment-report-\d+-task-\d+-wave-\d+-checkpoint$/.test(event.idempotencyKey));
-  assert.equal(checkpoints.length, 2);
-  assert.equal(checkpoints[1].metadata.pagesRequested, 140);
+  assert.equal(checkpoints.length, 1);
+  assert.equal(checkpoints[0].metadata.pagesRequested, 140);
 });
 
 test("a task retry reuses durable enrichment batches instead of fetching product pages again", async () => {

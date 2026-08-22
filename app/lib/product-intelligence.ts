@@ -1930,7 +1930,7 @@ export function planPreliminaryCatalogReconciliation(comparison: ProductComparis
 }
 
 export function planFinalProductEnrichmentTargets(comparison: ProductComparison, maxPages = 24, referenceTimeMs = Date.now()) {
-  const boundedMax = Math.max(0, Math.min(6_000, Math.floor(maxPages)));
+  const boundedMax = Math.max(0, Math.min(7_000, Math.floor(maxPages)));
   const marketCountryCode = /^[A-Z]{2}$/.test(String(comparison.marketCountryCode || "").toUpperCase())
     ? String(comparison.marketCountryCode).toUpperCase()
     : "";

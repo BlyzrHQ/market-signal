@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildAIProductComparison, judgeBatchKey } from "../app/lib/ai-product-matching.ts";
+import { boundJudgeCandidatePairs, buildAIProductComparison, judgeBatchKey, MAX_JUDGE_CANDIDATE_PAIRS } from "../app/lib/ai-product-matching.ts";
 import { hasValidObservedRivalPrice } from "../app/lib/product-intelligence.ts";
 import { publishPricedProductComparison } from "../app/lib/product-match-lifecycle.ts";
 
@@ -175,6 +175,44 @@ test("a validated exact-pair pin survives primary and rival catalog limits", asy
   assert.deepEqual(judged[0].candidates.map((candidate) => candidate.id), [pinnedRival.id]);
   assert.equal(comparison.rows[0].primary.id, pinnedPrimary.id);
   assert.equal(comparison.rows[0].matches[0].product?.id, pinnedRival.id);
+});
+
+test("a fully screened catalog with no rival products is a completed empty match pool", async () => {
+  const primary = product("p-empty-rivals", "shop.test", "Sidr Honey 500g");
+  const comparison = await buildAIProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }], {}, {
+    apiKey: "",
+    fetch: async () => { throw new Error("an empty rival pool must not call the model"); },
+  });
+
+  assert.equal(comparison.matching?.method, "ai-hybrid");
+  assert.equal(comparison.matching?.available, true);
+  assert.deepEqual(comparison.matching?.selectedPrimaryIds, [primary.id]);
+  assert.deepEqual(comparison.matching?.processedPrimaryIds, [primary.id]);
+  assert.deepEqual(comparison.matching?.gaps, []);
+});
+
+test("candidate judging retains every pin while staying inside the global 6000-pair bound", () => {
+  const groups = Array.from({ length: 1_000 }, (_, primaryIndex) => {
+    const primary = product(`bounded-p-${primaryIndex}`, "shop.test", `Primary ${primaryIndex}`);
+    const count = primaryIndex < 750 ? 7 : 5;
+    return {
+      primary,
+      candidates: Array.from({ length: count }, (_, candidateIndex) => ({
+        product: product(`bounded-r-${primaryIndex}-${candidateIndex}`, `rival-${candidateIndex}.test`, `Rival ${primaryIndex} ${candidateIndex}`),
+        retrievalScore: 1,
+        lexicalScore: 1,
+        lexicalEligible: true,
+        semanticScore: 1,
+        identitySignal: true,
+      })),
+    };
+  });
+  const pins = groups.slice(0, 750).flatMap((group) => group.candidates.map((candidate) => ({ primaryId: group.primary.id, rivalDomain: candidate.product.domain, rivalId: candidate.product.id })));
+  const bounded = boundJudgeCandidatePairs(groups, pins, MAX_JUDGE_CANDIDATE_PAIRS);
+
+  assert.equal(pins.length, 5_250);
+  assert.equal(bounded.reduce((total, group) => total + group.candidates.length, 0), 6_000);
+  assert.equal(bounded.slice(0, 750).every((group) => group.candidates.length === 7), true);
 });
 
 test("exact-pair backfill preserves more than twelve bounded pins", async () => {

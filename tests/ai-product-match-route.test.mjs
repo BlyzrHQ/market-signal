@@ -223,6 +223,17 @@ test("a single seller can retain the complete 6000-product pinned universe", () 
   assert.deepEqual(parsePinnedPairs([pin], catalogs, "shop.test"), [pin]);
 });
 
+test("the 6000-product rival bound is global across submitted catalogs", () => {
+  const records = (count, domain, prefix) => Array.from({ length: count }, (_, index) => ({ id: `${prefix}${index}`, name: `Product ${index}`, sourceUrl: `https://${domain}/products/${index}` }));
+  const catalogs = parseCatalogs([
+    { domain: "shop.test", products: [{ id: "p1", name: "Primary", sourceUrl: "https://shop.test/products/primary" }] },
+    { domain: "rival-a.test", products: records(3_001, "rival-a.test", "a") },
+    { domain: "rival-b.test", products: records(3_000, "rival-b.test", "b") },
+  ], "shop.test");
+
+  assert.deepEqual(catalogs, []);
+});
+
 test("authenticated matching binds durable judge checkpoints to the active report attempt", async () => {
   const token = "test-callback-token-that-is-at-least-32-characters";
   const saved = [];

@@ -398,7 +398,7 @@ export function competitorInvestigationComplete(result: Pick<DomainCrawl, "homep
     let key = "";
     try { const url = new URL(gap.url); key = `${canonicalDomain(url.hostname)}${url.pathname.replace(/\/$/, "")}`; } catch { return false; }
     if (!seedUrls.has(key) || /(?:HTTP|status)\s+(?:404|410)\b/i.test(gap.reason)) return false;
-    return /timeout|timed out|network|robots|unavailable|access|denied|(?:HTTP|status)\s+(?:401|403|407|408|425|429|5\d\d)\b/i.test(gap.reason);
+    return /timeout|timed out|network|robots|unavailable|access|denied|processing failed before verification completed|(?:HTTP|status)\s+(?:401|403|407|408|425|429|5\d\d)\b/i.test(gap.reason);
   });
 }
 

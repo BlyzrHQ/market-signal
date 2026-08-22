@@ -320,6 +320,12 @@ test("discovery exhaustion fails closed on candidate truncation or nonterminal v
     gaps: [{ url: "https://verified.example/products/beef-cubes", reason: "request timed out", observedAt: "2026-08-07T00:00:00.000Z" }],
   };
   assert.equal(competitorInvestigationComplete(seededTimeout), false);
+  const seededProcessingFailure = {
+    ...verified,
+    discovery: { matchedProductUrl: "https://verified.example/products/beef-cubes" },
+    gaps: [{ url: "https://verified.example/products/beef-cubes", reason: "page processing failed before verification completed.", observedAt: "2026-08-07T00:00:00.000Z" }],
+  };
+  assert.equal(competitorInvestigationComplete(seededProcessingFailure), false);
   const persistenceFailed = finalizedDiscoveryCoverage(coverage, 1, 1, ["fulfilled"], [verified], true, false);
   assert.equal(persistenceFailed.batchComplete, false);
   assert.equal(persistenceFailed.complete, false);

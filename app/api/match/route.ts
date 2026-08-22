@@ -209,6 +209,10 @@ export function parseCatalogs(value: unknown, primaryDomain = "", requestedPins?
     if (productIds.has(item.id)) return [];
     productIds.add(item.id);
   }
+  const rivalProductCount = catalogs
+    .filter((catalog) => catalog.domain !== canonicalDomain(primaryDomain))
+    .reduce((total, catalog) => total + catalog.products.length, 0);
+  if (rivalProductCount > MAX_RIVAL_PRODUCTS) return [];
   return catalogs;
 }
 

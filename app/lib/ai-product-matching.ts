@@ -105,6 +105,7 @@ const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
 const DEFAULT_MAX_PRIMARY = 60;
 const MAX_PRIMARY_PRODUCTS = 1_000;
 const MAX_PINNED_PAIRS = 6_000;
+export const MAX_JUDGE_CANDIDATE_PAIRS = 6_000;
 const DEFAULT_MAX_CANDIDATES = 5;
 const DEFAULT_MAX_PER_DOMAIN = 5;
 const DEFAULT_MAX_COMPETITOR_PRODUCTS = 5_000;
@@ -378,6 +379,23 @@ function retrieveGroups(primaryProducts: ProductRecord[], competitors: ProductCa
   return { groups, scoredPairs };
 }
 
+export function boundJudgeCandidatePairs(groups: CandidateGroup[], pinnedPairs: PinnedProductPair[], maxPairs: number) {
+  const pinnedKeys = new Set(pinnedPairs.map((pair) => `${pair.primaryId}|${canonicalDomain(pair.rivalDomain)}|${pair.rivalId}`));
+  const split = groups.map((group) => ({
+    group,
+    pinned: group.candidates.filter((candidate) => pinnedKeys.has(`${group.primary.id}|${canonicalDomain(candidate.product.domain)}|${candidate.product.id}`)),
+    ordinary: group.candidates.filter((candidate) => !pinnedKeys.has(`${group.primary.id}|${canonicalDomain(candidate.product.domain)}|${candidate.product.id}`)),
+  }));
+  const pinnedCount = split.reduce((total, item) => total + item.pinned.length, 0);
+  if (pinnedCount > maxPairs) throw new Error("The pinned product-pair universe exceeds the bounded judge capacity.");
+  let ordinaryRemaining = maxPairs - pinnedCount;
+  return split.map(({ group, pinned, ordinary }) => {
+    const retainedOrdinary = ordinary.slice(0, ordinaryRemaining);
+    ordinaryRemaining -= retainedOrdinary.length;
+    return { primary: group.primary, candidates: [...pinned, ...retainedOrdinary] };
+  });
+}
+
 function judgeSchema() {
   return {
     type: "object",
@@ -634,6 +652,7 @@ function restoreCandidatePlan(value: unknown, planHash: string, primary: Product
     || plan.selectedPrimaryCount !== expectedGroupCount
     || !Array.isArray(plan.groups)
     || plan.groups.length !== expectedGroupCount
+    || plan.candidatePairCount > MAX_JUDGE_CANDIDATE_PAIRS
     || plan.candidatePairCount !== plan.groups.reduce((sum, group) => sum + (Array.isArray(group?.candidateKeys) ? group.candidateKeys.length : 0), 0)
     || plan.contentHash !== candidatePlanContentHash(plan.groups)) return null;
   const primaryByKey = new Map(primary.map((product) => [candidatePlanProductKey(product), product]));
@@ -725,7 +744,6 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   const model = options.model || process.env.MARKET_SIGNAL_MATCH_MODEL || DEFAULT_MODEL;
   const embeddingModel = options.embeddingModel || process.env.MARKET_SIGNAL_MATCH_EMBEDDING_MODEL || DEFAULT_EMBEDDING_MODEL;
   const matchingBase = { model, embeddingModel, promptVersion: PROMPT_VERSION, primaryProductsAssessed: 0, primaryProductsScreened: 0, candidatePairsAssessed: 0, retrievalPairsScored: 0, judgeCalls: 0, embeddingCalls: 0, totalJudgeBatches: 0, reusedJudgeCheckpoints: 0, savedJudgeCheckpoints: 0, durationMs: 0, gaps: [] as string[], selectedPrimaryIds: [] as string[], assessedPrimaryIds: [] as string[], processedPrimaryIds: [] as string[], attempts: 1, primaryProductsSynchronized: 0, competitorProductsSynchronized: 0, candidateSlotsByDomain: {} as Record<string, number> };
-  if (!apiKey) return { ...withoutUnassessedMatches(fallback), matching: { ...matchingBase, method: "lexical-fallback", available: false, gaps: ["AI product matching is not configured; no product pair was accepted without AI assessment."] } };
 
   const fetcher = options.fetch || fetch;
   const baseUrl = (options.baseUrl || process.env.OPENAI_RESPONSES_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
@@ -753,7 +771,12 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   });
   matchingBase.primaryProductsSynchronized = synchronizedPrimary.length;
   matchingBase.competitorProductsSynchronized = competitors.reduce((sum, catalog) => sum + catalog.products.length, 0);
-  if (!synchronizedPrimary.length || !competitors.length) return { ...withoutUnassessedMatches(fallback), matching: { ...matchingBase, method: "lexical-fallback", available: false, gaps: ["AI product matching had no primary or competitor catalog records to assess; no product pair was accepted."] } };
+  if (!synchronizedPrimary.length) return { ...withoutUnassessedMatches(fallback), matching: { ...matchingBase, method: "lexical-fallback", available: false, gaps: ["AI product matching had no primary catalog records to assess; no product pair was accepted."] } };
+  if (!competitors.length) {
+    const processed = synchronizedPrimary.slice(0, maxPrimary).map((product) => product.id);
+    return { ...withoutUnassessedMatches(fallback), matching: { ...matchingBase, method: "ai-hybrid", available: true, primaryProductsScreened: processed.length, selectedPrimaryIds: processed, processedPrimaryIds: processed } };
+  }
+  if (!apiKey) return { ...withoutUnassessedMatches(fallback), matching: { ...matchingBase, method: "lexical-fallback", available: false, gaps: ["AI product matching is not configured; no product pair was accepted without AI assessment."] } };
 
   const embeddingProducts = [...new Map([...synchronizedPrimary, ...competitors.flatMap((catalog) => catalog.products)].map((product) => [product.id, product])).values()];
   let embeddings = new Map<string, number[]>();
@@ -789,7 +812,11 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
       gaps.push(error instanceof Error && error.name === "AbortError" ? "Semantic product retrieval timed out; bounded lexical retrieval was used before AI judging." : "Semantic product retrieval was unavailable; bounded lexical retrieval was used before AI judging.");
     }
     const retrievedGroups = retrieveGroups(synchronizedPrimary, competitors, embeddings, fallback, maxCandidates, maxPerDomain, maxRetrievalPool, pinnedPairs);
-    groups = selectJudgeGroups(retrievedGroups.groups, maxPrimary, new Set(pinnedPairs.map((pair) => pair.primaryId)), referenceTimeMs, options.marketCountryCode || "");
+    groups = boundJudgeCandidatePairs(
+      selectJudgeGroups(retrievedGroups.groups, maxPrimary, new Set(pinnedPairs.map((pair) => pair.primaryId)), referenceTimeMs, options.marketCountryCode || ""),
+      pinnedPairs,
+      MAX_JUDGE_CANDIDATE_PAIRS,
+    );
     if (options.saveCandidatePlan) {
       const planGroups = groups.map((group) => ({ primaryKey: candidatePlanProductKey(group.primary), candidateKeys: group.candidates.map((candidate) => candidatePlanProductKey(candidate.product)) }));
       const plan: ProductCandidatePlan = { version: 2, planHash, contentHash: candidatePlanContentHash(planGroups), primaryCatalogCount: synchronizedPrimary.length, selectedPrimaryCount: groups.length, candidatePairCount: planGroups.reduce((sum, group) => sum + group.candidateKeys.length, 0), groups: planGroups };
