@@ -13,7 +13,7 @@ import {
   upsertProductComparisonBlock,
 } from "../app/lib/product-match-lifecycle.ts";
 import { applyFinalProductEnrichment } from "../app/lib/product-intelligence.ts";
-import { REPORT_CALLBACK_ENVELOPE_BYTES } from "../src/shared/report-document-compaction.ts";
+import { REPORT_CALLBACK_ENVELOPE_BYTES, REPORT_MATCH_CHECKPOINT_RESULT_BYTES } from "../src/shared/report-document-compaction.ts";
 
 const TEST_NOW = new Date().toISOString();
 
@@ -572,7 +572,7 @@ test("maximum legal compact fields preserve twenty alternatives for every target
       match.product.name = `Rival ${primaryIndex}-${rivalIndex} ${"n".repeat(220)}`;
       match.product.sourceUrl = legalUrl(`${primaryIndex}-${rivalIndex}`);
       match.product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
-      match.product.identifiers = { gtins: Array.from({ length: 8 }, (_, gtinIndex) => validGtin(1 + (primaryIndex * 160) + (rivalIndex * 8) + gtinIndex)) };
+      match.product.identifiers = { gtins: Array.from({ length: 20 }, (_, gtinIndex) => validGtin(1 + (primaryIndex * 400) + (rivalIndex * 20) + gtinIndex)) };
       match.product.identifiers.sku = "s".repeat(100);
       match.product.identifiers.mpn = "m".repeat(100);
       match.product.identifiers.brand = "b".repeat(100);
@@ -589,7 +589,8 @@ test("maximum legal compact fields preserve twenty alternatives for every target
 
   assert.equal(state.comparison.rows.length, 20);
   assert.deepEqual(state.evidence.rows.map((item) => item.matches.length), Array(20).fill(20));
-  assert.ok(Buffer.byteLength(JSON.stringify(checkpoint), "utf8") < REPORT_CALLBACK_ENVELOPE_BYTES - 100_000);
+  assert.ok(Buffer.byteLength(JSON.stringify(checkpoint), "utf8") <= REPORT_MATCH_CHECKPOINT_RESULT_BYTES);
+  assert.ok(Buffer.byteLength(JSON.stringify({ action: "match-batch-checkpoint-save", attemptNumber: 20, batchIndex: 3_999, inputHash: "a".repeat(64), result: checkpoint }), "utf8") < REPORT_CALLBACK_ENVELOPE_BYTES);
 });
 
 test("global assignment counts a merchant product id only once when its URL and name drift", () => {
@@ -632,15 +633,39 @@ test("global assignment counts one canonical rival source only once when ids and
   assert.equal(state.comparison.matching.resultShortfall, 1);
 });
 
-test("global assignment counts a rival only once when observations share a secondary GTIN", () => {
+test("global assignment counts one shop-route rival source only once when ids and names drift", () => {
+  const pricedRow = (primaryId, rivalId, rivalName) => {
+    const item = row(primaryId, rivalId);
+    item.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+    item.matches[0].product.name = rivalName;
+    item.matches[0].product.normalizedName = rivalName.toLowerCase();
+    item.matches[0].product.sourceUrl = "https://rival.test/shop/shared-widget?country=US";
+    item.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+    return item;
+  };
+  const rows = [pricedRow("p1", "r1", "Widget Original"), pricedRow("p2", "r2", "Widget Renamed")];
+  const state = mergePublishedProductComparisonState(comparison({ selected: ["p1", "p2"], assessed: ["p1", "p2"], rows, accepted: 2 }), null, 2);
+
+  assert.equal(state.comparison.rows.length, 1);
+  assert.equal(mergePublishedProductComparisonState(JSON.parse(JSON.stringify(state.evidence)), null, 2).comparison.rows.length, 1);
+});
+
+test("global assignment and compact recovery count a rival once when observations share the ninth GTIN", () => {
+  const validGtin = (seed) => {
+    const body = String(seed).padStart(13, "0").slice(-13);
+    let sum = 0;
+    for (let index = body.length - 1, weight = 3; index >= 0; index -= 1, weight = weight === 3 ? 1 : 3) sum += Number(body[index]) * weight;
+    return `${body}${(10 - (sum % 10)) % 10}`;
+  };
+  const bridge = validGtin(9);
   const rows = Array.from({ length: 20 }, (_, index) => {
     const item = row(`p${index}`, `r${index}`);
     item.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
     item.matches[0].product.sourceUrl = `https://rival.test/products/r${index}?country=US`;
     item.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
     item.matches[0].product.identifiers = { gtins: index === 0
-      ? ["00036000291452", "04006381333931"]
-      : index === 1 ? ["04006381333931"] : [] };
+      ? Array.from({ length: 9 }, (_, gtinIndex) => validGtin(gtinIndex + 1))
+      : index === 1 ? [bridge] : [] };
     return item;
   });
   const ids = rows.map((item) => item.primary.id);
@@ -648,7 +673,7 @@ test("global assignment counts a rival only once when observations share a secon
 
   assert.equal(live.comparison.rows.length, 19);
   const checkpoint = JSON.parse(JSON.stringify(compactPublishedProductComparisonCheckpoint(live.evidence)));
-  assert.equal(checkpoint.rows[0].matches[0].product.identifiers.gtins.length, 2);
+  assert.equal(checkpoint.rows[0].matches[0].product.identifiers.gtins.length, 9);
   assert.equal(mergePublishedProductComparisonState(checkpoint, null, 20).comparison.rows.length, 19);
 });
 

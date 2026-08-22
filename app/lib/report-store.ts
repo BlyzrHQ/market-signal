@@ -5,7 +5,7 @@ import { canonicalReportFact, reportFactContentHash, reportFactHash } from "../.
 import { publicHttpUrl } from "./public-url.ts";
 import { officialAdRecordUrl } from "./ad-intelligence.ts";
 import { DETERMINISTIC_EVALUATOR_VERSION, DETERMINISTIC_RUBRIC_VERSION, profileDeterministicEvaluation } from "./report-evaluator.ts";
-import { compactTerminalReportDocument, REPORT_CALLBACK_ENVELOPE_BYTES, REPORT_SNAPSHOT_HARD_BYTES } from "../../src/shared/report-document-compaction.ts";
+import { compactTerminalReportDocument, REPORT_MATCH_CHECKPOINT_RESULT_BYTES, REPORT_SNAPSHOT_HARD_BYTES } from "../../src/shared/report-document-compaction.ts";
 import { MAX_REPORT_ATTEMPTS, MAX_REPORT_MATCH_CHECKPOINTS_PER_ATTEMPT } from "../../src/shared/report-orchestration-contract.ts";
 import { PRODUCT_PLAN_LIMITS, type ProductEntitlement, type ProductPlan } from "./product-entitlements.ts";
 import { enrichProductTargets } from "./storefront-product-enrichment.ts";
@@ -267,7 +267,7 @@ const MAX_REPORT_FACT_CHUNKS = 1_000;
 const MAX_REPORT_MATCH_CHECKPOINTS = MAX_REPORT_MATCH_CHECKPOINTS_PER_ATTEMPT;
 const MAX_STORED_REPORT_EVENTS = 1_000;
 const MAX_REPORT_FACT_CHUNK_BYTES = 1_000_000;
-export const MAX_REPORT_MATCH_BATCH_RESULT_BYTES = REPORT_CALLBACK_ENVELOPE_BYTES - 100_000;
+export const MAX_REPORT_MATCH_BATCH_RESULT_BYTES = REPORT_MATCH_CHECKPOINT_RESULT_BYTES;
 const INVALID_DOMAIN_MESSAGE = "A valid public domain is required.";
 const STORAGE_UNAVAILABLE_MESSAGE = "Persistent report storage is unavailable.";
 const PUBLIC_ID_PATTERN = /^[a-f0-9]{32}$/;

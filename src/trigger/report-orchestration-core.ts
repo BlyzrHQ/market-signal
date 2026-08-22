@@ -32,7 +32,7 @@ import {
   type ReportOrchestrationSummary,
 } from "../shared/report-orchestration-contract.ts";
 import { buildReportFactBundle } from "../shared/report-facts.ts";
-import { compactTerminalReportDocument } from "../shared/report-document-compaction.ts";
+import { compactTerminalReportDocument, encodedJsonBytes, REPORT_MATCH_CHECKPOINT_RESULT_BYTES } from "../shared/report-document-compaction.ts";
 import type { ReportFactChunkInput, ReportFactManifestInput } from "../../app/lib/report-store.ts";
 import type { PinnedProductPair } from "../../app/lib/ai-product-matching.ts";
 import { screenedComparisonFromJudgeCheckpoints } from "../../app/lib/ai-product-matching.ts";
@@ -1013,6 +1013,9 @@ export async function orchestrateReport(
         comparison: compactPublishedProductComparisonCheckpoint(comparison),
         evidence: compactPublishedProductComparisonCheckpoint(publishedState.evidence),
       };
+      if (encodedJsonBytes(publishedCheckpoint) > REPORT_MATCH_CHECKPOINT_RESULT_BYTES) {
+        throw new Error("The complete published-result checkpoint exceeds its persistence budget.");
+      }
       const checkpointIsComplete = comparison.matching?.resultShortfallReason !== "processing-incomplete"
         && comparison.enrichment?.pagesTruncated !== true
         && (comparison.enrichment?.failedBatchCount || 0) === 0;

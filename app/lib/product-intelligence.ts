@@ -256,6 +256,7 @@ const GENERIC_PRODUCT_IDENTITY_TOKENS = new Set([
   "\u0645\u062c\u0645\u0648\u0639\u0629", "\u062d\u0632\u0645\u0629", "\u0639\u0644\u0628\u0629", "\u0628\u0627\u0642\u0629", "\u0637\u0642\u0645", "\u0639\u0628\u0648\u0629",
 ].map((token) => bilingualNormalize(token)));
 const PRODUCT_ROUTE_SEGMENTS = new Set(["product", "products"]);
+const PRODUCT_SOURCE_ROUTE_SEGMENTS = new Set([...PRODUCT_ROUTE_SEGMENTS, "shop", "store"]);
 const LOCALE_PATH_PREFIX = /^[a-z]{2}(?:-[a-z]{2})?$/i;
 const BUSINESS_TYPE_ONLY_OFFERING = /^(?:content creation|mobile app|social media)$/i;
 const GENERIC_PAGE_NAME = /^(?:features?|platform|pricing|products?|services?|solutions?|plans?)$/i;
@@ -1295,8 +1296,8 @@ export function canonicalProductSourceKey(product: ProductRecord) {
       try { return decodeURIComponent(segment).toLowerCase(); } catch { return segment.toLowerCase(); }
     });
     const sourceMarket = publicSourceMarketContext(product.sourceUrl).contextKey;
-    if (segments.length > 2 && /^[a-z]{2}$/i.test(segments[0]) && PRODUCT_ROUTE_SEGMENTS.has(segments[1])) segments.shift();
-    const productIndex = segments.findIndex((segment) => PRODUCT_ROUTE_SEGMENTS.has(segment));
+    if (segments.length > 2 && /^[a-z]{2}$/i.test(segments[0]) && PRODUCT_SOURCE_ROUTE_SEGMENTS.has(segments[1])) segments.shift();
+    const productIndex = segments.findIndex((segment) => PRODUCT_SOURCE_ROUTE_SEGMENTS.has(segment));
     if (productIndex < 0 || !segments[productIndex + 1]) return "";
     return `${canonicalHost(product.domain)}|${sourceMarket ? `@${sourceMarket}` : ""}/${segments.slice(productIndex).join("/")}`;
   } catch {

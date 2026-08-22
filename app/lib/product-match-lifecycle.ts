@@ -6,7 +6,7 @@ import { publicHttpUrl } from "./public-url.ts";
 
 export type ProductMatchLifecycle = "idle" | "matching" | "retrying" | "complete" | "limited";
 export const MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY = 20;
-const MAX_DURABLE_EVIDENCE_ROWS_BYTES = 1_800_000;
+const MAX_DURABLE_EVIDENCE_ROWS_BYTES = 3_500_000;
 
 function compactEvidenceText(value: unknown, maxLength: number) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
@@ -30,7 +30,7 @@ function durablePrimaryIdentity(product: ProductRecord) {
 }
 
 function compactPricedEvidenceProduct(product: ProductRecord): ProductRecord {
-  const durableGtins = [...new Set(product.identifiers?.gtins.map(canonicalGtin).filter((gtin): gtin is string => Boolean(gtin)) || [])].slice(0, 8);
+  const durableGtins = [...new Set(product.identifiers?.gtins.map(canonicalGtin).filter((gtin): gtin is string => Boolean(gtin)) || [])].slice(0, 20);
   const identifiers = product.identifiers ? {
     gtins: durableGtins,
     ...(product.identifiers.sku ? { sku: compactEvidenceText(product.identifiers.sku, 100) } : {}),
@@ -110,17 +110,9 @@ function exactProductPriority(match: ProductMatch) {
 }
 
 function evidenceRowsWithinByteBudget(rows: ProductComparison["rows"], maxBytes = MAX_DURABLE_EVIDENCE_ROWS_BYTES) {
-  const retained = rows.map((row) => ({ ...row, matches: row.matches.slice(0, 1) }));
-  const byteLength = () => new TextEncoder().encode(JSON.stringify(retained)).byteLength;
-  if (byteLength() > maxBytes) throw new Error("The minimum durable priced-evidence layer exceeds its persistence budget.");
-  for (let alternativeIndex = 1; alternativeIndex < MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY; alternativeIndex += 1) {
-    for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
-      const alternative = rows[rowIndex].matches[alternativeIndex];
-      if (!alternative) continue;
-      retained[rowIndex].matches.push(alternative);
-      if (byteLength() > maxBytes) retained[rowIndex].matches.pop();
-    }
-  }
+  const retained = rows.map((row) => ({ ...row, matches: row.matches.slice(0, MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY) }));
+  const byteLength = new TextEncoder().encode(JSON.stringify(retained)).byteLength;
+  if (byteLength > maxBytes) throw new Error("The complete durable priced-evidence graph exceeds its persistence budget.");
   return retained;
 }
 
