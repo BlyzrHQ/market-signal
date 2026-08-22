@@ -333,6 +333,29 @@ function mergeEnrichmentRetry(previous: EnrichmentResult, retried: EnrichmentRes
   };
 }
 
+function terminalizeRepeatedAdapterGaps(previous: EnrichmentResult, retried: EnrichmentResult): EnrichmentResult {
+  const retriedAdapterKeys = new Set(previous.coverage.gaps
+    .filter((gap) => gap.code === "adapter_limited" && isRetryableEnrichmentGap(gap))
+    .map(enrichmentOutcomeKey));
+  if (!retriedAdapterKeys.size) return retried;
+  return {
+    ...retried,
+    coverage: {
+      ...retried.coverage,
+      gaps: retried.coverage.gaps.map((gap) => gap.code === "adapter_limited"
+        && isRetryableEnrichmentGap(gap)
+        && retriedAdapterKeys.has(enrichmentOutcomeKey(gap))
+        ? {
+            ...gap,
+            reason: `${gap.reason} The single bounded adapter retry was exhausted.`,
+            failureKind: "adapter" as const,
+            httpStatus: undefined,
+          }
+        : gap),
+    },
+  };
+}
+
 export function validEnrichmentCheckpoint(value: unknown, targets: ProductEnrichmentTarget[]): EnrichmentResult | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const candidate = value as Partial<EnrichmentResult>;
@@ -1214,7 +1237,8 @@ export async function orchestrateReport(
               const result = await port.enrich({ targets: targetsToFetch });
               const validatedResult = validEnrichmentCheckpoint(result, targetsToFetch);
               if (!validatedResult) throw new Error("Product-page enrichment returned an invalid batch result.");
-              const merged = previous ? validEnrichmentCheckpoint(mergeEnrichmentRetry(previous, validatedResult, batch), batch) : validatedResult;
+              const boundedRetryResult = previous ? terminalizeRepeatedAdapterGaps(previous, validatedResult) : validatedResult;
+              const merged = previous ? validEnrichmentCheckpoint(mergeEnrichmentRetry(previous, boundedRetryResult, batch), batch) : validatedResult;
               if (!merged) throw new Error("Product-page enrichment retry could not be merged into its durable batch.");
               mergedResult = merged;
             } catch (error) {
@@ -1403,7 +1427,9 @@ export async function orchestrateReport(
           } : comparison.matching,
         };
       }
-      const actionInputs = collectProductActionInputs(comparison);
+      const actionInputs = comparison.matching?.resultShortfallReason === "processing-incomplete"
+        ? []
+        : collectProductActionInputs(comparison);
       if (actionInputs.length) {
         await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "actions-started"), "actions", "Drafting evidence-grounded next moves for the accepted product pairs.", { pairs: actionInputs.length }));
         try {

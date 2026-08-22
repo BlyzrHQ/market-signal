@@ -2224,6 +2224,42 @@ test("a permanent adapter limitation terminalizes without a task retry or paid a
   assert.equal(port.events.some((item) => item.idempotencyKey === "report-1-task-1-matching-task-retry"), false);
 });
 
+test("a transient adapter failure gets one retry and never repeats paid action planning while incomplete", async () => {
+  let enrichCalls = 0;
+  let actionCalls = 0;
+  const port = mockPort({
+    async match() {
+      const value = comparison({ withPair: true, count: 1 });
+      value.rows[0].primary.priceSignals = [];
+      value.rows[0].matches[0].product.priceSignals = [];
+      return { ok: true, comparison: value };
+    },
+    async enrich({ targets }) {
+      enrichCalls += 1;
+      const primaryTarget = targets.find((target) => target.role === "primary");
+      const rivalTarget = targets.find((target) => target.role === "rival") || targets[0];
+      const products = primaryTarget
+        ? [{ ...product(primaryTarget.domain, primaryTarget.productId), name: primaryTarget.expectedName, normalizedName: primaryTarget.expectedName.toLowerCase(), sourceUrl: primaryTarget.sourceUrl, priceSignals: [{ raw: "GBP 9", currency: "GBP", amount: 9 }] }]
+        : [];
+      return {
+        ok: true,
+        products,
+        coverage: { pagesRequested: targets.length, pagesFetched: products.length, maxPages: 64, gaps: [{ url: rivalTarget.sourceUrl, productId: rivalTarget.productId, role: rivalTarget.role, reason: "Price adapter remains temporarily unavailable.", code: "adapter_limited", failureKind: "network", httpStatus: 0 }] },
+      };
+    },
+    async actions() { actionCalls += 1; throw new Error("must not plan actions without a published pair"); },
+  });
+
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/);
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
+  assert.equal(result.reportStatus, "limited");
+  assert.equal(enrichCalls, 2);
+  assert.equal(actionCalls, 0);
+  const lastCheckpoint = [...port.checkpoints.values()].find((checkpoint) => checkpoint.batchIndex === 300 + MAX_FINAL_ENRICHMENT_BATCHES);
+  assert.equal(lastCheckpoint.result.coverage.gaps[0].failureKind, "adapter");
+  assert.match(lastCheckpoint.result.coverage.gaps[0].reason, /single bounded adapter retry was exhausted/i);
+});
+
 test("a failed transient retry preserves prior successful pages and published pairs", async () => {
   let enrichCalls = 0;
   const port = mockPort({
