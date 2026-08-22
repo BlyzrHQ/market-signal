@@ -1300,7 +1300,10 @@ export function canonicalProductSourceKey(product: ProductRecord) {
     });
     const sourceMarket = publicSourceMarketContext(product.sourceUrl).contextKey;
     if (segments.length > 2 && /^[a-z]{2}$/i.test(segments[0]) && PRODUCT_SOURCE_ROUTE_SEGMENTS.has(segments[1])) segments.shift();
-    const productIndex = segments.findIndex((segment) => PRODUCT_SOURCE_ROUTE_SEGMENTS.has(segment));
+    let productIndex = -1;
+    for (let index = segments.length - 1; index >= 0; index -= 1) {
+      if (PRODUCT_SOURCE_ROUTE_SEGMENTS.has(segments[index])) { productIndex = index; break; }
+    }
     if (productIndex < 0) return "";
     const productPath = segments.slice(productIndex);
     while (productPath.length && PRODUCT_SOURCE_ROUTE_SEGMENTS.has(productPath[0])) productPath.shift();

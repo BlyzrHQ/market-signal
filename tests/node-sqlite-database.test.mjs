@@ -26,6 +26,7 @@ test("report fact URLs reject intranet and non-global address variants", () => {
     assert.throws(() => publicHttpUrl(value), /Invalid report fact URL/);
   }
   assert.equal(publicHttpUrl("https://shop.example/product"), "https://shop.example/product");
+  assert.throws(() => publicHttpUrl(`https://shop.example/products/${"x".repeat(2_100)}`), /Invalid report fact URL/);
   assert.throws(() => publicHttpUrl((`https://shop.example/products/` + "界".repeat(1_000)).slice(0, 1_000), false, 1_000), /Invalid report fact URL/);
   for (const address of ["2606:4700:4700::1111", "2001:4860:4860::8888", "2410::1", "2610::1", "2620::1", "2630::1", "2a10::1", "2001:4860:4860:1:0:0:a00:1", "2001:4860:4860:1:0:5efe:a00:1"]) {
     assert.throws(() => publicHttpUrl(`https://[${address}]/`), /Invalid report fact URL/);

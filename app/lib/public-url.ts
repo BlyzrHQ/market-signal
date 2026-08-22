@@ -25,9 +25,10 @@ export function isPublicHostname(value: string) {
 }
 
 export function publicHttpUrl(value: unknown, allowEmpty = true, limit = 2_000) {
-  const candidate = typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
+  const candidate = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
   if (!candidate && allowEmpty) return "";
   try {
+    if (candidate.length > limit) throw new Error();
     const parsed = new URL(candidate);
     if (!/^https?:$/.test(parsed.protocol) || parsed.username || parsed.password || !isPublicHostname(parsed.hostname)) throw new Error();
     const normalized = parsed.toString();

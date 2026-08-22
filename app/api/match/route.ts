@@ -38,7 +38,7 @@ function strings(value: unknown, limit: number, itemLimit: number) {
 
 function publicUrl(value: unknown, domain: string) {
   try {
-    const url = new URL(publicHttpUrl(text(value, 1_000), false, 1_000));
+    const url = new URL(publicHttpUrl(typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "", false, 1_000));
     return canonicalDomain(url.hostname) === canonicalDomain(domain) ? url.toString() : "";
   } catch {
     return "";

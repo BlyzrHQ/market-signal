@@ -556,7 +556,7 @@ test("maximum legal compact fields preserve twenty alternatives for every target
   const legalUrl = (prefix) => {
     const head = `https://rival.test/products/${prefix}/`;
     const tail = "?country=US";
-    return `${head}${"x".repeat(2_048 - head.length - tail.length)}${tail}`;
+    return `${head}${"x".repeat(2_000 - head.length - tail.length)}${tail}`;
   };
   const validGtin = (seed) => {
     const body = String(seed).padStart(13, "0").slice(-13);
@@ -643,7 +643,7 @@ test("global assignment counts one shop-route rival source only once when ids an
     item.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
     return item;
   };
-  const rows = [pricedRow("p1", "r1", "Widget Original", "shop"), pricedRow("p2", "r2", "Widget Renamed", "store")];
+  const rows = [pricedRow("p1", "r1", "Widget Original", "us/products"), pricedRow("p2", "r2", "Widget Renamed", "store/us/products")];
   const state = mergePublishedProductComparisonState(comparison({ selected: ["p1", "p2"], assessed: ["p1", "p2"], rows, accepted: 2 }), null, 2);
 
   assert.equal(state.comparison.rows.length, 1);

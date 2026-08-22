@@ -1620,6 +1620,40 @@ test("an ambiguous checkpoint-save response reloads and uses the committed enric
   assert.equal(productBlock.rows.flatMap((row) => row.matches).filter((match) => match.product).length, 1);
 });
 
+test("an ambiguous enrichment save rejects different same-slot observations", async () => {
+  const port = mockPort({
+    async match() {
+      const value = comparison({ withPair: true, count: 1 });
+      value.rows[0].primary.priceSignals = [];
+      value.rows[0].matches[0].product.priceSignals = [];
+      return { ok: true, comparison: value };
+    },
+    async enrich({ targets }) {
+      return {
+        ok: true,
+        products: targets.map((target) => ({ ...product(target.domain, target.productId), name: target.expectedName, normalizedName: target.expectedName.toLowerCase(), sourceUrl: target.sourceUrl, priceSignals: [{ raw: "GBP 10", currency: "GBP", amount: 10 }] })),
+        coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: 64, gaps: [] },
+      };
+    },
+  });
+  const saveCheckpoint = port.saveCheckpoint.bind(port);
+  let conflicted = false;
+  port.saveCheckpoint = async (publicId, input) => {
+    await saveCheckpoint(publicId, input);
+    if (!conflicted && input.batchIndex >= 300 && input.batchIndex < 300 + MAX_FINAL_ENRICHMENT_BATCHES) {
+      const committed = structuredClone(port.checkpoints.get(input.batchIndex));
+      committed.result.products[0].priceSignals = [{ raw: "GBP 12", currency: "GBP", amount: 12 }];
+      port.checkpoints.set(input.batchIndex, committed);
+      conflicted = true;
+      throw new Error("checkpoint response lost");
+    }
+  };
+
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, port), /remained incomplete/);
+  assert.equal(conflicted, true);
+  assert.equal(port.saves.length, 0);
+});
+
 test("a shape-valid but semantically incomplete enrichment checkpoint is rejected", async () => {
   let enrichCalls = 0;
   const port = mockPort({
