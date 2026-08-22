@@ -10,8 +10,12 @@ type FetchLike = typeof fetch;
 const MAX_ACCEPTED_ERROR_BODY_BYTES = 1_000_000;
 export const MAX_SUCCESS_BODY_BYTES = 64 * 1_024 * 1_024;
 
-export function checkpointReadPageBound(attemptNumber: number, pageLimit: number) {
+export function checkpointReadPageBound(attemptNumber: number, pageLimit: number, batchIndexStart?: number, batchIndexEnd?: number, latestPerBatch = false) {
   if (!Number.isSafeInteger(attemptNumber) || attemptNumber < 1 || attemptNumber > MAX_REPORT_ATTEMPTS || !Number.isSafeInteger(pageLimit) || pageLimit < 1) throw new Error("Invalid checkpoint paging bound.");
+  if (latestPerBatch) {
+    if (!Number.isSafeInteger(batchIndexStart) || !Number.isSafeInteger(batchIndexEnd) || Number(batchIndexStart) < 0 || Number(batchIndexEnd) < Number(batchIndexStart)) throw new Error("Invalid checkpoint paging range.");
+    return Math.ceil((Number(batchIndexEnd) - Number(batchIndexStart) + 1) / pageLimit) + 1;
+  }
   return Math.ceil((attemptNumber * MAX_REPORT_MATCH_CHECKPOINTS_PER_ATTEMPT) / pageLimit) + 1;
 }
 
@@ -61,15 +65,19 @@ export const OPERATION_BUDGETS_MS = {
 } as const;
 
 export const MAX_REPORT_FACT_CALLBACKS = MAX_REPORT_FACT_CHUNKS;
+// The ordinary path reads the 270..1399 state range (57 pages plus terminal
+// empty page) and then refreshes one 250-slot judge namespace (13 pages plus
+// terminal empty page). The initial judge/state reads are parallel.
+export const MAX_BOUNDED_CHECKPOINT_READ_PAGES_ON_CRITICAL_PATH = 72;
 
 // Read + preflight + crawl events + crawl + longest parallel lane
 // (matching-start + two bounded match calls, where the second replays durable
 // judge checkpoints and only requests missing work, + enrichment-start + bounded
-// one bulk durable-checkpoint read + enrichment batch waves and their bounded
+// bounded range-projected durable-checkpoint reads + enrichment batch waves and their bounded
 // save/ambiguous-save recovery callbacks +
 // enrichment-complete + actions-start + actions + actions-complete +
 // matching-complete) + bounded relational-fact chunks, manifest, and final save.
-export const WORST_CASE_CRITICAL_PATH_MS = (OPERATION_BUDGETS_MS.report * (24 + MAX_FINAL_ENRICHMENT_BATCH_WAVES + (MAX_FINAL_ENRICHMENT_BATCHES * 2)))
+export const WORST_CASE_CRITICAL_PATH_MS = (OPERATION_BUDGETS_MS.report * (24 + MAX_BOUNDED_CHECKPOINT_READ_PAGES_ON_CRITICAL_PATH + MAX_FINAL_ENRICHMENT_BATCH_WAVES + (MAX_FINAL_ENRICHMENT_BATCHES * 2)))
   + (OPERATION_BUDGETS_MS.factCallback * (MAX_REPORT_FACT_CALLBACKS + 1))
   + OPERATION_BUDGETS_MS.preflight
   + OPERATION_BUDGETS_MS.crawl
@@ -331,7 +339,7 @@ export function createReportOrchestrationHttpPort(configuration: { appOrigin: st
     async loadCheckpoint(publicId, input) {
       const checkpoints: Awaited<ReturnType<ReportOrchestrationPort["loadCheckpoint"]>> = [];
       const pageLimit = 20;
-      const maxPages = checkpointReadPageBound(input.attemptNumber, pageLimit);
+      const maxPages = checkpointReadPageBound(input.attemptNumber, pageLimit, input.batchIndexStart, input.batchIndexEnd, input.latestPerBatch === true);
       let afterAttemptNumber: number | undefined;
       let afterBatchIndex: number | undefined;
       for (let page = 0; page < maxPages; page += 1) {

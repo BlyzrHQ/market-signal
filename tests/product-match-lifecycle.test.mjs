@@ -448,6 +448,34 @@ test("durable priced evidence preserves backup rivals until a later global assig
   assert.deepEqual(new Set(second.comparison.rows.flatMap((item) => item.matches.flatMap((match) => match.product ? [match.product.id] : []))), new Set(["r-shared", "r-backup"]));
 });
 
+test("checkpoint compaction preserves the late edge required by a 20-row augmenting path", () => {
+  const priced = (primaryId, rivalId, rivalIndex) => {
+    const item = row(primaryId, rivalId);
+    item.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+    item.primary.sourceUrl = `https://shop.test/products/${primaryId}/${"p".repeat(900)}?country=US`;
+    item.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+    item.matches[0].product.sourceUrl = `https://rival.test/products/${rivalId}/${"r".repeat(900)}?country=US`;
+    item.matches[0].score = 1 - (rivalIndex / 1_000);
+    return item;
+  };
+  const first = priced("p00", "r00", 0);
+  first.matches = Array.from({ length: 20 }, (_, index) => priced("p00", `r${String(index).padStart(2, "0")}`, index).matches[0]);
+  const rows = [first, ...Array.from({ length: 19 }, (_, index) => priced(
+    `p${String(index + 1).padStart(2, "0")}`,
+    `r${String(index).padStart(2, "0")}`,
+    0,
+  ))];
+  const selected = rows.map((item) => item.primary.id);
+  const state = mergePublishedProductComparisonState(comparison({ selected, assessed: selected, rows, accepted: 39 }), null, 20);
+  const checkpoint = compactPublishedProductComparisonCheckpoint(state.evidence);
+  const recovered = mergePublishedProductComparisonState(checkpoint, null, 20);
+
+  assert.equal(state.comparison.rows.length, 20);
+  assert.equal(checkpoint.rows.find((item) => item.primary.id === "p00").matches.length, 20);
+  assert.equal(recovered.comparison.rows.length, 20);
+  assert.ok(recovered.comparison.rows.some((item) => item.matches.some((match) => match.product?.id === "r19")));
+});
+
 test("global assignment counts a merchant product id only once when its URL and name drift", () => {
   const pricedRow = (primaryId, rivalName, rivalUrl) => {
     const item = row(primaryId, "merchant-product-id");
@@ -536,6 +564,7 @@ test("durable priced evidence stays below the checkpoint limit for a legal 6000-
   assert.equal(state.evidence.rows.length, 20);
   assert.ok(state.evidence.rows.every((item) => item.matches.length === MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY));
   assert.ok(state.evidence.rows.every((item) => item.matches.some((match) => match.product?.sourceUrl.startsWith("https://rival.test/rival/"))));
+  assert.ok(checkpoint.evidence.rows.every((item) => item.matches.length === MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY));
   assert.equal(checkpoint.evidence.enrichment.gaps.length, 20);
   assert.ok(Buffer.byteLength(JSON.stringify(checkpoint), "utf8") < 1_400_000);
 });

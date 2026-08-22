@@ -14,6 +14,7 @@ import {
   comparisonWithinPrimaryCatalog,
   orchestrateReport,
   pricedResultEnrichmentBudget,
+  productEvidenceReferenceTimeMs,
   validEnrichmentCheckpoint,
 } from "../src/trigger/report-orchestration-core.ts";
 import {
@@ -49,6 +50,16 @@ test("priced-result enrichment can exhaust the full bounded catalog regardless o
   assert.equal(pricedResultEnrichmentBudget(20), MAX_FINAL_ENRICHMENT_TARGETS);
   assert.equal(pricedResultEnrichmentBudget(200), MAX_FINAL_ENRICHMENT_TARGETS);
   assert.equal(pricedResultEnrichmentBudget(1_000), MAX_FINAL_ENRICHMENT_TARGETS);
+});
+
+test("a late recovery validates prices against the fresh crawl observation rather than report creation", () => {
+  const current = product("shop.example", "fresh-price");
+  current.observedAt = "2026-08-22T12:00:00.000Z";
+  assert.equal(productEvidenceReferenceTimeMs(
+    [{ products: [current] }],
+    "2026-08-19T12:00:00.000Z",
+    Date.parse("2026-08-22T12:05:00.000Z"),
+  ), Date.parse(current.observedAt));
 });
 
 test("adopted judge evidence requires the exact current primary product identity", () => {
@@ -919,7 +930,7 @@ test("all operation deadlines keep a two-minute margin below the stale marker", 
   for (const timeout of Object.values(OPERATION_BUDGETS_MS)) assert.ok(timeout <= MAX_OPERATION_TIMEOUT_MS);
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS > OPERATION_BUDGETS_MS.match, "Undici must not preempt the match operation deadline");
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS < MAX_OPERATION_TIMEOUT_MS, "the worker deadline must remain inside the outer edge window");
-  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 12_221_000);
+  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 12_941_000);
   assert.ok(WORST_CASE_CRITICAL_PATH_MS <= 14_580_000, "critical path must preserve a two-minute task-ceiling margin");
 });
 
@@ -1746,7 +1757,7 @@ test("the HTTP report adapter pages checkpoint recovery below the response trans
     },
   });
 
-  const loaded = await port.loadCheckpoint(payload.publicId, { attemptNumber: 3 });
+  const loaded = await port.loadCheckpoint(payload.publicId, { attemptNumber: 3, batchIndexStart: 1_400, batchIndexEnd: 1_649, latestPerBatch: true });
 
   assert.equal(loaded.length, 21);
   assert.equal(bodies.length, 2);
@@ -1754,7 +1765,9 @@ test("the HTTP report adapter pages checkpoint recovery below the response trans
   assert.equal(bodies[0].afterAttemptNumber, undefined);
   assert.equal(bodies[1].afterAttemptNumber, 3);
   assert.equal(bodies[1].afterBatchIndex, 19);
+  assert.ok(bodies.every((body) => body.batchIndexStart === 1_400 && body.batchIndexEnd === 1_649 && body.latestPerBatch === true));
   assert.equal(checkpointReadPageBound(11, 20), 2_201);
+  assert.equal(checkpointReadPageBound(20, 20, 1_400, 1_649, true), 14);
   assert.throws(() => checkpointReadPageBound(21, 20), /Invalid checkpoint paging bound/);
 });
 

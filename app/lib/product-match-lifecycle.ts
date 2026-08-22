@@ -38,11 +38,16 @@ function compactPricedEvidenceProduct(product: ProductRecord): ProductRecord {
     id: compactEvidenceText(product.id, 300),
     domain: product.domain,
     name: compactEvidenceText(product.name, 220),
-    normalizedName: compactEvidenceText(product.normalizedName, 220),
+    // The durable layer is a priced assignment graph, not a second catalog
+    // snapshot. The display name, immutable identifiers, source, quantity and
+    // price are sufficient to revalidate identity and publication. Omitting the
+    // duplicated normalized/category prose keeps every bounded alternative
+    // edge instead of making recovery depend on string length.
+    normalizedName: "",
     description: "",
-    category: compactEvidenceText(product.category, 160),
+    category: product.category.startsWith("saas-plan") ? compactEvidenceText(product.category, 40) : "",
     jsonLdType: product.jsonLdType,
-    priceSignals: product.priceSignals.slice(0, 4).map((signal) => ({
+    priceSignals: product.priceSignals.slice(0, 1).map((signal) => ({
       raw: compactEvidenceText(signal.raw, 120),
       ...(signal.currency ? { currency: compactEvidenceText(signal.currency, 8) } : {}),
       ...(typeof signal.amount === "number" ? { amount: signal.amount } : {}),
@@ -55,7 +60,7 @@ function compactPricedEvidenceProduct(product: ProductRecord): ProductRecord {
     sourceUrl: product.sourceUrl,
     imageUrl: "",
     observedAt: product.observedAt,
-    claimIds: product.claimIds.slice(0, 2).map((claimId) => compactEvidenceText(claimId, 100)),
+    claimIds: [],
     ...(identifiers ? { identifiers } : {}),
     ...(product.quantity ? { quantity: product.quantity } : {}),
     ...(product.recoveryIdentityHash ? { recoveryIdentityHash: product.recoveryIdentityHash } : {}),
@@ -77,11 +82,11 @@ function compactPricedEvidenceMatch(primary: ProductRecord, match: ProductMatch 
       ...match.assessment,
       model: compactEvidenceText(match.assessment.model, 80),
       promptVersion: compactEvidenceText(match.assessment.promptVersion, 80),
-      reasons: match.assessment.reasons.slice(0, 1).map((reason) => compactEvidenceText(reason, 160)),
-      contradictions: match.assessment.contradictions.slice(0, 1).map((reason) => compactEvidenceText(reason, 160)),
-      normalizedCategory: compactEvidenceText(match.assessment.normalizedCategory, 100),
-      normalizedVariant: compactEvidenceText(match.assessment.normalizedVariant, 100),
-      normalizedSize: compactEvidenceText(match.assessment.normalizedSize, 100),
+       reasons: [],
+       contradictions: [],
+       normalizedCategory: compactEvidenceText(match.assessment.normalizedCategory, 60),
+       normalizedVariant: compactEvidenceText(match.assessment.normalizedVariant, 60),
+       normalizedSize: compactEvidenceText(match.assessment.normalizedSize, 60),
       primarySourceUrl: "",
       rivalSourceUrl: "",
     } } : {}),

@@ -52,6 +52,19 @@ export const ENRICHMENT_CHECKPOINT_BATCH_INDEX_BASE = 300;
 export const PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX = 279;
 export const TERMINAL_PRESENTATION_CHECKPOINT_BATCH_INDEX_BASE = 280;
 export const MAX_ORCHESTRATION_TASK_ATTEMPTS = 10;
+export const MATCH_JUDGE_CHECKPOINT_BATCH_INDEX_BASE = 1_400;
+export const MAX_MATCH_JUDGE_CHECKPOINTS_PER_TASK_ATTEMPT = 250;
+
+export function productEvidenceReferenceTimeMs(catalogs: Array<{ products: ProductRecord[] }>, reportCreatedAt: string, wallClockMs = Date.now()) {
+  const fallback = Date.parse(reportCreatedAt);
+  let reference = Number.isFinite(fallback) ? fallback : wallClockMs;
+  const latestAllowed = wallClockMs + (24 * 60 * 60 * 1_000);
+  for (const product of catalogs.flatMap((catalog) => catalog.products)) {
+    const observedAt = Date.parse(product.observedAt);
+    if (Number.isFinite(observedAt) && observedAt <= latestAllowed) reference = Math.max(reference, observedAt);
+  }
+  return reference;
+}
 
 function enrichmentPlanCheckpointIndex(taskAttemptNumber: number) {
   const index = ENRICHMENT_PLAN_CHECKPOINT_BATCH_INDEX - (taskAttemptNumber - 1);
@@ -440,7 +453,7 @@ export interface ReportOrchestrationPort {
   ads(input: unknown): Promise<{ ok: true; block: JsonBlock }>;
   match(input: { publicId: string; reportAttempt: number; taskAttemptNumber: number; reportObservedAt: string; primaryDomain: string; marketCountryCode?: string; productLimit: number; catalogs: Array<{ domain: string; products: ProductRecord[] }>; pinnedPairs?: PinnedProductPair[] }): Promise<{ ok: true; comparison: ProductComparison }>;
   enrich(input: { targets: unknown[] }): Promise<{ ok: true; products: ProductRecord[]; coverage: NonNullable<ProductComparison["enrichment"]> }>;
-  loadCheckpoint(publicId: string, input: { attemptNumber: number; batchIndex?: number }): Promise<Array<{ attemptNumber: number; batchIndex: number; inputHash: string; result: unknown }>>;
+  loadCheckpoint(publicId: string, input: { attemptNumber: number; batchIndex?: number; batchIndexStart?: number; batchIndexEnd?: number; latestPerBatch?: boolean }): Promise<Array<{ attemptNumber: number; batchIndex: number; inputHash: string; result: unknown }>>;
   saveCheckpoint(publicId: string, input: { attemptNumber: number; batchIndex: number; inputHash: string; result: unknown }): Promise<void>;
   actions(input: { inputs: ProductActionInput[] }): Promise<{ ok: true; result: ProductActionPlanningResult }>;
   persistFactChunk(publicId: string, input: ReportFactChunkInput): Promise<void>;
@@ -565,7 +578,7 @@ export async function orchestrateReport(
 
   let legacyCompletedManifestWithoutPresentation = false;
   if (stored.factManifest?.status === "complete") {
-    const checkpoints = await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber });
+    const checkpoints = await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: TERMINAL_PRESENTATION_CHECKPOINT_BATCH_INDEX_BASE, batchIndexEnd: 289, latestPerBatch: true });
     const presentationCandidates = checkpoints
       .filter((checkpoint) => checkpoint.batchIndex >= TERMINAL_PRESENTATION_CHECKPOINT_BATCH_INDEX_BASE && checkpoint.batchIndex <= 289)
       .sort((left, right) => right.attemptNumber - left.attemptNumber || right.batchIndex - left.batchIndex)
@@ -696,8 +709,19 @@ export async function orchestrateReport(
       ? String(primaryHomepage.regionCountryCode).toUpperCase()
       : "";
     const taskAttemptNumber = attempt.taskAttemptNumber || 1;
-    const reportReferenceTimeMs = Date.parse(stored.run.createdAt);
-    const loadedCheckpoints = await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber });
+    // Candidate-plan identity remains anchored to the immutable report time,
+    // but publication freshness follows the newest real observation in this
+    // crawl. A report recovered days later must not reject freshly refetched
+    // prices as being "future" relative to its original creation timestamp.
+    const updatedAtMs = Date.parse(stored.run.updatedAt);
+    const reportReferenceTimeMs = productEvidenceReferenceTimeMs(catalogs, stored.run.createdAt, Number.isFinite(updatedAtMs) ? updatedAtMs : Date.now());
+    const judgeCheckpointStart = MATCH_JUDGE_CHECKPOINT_BATCH_INDEX_BASE + ((taskAttemptNumber - 1) * MAX_MATCH_JUDGE_CHECKPOINTS_PER_TASK_ATTEMPT);
+    const judgeCheckpointEnd = judgeCheckpointStart + MAX_MATCH_JUDGE_CHECKPOINTS_PER_TASK_ATTEMPT - 1;
+    const [stateCheckpoints, adoptedJudgeCheckpoints] = await Promise.all([
+      port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: 270, batchIndexEnd: MATCH_JUDGE_CHECKPOINT_BATCH_INDEX_BASE - 1, latestPerBatch: true }),
+      port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: judgeCheckpointStart, batchIndexEnd: judgeCheckpointEnd, latestPerBatch: true }),
+    ]);
+    const loadedCheckpoints = [...stateCheckpoints, ...adoptedJudgeCheckpoints];
     const allDurableCheckpoints = new Map(loadedCheckpoints.map((checkpoint) => [`${checkpoint.attemptNumber}:${checkpoint.batchIndex}`, checkpoint]));
     const durableCheckpoints = new Map<number, (typeof loadedCheckpoints)[number]>();
     for (const checkpoint of loadedCheckpoints) {
@@ -957,8 +981,8 @@ export async function orchestrateReport(
           truncated: true,
         }));
       }
-      comparison = publishPricedProductComparison(comparison, Date.parse(stored.run.createdAt));
-      const refreshedCheckpoints = await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber });
+      comparison = publishPricedProductComparison(comparison, reportReferenceTimeMs);
+      const refreshedCheckpoints = await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: judgeCheckpointStart, batchIndexEnd: judgeCheckpointEnd, latestPerBatch: true });
       for (const checkpoint of refreshedCheckpoints) {
         allDurableCheckpoints.set(`${checkpoint.attemptNumber}:${checkpoint.batchIndex}`, checkpoint);
         const effective = durableCheckpoints.get(checkpoint.batchIndex);
