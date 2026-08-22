@@ -282,13 +282,13 @@ function isRetryableEnrichmentGap(gap: NonNullable<ProductComparison["enrichment
   // was transient. Retrying them in a later task can repeat paid matcher work
   // after a crash; the user can explicitly start a fresh report instead.
   if (gap.code === "adapter_limited") return false;
-  return gap.failureKind === "network"
-    || gap.code === "robots_unreachable"
-    || gap.httpStatus === 0
-    || gap.httpStatus === 408
+  if (gap.code === "robots_unreachable") return gap.failureKind === "robots" || gap.failureKind === "network";
+  if (gap.code !== "fetch_failed") return false;
+  if (gap.failureKind === "network") return gap.httpStatus === 0;
+  return gap.failureKind === "http" && (gap.httpStatus === 408
     || gap.httpStatus === 425
     || gap.httpStatus === 429
-    || (typeof gap.httpStatus === "number" && gap.httpStatus >= 500);
+    || (typeof gap.httpStatus === "number" && gap.httpStatus >= 500));
 }
 
 function hasRetryableEnrichmentGap(result: EnrichmentResult) {
@@ -426,10 +426,14 @@ export function validEnrichmentCheckpoint(value: unknown, targets: ProductEnrich
     const record = gap as { productId?: unknown; url?: unknown; role?: unknown; reason?: unknown; code?: unknown; failureKind?: unknown; httpStatus?: unknown };
     const validCodes = new Set(["robots_unreachable", "robots_disallowed", "fetch_failed", "identity_mismatch", "adapter_limited"]);
     const validFailureKinds = new Set(["robots", "network", "http", "content", "identity", "adapter", "redirect"]);
+    const retryShaped = record.failureKind === "network" || record.httpStatus === 0 || record.code === "robots_unreachable"
+      || record.httpStatus === 408 || record.httpStatus === 425 || record.httpStatus === 429
+      || (typeof record.httpStatus === "number" && record.httpStatus >= 500);
     if (typeof record.url !== "string"
       || typeof record.reason !== "string" || !record.reason.trim() || record.reason.length > 2_000
       || (record.code !== undefined && !validCodes.has(String(record.code)))
       || (record.failureKind !== undefined && !validFailureKinds.has(String(record.failureKind)))
+      || (retryShaped && (typeof record.code !== "string" || typeof record.failureKind !== "string"))
       || (record.httpStatus !== undefined && (!Number.isInteger(record.httpStatus) || Number(record.httpStatus) < 0 || Number(record.httpStatus) > 599))) return false;
     try {
       const key = `${canonicalDomain(new URL(record.url).hostname)}\n${String(record.productId || "")}`;

@@ -241,6 +241,8 @@ test("enrichment checkpoint validation rejects forged retry metadata", () => {
     { ...base.coverage.gaps[0], code: "paid_retry_please" },
     { ...base.coverage.gaps[0], failureKind: "forged" },
     { ...base.coverage.gaps[0], httpStatus: 999 },
+    { ...base.coverage.gaps[0], code: undefined },
+    { ...base.coverage.gaps[0], failureKind: undefined },
   ]) assert.equal(validEnrichmentCheckpoint({ ...base, coverage: { ...base.coverage, gaps: [gap] } }, [target]), null);
 });
 
