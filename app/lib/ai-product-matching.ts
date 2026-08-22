@@ -108,7 +108,7 @@ const MAX_PINNED_PAIRS = 6_000;
 export const MAX_JUDGE_CANDIDATE_PAIRS = 6_000;
 const DEFAULT_MAX_CANDIDATES = 5;
 const DEFAULT_MAX_PER_DOMAIN = 5;
-const DEFAULT_MAX_COMPETITOR_PRODUCTS = 5_000;
+export const MAX_COMPETITOR_PRODUCTS_PER_CATALOG = 6_000;
 const DEFAULT_MAX_RETRIEVAL_POOL_PER_DOMAIN = 24;
 const DEFAULT_GROUPS_PER_BATCH = 20;
 const DEFAULT_MAX_PAIRS_PER_BATCH = 25;
@@ -359,14 +359,17 @@ function retrieveGroups(primaryProducts: ProductRecord[], competitors: ProductCa
   const groups = primaryProducts.map((primary): CandidateGroup => {
     const primaryTokens = retrievalTokens(primary);
     const primaryVector = embeddings.get(primary.id);
+    const requestedPrimaryPins = pinsByPrimary.get(primary.id) || [];
+    const requestedPinKeys = new Set(requestedPrimaryPins.map((pin) => `${canonicalDomain(pin.rivalDomain)}|${pin.rivalId}`));
     const candidates = indexes.flatMap((index) => {
       const fallbackProduct = fallbackRows.get(primary.id)?.get(canonicalDomain(index.catalog.domain)) || null;
       const pool = exactRetrievalPool(primary, primaryTokens, primaryVector, index, embeddings, fallbackProduct, Math.max(maxPool, maxPerDomain));
       scoredPairs += index.catalog.products.length;
       return pool.map((product) => candidateForPair(primary, product, embeddings)).filter((candidate) => candidate.semanticScore > 0 || candidate.lexicalEligible || candidate.identitySignal)
+        .filter((candidate) => !requestedPinKeys.has(`${canonicalDomain(candidate.product.domain)}|${candidate.product.id}`))
         .sort((left, right) => right.retrievalScore - left.retrievalScore || right.lexicalScore - left.lexicalScore || left.product.id.localeCompare(right.product.id)).slice(0, maxPerDomain);
     });
-    const pinned = (pinsByPrimary.get(primary.id) || []).flatMap((pin) => {
+    const pinned = requestedPrimaryPins.flatMap((pin) => {
       const catalog = competitors.find((item) => canonicalDomain(item.domain) === canonicalDomain(pin.rivalDomain));
       const product = catalog?.products.find((item) => item.id === pin.rivalId);
       return product ? [candidateForPair(primary, product, embeddings)] : [];
@@ -374,7 +377,14 @@ function retrieveGroups(primaryProducts: ProductRecord[], competitors: ProductCa
     const ordered = [...pinned, ...candidates]
       .filter((candidate, index, all) => all.findIndex((item) => item.product.id === candidate.product.id && canonicalDomain(item.product.domain) === canonicalDomain(candidate.product.domain)) === index);
     const pinnedKeys = new Set(pinned.map((candidate) => `${canonicalDomain(candidate.product.domain)}|${candidate.product.id}`));
-    return { primary, candidates: ordered.sort((left, right) => Number(pinnedKeys.has(`${canonicalDomain(right.product.domain)}|${right.product.id}`)) - Number(pinnedKeys.has(`${canonicalDomain(left.product.domain)}|${left.product.id}`)) || right.retrievalScore - left.retrievalScore || left.product.id.localeCompare(right.product.id)).slice(0, Math.max(maxCandidates, pinned.length)) };
+    const sorted = ordered.sort((left, right) => Number(pinnedKeys.has(`${canonicalDomain(right.product.domain)}|${right.product.id}`)) - Number(pinnedKeys.has(`${canonicalDomain(left.product.domain)}|${left.product.id}`)) || right.retrievalScore - left.retrievalScore || left.product.id.localeCompare(right.product.id));
+    return {
+      primary,
+      candidates: [
+        ...sorted.filter((candidate) => pinnedKeys.has(`${canonicalDomain(candidate.product.domain)}|${candidate.product.id}`)),
+        ...sorted.filter((candidate) => !pinnedKeys.has(`${canonicalDomain(candidate.product.domain)}|${candidate.product.id}`)).slice(0, maxCandidates),
+      ],
+    };
   });
   return { groups, scoredPairs };
 }
@@ -750,7 +760,7 @@ export async function buildAIProductComparison(primaryDomain: string, catalogs: 
   const maxPrimary = Math.min(MAX_PRIMARY_PRODUCTS, Math.max(1, options.maxPrimaryProducts || DEFAULT_MAX_PRIMARY));
   const maxCandidates = Math.max(1, options.maxCandidatesPerPrimary || DEFAULT_MAX_CANDIDATES);
   const maxPerDomain = Math.max(1, options.maxCandidatesPerDomain || DEFAULT_MAX_PER_DOMAIN);
-  const maxCompetitorProducts = Math.max(1, options.maxProductsPerCompetitor || DEFAULT_MAX_COMPETITOR_PRODUCTS);
+  const maxCompetitorProducts = Math.max(1, options.maxProductsPerCompetitor || MAX_COMPETITOR_PRODUCTS_PER_CATALOG);
   const maxRetrievalPool = Math.max(1, options.maxRetrievalPoolPerDomain || DEFAULT_MAX_RETRIEVAL_POOL_PER_DOMAIN);
   const maxGroupsPerBatch = Math.min(MAX_GROUPS_PER_BATCH, Math.max(1, options.primaryProductsPerJudgeCall || DEFAULT_GROUPS_PER_BATCH));
   const maxPairsPerBatch = Math.min(MAX_PAIRS_PER_BATCH, Math.max(1, options.maxPairsPerJudgeCall || DEFAULT_MAX_PAIRS_PER_BATCH));

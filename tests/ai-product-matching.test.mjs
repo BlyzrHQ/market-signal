@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { boundJudgeCandidatePairs, buildAIProductComparison, judgeBatchKey, MAX_JUDGE_CANDIDATE_PAIRS } from "../app/lib/ai-product-matching.ts";
+import { boundJudgeCandidatePairs, buildAIProductComparison, judgeBatchKey, MAX_COMPETITOR_PRODUCTS_PER_CATALOG, MAX_JUDGE_CANDIDATE_PAIRS } from "../app/lib/ai-product-matching.ts";
 import { hasValidObservedRivalPrice } from "../app/lib/product-intelligence.ts";
 import { publishPricedProductComparison } from "../app/lib/product-match-lifecycle.ts";
 
@@ -783,6 +783,33 @@ test("the default retrieval budget judges five viable candidates for one primary
   assert.equal(judgedCandidateIds.length, 5);
   assert.equal(new Set(judgedCandidateIds).size, 5);
   assert.equal(comparison.matching?.candidatePairsAssessed, 5);
+});
+
+test("one exact pin supplements rather than displaces the five ordinary candidates", async () => {
+  const primary = product("pin-plus-five-p", "shop.test", "Beef Cubes Halal 500g");
+  const rivals = Array.from({ length: 6 }, (_, index) => product(`pin-plus-five-r${index}`, "rival.test", `Beef Cubes Halal 500g option ${index}`));
+  let judgedCandidateIds = [];
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, index / 100] })) });
+    const request = JSON.parse(body.input[1].content);
+    judgedCandidateIds = request.groups[0].candidates.map((candidate) => candidate.id);
+    return response({ output_text: JSON.stringify({ assessments: request.groups[0].candidates.map((candidate) => ({ primaryId: primary.id, candidateId: candidate.id, verdict: "no_match", confidence: 0.99, reason: "Test assessment.", contradiction: "" })) }) });
+  };
+
+  const comparison = await buildAIProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "rival.test", products: rivals }], {}, {
+    apiKey: "test",
+    fetch,
+    pinnedPairs: [{ primaryId: primary.id, rivalDomain: "rival.test", rivalId: rivals[5].id }],
+  });
+
+  assert.equal(judgedCandidateIds.length, 6);
+  assert.equal(new Set(judgedCandidateIds).size, 6);
+  assert.equal(comparison.matching?.candidatePairsAssessed, 6);
+});
+
+test("the matcher default admits the complete single-seller 6000-product universe", () => {
+  assert.equal(MAX_COMPETITOR_PRODUCTS_PER_CATALOG, 6_000);
 });
 
 test("accepted backup candidates survive matching until the final priced-result selection", async () => {
