@@ -350,7 +350,8 @@ export function createReportOrchestrationHttpPort(configuration: { appOrigin: st
     },
     async loadCheckpoint(publicId, input) {
       const checkpoints: Awaited<ReturnType<ReportOrchestrationPort["loadCheckpoint"]>> = [];
-      const pageLimit = 20;
+      const requestedLimit = input.limit;
+      const pageLimit = Math.min(20, requestedLimit ?? 20);
       const maxPages = checkpointReadPageBound(input.attemptNumber, pageLimit, input.batchIndexStart, input.batchIndexEnd, input.latestPerBatch === true);
       let afterAttemptNumber: number | undefined;
       let afterBatchIndex: number | undefined;
@@ -360,6 +361,7 @@ export function createReportOrchestrationHttpPort(configuration: { appOrigin: st
         if (payload.ok !== true || !Array.isArray(payload.checkpoints)) throw new OrchestrationHttpError("Report checkpoint read", 502, true);
         const batch = payload.checkpoints as Awaited<ReturnType<ReportOrchestrationPort["loadCheckpoint"]>>;
         checkpoints.push(...batch);
+        if (requestedLimit !== undefined && checkpoints.length >= requestedLimit) return checkpoints.slice(0, requestedLimit);
         if (batch.length < pageLimit) return checkpoints;
         const last = batch.at(-1);
         if (!last || !Number.isInteger(last.attemptNumber) || !Number.isInteger(last.batchIndex)

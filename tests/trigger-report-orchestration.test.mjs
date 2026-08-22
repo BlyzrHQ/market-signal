@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import test from "node:test";
+import { gunzipSync, gzipSync } from "node:zlib";
 
 import {
   PermanentOrchestrationError,
@@ -263,7 +265,17 @@ function mockPort(overrides = {}) {
     async ads() { return { ok: true, block: { type: "ad-intelligence", id: "ad-intelligence" } }; },
     async match() { return { ok: true, comparison: comparison({ withPair: true }) }; },
     async enrich({ targets }) { return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: targets.length, gaps: targets.map((target) => ({ url: target.sourceUrl, productId: target.productId, role: target.role, reason: "Test fixture did not fetch this page." })) } }; },
-    async loadCheckpoint(_publicId, input) { return input.batchIndex === undefined ? [...checkpoints.values()] : checkpoints.has(input.batchIndex) ? [checkpoints.get(input.batchIndex)] : []; },
+    async loadCheckpoint(_publicId, input) {
+      let values = input.batchIndex === undefined ? [...checkpoints.values()] : checkpoints.has(input.batchIndex) ? [checkpoints.get(input.batchIndex)] : [];
+      if (input.batchIndexStart !== undefined) values = values.filter((item) => item.batchIndex >= input.batchIndexStart && item.batchIndex <= input.batchIndexEnd);
+      if (input.latestPerBatch) {
+        const latest = new Map();
+        for (const item of values) if (!latest.has(item.batchIndex) || latest.get(item.batchIndex).attemptNumber < item.attemptNumber) latest.set(item.batchIndex, item);
+        values = [...latest.values()];
+      }
+      values.sort((left, right) => right.attemptNumber - left.attemptNumber || left.batchIndex - right.batchIndex);
+      return input.limit === undefined ? values : values.slice(0, input.limit);
+    },
     async saveCheckpoint(_publicId, input) {
       const existing = checkpoints.get(input.batchIndex);
       if (existing && (existing.inputHash !== input.inputHash || JSON.stringify(existing.result) !== JSON.stringify(input.result))) throw new Error("checkpoint conflict");
@@ -349,6 +361,64 @@ test("a task retry resumes the durable successful crawl without another network 
   assert.ok(port.events.some((item) => item.idempotencyKey === "report-1-task-2-crawl-resumed"));
 });
 
+test("a large noisy crawl is compacted into a durable checkpoint before a task retry", async () => {
+  let crawlCalls = 0;
+  const base = mockPort();
+  let rawWireBytes = 0;
+  let expectedCatalogs = null;
+  let expectedBaseline = null;
+  const matchedCatalogs = [];
+  const port = mockPort({
+    async crawl() {
+      crawlCalls += 1;
+      const value = await base.crawl();
+      value.results[0].products[0] = {
+        ...value.results[0].products[0],
+        imageUrl: "https://cdn.shop.example/images/honey-500g.webp",
+        aliases: [{ name: "عسل 500 جرام", normalizedName: "عسل 500 جرام", locale: "ar", sourceUrl: "https://shop.example/ar/honey", extraction: "sitemap" }],
+        claimIds: ["claim-identity-1", "claim-identity-2"],
+      };
+      const baseline = { type: "product-comparison", id: "product-comparison", ...comparison({ withPair: true, count: 1 }) };
+      baseline.rows[0].primary = structuredClone(value.results[0].products[0]);
+      value.document.blocks.push(baseline);
+      expectedCatalogs = value.results.map((result) => ({ domain: result.domain, products: structuredClone(result.products) }));
+      expectedBaseline = structuredClone(baseline);
+      value.results[0].pages = Array.from({ length: 1_200 }, (_, pageIndex) => ({
+        url: `https://shop.example/products/page-${pageIndex}`,
+        sourceUrl: `https://shop.example/products/page-${pageIndex}`,
+        internalLinks: Array.from({ length: 20 }, (__, linkIndex) => `https://shop.example/products/${pageIndex}-${linkIndex}-${createHash("sha256").update(`link:${pageIndex}:${linkIndex}`).digest("hex")}`),
+        claims: Array.from({ length: 20 }, (__, claimIndex) => ({
+          id: `claim-${pageIndex}-${claimIndex}`,
+          text: Array.from({ length: 4 }, (___, part) => createHash("sha256").update(`claim:${pageIndex}:${claimIndex}:${part}`).digest("hex")).join(""),
+          sourceUrl: `https://shop.example/products/page-${pageIndex}`,
+        })),
+        products: value.results[0].products,
+      }));
+      value.results[0].enrichmentPages = value.results[0].pages.slice(0, 16);
+      rawWireBytes = Buffer.byteLength(JSON.stringify(value), "utf8");
+      return value;
+    },
+    async match(input) {
+      matchedCatalogs.push(structuredClone(input.catalogs));
+      return { ok: true, comparison: comparison({ withPair: false }) };
+    },
+    async persistFactChunk() { throw new Error("test persistence interruption"); },
+  });
+
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /Relational fact persistence remained incomplete/);
+  assert.ok(rawWireBytes > 4_000_000);
+  const checkpoint = port.checkpoints.get(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE);
+  assert.ok(checkpoint);
+  assert.ok(JSON.stringify(checkpoint.result).length < 3_900_000);
+  const recovered = JSON.parse(gunzipSync(Buffer.from(checkpoint.result.data, "base64")).toString("utf8"));
+  assert.deepEqual(recovered.results.map((result) => ({ domain: result.domain, products: result.products })), expectedCatalogs);
+  assert.deepEqual(recovered.document.blocks.find((block) => block.type === "product-comparison"), expectedBaseline);
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port), /Relational fact persistence remained incomplete/);
+  assert.equal(crawlCalls, 1);
+  assert.deepEqual(matchedCatalogs.at(-1), expectedCatalogs);
+  assert.ok(port.events.some((item) => item.idempotencyKey === "report-1-task-2-crawl-resumed"));
+});
+
 test("a later task attempt cannot replace a durable successful crawl with an HTTP 403", async () => {
   let crawlCalls = 0;
   let saveCalls = 0;
@@ -374,7 +444,7 @@ test("a later task attempt cannot replace a durable successful crawl with an HTT
   assert.equal(port.events.some((item) => item.idempotencyKey === "crawl-failed"), false);
 });
 
-test("a corrupt durable crawl checkpoint is ignored and replaced by a fresh valid crawl", async () => {
+test("a corrupt active-attempt crawl checkpoint fails closed before another network crawl", async () => {
   let crawlCalls = 0;
   let saveCalls = 0;
   const base = mockPort();
@@ -388,12 +458,121 @@ test("a corrupt durable crawl checkpoint is ignored and replaced by a fresh vali
   });
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
   port.checkpoints.get(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE).result.data = "not-gzip";
-  await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
-  assert.equal(crawlCalls, 2);
-  assert.ok(port.checkpoints.has(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1));
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port),
+    /active report attempt contains an invalid crawl checkpoint/,
+  );
+  assert.equal(crawlCalls, 1);
+  assert.equal(port.checkpoints.has(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1), false);
 });
 
-test("checkpoint storage failure does not relabel a successful crawl as failed", async () => {
+test("crawl checkpoint recovery validates newest-first and never expands older history after a valid hit", async () => {
+  let crawlCalls = 0;
+  let saveCalls = 0;
+  const base = mockPort();
+  const port = mockPort({
+    async crawl() { crawlCalls += 1; return base.crawl(); },
+    async saveDocument(_publicId, value) {
+      saveCalls += 1;
+      if (saveCalls === 1) throw new Error("terminal callback lost");
+      port.saves.push(value);
+    },
+  });
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
+  const valid = port.checkpoints.get(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE);
+  const taskTwoInputHash = createHash("sha256").update(JSON.stringify({
+    version: 1,
+    publicId: payload.publicId,
+    primaryDomain: payload.primaryDomain,
+    reportAttempt: payload.reportAttempt,
+    productPlan: payload.productPlan,
+    productLimit: payload.productLimit,
+    taskAttemptNumber: 2,
+  })).digest("hex");
+  port.checkpoints.set(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1, { ...valid, batchIndex: CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1, inputHash: taskTwoInputHash });
+  Object.defineProperty(valid, "result", { get() { throw new Error("older checkpoint must not be expanded"); } });
+  await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
+  assert.equal(crawlCalls, 1);
+  assert.ok(port.events.some((item) => item.idempotencyKey === "report-1-task-2-crawl-resumed"));
+});
+
+test("a pre-existing active-attempt crawl conflict cannot resume an older complete crawl", async () => {
+  let crawlCalls = 0;
+  let saveCalls = 0;
+  const base = mockPort();
+  const port = mockPort({
+    async crawl() { crawlCalls += 1; return base.crawl(); },
+    async saveDocument(_publicId, value) {
+      saveCalls += 1;
+      if (saveCalls === 1) throw new Error("terminal callback lost");
+      port.saves.push(value);
+    },
+  });
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
+  const older = port.checkpoints.get(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE);
+  port.checkpoints.set(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1, {
+    ...older,
+    attemptNumber: 1,
+    batchIndex: CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1,
+    inputHash: "f".repeat(64),
+  });
+
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port),
+    /active report attempt contains a conflicting crawl checkpoint/,
+  );
+  assert.equal(crawlCalls, 1);
+  assert.equal(port.events.some((item) => item.idempotencyKey === "report-1-task-2-crawl-resumed"), false);
+});
+
+test("lossless crawl checkpoint overflow fails closed before downstream processing", async () => {
+  let matchCalls = 0;
+  const base = mockPort();
+  const port = mockPort({
+    async crawl() {
+      const value = await base.crawl();
+      value.results[0].products[0].claimIds = Array.from({ length: 100_000 }, (_, index) => createHash("sha256").update(`oversized-claim:${index}`).digest("hex"));
+      return value;
+    },
+    async match() { matchCalls += 1; return { ok: true, comparison: comparison({ withPair: true }) }; },
+  });
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port),
+    /durable checkpoint budget/,
+  );
+  assert.equal(matchCalls, 0);
+  assert.equal(port.checkpoints.has(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE), false);
+});
+
+test("a newer successful crawl overflow cannot silently fall back to an older durable crawl", async () => {
+  let crawlCalls = 0;
+  let saveCalls = 0;
+  const base = mockPort();
+  const port = mockPort({
+    async crawl() {
+      crawlCalls += 1;
+      const value = await base.crawl();
+      value.discovery.productSearchCoverage.complete = false;
+      if (crawlCalls > 1) value.results[0].products[0].claimIds = Array.from({ length: 100_000 }, (_, index) => createHash("sha256").update(`newer-oversized-claim:${index}`).digest("hex"));
+      return value;
+    },
+    async saveDocument(_publicId, value) {
+      saveCalls += 1;
+      if (saveCalls === 1) throw new Error("terminal callback lost");
+      port.saves.push(value);
+    },
+  });
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port),
+    /durable checkpoint budget/,
+  );
+  assert.equal(crawlCalls, 2);
+  assert.equal(port.events.some((item) => item.idempotencyKey === "report-1-task-2-crawl-resumed"), false);
+});
+
+test("unconfirmed crawl checkpoint storage failure stops before downstream processing", async () => {
+  let matchCalls = 0;
   const base = mockPort();
   const port = mockPort({
     async crawl() { return base.crawl(); },
@@ -401,10 +580,203 @@ test("checkpoint storage failure does not relabel a successful crawl as failed",
       if (input.batchIndex === CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE) throw new Error("checkpoint store unavailable");
       port.checkpoints.set(input.batchIndex, { attemptNumber: input.attemptNumber, batchIndex: input.batchIndex, inputHash: input.inputHash, result: input.result });
     },
+    async match() { matchCalls += 1; return { ok: true, comparison: comparison({ withPair: true }) }; },
   });
-  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: true }, port);
-  assert.equal(result.reportStatus, "complete");
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: true }, port), /checkpoint store unavailable/);
+  assert.equal(matchCalls, 0);
   assert.equal(port.events.some((item) => item.idempotencyKey === "crawl-failed"), false);
+});
+
+test("ambiguous crawl checkpoint save rejects different committed content in the same slot", async () => {
+  let matchCalls = 0;
+  let port;
+  port = mockPort({
+    async saveCheckpoint(_publicId, input) {
+      if (input.batchIndex !== CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE) return;
+      const different = JSON.parse(gunzipSync(Buffer.from(input.result.data, "base64")).toString("utf8"));
+      different.results[0].products[0].name = "Different committed crawl product";
+      port.checkpoints.set(input.batchIndex, {
+        attemptNumber: input.attemptNumber,
+        batchIndex: input.batchIndex,
+        inputHash: input.inputHash,
+        result: { ...input.result, data: gzipSync(JSON.stringify(different), { level: 9 }).toString("base64") },
+      });
+      throw new Error("ambiguous crawl checkpoint save");
+    },
+    async match() { matchCalls += 1; return { ok: true, comparison: comparison({ withPair: true }) }; },
+  });
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port),
+    /ambiguous crawl checkpoint save/,
+  );
+  assert.equal(matchCalls, 0);
+});
+
+test("a same-attempt crawl checkpoint conflict cannot fall back to an older durable crawl", async () => {
+  let crawlCalls = 0;
+  let saveCalls = 0;
+  let port;
+  const base = mockPort();
+  port = mockPort({
+    async crawl() {
+      crawlCalls += 1;
+      const value = await base.crawl();
+      value.discovery.productSearchCoverage.complete = false;
+      return value;
+    },
+    async saveDocument(_publicId, value) {
+      saveCalls += 1;
+      if (saveCalls === 1) throw new Error("terminal callback lost");
+      port.saves.push(value);
+    },
+  });
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
+  const ordinarySave = port.saveCheckpoint.bind(port);
+  port.saveCheckpoint = async (publicId, input) => {
+    if (input.batchIndex !== CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1) return ordinarySave(publicId, input);
+    const different = JSON.parse(gunzipSync(Buffer.from(input.result.data, "base64")).toString("utf8"));
+    different.results[0].products[0].name = "Conflicting second-wave product";
+    port.checkpoints.set(input.batchIndex, {
+      attemptNumber: input.attemptNumber,
+      batchIndex: input.batchIndex,
+      inputHash: input.inputHash,
+      result: { ...input.result, data: gzipSync(JSON.stringify(different), { level: 9 }).toString("base64") },
+    });
+    throw new Error("second-wave checkpoint conflict");
+  };
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port),
+    /second-wave checkpoint conflict/,
+  );
+  assert.equal(crawlCalls, 2);
+  assert.equal(port.events.some((item) => item.idempotencyKey === "report-1-task-2-crawl-resumed"), false);
+});
+
+test("a missing confirmation after an ambiguous checkpoint save cannot fall back to an older crawl", async () => {
+  let saveCalls = 0;
+  let matchCalls = 0;
+  const base = mockPort();
+  const port = mockPort({
+    async crawl() {
+      const value = await base.crawl();
+      value.discovery.productSearchCoverage.complete = false;
+      return value;
+    },
+    async match() { matchCalls += 1; return { ok: true, comparison: comparison({ withPair: true }) }; },
+    async saveDocument(_publicId, value) {
+      saveCalls += 1;
+      if (saveCalls === 1) throw new Error("terminal callback lost");
+      port.saves.push(value);
+    },
+  });
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
+  const matchesBeforeRetry = matchCalls;
+  const ordinarySave = port.saveCheckpoint.bind(port);
+  port.saveCheckpoint = async (publicId, input) => {
+    if (input.batchIndex === CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1) throw new Error("new checkpoint response lost");
+    return ordinarySave(publicId, input);
+  };
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port),
+    /new checkpoint response lost/,
+  );
+  assert.equal(matchCalls, matchesBeforeRetry);
+  assert.equal(port.events.some((item) => item.idempotencyKey === "report-1-task-2-crawl-resumed"), false);
+});
+
+test("a failed confirmation read after an ambiguous checkpoint save cannot fall back to an older crawl", async () => {
+  let saveCalls = 0;
+  let matchCalls = 0;
+  const base = mockPort();
+  const port = mockPort({
+    async crawl() {
+      const value = await base.crawl();
+      value.discovery.productSearchCoverage.complete = false;
+      return value;
+    },
+    async match() { matchCalls += 1; return { ok: true, comparison: comparison({ withPair: true }) }; },
+    async saveDocument(_publicId, value) {
+      saveCalls += 1;
+      if (saveCalls === 1) throw new Error("terminal callback lost");
+      port.saves.push(value);
+    },
+  });
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
+  const matchesBeforeRetry = matchCalls;
+  const ordinarySave = port.saveCheckpoint.bind(port);
+  const ordinaryLoad = port.loadCheckpoint.bind(port);
+  port.saveCheckpoint = async (publicId, input) => {
+    if (input.batchIndex === CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1) throw new Error("new checkpoint response lost");
+    return ordinarySave(publicId, input);
+  };
+  port.loadCheckpoint = async (publicId, input) => {
+    if (input.batchIndex === CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1) throw new Error("confirmation read unavailable");
+    return ordinaryLoad(publicId, input);
+  };
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port),
+    /new checkpoint response lost/,
+  );
+  assert.equal(matchCalls, matchesBeforeRetry);
+  assert.equal(port.events.some((item) => item.idempotencyKey === "report-1-task-2-crawl-resumed"), false);
+});
+
+test("checkpoint presentation projection failure cannot fall back to an older durable crawl", async () => {
+  let crawlCalls = 0;
+  let saveCalls = 0;
+  let matchCalls = 0;
+  const base = mockPort();
+  const port = mockPort({
+    async crawl() {
+      crawlCalls += 1;
+      const value = await base.crawl();
+      value.discovery.productSearchCoverage.complete = false;
+      if (crawlCalls > 1) value.document.blocks = Array.from({ length: 100 }, (_, index) => ({ type: "summary", id: `oversized-summary-${index}`, body: "مرحبا".repeat(2_000) }));
+      return value;
+    },
+    async match() { matchCalls += 1; return { ok: true, comparison: comparison({ withPair: true }) }; },
+    async saveDocument(_publicId, value) {
+      saveCalls += 1;
+      if (saveCalls === 1) throw new Error("terminal callback lost");
+      port.saves.push(value);
+    },
+  });
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
+  const matchesBeforeRetry = matchCalls;
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port),
+    /could not be projected into a durable checkpoint/,
+  );
+  assert.equal(matchCalls, matchesBeforeRetry);
+  assert.equal(port.events.some((item) => item.idempotencyKey === "report-1-task-2-crawl-resumed"), false);
+});
+
+test("an exact committed crawl after a lost save response keeps rich live facts in memory", async () => {
+  const base = mockPort();
+  let port;
+  let lost = false;
+  let freshProduct = null;
+  port = mockPort({
+    async crawl() {
+      const value = await base.crawl();
+      freshProduct = value.results[0].products[0];
+      return value;
+    },
+    async match(input) {
+      assert.equal(input.catalogs[0].products[0], freshProduct);
+      return { ok: true, comparison: comparison({ withPair: true }) };
+    },
+  });
+  const ordinarySave = port.saveCheckpoint.bind(port);
+  port.saveCheckpoint = async (publicId, input) => {
+    await ordinarySave(publicId, input);
+    if (!lost && input.batchIndex === CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE) {
+      lost = true;
+      throw new Error("crawl checkpoint response lost");
+    }
+  };
+  await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: true }, port);
+  assert.equal(lost, true);
 });
 
 test("a retry advances to the next discovery anchor batch only after a complete prior batch", async () => {
@@ -1467,6 +1839,7 @@ test("an ambiguous publication save cannot adopt an older report attempt checkpo
   });
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/i);
   assert.equal(port.checkpoints.get(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX).attemptNumber, 1);
+  for (let index = CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE; index <= CRAWL_RESULT_CHECKPOINT_BATCH_INDEX; index += 1) port.checkpoints.delete(index);
   const loadPriorReport = port.loadReport.bind(port);
   port.loadReport = async () => { const stored = await loadPriorReport(); return { ...stored, run: { ...stored.run, attemptCount: 2 } }; };
   const saveCheckpoint = port.saveCheckpoint.bind(port);
@@ -2029,6 +2402,25 @@ test("the HTTP report adapter pages checkpoint recovery below the response trans
   assert.equal(checkpointReadPageBound(11, 20), 2_201);
   assert.equal(checkpointReadPageBound(20, 20, 1_400, 1_649, true), 14);
   assert.throws(() => checkpointReadPageBound(21, 20), /Invalid checkpoint paging bound/);
+});
+
+test("the HTTP report adapter enforces a caller checkpoint limit at the API boundary", async () => {
+  const bodies = [];
+  const port = createReportOrchestrationHttpPort({
+    appOrigin: "https://market.example",
+    callbackToken: "callback_secret_with_enough_entropy_123456",
+    async fetchImpl(_url, init) {
+      const body = JSON.parse(init.body);
+      bodies.push(body);
+      return Response.json({ ok: true, checkpoints: [{ attemptNumber: 3, batchIndex: 262, inputHash: "a".repeat(64), result: { data: "bounded" } }] });
+    },
+  });
+
+  const loaded = await port.loadCheckpoint(payload.publicId, { attemptNumber: 3, batchIndexStart: 262, batchIndexEnd: 262, latestPerBatch: true, limit: 1 });
+
+  assert.equal(loaded.length, 1);
+  assert.equal(bodies.length, 1);
+  assert.equal(bodies[0].limit, 1);
 });
 
 test("the HTTP report adapter compacts a large terminal document before transport", async () => {

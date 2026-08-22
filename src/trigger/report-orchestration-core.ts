@@ -511,14 +511,104 @@ type StoredReport = {
 };
 type JsonBlock = { type: string; id: string } & Record<string, unknown>;
 type JsonDocument = { blocks: JsonBlock[] } & Record<string, unknown>;
-type CrawlResult = { domain: string; homepage?: unknown; products: ProductRecord[]; role?: string; discovery?: { verificationScore?: number } };
+type CrawlResult = { domain: string; homepage?: unknown; products: ProductRecord[]; role?: string; fetchedAt?: string; discovery?: { verificationScore?: number; category?: string; region?: string; sourceIds?: string[]; reason?: string; source?: string } };
 type DiscoveryCoverage = { eligibleAnchors?: number; anchorSetHash?: string; searchedAnchors?: number; startIndex?: number; endIndex?: number; truncated?: boolean; searchesComplete?: boolean; candidateDomainsFound?: number; candidateDomainsInvestigated?: number; candidateTruncated?: boolean; verificationComplete?: boolean; batchComplete?: boolean; complete?: boolean };
 type CrawlSuccess = { ok: true; primaryDomain: string; results: CrawlResult[]; discovery?: { productSearchCoverage?: DiscoveryCoverage }; adRequest: unknown; matchHints?: PinnedProductPair[]; document: JsonDocument };
 type ParkedDomainOutcome = { ok: false; code: "parked-domain"; primaryDomain: string; error: string; document: JsonDocument };
 type UnavailableDomainOutcome = { ok: false; code: "unavailable-domain"; primaryDomain: string; error: string; document: JsonDocument };
 type CrawlOutcome = CrawlSuccess | ParkedDomainOutcome | UnavailableDomainOutcome;
 
-const MAX_CRAWL_CHECKPOINT_UNCOMPRESSED_BYTES = 64 * 1_024 * 1_024;
+const MAX_CRAWL_CHECKPOINT_UNCOMPRESSED_BYTES = 16 * 1_024 * 1_024;
+const MAX_CRAWL_CHECKPOINT_RECOVERY_CANDIDATES = 2;
+
+class CrawlCheckpointProjectionError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "CrawlCheckpointProjectionError";
+  }
+}
+
+class CrawlCheckpointConflictError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "CrawlCheckpointConflictError";
+  }
+}
+
+function checkpointText(value: unknown, limit: number) {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
+}
+
+function checkpointProduct(product: ProductRecord): ProductRecord {
+  return {
+    id: product.id,
+    domain: product.domain,
+    name: product.name,
+    normalizedName: product.normalizedName,
+    description: product.description,
+    category: product.category,
+    jsonLdType: product.jsonLdType,
+    priceSignals: product.priceSignals,
+    attributes: product.attributes,
+    ownership: product.ownership,
+    extraction: product.extraction,
+    confidence: product.confidence,
+    sourceUrl: product.sourceUrl,
+    imageUrl: product.imageUrl,
+    observedAt: product.observedAt,
+    claimIds: product.claimIds,
+    ...(product.aliases ? { aliases: product.aliases } : {}),
+    ...(product.identifiers ? { identifiers: product.identifiers } : {}),
+    ...(product.quantity ? { quantity: product.quantity } : {}),
+    ...(product.recoveryIdentityHash ? { recoveryIdentityHash: product.recoveryIdentityHash } : {}),
+    ...(product.assignmentComponentHash ? { assignmentComponentHash: product.assignmentComponentHash } : {}),
+  };
+}
+
+function checkpointDiscovery(value: CrawlResult["discovery"]): CrawlResult["discovery"] {
+  if (!value) return undefined;
+  return {
+    ...(typeof value.verificationScore === "number" ? { verificationScore: value.verificationScore } : {}),
+    ...(value.category ? { category: checkpointText(value.category, 240) } : {}),
+    ...(value.region ? { region: checkpointText(value.region, 120) } : {}),
+    ...(value.sourceIds ? { sourceIds: value.sourceIds.slice(0, 20).map((item) => checkpointText(item, 160)).filter(Boolean) } : {}),
+    ...(value.reason ? { reason: checkpointText(value.reason, 1_000) } : {}),
+    ...(value.source ? { source: checkpointText(value.source, 80) } : {}),
+  };
+}
+
+function checkpointHomepage(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const source = value as Record<string, unknown>;
+  return Object.fromEntries([
+    "domain", "sourceUrl", "observedAt", "companyName", "title", "description",
+    "region", "regionCountryCode", "category", "status", "verificationScore",
+  ].flatMap((key) => source[key] === undefined ? [] : [[key, typeof source[key] === "string" ? checkpointText(source[key], key === "description" ? 1_000 : 500) : source[key]]]));
+}
+
+function crawlCheckpointSnapshot(crawl: CrawlSuccess): CrawlSuccess {
+  const presentation = compactTerminalReportDocument({ primaryDomain: crawl.primaryDomain, document: ensureDocument(crawl.document), marketBrief: null }, 650_000, { factsAuthoritative: false, factCounts: null }) as { document: JsonDocument };
+  const baseline = ensureDocument(crawl.document).blocks.find((block) => block.type === "product-comparison");
+  const document = baseline
+    ? { ...presentation.document, blocks: [...presentation.document.blocks.filter((block) => block.type !== "product-comparison"), baseline] }
+    : presentation.document;
+  return {
+    ok: true,
+    primaryDomain: crawl.primaryDomain,
+    results: crawl.results.map((result) => ({
+      domain: result.domain,
+      homepage: checkpointHomepage(result.homepage),
+      products: result.products.map(checkpointProduct),
+      ...(result.role ? { role: result.role } : {}),
+      ...(result.fetchedAt ? { fetchedAt: result.fetchedAt } : {}),
+      ...(result.discovery ? { discovery: checkpointDiscovery(result.discovery) } : {}),
+    })),
+    ...(crawl.discovery?.productSearchCoverage ? { discovery: { productSearchCoverage: crawl.discovery.productSearchCoverage } } : {}),
+    adRequest: crawl.adRequest,
+    ...(crawl.matchHints ? { matchHints: crawl.matchHints } : {}),
+    document,
+  };
+}
 
 function crawlCheckpointBatchIndex(taskAttemptNumber: number) {
   if (!Number.isInteger(taskAttemptNumber) || taskAttemptNumber < 1 || taskAttemptNumber > MAX_ORCHESTRATION_TASK_ATTEMPTS) throw new PermanentOrchestrationError("Unsupported crawl task attempt.");
@@ -538,11 +628,16 @@ function crawlCheckpointInputHash(payload: ReportOrchestrationPayload, taskAttem
 }
 
 function crawlCheckpoint(crawl: CrawlSuccess) {
-  const json = JSON.stringify(crawl);
-  if (Buffer.byteLength(json, "utf8") > MAX_CRAWL_CHECKPOINT_UNCOMPRESSED_BYTES) throw new Error("The successful crawl is too large to checkpoint safely.");
-  const checkpoint = { version: 1, encoding: "gzip-base64", data: gzipSync(json, { level: 9 }).toString("base64") };
-  if (encodedJsonBytes(checkpoint) > REPORT_MATCH_CHECKPOINT_RESULT_BYTES) throw new Error("The successful crawl checkpoint exceeds the durable checkpoint budget.");
-  return checkpoint;
+  try {
+    const json = JSON.stringify(crawlCheckpointSnapshot(crawl));
+    if (Buffer.byteLength(json, "utf8") > MAX_CRAWL_CHECKPOINT_UNCOMPRESSED_BYTES) throw new CrawlCheckpointProjectionError("The successful crawl checkpoint exceeds the durable uncompressed checkpoint budget.");
+    const checkpoint = { version: 1, encoding: "gzip-base64", data: gzipSync(json, { level: 9 }).toString("base64") };
+    if (encodedJsonBytes(checkpoint) <= REPORT_MATCH_CHECKPOINT_RESULT_BYTES) return checkpoint;
+    throw new CrawlCheckpointProjectionError("The successful crawl checkpoint exceeds the durable checkpoint budget after lossless matching-state projection.");
+  } catch (error) {
+    if (error instanceof CrawlCheckpointProjectionError) throw error;
+    throw new CrawlCheckpointProjectionError("The successful crawl could not be projected into a durable checkpoint.", { cause: error });
+  }
 }
 
 function validCrawlSuccess(value: unknown, payload: ReportOrchestrationPayload): CrawlSuccess | null {
@@ -585,7 +680,7 @@ export interface ReportOrchestrationPort {
   ads(input: unknown): Promise<{ ok: true; block: JsonBlock }>;
   match(input: { publicId: string; reportAttempt: number; taskAttemptNumber: number; reportObservedAt: string; primaryDomain: string; marketCountryCode?: string; productLimit: number; catalogs: Array<{ domain: string; products: ProductRecord[] }>; pinnedPairs?: PinnedProductPair[] }): Promise<{ ok: true; comparison: ProductComparison }>;
   enrich(input: { targets: unknown[] }): Promise<{ ok: true; products: ProductRecord[]; coverage: NonNullable<ProductComparison["enrichment"]> }>;
-  loadCheckpoint(publicId: string, input: { attemptNumber: number; batchIndex?: number; batchIndexStart?: number; batchIndexEnd?: number; latestPerBatch?: boolean }): Promise<Array<{ attemptNumber: number; batchIndex: number; inputHash: string; result: unknown }>>;
+  loadCheckpoint(publicId: string, input: { attemptNumber: number; batchIndex?: number; batchIndexStart?: number; batchIndexEnd?: number; latestPerBatch?: boolean; limit?: number }): Promise<Array<{ attemptNumber: number; batchIndex: number; inputHash: string; result: unknown }>>;
   saveCheckpoint(publicId: string, input: { attemptNumber: number; batchIndex: number; inputHash: string; result: unknown }): Promise<void>;
   actions(input: { inputs: ProductActionInput[] }): Promise<{ ok: true; result: ProductActionPlanningResult }>;
   persistFactChunk(publicId: string, input: ReportFactChunkInput): Promise<void>;
@@ -743,14 +838,28 @@ export async function orchestrateReport(
   const limitedPhases: string[] = [];
   let crawl: CrawlOutcome;
   const taskAttemptNumber = attempt.taskAttemptNumber || 1;
-  const crawlCheckpoints = await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE, batchIndexEnd: CRAWL_RESULT_CHECKPOINT_BATCH_INDEX, latestPerBatch: true });
-  const durableCrawls = crawlCheckpoints.flatMap((checkpoint) => {
+  let priorDurableCrawl: { taskAttemptNumber: number; crawl: CrawlSuccess } | null = null;
+  let crawlCheckpointCandidates = 0;
+  for (let batchIndex = crawlCheckpointBatchIndex(taskAttemptNumber); batchIndex >= CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE && crawlCheckpointCandidates < MAX_CRAWL_CHECKPOINT_RECOVERY_CANDIDATES; batchIndex -= 1) {
+    const [checkpoint] = await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: batchIndex, batchIndexEnd: batchIndex, latestPerBatch: true, limit: 1 });
+    if (!checkpoint) continue;
+    crawlCheckpointCandidates += 1;
     const checkpointTaskAttempt = checkpoint.batchIndex - CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1;
-    if (checkpointTaskAttempt < 1 || checkpointTaskAttempt > taskAttemptNumber || checkpoint.inputHash !== crawlCheckpointInputHash(payload, checkpointTaskAttempt)) return [];
+    const expectedInputHash = checkpointTaskAttempt >= 1 && checkpointTaskAttempt <= taskAttemptNumber
+      ? crawlCheckpointInputHash(payload, checkpointTaskAttempt)
+      : "";
+    if (!expectedInputHash || checkpoint.inputHash !== expectedInputHash) {
+      if (checkpoint.attemptNumber === attempt.attemptNumber) throw new CrawlCheckpointConflictError("The active report attempt contains a conflicting crawl checkpoint.");
+      continue;
+    }
     const value = validCrawlCheckpoint(checkpoint.result, payload);
-    return value ? [{ taskAttemptNumber: checkpointTaskAttempt, crawl: value }] : [];
-  }).sort((left, right) => right.taskAttemptNumber - left.taskAttemptNumber);
-  const priorDurableCrawl = durableCrawls[0] || null;
+    if (!value) {
+      if (checkpoint.attemptNumber === attempt.attemptNumber) throw new CrawlCheckpointConflictError("The active report attempt contains an invalid crawl checkpoint.");
+      continue;
+    }
+    priorDurableCrawl = { taskAttemptNumber: checkpointTaskAttempt, crawl: value };
+    break;
+  }
   const priorCoverageComplete = priorDurableCrawl?.crawl.discovery?.productSearchCoverage?.complete === true;
   const shouldRefreshCrawl = !priorDurableCrawl || (!priorCoverageComplete && priorDurableCrawl.taskAttemptNumber < taskAttemptNumber);
   if (!shouldRefreshCrawl && priorDurableCrawl) {
@@ -769,22 +878,31 @@ export async function orchestrateReport(
       if (freshCrawl.ok === true && !validatedFreshCrawl) throw new Error("The successful crawl did not contain a valid primary result.");
       crawl = validatedFreshCrawl || freshCrawl;
       if (validatedFreshCrawl) {
-        let checkpoint: ReturnType<typeof crawlCheckpoint> | null = null;
-        try { checkpoint = crawlCheckpoint(validatedFreshCrawl); } catch { /* checkpointing is an optimization; the successful crawl remains usable */ }
+        const checkpoint = crawlCheckpoint(validatedFreshCrawl);
         const crawlInputHash = crawlCheckpointInputHash(payload, taskAttemptNumber);
         const checkpointBatchIndex = crawlCheckpointBatchIndex(taskAttemptNumber);
-        if (checkpoint) try {
+        try {
           await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointBatchIndex, inputHash: crawlInputHash, result: checkpoint });
-        } catch {
-          const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointBatchIndex }))[0];
-          const committedCrawl = committed?.attemptNumber === attempt.attemptNumber && committed.inputHash === crawlInputHash ? validCrawlCheckpoint(committed.result, payload) : null;
-          crawl = committedCrawl || validatedFreshCrawl;
+        } catch (saveError) {
+          let committed: Awaited<ReturnType<ReportOrchestrationPort["loadCheckpoint"]>>[number] | undefined;
+          try {
+            committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointBatchIndex, limit: 1 }))[0];
+          } catch (confirmationError) {
+            throw new CrawlCheckpointConflictError(message(saveError, "The crawl checkpoint save could not be confirmed."), { cause: confirmationError });
+          }
+          const exactCommittedResult = committed?.attemptNumber === attempt.attemptNumber
+            && committed.inputHash === crawlInputHash
+            && JSON.stringify(stableCheckpointValue(committed.result)) === JSON.stringify(stableCheckpointValue(checkpoint));
+          const committedCrawl = exactCommittedResult ? validCrawlCheckpoint(committed!.result, payload) : null;
+          if (!committedCrawl) throw new CrawlCheckpointConflictError(message(saveError, "The crawl checkpoint save could not be confirmed."), { cause: saveError });
+          crawl = validatedFreshCrawl;
         }
       } else if (priorDurableCrawl) {
         crawl = priorDurableCrawl.crawl;
         await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "crawl-resumed"), "crawl", "The next discovery wave was unavailable, so processing resumed from the last durable successful crawl.", { taskAttempt: taskAttemptNumber }));
       }
     } catch (error) {
+      if (error instanceof CrawlCheckpointProjectionError || error instanceof CrawlCheckpointConflictError) throw error;
       if (priorDurableCrawl) {
         crawl = priorDurableCrawl.crawl;
         await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "crawl-resumed"), "crawl", "The next discovery wave failed, so processing resumed from the last durable successful crawl.", { taskAttempt: taskAttemptNumber, reason: message(error, "Discovery wave unavailable.") }));
