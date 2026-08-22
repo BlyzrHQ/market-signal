@@ -1561,10 +1561,36 @@ test("unschedulable accepted price gaps remain processing-incomplete instead of 
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/);
   assert.equal(port.saves.length, 0);
   assert.ok(port.events.some((item) => item.idempotencyKey === "report-1-task-1-matching-task-retry"));
-  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port), /remained incomplete after the final task attempt/);
+  const terminal = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port);
+  assert.equal(terminal.reportStatus, "limited");
   assert.equal(enrichCalls, 0);
-  assert.equal(port.saves.length, 0);
+  assert.equal(port.saves.length, 1);
+  const terminalBlock = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
+  assert.equal(terminalBlock.rows.length, 0);
+  assert.equal(terminalBlock.matching.resultShortfallReason, "processing-incomplete");
+  assert.ok(port.events.some((item) => item.idempotencyKey === "report-1-task-2-matching-limited"));
   assert.ok(port.events.some((item) => item.idempotencyKey.endsWith("-limited") && item.phase === "enrichment" && item.metadata?.pagesPlanned === 0));
+});
+
+test("the final bounded task publishes a limited report when processing has zero verified rows", async () => {
+  const empty = comparison({ withPair: false, count: 20 });
+  empty.matching.resultShortfall = 20;
+  empty.matching.resultShortfallReason = "processing-incomplete";
+  empty.matching.gaps = ["Candidate processing remained incomplete within the bounded worker attempts."];
+  const port = mockPort({
+    async match() { return { ok: true, comparison: empty }; },
+    async enrich() { throw new Error("zero-row processing must not schedule enrichment"); },
+  });
+
+  const terminal = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 10, isFinalAttempt: true }, port);
+
+  assert.equal(terminal.reportStatus, "limited");
+  assert.equal(port.saves.length, 1);
+  const terminalBlock = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
+  assert.equal(terminalBlock.rows.length, 0);
+  assert.equal(terminalBlock.matching.resultShortfallReason, "processing-incomplete");
+  assert.ok(port.events.some((item) => item.idempotencyKey === "report-1-task-10-matching-limited"));
+  assert.equal(port.events.some((item) => item.idempotencyKey === "orchestration-failed"), false);
 });
 
 test("terminal product-page rejections permit truthful bounded exhaustion while preserving their gaps", async () => {
@@ -2118,7 +2144,7 @@ test("an ambiguous enrichment save rejects different same-slot observations", as
     }
   };
 
-  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, port), /remained incomplete/);
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, port), /checkpoint save committed conflicting content/);
   assert.equal(conflicted, true);
   assert.equal(port.saves.length, 0);
 });
@@ -2141,7 +2167,7 @@ test("a shape-valid but semantically incomplete enrichment checkpoint is rejecte
   const checkpoint = [...port.checkpoints.values()].find((value) => value.result?.coverage);
   assert.ok(checkpoint);
   checkpoint.result.coverage.gaps = [];
-  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port), /remained incomplete after the final task attempt/);
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port), /durable enrichment checkpoint is invalid/);
   assert.equal(enrichCalls, 1);
   assert.equal(port.saves.length, 0);
 });
@@ -2164,7 +2190,7 @@ test("a conflicting enrichment checkpoint fails closed without fetching or publi
       ? [{ batchIndex: input.batchIndex, inputHash: "0".repeat(64), result: { ok: true, products: [], coverage: { pagesRequested: 2, pagesFetched: 0, maxPages: 64, gaps: [] } } }]
       : loadCheckpoint(publicId, input);
 
-  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, port), /remained incomplete after the final task attempt/);
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: true }, port), /durable enrichment checkpoint conflicts/);
   assert.equal(enrichCalls, 0);
   assert.equal(port.saves.length, 0);
 });
