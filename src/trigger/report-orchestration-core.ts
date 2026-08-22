@@ -136,8 +136,8 @@ function validPublishedResultCheckpoint(value: unknown, resultTarget: number, re
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const checkpoint = value as { version?: unknown; comparison?: ProductComparison; evidence?: ProductComparison };
     if ((checkpoint.version !== 1 && checkpoint.version !== 2 && checkpoint.version !== 3) || !checkpoint.comparison || !Array.isArray(checkpoint.comparison.rows) || checkpoint.comparison.rows.length > resultTarget) return null;
-    const evidence = checkpoint.version === 2 ? checkpoint.evidence : null;
-    if (checkpoint.version === 2 && (!evidence || !Array.isArray(evidence.rows) || evidence.rows.length > resultTarget)) return null;
+    const evidence = checkpoint.version === 2 || checkpoint.version === 3 ? checkpoint.evidence : null;
+    if ((checkpoint.version === 2 || checkpoint.version === 3) && (!evidence || !Array.isArray(evidence.rows) || evidence.rows.length > resultTarget)) return null;
     if (new Set(checkpoint.comparison.rows.map((row) => row?.primary?.id)).size !== checkpoint.comparison.rows.length) return null;
     if (evidence && new Set(evidence.rows.map((row) => row?.primary?.id)).size !== evidence.rows.length) return null;
     if (![...checkpoint.comparison.rows, ...(evidence?.rows || [])].every((row) => allowedPrimaryProductKeys.has(`${row.primary.id}\n${canonicalDomain(row.primary.domain)}`))) return null;

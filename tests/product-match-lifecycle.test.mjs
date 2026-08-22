@@ -469,7 +469,7 @@ test("durable priced evidence stays below the checkpoint limit for a legal 6000-
   });
   const ids = rows.map((item) => item.primary.id);
   const state = mergePublishedProductComparisonState(comparison({ selected: ids, assessed: ids, rows, accepted: 6_000 }), null, 20);
-  const checkpoint = { version: 2, comparison: state.comparison, evidence: state.evidence };
+  const checkpoint = { version: 3, comparison: state.comparison, evidence: state.evidence };
 
   assert.equal(state.evidence.rows.length, 20);
   assert.ok(state.evidence.rows.every((item) => item.matches.length >= 1 && item.matches.length <= MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY));
