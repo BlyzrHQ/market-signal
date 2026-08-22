@@ -25,6 +25,7 @@ export type D1DatabaseLike = ApplicationDatabase;
 const MEMORY_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 const MAX_INVESTIGATIONS = 1_712;
 const MAX_REMEMBERED_CANDIDATES = 500;
+export const MAX_REMEMBERED_PRODUCT_EVIDENCE = 6_000;
 const schemaReady = new WeakMap<object, Promise<void>>();
 
 function clean(value: unknown, limit = 1_000) {
@@ -62,7 +63,7 @@ function candidateFromRecord(record: VerifiedCompetitorMemory): MemoryCandidate 
     const method = evidenceItem.method;
     if (!url || !["entity-search", "category-search", "product-search", "search-source"].includes(String(method))) return [];
     return [{ url, title: clean(evidenceItem.title, 300), method: method as "entity-search" | "category-search" | "product-search" | "search-source" }];
-  }).slice(0, 200) : [];
+  }).slice(0, MAX_REMEMBERED_PRODUCT_EVIDENCE) : [];
   return {
     domain,
     companyName: clean(item.companyName, 200) || domain,
@@ -74,11 +75,11 @@ function candidateFromRecord(record: VerifiedCompetitorMemory): MemoryCandidate 
     relationship: item.relationship === "adjacent" ? "adjacent" : "direct",
     sharedOfferings: strings(item.sharedOfferings),
     evidence,
-    mentionCount: Math.max(1, Math.min(200, Number(item.mentionCount) || evidence.length || 1)),
+    mentionCount: Math.max(1, Math.min(MAX_REMEMBERED_PRODUCT_EVIDENCE, Number(item.mentionCount) || evidence.length || 1)),
     matchedPrimaryProductName: clean(item.matchedPrimaryProductName, 200) || undefined,
     matchedProductUrl: safeUrl(item.matchedProductUrl) || undefined,
-    matchedPrimaryProductNames: strings(item.matchedPrimaryProductNames, 200) || undefined,
-    matchedProductUrls: Array.isArray(item.matchedProductUrls) ? item.matchedProductUrls.map(safeUrl).filter(Boolean).slice(0, 200) : undefined,
+    matchedPrimaryProductNames: strings(item.matchedPrimaryProductNames, MAX_REMEMBERED_PRODUCT_EVIDENCE) || undefined,
+    matchedProductUrls: Array.isArray(item.matchedProductUrls) ? item.matchedProductUrls.map(safeUrl).filter(Boolean).slice(0, MAX_REMEMBERED_PRODUCT_EVIDENCE) : undefined,
     evidenceMethod: item.evidenceMethod === "search-source" ? "search-source" : "model-summarized",
     provenance: "remembered-reverified",
     rememberedVerifiedAt: record.lastVerifiedAt,
@@ -117,7 +118,7 @@ async function ensureSchema(database: D1DatabaseLike) {
   return pending;
 }
 
-export function mergeRememberedCandidates(fresh: DiscoveryCandidate[], remembered: MemoryCandidate[], limit = MAX_INVESTIGATIONS) {
+export function mergeRememberedCandidateCoverage(fresh: DiscoveryCandidate[], remembered: MemoryCandidate[], limit = MAX_INVESTIGATIONS) {
   const selected = new Map<string, MemoryCandidate>();
   const freshCandidates = fresh.map((candidate): MemoryCandidate => ({ ...candidate, provenance: "discovered-this-run" }));
   const rememberedFirst = remembered.slice(0, Math.min(MAX_REMEMBERED_CANDIDATES, Math.max(0, limit - Math.min(MAX_REMEMBERED_CANDIDATES, freshCandidates.length))));
@@ -134,17 +135,17 @@ export function mergeRememberedCandidates(fresh: DiscoveryCandidate[], remembere
     const matchedPrimaryProductNames = [...new Set([
       ...(current.matchedPrimaryProductNames || (current.matchedPrimaryProductName ? [current.matchedPrimaryProductName] : [])),
       ...(candidate.matchedPrimaryProductNames || (candidate.matchedPrimaryProductName ? [candidate.matchedPrimaryProductName] : [])),
-    ])].slice(0, 200);
+    ])].slice(0, MAX_REMEMBERED_PRODUCT_EVIDENCE);
     const matchedProductUrls = [...new Set([
       ...(current.matchedProductUrls || (current.matchedProductUrl ? [current.matchedProductUrl] : [])),
       ...(candidate.matchedProductUrls || (candidate.matchedProductUrl ? [candidate.matchedProductUrl] : [])),
-    ])].slice(0, 200);
+    ])].slice(0, MAX_REMEMBERED_PRODUCT_EVIDENCE);
     const inferredProductLeads = [...(current.inferredProductLeads || []), ...(candidate.inferredProductLeads || [])]
       .filter((lead, index, all) => all.findIndex((other) => other.primaryProductId === lead.primaryProductId
         && other.primarySourceUrl === lead.primarySourceUrl
         && other.candidateSourceUrl === lead.candidateSourceUrl
         && other.admission === lead.admission) === index)
-      .slice(0, 200);
+      .slice(0, MAX_REMEMBERED_PRODUCT_EVIDENCE);
     selected.set(domain, {
       ...current,
       ...candidate,
@@ -159,7 +160,27 @@ export function mergeRememberedCandidates(fresh: DiscoveryCandidate[], remembere
       rememberedVerifiedAt: current.rememberedVerifiedAt,
     });
   }
-  return [...selected.values()].slice(0, limit);
+  const candidates = [...selected.values()].slice(0, limit);
+  let remaining = MAX_REMEMBERED_PRODUCT_EVIDENCE;
+  let truncated = false;
+  const bounded = candidates.map((candidate) => {
+    const urls = candidate.matchedProductUrls || (candidate.matchedProductUrl ? [candidate.matchedProductUrl] : []);
+    const leads = candidate.inferredProductLeads || [];
+    const seedUrls = [...new Set([...urls, ...leads.map((lead) => lead.candidateSourceUrl)])];
+    const allowed = new Set(seedUrls.slice(0, Math.max(0, remaining)));
+    remaining -= allowed.size;
+    if (allowed.size < seedUrls.length) truncated = true;
+    return {
+      ...candidate,
+      matchedProductUrls: urls.filter((url) => allowed.has(url)),
+      inferredProductLeads: leads.filter((lead) => allowed.has(lead.candidateSourceUrl)),
+    };
+  });
+  return { candidates: bounded, truncated };
+}
+
+export function mergeRememberedCandidates(fresh: DiscoveryCandidate[], remembered: MemoryCandidate[], limit = MAX_INVESTIGATIONS) {
+  return mergeRememberedCandidateCoverage(fresh, remembered, limit).candidates;
 }
 
 export async function loadRememberedCompetitors(primaryDomain: string, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
@@ -183,11 +204,13 @@ export async function loadRememberedCompetitors(primaryDomain: string, now = new
       LIMIT 501`).bind(canonicalDomain(primaryDomain), cutoff).all<VerifiedCompetitorMemory>();
     const records = response.results || [];
     const truncated = records.length > MAX_REMEMBERED_CANDIDATES;
-    const candidates = records.slice(0, MAX_REMEMBERED_CANDIDATES).flatMap((record) => {
+    const parsedCandidates = records.slice(0, MAX_REMEMBERED_CANDIDATES).flatMap((record) => {
       const candidate = candidateFromRecord(record);
       return candidate ? [candidate] : [];
     });
-    return { available: true, candidates, truncated, gap: truncated ? "Verified competitor memory exceeded the bounded 500-domain carry-forward window; a result shortfall cannot claim full market exhaustion." : "" };
+    const bounded = mergeRememberedCandidateCoverage([], parsedCandidates, MAX_REMEMBERED_CANDIDATES);
+    const coverageTruncated = truncated || bounded.truncated;
+    return { available: true, candidates: bounded.candidates, truncated: coverageTruncated, gap: coverageTruncated ? "Verified competitor memory exceeded the bounded 500-domain / 6,000-product-evidence carry-forward window; a result shortfall cannot claim full market exhaustion." : "" };
   } catch {
     return { available: false, candidates: [] as MemoryCandidate[], truncated: false, gap: "Competitor memory was temporarily unavailable; fresh discovery was used." };
   }
@@ -214,12 +237,12 @@ export async function rememberVerifiedCompetitors(primaryDomain: string, verifie
         evidence: candidate.evidence.flatMap((entry) => {
           const url = safeUrl(entry.url);
           return url ? [{ url, title: clean(entry.title, 300), method: entry.method }] : [];
-        }).slice(0, 200),
-        mentionCount: Math.max(1, Math.min(200, Number(candidate.mentionCount) || 1)),
+        }).slice(0, MAX_REMEMBERED_PRODUCT_EVIDENCE),
+        mentionCount: Math.max(1, Math.min(MAX_REMEMBERED_PRODUCT_EVIDENCE, Number(candidate.mentionCount) || 1)),
         matchedPrimaryProductName: clean(candidate.matchedPrimaryProductName, 200) || undefined,
         matchedProductUrl: safeUrl(candidate.matchedProductUrl) || undefined,
-        matchedPrimaryProductNames: strings(candidate.matchedPrimaryProductNames, 200),
-        matchedProductUrls: Array.isArray(candidate.matchedProductUrls) ? candidate.matchedProductUrls.map(safeUrl).filter(Boolean).slice(0, 200) : undefined,
+        matchedPrimaryProductNames: strings(candidate.matchedPrimaryProductNames, MAX_REMEMBERED_PRODUCT_EVIDENCE),
+        matchedProductUrls: Array.isArray(candidate.matchedProductUrls) ? candidate.matchedProductUrls.map(safeUrl).filter(Boolean).slice(0, MAX_REMEMBERED_PRODUCT_EVIDENCE) : undefined,
         evidenceMethod: candidate.evidenceMethod === "search-source" ? "search-source" : "model-summarized",
       };
       return database.prepare(`INSERT INTO verified_competitors (

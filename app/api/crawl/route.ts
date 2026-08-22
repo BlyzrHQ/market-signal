@@ -8,9 +8,9 @@ import { inferBusinessProfile } from "../../lib/business-profile.ts";
 import { seededCrawlPaths } from "../../lib/crawl-planning.ts";
 import { combineRegionSignals, displayRegion, inferRegion as inferRegionEvidence, type RegionSignal } from "../../lib/region-inference.ts";
 import { hasValidAnalysisAuthorization, unauthorizedInternalResponse } from "../../lib/internal-auth.ts";
-import { forgetRememberedCompetitors, loadRememberedCompetitors, mergeRememberedCandidates, rememberVerifiedCompetitors, type MemoryCandidate } from "../../lib/competitor-memory.ts";
+import { forgetRememberedCompetitors, loadRememberedCompetitors, mergeRememberedCandidateCoverage, rememberVerifiedCompetitors, type MemoryCandidate } from "../../lib/competitor-memory.ts";
 import { discoverDomainAlternatives, extractStaticClientRedirect, parkingProvider } from "../../lib/domain-recovery.ts";
-import { boundedExtractionDocument, compactCatalogSnapshots, preferredEndpointFailure, settleWithConcurrency, unavailableAfterBoundedAttempts, unavailablePrimaryMessaging, type PublicEndpointFailure } from "../../lib/crawl-runtime.ts";
+import { boundedExtractionDocument, compactCatalogSnapshots, createRequestLimiter, preferredEndpointFailure, settleWithConcurrency, unavailableAfterBoundedAttempts, unavailablePrimaryMessaging, type PublicEndpointFailure } from "../../lib/crawl-runtime.ts";
 import { fetchPublicText } from "../../lib/public-fetch.ts";
 import { claimablePagePricePatterns, enrichProductTargets, selectPrimaryProductPriceTargets, type EnrichmentDependencies } from "../../lib/storefront-product-enrichment.ts";
 import { buildExperienceBenchmark } from "../../lib/experience-benchmark.ts";
@@ -101,9 +101,9 @@ type ReportBlock = Record<string, unknown> & { type: string; id: string };
 
 const MAX_DOMAINS = 4;
 const MAX_HTML_PAGES = 5;
-// A merged rival can carry one exact seed for each of the 200 primary-product
-// anchors in a discovery attempt. Include the homepage plus every bounded seed.
-const MAX_DISCOVERED_HTML_PAGES = 201;
+// The complete 1,000-anchor screen can emit at most 6,000 attributable
+// seller-product leads. Include the homepage plus that full bounded universe.
+const MAX_DISCOVERED_HTML_PAGES = 6_001;
 const MAX_SITEMAP_DOCUMENTS = 4;
 const MAX_DISCOVERED_SITEMAP_DOCUMENTS = 2;
 const MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES = 16;
@@ -113,7 +113,9 @@ const MAX_CATALOG_RECONCILIATION_PAGES = 64;
 const MAX_DOCUMENT_BYTES = 1_500_000;
 const MAX_HTML_EXTRACTION_BYTES = 400_000;
 const COMPETITOR_CRAWL_CONCURRENCY = 48;
-const COMPETITOR_PAGE_CONCURRENCY = 3;
+// A request-scoped limiter below makes this a global ceiling across all rival
+// domains, including the pathological case where one seller owns every lead.
+const COMPETITOR_PAGE_CONCURRENCY = 256;
 // Two hundred product lanes and two company lanes can each contribute six
 // fresh domains, plus the 500 strongest remembered rivals.
 const MAX_COMPETITOR_INVESTIGATIONS = 1_712;
@@ -588,11 +590,15 @@ async function parsePage(document: string, sourceUrl: string, fetchedAt: string,
 type CrawlDomainDependencies = {
   fetchText?: typeof fetchText;
   robotsResolver?: Pick<typeof sharedRobotsPolicyResolver, "resolve">;
+  schedule?: <T>(work: () => Promise<T>) => Promise<T>;
 };
 
 export async function crawlDomain(input: string, role: DomainCrawl["role"], seededProductUrls: string[] = [], dependencies: CrawlDomainDependencies = {}): Promise<DomainCrawl> {
   const startedAt = new Date().toISOString();
-  const fetchPage = dependencies.fetchText || fetchText;
+  const rawFetchPage = dependencies.fetchText || fetchText;
+  const fetchPage: typeof fetchText = (...args) => dependencies.schedule
+    ? dependencies.schedule(() => rawFetchPage(...args))
+    : rawFetchPage(...args);
   const robotsResolver = dependencies.robotsResolver || sharedRobotsPolicyResolver;
   const maxHtmlPages = role === "discovered-competitor" ? MAX_DISCOVERED_HTML_PAGES : MAX_HTML_PAGES;
   const maxSitemapDocuments = role === "discovered-competitor" ? MAX_DISCOVERED_SITEMAP_DOCUMENTS : MAX_SITEMAP_DOCUMENTS;
@@ -1136,11 +1142,12 @@ export async function POST(request: Request) {
       discovery = { available: false, provider: "unavailable", model: process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini", category: "", region: primary.homepage.region, businessType: discoveryPolicy.businessType, strategy: discoveryPolicy.intendedStrategy, queries: [], candidates: [], gaps: [gap], gap, productSearchCoverage: { eligibleAnchors: primary.products.length, anchorSetHash: discoveryExpectedAnchorSetHash, searchedAnchors: 0, startIndex: discoverySearchOffset, endIndex: discoverySearchOffset, truncated: primary.products.length > discoverySearchOffset, searchesComplete: false, candidateDomainsFound: 0, candidateDomainsInvestigated: 0, candidateTruncated: false, verificationComplete: false, batchComplete: false, complete: false } };
     }
     const memory = await loadRememberedCompetitors(primary.domain);
-    const allInvestigationCandidates = mergeRememberedCandidates(
+    const mergedInvestigationCoverage = mergeRememberedCandidateCoverage(
       discovery.candidates.filter((candidate) => !domains.includes(candidate.domain)),
       memory.candidates.filter((candidate) => !domains.includes(candidate.domain)),
       MAX_COMPETITOR_INVESTIGATIONS,
     );
+    const allInvestigationCandidates = mergedInvestigationCoverage.candidates;
     const investigationCandidates = allInvestigationCandidates.slice(0, MAX_COMPETITOR_INVESTIGATIONS);
     discovery = {
       ...discovery,
@@ -1148,19 +1155,20 @@ export async function POST(request: Request) {
       gaps: memory.gap ? [...discovery.gaps, memory.gap] : discovery.gaps,
     };
     const verificationMarket = resolveVerificationMarket(discovery.region, primary.homepage.region, firstPartyRegionSource(primary.homepage));
+    const scheduleCompetitorRequest = createRequestLimiter(COMPETITOR_PAGE_CONCURRENCY);
     const investigatedSettled = await settleWithConcurrency(investigationCandidates, COMPETITOR_CRAWL_CONCURRENCY, async (candidate) => {
       const seedUrls = [...new Set([
         ...(candidate.matchedProductUrls || (candidate.matchedProductUrl ? [candidate.matchedProductUrl] : [])),
         ...(candidate.inferredProductLeads || []).map((lead) => lead.candidateSourceUrl),
       ])];
-      return verifyDiscoveredCompetitorWithInferredLeads(primary, await crawlDomain(candidate.domain, "discovered-competitor", seedUrls.length ? seedUrls : [candidate.websiteUrl]), candidate, verificationMarket, discoveryPolicy.requireProductOverlap);
+      return verifyDiscoveredCompetitorWithInferredLeads(primary, await crawlDomain(candidate.domain, "discovered-competitor", seedUrls.length ? seedUrls : [candidate.websiteUrl], { schedule: scheduleCompetitorRequest }), candidate, verificationMarket, discoveryPolicy.requireProductOverlap);
     });
     const discoveredResults = investigatedSettled.map((result) => result.status === "fulfilled" ? result.value : null);
     discovery = {
       ...discovery,
       productSearchCoverage: finalizedDiscoveryCoverage(
         discovery.productSearchCoverage,
-        allInvestigationCandidates.length + Number(memory.truncated),
+        allInvestigationCandidates.length + Number(memory.truncated || mergedInvestigationCoverage.truncated),
         investigationCandidates.length,
         investigatedSettled.map((result) => result.status),
         discoveredResults,

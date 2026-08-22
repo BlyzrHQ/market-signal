@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   forgetRememberedCompetitors,
   loadRememberedCompetitors,
+  mergeRememberedCandidateCoverage,
   mergeRememberedCandidates,
   rememberVerifiedCompetitors,
 } from "../app/lib/competitor-memory.ts";
@@ -100,6 +101,29 @@ test("fresh same-domain product evidence is merged into remembered continuity", 
   assert.deepEqual(merged.matchedPrimaryProductNames, ["Old product", "Fresh product"]);
   assert.deepEqual(merged.matchedProductUrls, [`https://${domain}/products/old`, `https://${domain}/products/fresh`]);
   assert.equal(merged.evidence.length, 2);
+});
+
+test("same-seller evidence crosses the former 200-product boundary without silent loss", () => {
+  const domain = "large-rival.test";
+  const remembered = [{
+    ...candidate(domain, "remembered-reverified"),
+    matchedProductUrls: Array.from({ length: 200 }, (_, index) => `https://${domain}/products/old-${index}`),
+  }];
+  const freshUrl = `https://${domain}/products/fresh-200`;
+  const fresh = [{ ...candidate(domain), matchedProductUrl: freshUrl, matchedProductUrls: [freshUrl] }];
+  const [merged] = mergeRememberedCandidates(fresh, remembered);
+  assert.equal(merged.matchedProductUrls.length, 201);
+  assert.ok(merged.matchedProductUrls.includes(freshUrl));
+});
+
+test("aggregate remembered product evidence exposes overflow beyond the declared search universe", () => {
+  const remembered = Array.from({ length: 2 }, (_, seller) => ({
+    ...candidate(`large-${seller}.test`, "remembered-reverified"),
+    matchedProductUrls: Array.from({ length: 3_001 }, (_, index) => `https://large-${seller}.test/products/${index}`),
+  }));
+  const merged = mergeRememberedCandidateCoverage([], remembered);
+  assert.equal(merged.candidates.reduce((total, item) => total + item.matchedProductUrls.length, 0), 6_000);
+  assert.equal(merged.truncated, true);
 });
 
 test("memory is isolated, expires old rows, and ignores malformed records", async () => {

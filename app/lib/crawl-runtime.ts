@@ -1,5 +1,20 @@
 import { IPV6_ONLY_ORIGIN_REASON } from "./public-fetch.ts";
 
+export function createRequestLimiter(limit: number) {
+  const bounded = Math.max(1, Math.floor(limit));
+  let active = 0;
+  const queue: Array<() => void> = [];
+  const release = () => {
+    active -= 1;
+    queue.shift()?.();
+  };
+  return async <T>(work: () => Promise<T>): Promise<T> => {
+    if (active >= bounded) await new Promise<void>((resolve) => queue.push(resolve));
+    active += 1;
+    try { return await work(); } finally { release(); }
+  };
+}
+
 export async function settleWithConcurrency<Input, Output>(
   inputs: Input[],
   concurrency: number,

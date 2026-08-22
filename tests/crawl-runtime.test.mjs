@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { boundedExtractionDocument, compactCatalogSnapshots, interruptedReportRecovery, preferredEndpointFailure, settleWithConcurrency, unavailableAfterBoundedAttempts, unavailablePrimaryMessaging } from "../app/lib/crawl-runtime.ts";
+import { boundedExtractionDocument, compactCatalogSnapshots, createRequestLimiter, interruptedReportRecovery, preferredEndpointFailure, settleWithConcurrency, unavailableAfterBoundedAttempts, unavailablePrimaryMessaging } from "../app/lib/crawl-runtime.ts";
 import { IPV6_ONLY_ORIGIN_REASON } from "../app/lib/public-fetch.ts";
 
 test("settles every crawl while keeping large-document work within the concurrency limit", async () => {
@@ -20,6 +20,19 @@ test("settles every crawl while keeping large-document work within the concurren
   assert.equal(results.length, 6);
   assert.deepEqual(results.map((result) => result.status), ["fulfilled", "fulfilled", "fulfilled", "rejected", "fulfilled", "fulfilled"]);
   assert.equal(results[0].status === "fulfilled" && results[0].value, "a-done");
+});
+
+test("the dynamic request limiter bounds work shared by independent domain crawls", async () => {
+  const schedule = createRequestLimiter(3);
+  let active = 0;
+  let peak = 0;
+  await Promise.all(Array.from({ length: 20 }, () => schedule(async () => {
+    active += 1;
+    peak = Math.max(peak, active);
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    active -= 1;
+  })));
+  assert.equal(peak, 3);
 });
 
 test("bounds regex extraction input while retaining both metadata and footer evidence", () => {

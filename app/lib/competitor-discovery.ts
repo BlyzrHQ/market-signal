@@ -88,6 +88,30 @@ const MAX_SOURCE_FIRST_LEADS_PER_SEARCH = 2;
 const MAX_SOURCE_FIRST_CANDIDATES = 2;
 const MAX_MODEL_STRUCTURED_LEADS_PER_LANE = 1;
 const SEARCH_TIMEOUT_MS = 24_000;
+export const MAX_DISCOVERY_PROVIDER_BODY_BYTES = 4 * 1_024 * 1_024;
+
+async function readBoundedProviderJson(response: Response) {
+  const declared = response.headers.get("content-length");
+  if (declared !== null && (!Number.isSafeInteger(Number(declared)) || Number(declared) < 0 || Number(declared) > MAX_DISCOVERY_PROVIDER_BODY_BYTES)) throw new Error("provider response is too large");
+  if (!response.body) throw new Error("provider response has no body");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > MAX_DISCOVERY_PROVIDER_BODY_BYTES) {
+      await reader.cancel();
+      throw new Error("provider response is too large");
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(bytes);
+  let offset = 0;
+  for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+  return JSON.parse(new TextDecoder().decode(body)) as unknown;
+}
 
 async function mapConcurrent<T, R>(values: T[], concurrency: number, work: (value: T) => Promise<R>) {
   const results = new Array<R>(values.length);
@@ -770,7 +794,7 @@ async function runLane(endpoint: string, apiKey: string, model: string, lane: Se
             region: { type: "string" },
             queries: { type: "array", items: { type: "string" } },
             // Six attributable sellers per exact query is the declared bounded
-            // search policy. Across 100 product lanes this permits 600 fresh
+            // search policy. Across 200 product lanes this permits 1,200 fresh
             // seller investigations without silently clipping parsed output.
             candidates: { type: "array", maxItems: MAX_CANDIDATES, items: { type: "object", additionalProperties: false, properties: {
               domain: { type: "string" },
@@ -794,7 +818,7 @@ async function runLane(endpoint: string, apiKey: string, model: string, lane: Se
     if (!response.ok) return { lane, category: business.category, region: business.region, queries: [], candidates: [], completed: false, gap: `${lane} search returned HTTP ${response.status}.` };
     let payload: Record<string, unknown>;
     try {
-      payload = await response.json() as Record<string, unknown>;
+      payload = await readBoundedProviderJson(response) as Record<string, unknown>;
       if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("invalid payload");
     } catch {
       return { lane, category: business.category, region: business.region, queries: [], candidates: [], completed: false, gap: `${lane} search returned an unreadable response.` };

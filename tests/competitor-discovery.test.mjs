@@ -815,6 +815,25 @@ test("runs one bounded search request per selected ecommerce product", async () 
   }
 });
 
+test("rejects an oversized successful provider body before parsing it", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  globalThis.fetch = async () => new Response("{}", {
+    status: 200,
+    headers: { "content-type": "application/json", "content-length": String(4 * 1_024 * 1_024 + 1) },
+  });
+  try {
+    const result = await discoverCompetitors(profile);
+    assert.equal(result.candidates.length, 0);
+    assert.match(result.gaps.join(" "), /unreadable response/i);
+    assert.equal(result.productSearchCoverage.searchesComplete, false);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
 test("does not count schema-incomplete HTTP 200 model output as exhausted discovery", async () => {
   const previousKey = process.env.OPENAI_API_KEY;
   const previousFetch = globalThis.fetch;
