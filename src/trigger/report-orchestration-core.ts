@@ -1605,8 +1605,9 @@ export async function orchestrateReport(
         const inputHash = actionPlanInputHash(actionInputs);
         const checkpointIndex = ACTION_PLAN_CHECKPOINT_BATCH_INDEX + taskAttemptNumber - 1;
         const currentSlot = durableCheckpoints.get(checkpointIndex);
-        if (currentSlot && currentSlot.inputHash !== inputHash) throw new Error("The current task attempt contains a conflicting durable action-plan checkpoint.");
-        const saved = currentSlot || actionCheckpoints.find((checkpoint) => checkpoint.inputHash === inputHash);
+        const currentAttemptSlot = currentSlot?.attemptNumber === attempt.attemptNumber ? currentSlot : undefined;
+        if (currentAttemptSlot && currentAttemptSlot.inputHash !== inputHash) throw new Error("The current task attempt contains a conflicting durable action-plan checkpoint.");
+        const saved = currentAttemptSlot || actionCheckpoints.find((checkpoint) => checkpoint.inputHash === inputHash);
         let actionResult: ProductActionPlanningResult;
         if (saved) {
           const validated = validActionPlanCheckpoint(saved.result, actionInputs);

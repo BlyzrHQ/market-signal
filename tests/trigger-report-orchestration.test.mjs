@@ -2637,6 +2637,38 @@ test("a task retry skips a stale prior action slot when product evidence evolves
   assert.ok(port.checkpoints.has(ACTION_PLAN_CHECKPOINT_BATCH_INDEX + 1));
 });
 
+test("a recovered report skips a conflicting prior-attempt action slot at the current task index", async () => {
+  const seedPort = mockPort();
+  await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, seedPort);
+  const stale = structuredClone(seedPort.checkpoints.get(ACTION_PLAN_CHECKPOINT_BATCH_INDEX));
+  stale.inputHash = "f".repeat(64);
+
+  let actionCalls = 0;
+  const port = mockPort({
+    async loadReport() {
+      return {
+        run: { publicId: recoveryPayload.publicId, primaryDomain: recoveryPayload.primaryDomain, locale: recoveryPayload.locale, status: "queued", attemptCount: 2, createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:00:00.000Z", productPlan: "starter", productLimit: 20 },
+        events: [],
+      };
+    },
+    async actions({ inputs }) {
+      actionCalls += 1;
+      return { ok: true, result: deterministicProductActionResult(inputs) };
+    },
+  });
+  const loadCheckpoint = port.loadCheckpoint.bind(port);
+  port.loadCheckpoint = async (publicId, input) => input.batchIndex === undefined
+    && input.batchIndexStart <= ACTION_PLAN_CHECKPOINT_BATCH_INDEX
+    && input.batchIndexEnd >= ACTION_PLAN_CHECKPOINT_BATCH_INDEX
+    ? [stale]
+    : loadCheckpoint(publicId, input);
+
+  const result = await orchestrateReport(recoveryPayload, { attemptNumber: 2, taskAttemptNumber: 1, isFinalAttempt: false }, port);
+  assert.equal(result.reportStatus, "complete");
+  assert.equal(actionCalls, 1);
+  assert.equal(port.checkpoints.get(ACTION_PLAN_CHECKPOINT_BATCH_INDEX).attemptNumber, 2);
+});
+
 test("a corrupt durable action-plan checkpoint fails closed without another action dispatch", async () => {
   let actionCalls = 0;
   let factCalls = 0;
