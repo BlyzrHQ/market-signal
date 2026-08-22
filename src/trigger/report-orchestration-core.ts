@@ -1,4 +1,5 @@
 import {
+  compactPublishedProductComparisonCheckpoint,
   composeProductMatchAttempts,
   hasProductMatchCoverageDefect,
   limitPublishedProductComparison,
@@ -973,7 +974,7 @@ export async function orchestrateReport(
       const publishedState = mergePublishedProductComparisonState(comparison, accumulatedPublished, payload.productLimit, reportReferenceTimeMs);
       comparison = publishedState.comparison;
       const publishedCheckpointIndex = publishedResultCheckpointIndex(taskAttemptNumber);
-      const publishedCheckpoint = { version: 3, comparison, evidence: publishedState.evidence };
+      const publishedCheckpoint = { version: 3, comparison: compactPublishedProductComparisonCheckpoint(comparison), evidence: publishedState.evidence };
       const checkpointIsComplete = comparison.matching?.resultShortfallReason !== "processing-incomplete"
         && comparison.enrichment?.pagesTruncated !== true
         && (comparison.enrichment?.failedBatchCount || 0) === 0;

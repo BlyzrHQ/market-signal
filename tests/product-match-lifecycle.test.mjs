@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  compactPublishedProductComparisonCheckpoint,
   composeProductMatchAttempts,
   hasProductMatchCoverageDefect,
   limitPublishedProductComparison,
@@ -447,6 +448,28 @@ test("durable priced evidence preserves backup rivals until a later global assig
   assert.deepEqual(new Set(second.comparison.rows.flatMap((item) => item.matches.flatMap((match) => match.product ? [match.product.id] : []))), new Set(["r-shared", "r-backup"]));
 });
 
+test("global assignment counts a merchant product id only once when its URL and name drift", () => {
+  const pricedRow = (primaryId, rivalName, rivalUrl) => {
+    const item = row(primaryId, "merchant-product-id");
+    item.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+    item.matches[0].product.name = rivalName;
+    item.matches[0].product.normalizedName = rivalName.toLowerCase();
+    item.matches[0].product.sourceUrl = rivalUrl;
+    item.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+    return item;
+  };
+  const rows = [
+    pricedRow("p1", "Honey 500g", "https://rival.test/products/honey-500g?country=US"),
+    pricedRow("p2", "Raw Honey 500g", "https://rival.test/products/raw-honey-500g?country=US"),
+  ];
+
+  const state = mergePublishedProductComparisonState(comparison({ selected: ["p1", "p2"], assessed: ["p1", "p2"], rows, accepted: 2 }), null, 2);
+
+  assert.equal(state.comparison.rows.length, 1);
+  assert.equal(state.comparison.matching.publishedPrimaryProducts, 1);
+  assert.equal(state.comparison.matching.resultShortfall, 1);
+});
+
 test("durable priced evidence stays below the checkpoint limit for a legal 6000-pair universe", () => {
   const legalUrl = (domain, role, primaryIndex, rivalIndex = 0) => `https://${domain}/${role}/${primaryIndex}/${rivalIndex}/${"x".repeat(900)}?country=US`;
   const rows = Array.from({ length: 20 }, (_, primaryIndex) => {
@@ -469,12 +492,12 @@ test("durable priced evidence stays below the checkpoint limit for a legal 6000-
   });
   const ids = rows.map((item) => item.primary.id);
   const state = mergePublishedProductComparisonState(comparison({ selected: ids, assessed: ids, rows, accepted: 6_000 }), null, 20);
-  const checkpoint = { version: 3, comparison: state.comparison, evidence: state.evidence };
+  const checkpoint = { version: 3, comparison: compactPublishedProductComparisonCheckpoint(state.comparison), evidence: state.evidence };
 
   assert.equal(state.evidence.rows.length, 20);
-  assert.ok(state.evidence.rows.every((item) => item.matches.length >= 1 && item.matches.length <= MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY));
+  assert.ok(state.evidence.rows.every((item) => item.matches.length === MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY));
   assert.ok(state.evidence.rows.every((item) => item.matches.some((match) => match.product?.sourceUrl.startsWith("https://rival.test/rival/"))));
-  assert.ok(Buffer.byteLength(JSON.stringify(checkpoint), "utf8") < 512_000);
+  assert.ok(Buffer.byteLength(JSON.stringify(checkpoint), "utf8") < 1_500_000);
 });
 
 test("a later unpriced observation does not evict an earlier valid priced comparison", () => {

@@ -1830,6 +1830,26 @@ test("final enrichment cannot replace a selected market with a different localiz
   assert.equal(enriched.rows[0].matches[0].product.observedAt, rival.observedAt);
 });
 
+test("final enrichment cannot replace a product when a merchant reuses its internal id", () => {
+  const primary = { ...product("primary-honey", "shop.test", "Raw Honey 500g"), jsonLdType: "Product", sourceUrl: "https://shop.test/products/raw-honey-500g?country=GB", priceSignals: [{ raw: "GBP 10", currency: "GBP", amount: 10 }] };
+  const rival = { ...product("reused-id", "rival.test", "Raw Honey 500g"), jsonLdType: "Product", sourceUrl: "https://rival.test/products/raw-honey-500g?country=GB", priceSignals: [{ raw: "GBP 8", currency: "GBP", amount: 8 }] };
+  const comparison = buildProductComparison("shop.test", [{ domain: "shop.test", products: [primary] }, { domain: "rival.test", products: [rival] }]);
+  const changedIdentity = {
+    ...rival,
+    name: "New Coffee 1kg",
+    normalizedName: "new coffee 1kg",
+    sourceUrl: "https://rival.test/products/new-coffee-1kg?country=GB",
+    priceSignals: [{ raw: "GBP 14", currency: "GBP", amount: 14 }],
+    observedAt: "2026-08-22T00:00:00.000Z",
+  };
+
+  const enriched = applyFinalProductEnrichment(comparison, [changedIdentity], { pagesRequested: 1, pagesFetched: 1, maxPages: 24, gaps: [] });
+
+  assert.equal(enriched.rows[0].matches[0].product.name, "Raw Honey 500g");
+  assert.equal(enriched.rows[0].matches[0].product.sourceUrl, rival.sourceUrl);
+  assert.deepEqual(enriched.rows[0].matches[0].product.priceSignals, rival.priceSignals);
+});
+
 test("pre-match reconciliation cannot restore a stale range after fresh currency-conflict evidence", () => {
   const primary = { ...product("jacket", "wearform.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://wearform.test/products/custom-jacket", priceSignals: [{ raw: "USD 100", currency: "USD", amount: 100 }, { raw: "USD 120", currency: "USD", amount: 120 }] };
   const rival = { ...product("rival-jacket", "rival.test", "Custom Jacket"), jsonLdType: "Product", sourceUrl: "https://rival.test/products/custom-jacket", priceSignals: [{ raw: "USD 80", currency: "USD", amount: 80 }] };

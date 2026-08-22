@@ -1854,6 +1854,13 @@ function compatibleFinalEnrichmentSource(left: ProductRecord, right: ProductReco
   return Boolean(leftRoute && leftRoute === localeNeutralProductPageUrl(right.sourceUrl));
 }
 
+function compatibleFinalEnrichmentMarket(left: ProductRecord, right: ProductRecord) {
+  const leftMarket = publicSourceMarketContext(left.sourceUrl);
+  const rightMarket = publicSourceMarketContext(right.sourceUrl);
+  return !leftMarket.conflict && !rightMarket.conflict
+    && !(leftMarket.contextKey && rightMarket.contextKey && leftMarket.contextKey !== rightMarket.contextKey);
+}
+
 function safeProductSource(product: ProductRecord) {
   try {
     const url = new URL(product.sourceUrl);
@@ -2043,8 +2050,13 @@ function sameProductMarketContext(left: ProductRecord, right: ProductRecord) {
 }
 
 function sameProductIdentity(left: ProductRecord, right: ProductRecord) {
+  const comparableName = (value: string) => value.normalize("NFKC").toLowerCase()
+    .replace(/&|\band\b/gu, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .replace(/\s+/g, " ");
   return Boolean(sharedValidGtin(left.identifiers, right.identifiers))
-    || (left.normalizedName === right.normalizedName
+    || (comparableName(left.normalizedName) === comparableName(right.normalizedName)
       && (quantitiesEqual(left.quantity, right.quantity) || (!left.quantity && !right.quantity)));
 }
 
@@ -2129,10 +2141,10 @@ export function applyFinalProductEnrichment(
     } satisfies ProductIdentifiers;
   };
   const merge = (base: ProductRecord) => {
-    const fresh = products.find((product) => (product.id === base.id && sameProductMarketContext(product, base))
-      || (canonicalHost(product.domain) === canonicalHost(base.domain)
-        && compatibleFinalEnrichmentSource(product, base)
-        && sameProductIdentity(product, base)));
+    const fresh = products.find((product) => canonicalHost(product.domain) === canonicalHost(base.domain)
+      && sameProductIdentity(product, base)
+      && (compatibleFinalEnrichmentSource(product, base)
+        || (product.id === base.id && compatibleFinalEnrichmentMarket(product, base))));
     if (!fresh || isCatalogReplacementProduct(fresh)) return base;
     const secureImage = [fresh.imageUrl, base.imageUrl].find((value) => /^https:\/\//i.test(value));
     return {
