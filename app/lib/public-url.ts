@@ -30,7 +30,9 @@ export function publicHttpUrl(value: unknown, allowEmpty = true, limit = 2_000) 
   try {
     const parsed = new URL(candidate);
     if (!/^https?:$/.test(parsed.protocol) || parsed.username || parsed.password || !isPublicHostname(parsed.hostname)) throw new Error();
-    return parsed.toString();
+    const normalized = parsed.toString();
+    if (normalized.length > limit) throw new Error();
+    return normalized;
   } catch {
     throw new Error("Invalid report fact URL.");
   }

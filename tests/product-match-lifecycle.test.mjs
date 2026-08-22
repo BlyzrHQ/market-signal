@@ -634,16 +634,16 @@ test("global assignment counts one canonical rival source only once when ids and
 });
 
 test("global assignment counts one shop-route rival source only once when ids and names drift", () => {
-  const pricedRow = (primaryId, rivalId, rivalName) => {
+  const pricedRow = (primaryId, rivalId, rivalName, route) => {
     const item = row(primaryId, rivalId);
     item.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
     item.matches[0].product.name = rivalName;
     item.matches[0].product.normalizedName = rivalName.toLowerCase();
-    item.matches[0].product.sourceUrl = "https://rival.test/shop/shared-widget?country=US";
+    item.matches[0].product.sourceUrl = `https://rival.test/${route}/shared-widget?country=US`;
     item.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
     return item;
   };
-  const rows = [pricedRow("p1", "r1", "Widget Original"), pricedRow("p2", "r2", "Widget Renamed")];
+  const rows = [pricedRow("p1", "r1", "Widget Original", "shop"), pricedRow("p2", "r2", "Widget Renamed", "store")];
   const state = mergePublishedProductComparisonState(comparison({ selected: ["p1", "p2"], assessed: ["p1", "p2"], rows, accepted: 2 }), null, 2);
 
   assert.equal(state.comparison.rows.length, 1);
