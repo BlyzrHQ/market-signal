@@ -12,6 +12,8 @@ The first durable-resume rollout correctly preserved a successful crawl when its
 - Preserve fields that participate in catalog identity exactly; bound only company metadata and the presentation document.
 - Preserve every catalog field used by candidate retrieval and scoring, including images, aliases, and claim links; fail closed if the lossless matching-state projection cannot fit the callback budget.
 - Keep the full product-comparison baseline as computation state while compacting the separate presentation document around it.
+- Fail closed when lossless checkpoint projection exceeds its budget; keep transport/storage ambiguity recoverable only when an exact committed checkpoint can be adopted.
+- Recover newest-first, stop after the first valid crawl checkpoint, and cap validation to two 16 MiB candidates.
 - Keep the live first attempt on the original in-memory crawl; compaction affects only retry recovery.
 
 ## Validation

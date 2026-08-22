@@ -518,7 +518,8 @@ type ParkedDomainOutcome = { ok: false; code: "parked-domain"; primaryDomain: st
 type UnavailableDomainOutcome = { ok: false; code: "unavailable-domain"; primaryDomain: string; error: string; document: JsonDocument };
 type CrawlOutcome = CrawlSuccess | ParkedDomainOutcome | UnavailableDomainOutcome;
 
-const MAX_CRAWL_CHECKPOINT_UNCOMPRESSED_BYTES = 64 * 1_024 * 1_024;
+const MAX_CRAWL_CHECKPOINT_UNCOMPRESSED_BYTES = 16 * 1_024 * 1_024;
+const MAX_CRAWL_CHECKPOINT_RECOVERY_CANDIDATES = 2;
 
 function checkpointText(value: unknown, limit: number) {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
@@ -819,13 +820,19 @@ export async function orchestrateReport(
   let crawl: CrawlOutcome;
   const taskAttemptNumber = attempt.taskAttemptNumber || 1;
   const crawlCheckpoints = await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE, batchIndexEnd: CRAWL_RESULT_CHECKPOINT_BATCH_INDEX, latestPerBatch: true });
-  const durableCrawls = crawlCheckpoints.flatMap((checkpoint) => {
+  let priorDurableCrawl: { taskAttemptNumber: number; crawl: CrawlSuccess } | null = null;
+  const orderedCrawlCheckpoints = crawlCheckpoints
+    .filter((checkpoint) => checkpoint.batchIndex >= CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE && checkpoint.batchIndex <= CRAWL_RESULT_CHECKPOINT_BATCH_INDEX)
+    .sort((left, right) => right.batchIndex - left.batchIndex)
+    .slice(0, MAX_CRAWL_CHECKPOINT_RECOVERY_CANDIDATES);
+  for (const checkpoint of orderedCrawlCheckpoints) {
     const checkpointTaskAttempt = checkpoint.batchIndex - CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1;
-    if (checkpointTaskAttempt < 1 || checkpointTaskAttempt > taskAttemptNumber || checkpoint.inputHash !== crawlCheckpointInputHash(payload, checkpointTaskAttempt)) return [];
+    if (checkpointTaskAttempt < 1 || checkpointTaskAttempt > taskAttemptNumber || checkpoint.inputHash !== crawlCheckpointInputHash(payload, checkpointTaskAttempt)) continue;
     const value = validCrawlCheckpoint(checkpoint.result, payload);
-    return value ? [{ taskAttemptNumber: checkpointTaskAttempt, crawl: value }] : [];
-  }).sort((left, right) => right.taskAttemptNumber - left.taskAttemptNumber);
-  const priorDurableCrawl = durableCrawls[0] || null;
+    if (!value) continue;
+    priorDurableCrawl = { taskAttemptNumber: checkpointTaskAttempt, crawl: value };
+    break;
+  }
   const priorCoverageComplete = priorDurableCrawl?.crawl.discovery?.productSearchCoverage?.complete === true;
   const shouldRefreshCrawl = !priorDurableCrawl || (!priorCoverageComplete && priorDurableCrawl.taskAttemptNumber < taskAttemptNumber);
   if (!shouldRefreshCrawl && priorDurableCrawl) {
@@ -844,11 +851,10 @@ export async function orchestrateReport(
       if (freshCrawl.ok === true && !validatedFreshCrawl) throw new Error("The successful crawl did not contain a valid primary result.");
       crawl = validatedFreshCrawl || freshCrawl;
       if (validatedFreshCrawl) {
-        let checkpoint: ReturnType<typeof crawlCheckpoint> | null = null;
-        try { checkpoint = crawlCheckpoint(validatedFreshCrawl); } catch { /* checkpointing is an optimization; the successful crawl remains usable */ }
+        const checkpoint = crawlCheckpoint(validatedFreshCrawl);
         const crawlInputHash = crawlCheckpointInputHash(payload, taskAttemptNumber);
         const checkpointBatchIndex = crawlCheckpointBatchIndex(taskAttemptNumber);
-        if (checkpoint) try {
+        try {
           await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointBatchIndex, inputHash: crawlInputHash, result: checkpoint });
         } catch {
           const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointBatchIndex }))[0];

@@ -453,6 +453,55 @@ test("a corrupt durable crawl checkpoint is ignored and replaced by a fresh vali
   assert.ok(port.checkpoints.has(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1));
 });
 
+test("crawl checkpoint recovery validates newest-first and never expands older history after a valid hit", async () => {
+  let crawlCalls = 0;
+  let saveCalls = 0;
+  const base = mockPort();
+  const port = mockPort({
+    async crawl() { crawlCalls += 1; return base.crawl(); },
+    async saveDocument(_publicId, value) {
+      saveCalls += 1;
+      if (saveCalls === 1) throw new Error("terminal callback lost");
+      port.saves.push(value);
+    },
+  });
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
+  const valid = port.checkpoints.get(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE);
+  const taskTwoInputHash = createHash("sha256").update(JSON.stringify({
+    version: 1,
+    publicId: payload.publicId,
+    primaryDomain: payload.primaryDomain,
+    reportAttempt: payload.reportAttempt,
+    productPlan: payload.productPlan,
+    productLimit: payload.productLimit,
+    taskAttemptNumber: 2,
+  })).digest("hex");
+  port.checkpoints.set(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1, { ...valid, batchIndex: CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1, inputHash: taskTwoInputHash });
+  Object.defineProperty(valid, "result", { get() { throw new Error("older checkpoint must not be expanded"); } });
+  await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
+  assert.equal(crawlCalls, 1);
+  assert.ok(port.events.some((item) => item.idempotencyKey === "report-1-task-2-crawl-resumed"));
+});
+
+test("lossless crawl checkpoint overflow fails closed before downstream processing", async () => {
+  let matchCalls = 0;
+  const base = mockPort();
+  const port = mockPort({
+    async crawl() {
+      const value = await base.crawl();
+      value.results[0].products[0].claimIds = Array.from({ length: 100_000 }, (_, index) => createHash("sha256").update(`oversized-claim:${index}`).digest("hex"));
+      return value;
+    },
+    async match() { matchCalls += 1; return { ok: true, comparison: comparison({ withPair: true }) }; },
+  });
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port),
+    /durable checkpoint budget/,
+  );
+  assert.equal(matchCalls, 0);
+  assert.equal(port.checkpoints.has(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE), false);
+});
+
 test("checkpoint storage failure does not relabel a successful crawl as failed", async () => {
   const base = mockPort();
   const port = mockPort({
