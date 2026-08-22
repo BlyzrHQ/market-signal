@@ -1781,7 +1781,7 @@ export function buildProductComparison(primaryDomain: string, catalogs: Array<{ 
   };
 }
 
-function hasComparablePublicPrice(product: ProductRecord, now = Date.now()) {
+export function hasComparablePublicPrice(product: ProductRecord, now = Date.now()) {
   if (!product.priceSignals.length) return false;
   try {
     const source = new URL(publicHttpUrl(product.sourceUrl, false));
@@ -1800,6 +1800,18 @@ function hasComparablePublicPrice(product: ProductRecord, now = Date.now()) {
     currencies.add(String(signal.currency).trim().toUpperCase());
   }
   return currencies.size === 1;
+}
+
+export function hasComparablePublicPricePair(primary: ProductRecord, rival: ProductRecord, now = Date.now()) {
+  if (!hasComparablePublicPrice(primary, now) || !hasComparablePublicPrice(rival, now)) return false;
+  const primaryCurrency = String(primary.priceSignals[0]?.currency || "").trim().toUpperCase();
+  const rivalCurrency = String(rival.priceSignals[0]?.currency || "").trim().toUpperCase();
+  if (!primaryCurrency || primaryCurrency !== rivalCurrency) return false;
+  const primaryMarket = publicSourceMarketEvidence(primary.sourceUrl);
+  const rivalMarket = publicSourceMarketEvidence(rival.sourceUrl);
+  if (primaryMarket.conflict || rivalMarket.conflict) return false;
+  if ((primaryMarket.explicit && !primaryMarket.countryCode) || (rivalMarket.explicit && !rivalMarket.countryCode)) return false;
+  return !(primaryMarket.countryCode && rivalMarket.countryCode && primaryMarket.countryCode !== rivalMarket.countryCode);
 }
 
 function localeNeutralProductPageUrl(value: string) {

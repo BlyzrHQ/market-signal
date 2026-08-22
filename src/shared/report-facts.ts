@@ -404,11 +404,13 @@ export async function buildReportFactBundle(input: {
   observedAt: string;
   attemptNumber?: number;
 }): Promise<ReportFactBundle> {
+  const reportObservedAt = observedAt(input.observedAt, "");
+  const withStableReportObservation = (items: Array<Record<string, unknown>>) => items.map((item) => ({ ...item, observedAt: reportObservedAt }));
   const facts: Record<ReportFactKind, Array<Record<string, unknown>>> = {
-    companies: uniqueFacts("companies", companyFacts(input.crawlResults, input.comparison, input.observedAt)),
-    products: uniqueFacts("products", productFacts(input.crawlResults, input.comparison, input.observedAt)),
-    matches: uniqueFacts("matches", await matchFacts(input.publicId, input.comparison, input.observedAt)),
-    ads: uniqueFacts("ads", await adFacts(input.publicId, input.adBlock, input.observedAt)),
+    companies: uniqueFacts("companies", withStableReportObservation(companyFacts(input.crawlResults, input.comparison, reportObservedAt))),
+    products: uniqueFacts("products", withStableReportObservation(productFacts(input.crawlResults, input.comparison, reportObservedAt))),
+    matches: uniqueFacts("matches", withStableReportObservation(await matchFacts(input.publicId, input.comparison, reportObservedAt))),
+    ads: uniqueFacts("ads", withStableReportObservation(await adFacts(input.publicId, input.adBlock, reportObservedAt))),
   };
   const manifestId = await reportFactHash({ publicId: input.publicId, facts });
   const attemptNumber = Number.isInteger(input.attemptNumber) && Number(input.attemptNumber) > 0 ? Number(input.attemptNumber) : 1;

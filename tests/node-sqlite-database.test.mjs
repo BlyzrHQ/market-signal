@@ -375,7 +375,7 @@ test("partial manifests can be atomically superseded while invalid domains and r
     const crawlResults = [{ domain: "shop.example", role: "primary", homepage: { sourceUrl: "https://shop.example/" }, products: [product], fetchedAt: now.toISOString() }];
     const bundle = await buildReportFactBundle({ publicId: created.publicId, crawlResults, comparison: null, adBlock: null, observedAt: now.toISOString(), attemptNumber: 2 });
     const retriedBundle = await buildReportFactBundle({ publicId: created.publicId, crawlResults, comparison: null, adBlock: null, observedAt: "2026-08-01T00:00:00.000Z", attemptNumber: 2 });
-    assert.equal(retriedBundle.manifest.manifestId, bundle.manifest.manifestId);
+    assert.notEqual(retriedBundle.manifest.manifestId, bundle.manifest.manifestId);
     for (const chunk of bundle.chunks) await saveReportFactChunk(created.publicId, chunk, now, database);
     await finalizeReportFactManifest(created.publicId, bundle.manifest, now, database);
     assert.deepEqual((await database.prepare("SELECT domain FROM report_companies ORDER BY domain").all()).results, [{ domain: "shop.example" }]);
@@ -649,6 +649,23 @@ test("manifest finalization rejects missing chunks and conflicting completed rep
     database.close();
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("report fact manifests use the stable report observation across retry timestamps", async () => {
+  const reportObservedAt = "2026-08-22T03:00:00.000Z";
+  const base = {
+    id: "retry", domain: "catalog.example", name: "Retry jacket", normalizedName: "retry jacket",
+    description: "", category: "apparel", jsonLdType: "Product",
+    priceSignals: [{ raw: "USD 20", currency: "USD", amount: 20 }], attributes: [],
+    ownership: "path-inferred", extraction: "json-ld", confidence: "High",
+    sourceUrl: "https://catalog.example/products/retry", imageUrl: "", claimIds: [],
+  };
+  const make = (observedAt) => buildReportFactBundle({ publicId: "d".repeat(32), crawlResults: [{ domain: "catalog.example", role: "primary", products: [{ ...base, observedAt }], fetchedAt: observedAt }], comparison: null, adBlock: null, observedAt: reportObservedAt });
+  const first = await make("2026-08-22T03:01:00.000Z");
+  const retry = await make("2026-08-22T03:06:00.000Z");
+  assert.equal(retry.manifest.manifestId, first.manifest.manifestId);
+  assert.equal(retry.manifest.manifestHash, first.manifest.manifestHash);
+  assert.ok(retry.chunks.every((chunk) => chunk.items.every((item) => item.observedAt === reportObservedAt)));
 });
 
 test("document persistence CAS rejects a fact manifest finalized after the worker snapshot", async () => {

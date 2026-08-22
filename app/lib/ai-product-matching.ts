@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   buildProductComparison,
-  hasValidObservedRivalPrice,
+  hasComparablePublicPricePair,
   isGenericProductIdentityToken,
   productIdentityKey,
   productIdentityTokens,
@@ -549,8 +549,7 @@ function candidateStrength(group: CandidateGroup) {
 }
 
 function hasPricedCandidate(group: CandidateGroup) {
-  if (!hasValidObservedRivalPrice(group.primary)) return false;
-  return group.candidates.some((candidate) => hasValidObservedRivalPrice(candidate.product));
+  return group.candidates.some((candidate) => hasComparablePublicPricePair(group.primary, candidate.product));
 }
 
 function selectJudgeGroups(groups: CandidateGroup[], maxPrimary: number, pinnedPrimaryIds = new Set<string>()) {

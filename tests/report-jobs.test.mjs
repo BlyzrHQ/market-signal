@@ -377,6 +377,10 @@ test("a lost final callback response replays only for the exact persisted docume
   assert.equal(replay.status, 200);
   assert.equal((await replay.json()).replayed, true);
   assert.equal(saves, 0);
+  const wrongManifest = await handlers.post(request({ action: "document", status: "limited", expectedFactManifestHash: "f".repeat(64), document }), { params: { publicId: PUBLIC_ID } });
+  assert.equal(wrongManifest.status, 409);
+  const malformedManifest = await handlers.post(request({ action: "document", status: "limited", expectedFactManifestHash: "not-a-hash", document }), { params: { publicId: PUBLIC_ID } });
+  assert.equal(malformedManifest.status, 400);
   const conflict = await handlers.post(request({ action: "document", status: "limited", expectedFactManifestHash: "", document: { ...document, marketBrief: { changed: true } } }), { params: { publicId: PUBLIC_ID } });
   assert.equal(conflict.status, 409);
 });

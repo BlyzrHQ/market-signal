@@ -125,6 +125,8 @@ function reportDocumentDomain(value: unknown) {
 function documentReplayMatches(report: StoredReport, body: Record<string, unknown>) {
   const requestedStatus = body.status === "limited" ? "limited" : "complete";
   if (!report.document || report.run.status !== requestedStatus) return false;
+  const persistedFactManifestHash = report.factManifest?.status === "complete" ? report.factManifest.manifestHash : "";
+  if (body.expectedFactManifestHash !== persistedFactManifestHash) return false;
   if (reportDocumentDomain(report.document) !== report.run.primaryDomain || reportDocumentDomain(body.document) !== report.run.primaryDomain) return false;
   return sameJson(compactReportDocument(report.document), compactReportDocument(body.document));
 }
@@ -240,6 +242,7 @@ export function createInternalReportHandlers(store: InternalReportStore, expecte
         }
         if (body.action === "document") {
           if (typeof body.expectedFactManifestHash !== "string") return Response.json({ ok: false, error: "The expected report fact manifest hash is required." }, { status: 400 });
+          if (body.expectedFactManifestHash !== "" && !/^[a-f0-9]{64}$/.test(body.expectedFactManifestHash)) return Response.json({ ok: false, error: "The expected report fact manifest hash is invalid." }, { status: 400 });
           if (["complete", "limited"].includes(report.run.status)) {
             if (!documentReplayMatches(report, body)) return Response.json({ ok: false, error: "The completed report callback conflicts with the saved document." }, { status: 409 });
             await terminal.settle(report.run);

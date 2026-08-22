@@ -20,7 +20,7 @@ function product(id, domain, name, options = {}) {
     confidence: "High",
     sourceUrl: options.sourceUrl || `https://${domain}/products/${id}`,
     imageUrl: options.imageUrl || "",
-    observedAt: "2026-07-15T00:00:00.000Z",
+    observedAt: options.observedAt || "2026-07-15T00:00:00.000Z",
     claimIds: [`claim-${id}`],
     identifiers: options.identifiers,
     quantity: options.quantity,
@@ -553,6 +553,29 @@ test("the bounded backfill pool judges already-priced product pairs before unpri
   ], {}, { apiKey: "test", fetch, maxPrimaryProducts: 1, maxCandidatesPerPrimary: 1 });
 
   assert.equal(judgedPrimaryId, "z-priced");
+});
+
+test("the bounded backfill pool does not prioritize stale or cross-market priced pairs", async () => {
+  const viablePrimary = product("z-viable", "shop.test", "Sidr Honey 500g", { price: { raw: "GBP 10", currency: "GBP", amount: 10 }, sourceUrl: "https://shop.test/en-gb/products/viable" });
+  const stalePrimary = product("a-stale", "shop.test", "Sidr Honey 500g", { price: { raw: "GBP 10", currency: "GBP", amount: 10 }, observedAt: "2020-01-01T00:00:00.000Z" });
+  const ukRival = product("r-uk", "rival.test", "Sidr Honey 500g", { price: { raw: "GBP 8", currency: "GBP", amount: 8 }, sourceUrl: "https://rival.test/en-gb/products/honey" });
+  const usRival = product("r-us", "other.test", "Sidr Honey 500g", { price: { raw: "USD 8", currency: "USD", amount: 8 }, sourceUrl: "https://other.test/en-us/products/honey" });
+  let judgedPrimaryId = "";
+  const fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/embeddings")) return response({ data: body.input.map((_, index) => ({ index, embedding: [1, 0] })) });
+    const request = JSON.parse(body.input[1].content);
+    judgedPrimaryId = request.groups[0].primary.id;
+    return response({ output_text: JSON.stringify({ assessments: request.groups[0].candidates.map((candidate) => ({ primaryId: judgedPrimaryId, candidateId: candidate.id, verdict: "no_match", confidence: 0.99, reason: "Test selection.", contradiction: "" })) }) });
+  };
+
+  await buildAIProductComparison("shop.test", [
+    { domain: "shop.test", products: [stalePrimary, viablePrimary] },
+    { domain: "rival.test", products: [ukRival] },
+    { domain: "other.test", products: [usRival] },
+  ], {}, { apiKey: "test", fetch, maxPrimaryProducts: 1, maxCandidatesPerPrimary: 2 });
+
+  assert.equal(judgedPrimaryId, "z-viable");
 });
 
 test("candidate retrieval performs an exact semantic scan across the bounded catalogs", async () => {
