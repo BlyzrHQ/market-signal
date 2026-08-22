@@ -1,9 +1,74 @@
-import { hasValidObservedRivalPrice, isSupportedCurrency, productIdentityKey, publicSourceMarketCountryCode, publicSourceMarketEvidence, type ProductComparison, type ProductMatch, type ProductRecord } from "./product-intelligence.ts";
+import { hasValidObservedRivalPrice, isSupportedCurrency, productDecision, productIdentityKey, publicSourceMarketCountryCode, publicSourceMarketEvidence, type ProductComparison, type ProductMatch, type ProductRecord } from "./product-intelligence.ts";
 import { canonicalDomain } from "./domain.ts";
 import { publicHttpUrl } from "./public-url.ts";
 
 export type ProductMatchLifecycle = "idle" | "matching" | "retrying" | "complete" | "limited";
 export const MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY = 20;
+
+function compactEvidenceText(value: unknown, maxLength: number) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function compactPricedEvidenceProduct(product: ProductRecord): ProductRecord {
+  const identifiers = product.identifiers ? {
+    gtins: product.identifiers.gtins.slice(0, 1),
+    ...(product.identifiers.sku ? { sku: compactEvidenceText(product.identifiers.sku, 100) } : {}),
+    ...(product.identifiers.mpn ? { mpn: compactEvidenceText(product.identifiers.mpn, 100) } : {}),
+    ...(product.identifiers.brand ? { brand: compactEvidenceText(product.identifiers.brand, 100) } : {}),
+  } : undefined;
+  return {
+    id: compactEvidenceText(product.id, 220),
+    domain: product.domain,
+    name: compactEvidenceText(product.name, 220),
+    normalizedName: compactEvidenceText(product.normalizedName, 220),
+    description: "",
+    category: compactEvidenceText(product.category, 160),
+    jsonLdType: product.jsonLdType,
+    priceSignals: product.priceSignals.slice(0, 4).map((signal) => ({
+      raw: compactEvidenceText(signal.raw, 120),
+      ...(signal.currency ? { currency: compactEvidenceText(signal.currency, 8) } : {}),
+      ...(typeof signal.amount === "number" ? { amount: signal.amount } : {}),
+      ...(signal.period ? { period: compactEvidenceText(signal.period, 40) } : {}),
+    })),
+    attributes: [],
+    ownership: product.ownership,
+    extraction: product.extraction,
+    confidence: product.confidence,
+    sourceUrl: product.sourceUrl,
+    imageUrl: "",
+    observedAt: product.observedAt,
+    claimIds: product.claimIds.slice(0, 2).map((claimId) => compactEvidenceText(claimId, 100)),
+    ...(identifiers ? { identifiers } : {}),
+    ...(product.quantity ? { quantity: product.quantity } : {}),
+  };
+}
+
+function compactPricedEvidenceMatch(primary: ProductRecord, match: ProductMatch & { product: ProductRecord }): ProductMatch {
+  const rival = compactPricedEvidenceProduct(match.product);
+  const exactProduct = match.assessment?.verdict !== "close_substitute";
+  return {
+    domain: match.domain,
+    product: rival,
+    score: match.score,
+    confidence: match.confidence,
+    sharedTerms: match.sharedTerms.slice(0, 4).map((term) => compactEvidenceText(term, 60)),
+    claimIds: match.claimIds.slice(0, 2).map((claimId) => compactEvidenceText(claimId, 100)),
+    decision: productDecision(primary, rival, match.score, exactProduct),
+    ...(match.assessment ? { assessment: {
+      ...match.assessment,
+      model: compactEvidenceText(match.assessment.model, 80),
+      promptVersion: compactEvidenceText(match.assessment.promptVersion, 80),
+      reasons: match.assessment.reasons.slice(0, 1).map((reason) => compactEvidenceText(reason, 160)),
+      contradictions: match.assessment.contradictions.slice(0, 1).map((reason) => compactEvidenceText(reason, 160)),
+      normalizedCategory: compactEvidenceText(match.assessment.normalizedCategory, 100),
+      normalizedVariant: compactEvidenceText(match.assessment.normalizedVariant, 100),
+      normalizedSize: compactEvidenceText(match.assessment.normalizedSize, 100),
+      primarySourceUrl: primary.sourceUrl,
+      rivalSourceUrl: rival.sourceUrl,
+    } } : {}),
+    publication: { priceEligible: true },
+  };
+}
 
 type ReportBlock = { type: string; id: string } & Record<string, unknown>;
 type ReportDocument = { blocks: ReportBlock[] } & Record<string, unknown>;
@@ -397,6 +462,7 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
     ...candidateRows.filter((row) => !selectedPrimaryIds.has(row.primary.id)),
   ].slice(0, Math.max(1, Math.floor(resultTarget)));
   const evidenceRows = evidenceCandidates.map((row) => {
+    const compactPrimary = compactPricedEvidenceProduct(row.primary);
     const seenRivals = new Set<string>();
     const matches = row.matches.filter((match): match is ProductMatch & { product: ProductRecord } => {
       if (!match.product || match.publication?.priceEligible !== true) return false;
@@ -404,8 +470,8 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
       if (seenRivals.has(key)) return false;
       seenRivals.add(key);
       return true;
-    }).slice(0, MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY);
-    return { ...row, matches };
+    }).slice(0, MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY).map((match) => compactPricedEvidenceMatch(compactPrimary, match));
+    return { primary: compactPrimary, matches };
   });
   const evidence: ProductComparison = {
     ...comparison,

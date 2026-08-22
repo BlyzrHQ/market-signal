@@ -426,19 +426,28 @@ test("durable priced evidence preserves backup rivals until a later global assig
   assert.deepEqual(new Set(second.comparison.rows.flatMap((item) => item.matches.flatMap((match) => match.product ? [match.product.id] : []))), new Set(["r-shared", "r-backup"]));
 });
 
-test("durable priced evidence stays below the checkpoint limit for a legal 6000-pair primary", () => {
-  const first = row("p1", "r1");
-  first.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
-  first.matches = Array.from({ length: 6_000 }, (_, index) => {
-    const match = row("p1", `r${index + 1}`).matches[0];
-    match.product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
-    match.score = 1 - (index / 10_000);
-    return match;
+test("durable priced evidence stays below the checkpoint limit for a legal 6000-pair universe", () => {
+  const rows = Array.from({ length: 20 }, (_, primaryIndex) => {
+    const item = row(`p${primaryIndex + 1}`, `r${primaryIndex + 1}-1`);
+    item.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+    item.primary.description = "p".repeat(500);
+    item.primary.attributes = Array.from({ length: 8 }, () => "a".repeat(100));
+    item.matches = Array.from({ length: 300 }, (_, rivalIndex) => {
+      const match = row(item.primary.id, `r${primaryIndex + 1}-${rivalIndex + 1}`).matches[0];
+      match.product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+      match.product.description = "r".repeat(500);
+      match.product.attributes = Array.from({ length: 8 }, () => "b".repeat(100));
+      match.score = 1 - (rivalIndex / 10_000);
+      return match;
+    });
+    return item;
   });
-  const state = mergePublishedProductComparisonState(comparison({ selected: ["p1"], assessed: ["p1"], rows: [first], accepted: 6_000 }), null, 20);
+  const ids = rows.map((item) => item.primary.id);
+  const state = mergePublishedProductComparisonState(comparison({ selected: ids, assessed: ids, rows, accepted: 6_000 }), null, 20);
   const checkpoint = { version: 2, comparison: state.comparison, evidence: state.evidence };
 
-  assert.equal(state.evidence.rows[0].matches.length, MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY);
+  assert.equal(state.evidence.rows.length, 20);
+  assert.ok(state.evidence.rows.every((item) => item.matches.length === MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY));
   assert.ok(Buffer.byteLength(JSON.stringify(checkpoint), "utf8") < 512_000);
 });
 
