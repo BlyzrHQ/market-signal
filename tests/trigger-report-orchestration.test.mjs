@@ -8,6 +8,7 @@ import {
 } from "../src/trigger/contracts/report-orchestration.ts";
 import {
   MAX_FINAL_ENRICHMENT_TARGETS,
+  MAX_FINAL_ENRICHMENT_BATCHES,
   MAX_OPERATION_TIMEOUT_MS,
   orchestrateReport,
   pricedResultEnrichmentBudget,
@@ -820,6 +821,54 @@ test("unschedulable accepted price gaps remain processing-incomplete instead of 
   assert.ok(port.events.some((item) => item.idempotencyKey.endsWith("-limited") && item.phase === "enrichment" && item.metadata?.pagesPlanned === 0));
 });
 
+test("terminal product-page rejections permit truthful bounded exhaustion while preserving their gaps", async () => {
+  const port = mockPort({
+    async match() {
+      const value = comparison({ withPair: true, count: 1 });
+      value.rows[0].primary.priceSignals = [];
+      value.rows[0].matches[0].product.priceSignals = [];
+      return { ok: true, comparison: value };
+    },
+    async enrich({ targets }) {
+      return {
+        ok: true,
+        products: [],
+        coverage: {
+          pagesRequested: targets.length,
+          pagesFetched: 0,
+          maxPages: 64,
+          gaps: targets.map((target) => ({ url: target.sourceUrl, productId: target.productId, role: target.role, reason: "Product page was removed.", code: "fetch_failed", httpStatus: 404, failureKind: "http" })),
+        },
+      };
+    },
+  });
+
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port);
+  assert.equal(result.reportStatus, "limited");
+  assert.equal(result.limitedPhases.includes("enrichment"), false);
+  const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
+  assert.equal(block.matching.resultShortfallReason, "bounded-candidate-pool-exhausted");
+  assert.equal(block.enrichment.pagesTruncated, false);
+  assert.equal(block.enrichment.gaps.length, 2);
+});
+
+test("access-blocked product pages remain processing-incomplete", async () => {
+  const port = mockPort({
+    async match() {
+      const value = comparison({ withPair: true, count: 1 });
+      value.rows[0].primary.priceSignals = [];
+      value.rows[0].matches[0].product.priceSignals = [];
+      return { ok: true, comparison: value };
+    },
+    async enrich({ targets }) {
+      return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: 64, gaps: targets.map((target) => ({ url: target.sourceUrl, productId: target.productId, role: target.role, reason: "Product page denied automated access.", code: "fetch_failed", httpStatus: 403, failureKind: "http" })) } };
+    },
+  });
+
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/);
+  assert.equal(port.saves.length, 0);
+});
+
 test("publication-ineligible pairs are re-read on both sides and successful batches survive a failure", async () => {
   const batched = comparison({ withPair: true });
   const template = batched.rows[0];
@@ -890,8 +939,9 @@ test("a task retry reuses durable enrichment batches instead of fetching product
   assert.ok(port.checkpoints.has(299));
 });
 
-test("a task retry re-fetches transient page gaps and uses attempt-scoped enrichment events", async () => {
+test("a task retry preserves successful pages, re-fetches only transient gaps, and uses attempt-scoped enrichment events", async () => {
   let enrichCalls = 0;
+  const fetchedRoles = [];
   const eventPayloads = new Map();
   const port = mockPort({
     async match() {
@@ -902,6 +952,7 @@ test("a task retry re-fetches transient page gaps and uses attempt-scoped enrich
     },
     async enrich({ targets }) {
       enrichCalls += 1;
+      fetchedRoles.push(targets.map((target) => target.role));
       if (enrichCalls === 1) {
         const primaryTarget = targets.find((target) => target.role === "primary");
         const rivalTarget = targets.find((target) => target.role === "rival");
@@ -927,11 +978,13 @@ test("a task retry re-fetches transient page gaps and uses attempt-scoped enrich
   });
 
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/);
-  assert.equal(port.checkpoints.has(300), false);
+  assert.ok(port.checkpoints.has(300));
   const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port);
   assert.equal(enrichCalls, 2);
+  assert.deepEqual([...fetchedRoles[0]].sort(), ["primary", "rival"]);
+  assert.deepEqual(fetchedRoles[1], ["rival"]);
   assert.equal(result.reportStatus, "limited");
-  assert.ok(port.checkpoints.has(300));
+  assert.ok(port.checkpoints.has(300 + MAX_FINAL_ENRICHMENT_BATCHES));
   assert.ok(port.events.some((item) => item.idempotencyKey === "enrichment-task-1-wave-1-checkpoint"));
   assert.ok(port.events.some((item) => item.idempotencyKey === "enrichment-task-2-wave-1-checkpoint"));
   const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
@@ -983,7 +1036,7 @@ test("a shape-valid but semantically incomplete enrichment checkpoint is rejecte
     },
     async enrich({ targets }) {
       enrichCalls += 1;
-      return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: 64, gaps: targets.map((target) => ({ url: target.sourceUrl, productId: target.productId, role: target.role, reason: "Test fixture page gap." })) } };
+      return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: 64, gaps: targets.map((target) => ({ url: target.sourceUrl, productId: target.productId, role: target.role, reason: "Test fixture network gap.", code: "fetch_failed", httpStatus: 0, failureKind: "network" })) } };
     },
   });
   await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/);
