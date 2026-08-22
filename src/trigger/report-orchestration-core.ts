@@ -522,15 +522,15 @@ const MAX_CRAWL_CHECKPOINT_UNCOMPRESSED_BYTES = 16 * 1_024 * 1_024;
 const MAX_CRAWL_CHECKPOINT_RECOVERY_CANDIDATES = 2;
 
 class CrawlCheckpointProjectionError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "CrawlCheckpointProjectionError";
   }
 }
 
 class CrawlCheckpointConflictError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "CrawlCheckpointConflictError";
   }
 }
@@ -628,11 +628,16 @@ function crawlCheckpointInputHash(payload: ReportOrchestrationPayload, taskAttem
 }
 
 function crawlCheckpoint(crawl: CrawlSuccess) {
-  const json = JSON.stringify(crawlCheckpointSnapshot(crawl));
-  if (Buffer.byteLength(json, "utf8") > MAX_CRAWL_CHECKPOINT_UNCOMPRESSED_BYTES) throw new CrawlCheckpointProjectionError("The successful crawl checkpoint exceeds the durable uncompressed checkpoint budget.");
-  const checkpoint = { version: 1, encoding: "gzip-base64", data: gzipSync(json, { level: 9 }).toString("base64") };
-  if (encodedJsonBytes(checkpoint) <= REPORT_MATCH_CHECKPOINT_RESULT_BYTES) return checkpoint;
-  throw new CrawlCheckpointProjectionError("The successful crawl checkpoint exceeds the durable checkpoint budget after lossless matching-state projection.");
+  try {
+    const json = JSON.stringify(crawlCheckpointSnapshot(crawl));
+    if (Buffer.byteLength(json, "utf8") > MAX_CRAWL_CHECKPOINT_UNCOMPRESSED_BYTES) throw new CrawlCheckpointProjectionError("The successful crawl checkpoint exceeds the durable uncompressed checkpoint budget.");
+    const checkpoint = { version: 1, encoding: "gzip-base64", data: gzipSync(json, { level: 9 }).toString("base64") };
+    if (encodedJsonBytes(checkpoint) <= REPORT_MATCH_CHECKPOINT_RESULT_BYTES) return checkpoint;
+    throw new CrawlCheckpointProjectionError("The successful crawl checkpoint exceeds the durable checkpoint budget after lossless matching-state projection.");
+  } catch (error) {
+    if (error instanceof CrawlCheckpointProjectionError) throw error;
+    throw new CrawlCheckpointProjectionError("The successful crawl could not be projected into a durable checkpoint.", { cause: error });
+  }
 }
 
 function validCrawlSuccess(value: unknown, payload: ReportOrchestrationPayload): CrawlSuccess | null {
@@ -675,7 +680,7 @@ export interface ReportOrchestrationPort {
   ads(input: unknown): Promise<{ ok: true; block: JsonBlock }>;
   match(input: { publicId: string; reportAttempt: number; taskAttemptNumber: number; reportObservedAt: string; primaryDomain: string; marketCountryCode?: string; productLimit: number; catalogs: Array<{ domain: string; products: ProductRecord[] }>; pinnedPairs?: PinnedProductPair[] }): Promise<{ ok: true; comparison: ProductComparison }>;
   enrich(input: { targets: unknown[] }): Promise<{ ok: true; products: ProductRecord[]; coverage: NonNullable<ProductComparison["enrichment"]> }>;
-  loadCheckpoint(publicId: string, input: { attemptNumber: number; batchIndex?: number; batchIndexStart?: number; batchIndexEnd?: number; latestPerBatch?: boolean }): Promise<Array<{ attemptNumber: number; batchIndex: number; inputHash: string; result: unknown }>>;
+  loadCheckpoint(publicId: string, input: { attemptNumber: number; batchIndex?: number; batchIndexStart?: number; batchIndexEnd?: number; latestPerBatch?: boolean; limit?: number }): Promise<Array<{ attemptNumber: number; batchIndex: number; inputHash: string; result: unknown }>>;
   saveCheckpoint(publicId: string, input: { attemptNumber: number; batchIndex: number; inputHash: string; result: unknown }): Promise<void>;
   actions(input: { inputs: ProductActionInput[] }): Promise<{ ok: true; result: ProductActionPlanningResult }>;
   persistFactChunk(publicId: string, input: ReportFactChunkInput): Promise<void>;
@@ -833,13 +838,12 @@ export async function orchestrateReport(
   const limitedPhases: string[] = [];
   let crawl: CrawlOutcome;
   const taskAttemptNumber = attempt.taskAttemptNumber || 1;
-  const crawlCheckpoints = await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE, batchIndexEnd: CRAWL_RESULT_CHECKPOINT_BATCH_INDEX, latestPerBatch: true });
   let priorDurableCrawl: { taskAttemptNumber: number; crawl: CrawlSuccess } | null = null;
-  const orderedCrawlCheckpoints = crawlCheckpoints
-    .filter((checkpoint) => checkpoint.batchIndex >= CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE && checkpoint.batchIndex <= CRAWL_RESULT_CHECKPOINT_BATCH_INDEX)
-    .sort((left, right) => right.batchIndex - left.batchIndex)
-    .slice(0, MAX_CRAWL_CHECKPOINT_RECOVERY_CANDIDATES);
-  for (const checkpoint of orderedCrawlCheckpoints) {
+  let crawlCheckpointCandidates = 0;
+  for (let batchIndex = crawlCheckpointBatchIndex(taskAttemptNumber); batchIndex >= CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE && crawlCheckpointCandidates < MAX_CRAWL_CHECKPOINT_RECOVERY_CANDIDATES; batchIndex -= 1) {
+    const [checkpoint] = await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: batchIndex, batchIndexEnd: batchIndex, latestPerBatch: true, limit: 1 });
+    if (!checkpoint) continue;
+    crawlCheckpointCandidates += 1;
     const checkpointTaskAttempt = checkpoint.batchIndex - CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1;
     if (checkpointTaskAttempt < 1 || checkpointTaskAttempt > taskAttemptNumber || checkpoint.inputHash !== crawlCheckpointInputHash(payload, checkpointTaskAttempt)) continue;
     const value = validCrawlCheckpoint(checkpoint.result, payload);
@@ -871,16 +875,18 @@ export async function orchestrateReport(
         try {
           await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointBatchIndex, inputHash: crawlInputHash, result: checkpoint });
         } catch (saveError) {
-          const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointBatchIndex }))[0];
-          if (!committed || committed.attemptNumber !== attempt.attemptNumber) {
-            crawl = validatedFreshCrawl;
-          } else {
-            const exactCommittedResult = committed.inputHash === crawlInputHash
-              && JSON.stringify(stableCheckpointValue(committed.result)) === JSON.stringify(stableCheckpointValue(checkpoint));
-            const committedCrawl = exactCommittedResult ? validCrawlCheckpoint(committed.result, payload) : null;
-            if (!committedCrawl) throw new CrawlCheckpointConflictError(message(saveError, "A different crawl checkpoint was committed in the current attempt."));
-            crawl = validatedFreshCrawl;
+          let committed: Awaited<ReturnType<ReportOrchestrationPort["loadCheckpoint"]>>[number] | undefined;
+          try {
+            committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointBatchIndex, limit: 1 }))[0];
+          } catch (confirmationError) {
+            throw new CrawlCheckpointConflictError(message(saveError, "The crawl checkpoint save could not be confirmed."), { cause: confirmationError });
           }
+          const exactCommittedResult = committed?.attemptNumber === attempt.attemptNumber
+            && committed.inputHash === crawlInputHash
+            && JSON.stringify(stableCheckpointValue(committed.result)) === JSON.stringify(stableCheckpointValue(checkpoint));
+          const committedCrawl = exactCommittedResult ? validCrawlCheckpoint(committed!.result, payload) : null;
+          if (!committedCrawl) throw new CrawlCheckpointConflictError(message(saveError, "The crawl checkpoint save could not be confirmed."), { cause: saveError });
+          crawl = validatedFreshCrawl;
         }
       } else if (priorDurableCrawl) {
         crawl = priorDurableCrawl.crawl;
