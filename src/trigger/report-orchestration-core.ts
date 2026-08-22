@@ -45,6 +45,12 @@ export const MAX_FINAL_ENRICHMENT_BATCH_WAVES = Math.ceil(MAX_FINAL_ENRICHMENT_T
 export const ENRICHMENT_PLAN_CHECKPOINT_BATCH_INDEX = 299;
 export const ENRICHMENT_CHECKPOINT_BATCH_INDEX_BASE = 300;
 
+function enrichmentPlanCheckpointIndex(taskAttemptNumber: number) {
+  const index = ENRICHMENT_PLAN_CHECKPOINT_BATCH_INDEX - (taskAttemptNumber - 1);
+  if (!Number.isInteger(taskAttemptNumber) || taskAttemptNumber < 1 || index < 298) throw new PermanentOrchestrationError("Unsupported enrichment task attempt.");
+  return index;
+}
+
 export function pricedResultEnrichmentBudget(resultTarget: number) {
   void resultTarget;
   return MAX_FINAL_ENRICHMENT_TARGETS;
@@ -98,16 +104,16 @@ function hasRetryableEnrichmentGap(result: EnrichmentResult) {
   return result.coverage.gaps.some(isRetryableEnrichmentGap);
 }
 
+function isTerminalEnrichmentRejection(gap: NonNullable<ProductComparison["enrichment"]>["gaps"][number]) {
+  return gap.code === "identity_mismatch"
+    || gap.failureKind === "identity"
+    || gap.failureKind === "redirect"
+    || gap.httpStatus === 404
+    || gap.httpStatus === 410;
+}
+
 function isUnresolvedEnrichmentGap(gap: NonNullable<ProductComparison["enrichment"]>["gaps"][number]) {
-  return isRetryableEnrichmentGap(gap)
-    || gap.code === "robots_unreachable"
-    || gap.code === "robots_disallowed"
-    || gap.code === "adapter_limited"
-    || gap.code === "batch_failed"
-    || gap.code === "plan_limit"
-    || gap.code === "unschedulable_targets"
-    || gap.failureKind === "robots"
-    || [401, 402, 403, 407, 423, 451].includes(gap.httpStatus || 0);
+  return !isTerminalEnrichmentRejection(gap);
 }
 
 function enrichmentOutcomeKey(value: { domain?: string; url?: string; productId?: string; id?: string }) {
@@ -506,29 +512,44 @@ export async function orchestrateReport(
       let targetSatisfied = publishedPricedPrimaryCount(comparison, reportReferenceTimeMs) >= payload.productLimit;
       if (!targetSatisfied) {
         const inputHash = enrichmentPlanInputHash(comparison, maxEnrichmentPages, reportReferenceTimeMs);
-        const saved = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: ENRICHMENT_PLAN_CHECKPOINT_BATCH_INDEX }))[0];
+        const taskAttemptNumber = attempt.taskAttemptNumber || 1;
+        const planCheckpointIndex = enrichmentPlanCheckpointIndex(taskAttemptNumber);
+        const saved = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: planCheckpointIndex }))[0];
         if (saved) {
           if (saved.inputHash !== inputHash) throw new Error("The durable enrichment plan conflicts with the current accepted product identities.");
           const checkpoint = validEnrichmentPlanCheckpoint(saved.result);
           if (!checkpoint) throw new Error("The durable enrichment plan is invalid.");
           enrichmentPlan = checkpoint;
         } else {
-          const durablePlan: DurableEnrichmentPlan = { version: 1, contentHash: enrichmentPlanContentHash(enrichmentPlan), ...enrichmentPlan };
-          try {
-            await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: ENRICHMENT_PLAN_CHECKPOINT_BATCH_INDEX, inputHash, result: durablePlan });
-          } catch (saveError) {
-            const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: ENRICHMENT_PLAN_CHECKPOINT_BATCH_INDEX }))[0];
-            if (!committed || committed.inputHash !== inputHash) throw saveError;
-            const checkpoint = validEnrichmentPlanCheckpoint(committed.result);
-            if (!checkpoint) throw saveError;
+          let reusedPriorPlan = false;
+          for (let priorTaskAttempt = taskAttemptNumber - 1; priorTaskAttempt >= 1; priorTaskAttempt -= 1) {
+            const priorIndex = enrichmentPlanCheckpointIndex(priorTaskAttempt);
+            const prior = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: priorIndex }))[0];
+            if (!prior || prior.inputHash !== inputHash) continue;
+            const checkpoint = validEnrichmentPlanCheckpoint(prior.result);
+            if (!checkpoint) throw new Error("The durable enrichment plan is invalid.");
             enrichmentPlan = checkpoint;
+            reusedPriorPlan = true;
+            break;
+          }
+          if (!reusedPriorPlan) {
+            const durablePlan: DurableEnrichmentPlan = { version: 1, contentHash: enrichmentPlanContentHash(enrichmentPlan), ...enrichmentPlan };
+            try {
+              await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: planCheckpointIndex, inputHash, result: durablePlan });
+            } catch (saveError) {
+              const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: planCheckpointIndex }))[0];
+              if (!committed || committed.inputHash !== inputHash) throw saveError;
+              const checkpoint = validEnrichmentPlanCheckpoint(committed.result);
+              if (!checkpoint) throw saveError;
+              enrichmentPlan = checkpoint;
+            }
           }
         }
       }
       const targets = enrichmentPlan.targets;
       if (targets.length && !targetSatisfied) {
         const batches = Array.from({ length: Math.ceil(targets.length / FINAL_ENRICHMENT_BATCH_SIZE) }, (_, index) => targets.slice(index * FINAL_ENRICHMENT_BATCH_SIZE, (index + 1) * FINAL_ENRICHMENT_BATCH_SIZE));
-        await port.appendEvent(payload.publicId, event(`enrichment-task-${attempt.taskAttemptNumber || 1}-started`, "enrichment", "Re-reading accepted product pages in bounded batches for attributable prices and images.", {
+        await port.appendEvent(payload.publicId, event(`enrichment-report-${attempt.attemptNumber}-task-${attempt.taskAttemptNumber || 1}-started`, "enrichment", "Re-reading accepted product pages in bounded batches for attributable prices and images.", {
           pagesEligible: enrichmentPlan.totalEligible,
           pagesPlanned: targets.length,
           batches: batches.length,
@@ -561,7 +582,7 @@ export async function orchestrateReport(
               const priorIndex = ENRICHMENT_CHECKPOINT_BATCH_INDEX_BASE + batchIndex + ((priorTaskAttempt - 1) * MAX_FINAL_ENRICHMENT_BATCHES);
               const priorSaved = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: priorIndex }))[0];
               if (!priorSaved) continue;
-              if (priorSaved.inputHash !== inputHash) throw new Error("A durable enrichment checkpoint conflicts with the current product-page batch.");
+              if (priorSaved.inputHash !== inputHash) continue;
               previous = validEnrichmentCheckpoint(priorSaved.result, batch);
               if (!previous) throw new Error("A durable enrichment checkpoint is invalid.");
               break;
@@ -571,11 +592,18 @@ export async function orchestrateReport(
               ? batch.filter((target) => previous?.coverage.gaps.some((gap) => isRetryableEnrichmentGap(gap) && enrichmentOutcomeKey(gap) === enrichmentOutcomeKey({ domain: target.domain, productId: target.productId })))
               : batch;
             if (!targetsToFetch.length) throw new Error("A retryable enrichment checkpoint did not identify any retryable targets.");
-            const result = await port.enrich({ targets: targetsToFetch });
-            const validatedResult = validEnrichmentCheckpoint(result, targetsToFetch);
-            if (!validatedResult) throw new Error("Product-page enrichment returned an invalid batch result.");
-            const mergedResult = previous ? validEnrichmentCheckpoint(mergeEnrichmentRetry(previous, validatedResult, batch), batch) : validatedResult;
-            if (!mergedResult) throw new Error("Product-page enrichment retry could not be merged into its durable batch.");
+            let mergedResult: EnrichmentResult;
+            try {
+              const result = await port.enrich({ targets: targetsToFetch });
+              const validatedResult = validEnrichmentCheckpoint(result, targetsToFetch);
+              if (!validatedResult) throw new Error("Product-page enrichment returned an invalid batch result.");
+              const merged = previous ? validEnrichmentCheckpoint(mergeEnrichmentRetry(previous, validatedResult, batch), batch) : validatedResult;
+              if (!merged) throw new Error("Product-page enrichment retry could not be merged into its durable batch.");
+              mergedResult = merged;
+            } catch (error) {
+              if (previous) return previous;
+              throw error;
+            }
             try {
               await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointIndex, inputHash, result: mergedResult });
             } catch (saveError) {
@@ -606,7 +634,7 @@ export async function orchestrateReport(
             });
           });
           const waveNumber = Math.floor(waveStart / FINAL_ENRICHMENT_BATCH_CONCURRENCY) + 1;
-          await port.appendEvent(payload.publicId, event(`enrichment-task-${attempt.taskAttemptNumber || 1}-wave-${waveNumber}-checkpoint`, "enrichment", "A bounded selected-product enrichment wave finished.", {
+          await port.appendEvent(payload.publicId, event(`enrichment-report-${attempt.attemptNumber}-task-${attempt.taskAttemptNumber || 1}-wave-${waveNumber}-checkpoint`, "enrichment", "A bounded selected-product enrichment wave finished.", {
             wave: waveNumber,
             waves: Math.ceil(batches.length / FINAL_ENRICHMENT_BATCH_CONCURRENCY),
             pagesRequested,
@@ -642,7 +670,7 @@ export async function orchestrateReport(
         });
         if (enrichmentIncomplete) {
           limitedPhases.push("enrichment");
-          await port.appendEvent(payload.publicId, event(`enrichment-task-${attempt.taskAttemptNumber || 1}-limited`, "enrichment", "Selected product enrichment finished with explicit batch or plan coverage gaps.", {
+          await port.appendEvent(payload.publicId, event(`enrichment-report-${attempt.attemptNumber}-task-${attempt.taskAttemptNumber || 1}-limited`, "enrichment", "Selected product enrichment finished with explicit batch or plan coverage gaps.", {
             pagesRequested,
             pagesFetched,
             batches: batchesProcessed,
@@ -651,7 +679,7 @@ export async function orchestrateReport(
           }));
         } else {
           completedPhases.push("enrichment");
-          await port.appendEvent(payload.publicId, event(`enrichment-task-${attempt.taskAttemptNumber || 1}-complete`, "enrichment", targetSatisfied ? "Selected product enrichment filled the priced result target." : "Selected product enrichment finished across all bounded batches.", {
+          await port.appendEvent(payload.publicId, event(`enrichment-report-${attempt.attemptNumber}-task-${attempt.taskAttemptNumber || 1}-complete`, "enrichment", targetSatisfied ? "Selected product enrichment filled the priced result target." : "Selected product enrichment finished across all bounded batches.", {
             pagesRequested,
             pagesFetched,
             batches: batchesProcessed,
@@ -674,7 +702,7 @@ export async function orchestrateReport(
           gaps,
         });
         limitedPhases.push("enrichment");
-        await port.appendEvent(payload.publicId, event(`enrichment-task-${attempt.taskAttemptNumber || 1}-limited`, "enrichment", "Accepted price gaps could not be safely scheduled as product-page enrichment targets.", {
+        await port.appendEvent(payload.publicId, event(`enrichment-report-${attempt.attemptNumber}-task-${attempt.taskAttemptNumber || 1}-limited`, "enrichment", "Accepted price gaps could not be safely scheduled as product-page enrichment targets.", {
           pagesEligible: enrichmentPlan.totalEligible,
           pagesPlanned: 0,
           truncated: true,

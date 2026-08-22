@@ -899,7 +899,7 @@ test("publication-ineligible pairs are re-read on both sides and successful batc
   assert.equal(block.enrichment.pagesRequested, 140);
   assert.equal(block.enrichment.pagesFetched, 76);
   assert.equal(block.enrichment.failedBatchCount, 1);
-  const checkpoints = port.events.filter((event) => /^enrichment-task-\d+-wave-\d+-checkpoint$/.test(event.idempotencyKey));
+  const checkpoints = port.events.filter((event) => /^enrichment-report-\d+-task-\d+-wave-\d+-checkpoint$/.test(event.idempotencyKey));
   assert.equal(checkpoints.length, 2);
   assert.equal(checkpoints[1].metadata.pagesRequested, 140);
 });
@@ -937,6 +937,33 @@ test("a task retry reuses durable enrichment batches instead of fetching product
   assert.equal(enrichCalls, 1);
   assert.equal(port.checkpoints.size, 2);
   assert.ok(port.checkpoints.has(299));
+});
+
+test("a task retry can persist an expanded enrichment plan after judge progress", async () => {
+  let matchCalls = 0;
+  const fetchedCounts = [];
+  const port = mockPort({
+    async match() {
+      matchCalls += 1;
+      const value = comparison({ withPair: true, count: matchCalls });
+      for (const row of value.rows) {
+        row.primary.priceSignals = [];
+        row.matches[0].product.priceSignals = [];
+      }
+      return { ok: true, comparison: value };
+    },
+    async enrich({ targets }) {
+      fetchedCounts.push(targets.length);
+      return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: 64, gaps: targets.map((target) => ({ url: target.sourceUrl, productId: target.productId, role: target.role, reason: fetchedCounts.length === 1 ? "Temporary network timeout." : "Product page was removed.", code: "fetch_failed", httpStatus: fetchedCounts.length === 1 ? 0 : 404, failureKind: fetchedCounts.length === 1 ? "network" : "http" })) } };
+    },
+  });
+
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/);
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port);
+  assert.equal(result.reportStatus, "limited");
+  assert.deepEqual(fetchedCounts, [2, 4]);
+  assert.ok(port.checkpoints.has(299));
+  assert.ok(port.checkpoints.has(298));
 });
 
 test("a task retry preserves successful pages, re-fetches only transient gaps, and uses attempt-scoped enrichment events", async () => {
@@ -985,11 +1012,42 @@ test("a task retry preserves successful pages, re-fetches only transient gaps, a
   assert.deepEqual(fetchedRoles[1], ["rival"]);
   assert.equal(result.reportStatus, "limited");
   assert.ok(port.checkpoints.has(300 + MAX_FINAL_ENRICHMENT_BATCHES));
-  assert.ok(port.events.some((item) => item.idempotencyKey === "enrichment-task-1-wave-1-checkpoint"));
-  assert.ok(port.events.some((item) => item.idempotencyKey === "enrichment-task-2-wave-1-checkpoint"));
+  assert.ok(port.events.some((item) => item.idempotencyKey === "enrichment-report-1-task-1-wave-1-checkpoint"));
+  assert.ok(port.events.some((item) => item.idempotencyKey === "enrichment-report-1-task-2-wave-1-checkpoint"));
   const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
   assert.equal(block.rows.length, 1);
   assert.equal(block.matching.publishedPrimaryProducts, 1);
+});
+
+test("a failed transient retry preserves prior successful pages and published pairs", async () => {
+  let enrichCalls = 0;
+  const port = mockPort({
+    async match() {
+      const value = comparison({ withPair: true, count: 2 });
+      for (const row of value.rows) {
+        row.primary.priceSignals = [];
+        row.matches[0].product.priceSignals = [];
+      }
+      return { ok: true, comparison: value };
+    },
+    async enrich({ targets }) {
+      enrichCalls += 1;
+      if (enrichCalls > 1) throw new Error("retry transport failed");
+      const failed = targets.at(-1);
+      const products = targets.slice(0, -1).map((target) => ({ ...product(target.domain, target.productId), name: target.expectedName, normalizedName: target.expectedName.toLowerCase(), sourceUrl: target.sourceUrl, priceSignals: [{ raw: target.role === "primary" ? "GBP 9" : "GBP 7", currency: "GBP", amount: target.role === "primary" ? 9 : 7 }] }));
+      return { ok: true, products, coverage: { pagesRequested: targets.length, pagesFetched: products.length, maxPages: 64, gaps: [{ url: failed.sourceUrl, productId: failed.productId, role: failed.role, reason: "Temporary network timeout.", code: "fetch_failed", httpStatus: 0, failureKind: "network" }] } };
+    },
+  });
+
+  await assert.rejects(() => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/);
+  const result = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port);
+  assert.equal(enrichCalls, 2);
+  assert.equal(result.reportStatus, "limited");
+  const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
+  assert.equal(block.rows.length, 1);
+  assert.equal(block.matching.publishedPrimaryProducts, 1);
+  assert.equal(block.enrichment.pagesFetched, 3);
+  assert.equal(block.enrichment.gaps[0].failureKind, "network");
 });
 
 test("an ambiguous checkpoint-save response reloads and uses the committed enrichment batch", async () => {
@@ -1095,7 +1153,7 @@ test("action planning runs after final enrichment and persists source-labelled p
   assert.equal(result.reportStatus, "complete");
   assert.equal(sawEnrichedPrice, true);
   const eventKeys = port.events.map((item) => item.idempotencyKey);
-  assert.ok(eventKeys.findIndex((key) => key.endsWith("-complete") && key.startsWith("enrichment-task-")) < eventKeys.indexOf("actions-started"));
+  assert.ok(eventKeys.findIndex((key) => key.endsWith("-complete") && key.startsWith("enrichment-report-")) < eventKeys.indexOf("actions-started"));
   assert.ok(eventKeys.indexOf("actions-complete") < eventKeys.indexOf("matching-complete"));
   const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
   assert.equal(block.actionPlanning.fallbackActions, 20);

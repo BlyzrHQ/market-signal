@@ -65,7 +65,7 @@ async function fetchSameDomain(url: string, domain: string, accept: string, fetc
   });
   if (result.redirectDomain || /redirected off the submitted domain/i.test(result.error || "")) throw new ProductFetchFailure("redirected off the product domain", "redirect");
   if (result.failureKind === "network" || result.failureKind === "timeout") throw new ProductFetchFailure(result.error || "network request failed", "network");
-  if (result.status === 0) throw new ProductFetchFailure(result.error || "response body could not be read", "content");
+  if (result.status === 0) throw new ProductFetchFailure(result.error || "response body could not be read", "network");
   return result;
 }
 

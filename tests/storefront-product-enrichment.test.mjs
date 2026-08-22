@@ -1543,7 +1543,7 @@ test("preserves observed non-success HTTP statuses without reading their bodies"
   }
 });
 
-test("classifies a successful response body-read failure as content, not network", async () => {
+test("classifies a successful response body-read failure as retryable network work", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
     if (String(input).endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
@@ -1555,8 +1555,8 @@ test("classifies a successful response body-read failure as content, not network
   try {
     const result = await enrichProductTargets([target()], 1);
     assert.equal(result.coverage.gaps[0].code, "fetch_failed");
-    assert.equal(result.coverage.gaps[0].failureKind, "content");
-    assert.equal(result.coverage.gaps[0].httpStatus, undefined);
+    assert.equal(result.coverage.gaps[0].failureKind, "network");
+    assert.equal(result.coverage.gaps[0].httpStatus, 0);
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -660,6 +660,7 @@ test("recovery adopts an immutable completed fact snapshot for the new attempt",
     await appendReportEvent(created.publicId, { attemptNumber: 1, idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Collecting public pages." }, started, database);
     const bundle = await buildReportFactBundle({ publicId: created.publicId, crawlResults: [{ domain: "recoverable.example", role: "primary", homepage: { sourceUrl: "https://recoverable.example/" }, products: [], fetchedAt: started.toISOString() }], comparison: null, adBlock: null, observedAt: started.toISOString(), attemptNumber: 1 });
     await saveReportMatchBatchCheckpoint(created.publicId, { attemptNumber: 1, batchIndex: 0, inputHash: "a".repeat(64), result: { assessments: [] } }, started, database);
+    await saveReportMatchBatchCheckpoint(created.publicId, { attemptNumber: 1, batchIndex: 299, inputHash: "b".repeat(64), result: { enrichmentPlan: [] } }, started, database);
     for (const chunk of bundle.chunks) await saveReportFactChunk(created.publicId, chunk, started, database);
     await finalizeReportFactManifest(created.publicId, bundle.manifest, started, database);
     const interrupted = await getStoredReport(created.publicId, new Date("2026-08-16T10:20:00.000Z"), database);
@@ -669,7 +670,7 @@ test("recovery adopts an immutable completed fact snapshot for the new attempt",
     assert.equal(recovered.attemptCount, 2);
     assert.deepEqual((await database.prepare("SELECT DISTINCT attempt_number FROM report_fact_chunks WHERE run_id = ?").bind(recovered.id).all()).results, [{ attempt_number: 2 }]);
     assert.deepEqual((await database.prepare("SELECT attempt_number, status FROM report_fact_manifests WHERE run_id = ?").bind(recovered.id).all()).results, [{ attempt_number: 2, status: "complete" }]);
-    assert.deepEqual((await database.prepare("SELECT attempt_number, batch_index FROM report_match_batch_checkpoints WHERE run_id = ?").bind(recovered.id).all()).results, [{ attempt_number: 2, batch_index: 0 }]);
+    assert.deepEqual((await database.prepare("SELECT attempt_number, batch_index FROM report_match_batch_checkpoints WHERE run_id = ? ORDER BY batch_index").bind(recovered.id).all()).results, [{ attempt_number: 2, batch_index: 0 }, { attempt_number: 1, batch_index: 299 }]);
   } finally {
     database.close();
     await rm(value.directory, { recursive: true, force: true });
