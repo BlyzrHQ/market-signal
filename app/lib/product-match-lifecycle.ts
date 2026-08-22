@@ -308,8 +308,18 @@ export function mergePublishedProductComparisons(current: ProductComparison, pri
   const publishable = (row: ProductComparison["rows"][number]) => row.matches.some((match) => match.product && match.publication?.priceEligible === true);
   const currentRows = publishedCurrent.rows.filter(publishable);
   const priorRows = publishedPrior.rows.filter(publishable);
-  const currentIds = new Set(currentRows.map((row) => row.primary.id));
-  const candidateRows = [...currentRows, ...priorRows.filter((row) => !currentIds.has(row.primary.id))];
+  const candidateRows: ProductComparison["rows"] = [];
+  const rowByPrimary = new Map<string, number>();
+  for (const row of [...currentRows, ...priorRows]) {
+    const existingIndex = rowByPrimary.get(row.primary.id);
+    if (existingIndex === undefined) {
+      rowByPrimary.set(row.primary.id, candidateRows.length);
+      candidateRows.push(row);
+      continue;
+    }
+    const existing = candidateRows[existingIndex];
+    candidateRows[existingIndex] = { ...existing, matches: [...existing.matches, ...row.matches] };
+  }
   const candidates = candidateRows.map((row) => row.matches
     .filter((match): match is ProductMatch & { product: ProductRecord } => Boolean(match.product && match.publication?.priceEligible === true))
     .sort((left, right) => Number(right.assessment?.verdict === "same_product") - Number(left.assessment?.verdict === "same_product")

@@ -387,6 +387,23 @@ test("priced result backfill never counts the same rival offering twice across d
   assert.equal(new Set(result.rows.flatMap((item) => item.matches.flatMap((match) => match.product ? [match.product.id] : []))).size, 1);
 });
 
+test("priced result backfill keeps historical alternatives when a primary is observed again", () => {
+  const pricedRow = (primaryId, rivalId) => {
+    const item = row(primaryId, rivalId);
+    item.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+    item.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+    return item;
+  };
+  const prior = comparison({ selected: ["p1"], assessed: ["p1"], rows: [pricedRow("p1", "r-old")], accepted: 1 });
+  const current = comparison({ selected: ["p1", "p2"], assessed: ["p1", "p2"], rows: [pricedRow("p1", "r-shared"), pricedRow("p2", "r-shared")], accepted: 2 });
+  const result = mergePublishedProductComparisons(current, limitPublishedProductComparison(publishPricedProductComparison(prior), 2), 2);
+
+  assert.equal(result.rows.length, 2);
+  assert.equal(result.matching.publishedPrimaryProducts, 2);
+  assert.equal(result.matching.resultShortfall, 0);
+  assert.deepEqual(new Set(result.rows.flatMap((item) => item.matches.flatMap((match) => match.product ? [match.product.id] : []))), new Set(["r-old", "r-shared"]));
+});
+
 test("a later unpriced observation does not evict an earlier valid priced comparison", () => {
   const priorRow = row("p1", "r1");
   priorRow.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
