@@ -460,6 +460,9 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
     const existing = candidateRows[existingIndex];
     candidateRows[existingIndex] = { ...existing, matches: [...existing.matches, ...row.matches] };
   }
+  candidateRows.sort((left, right) => durablePrimaryIdentity(left.primary).localeCompare(durablePrimaryIdentity(right.primary))
+    || left.primary.id.localeCompare(right.primary.id)
+    || left.primary.sourceUrl.localeCompare(right.primary.sourceUrl));
   const rivalConstraintKeys = (product: ProductRecord) => {
     const source = canonicalProductSourceKey(product);
     return [

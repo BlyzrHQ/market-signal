@@ -488,6 +488,21 @@ test("global assignment counts one canonical rival source only once when ids and
   assert.equal(state.comparison.matching.resultShortfall, 1);
 });
 
+test("global assignment is invariant to equivalent primary row ordering", () => {
+  const pricedRow = (primaryId) => {
+    const item = row(primaryId, "shared-rival");
+    item.primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+    item.matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+    return item;
+  };
+  const rows = [pricedRow("p2"), pricedRow("p1")];
+  const forward = mergePublishedProductComparisonState(comparison({ selected: ["p1", "p2"], assessed: ["p1", "p2"], rows, accepted: 2 }), null, 2);
+  const reverse = mergePublishedProductComparisonState(comparison({ selected: ["p1", "p2"], assessed: ["p1", "p2"], rows: [...rows].reverse(), accepted: 2 }), null, 2);
+
+  assert.deepEqual(forward.comparison.rows.map((item) => item.primary.id), reverse.comparison.rows.map((item) => item.primary.id));
+  assert.deepEqual(forward.comparison.rows.map((item) => item.primary.id), ["p1"]);
+});
+
 test("durable priced evidence stays below the checkpoint limit for a legal 6000-pair universe", () => {
   const legalUrl = (domain, role, primaryIndex, rivalIndex = 0) => `https://${domain}/${role}/${primaryIndex}/${rivalIndex}/${"x".repeat(900)}?country=US`;
   const rows = Array.from({ length: 20 }, (_, primaryIndex) => {
@@ -510,12 +525,19 @@ test("durable priced evidence stays below the checkpoint limit for a legal 6000-
   });
   const ids = rows.map((item) => item.primary.id);
   const state = mergePublishedProductComparisonState(comparison({ selected: ids, assessed: ids, rows, accepted: 6_000 }), null, 20);
-  const checkpoint = { version: 3, comparison: compactPublishedProductComparisonCheckpoint(state.comparison), evidence: state.evidence };
+  state.evidence.enrichment = {
+    pagesRequested: 7_000,
+    pagesFetched: 7_000,
+    maxPages: 7_000,
+    gaps: Array.from({ length: 7_000 }, (_, index) => ({ url: `https://rival.test/missing/${index}`, reason: "Terminal HTTP 404 product-page outcome" })),
+  };
+  const checkpoint = { version: 3, comparison: compactPublishedProductComparisonCheckpoint(state.comparison), evidence: compactPublishedProductComparisonCheckpoint(state.evidence) };
 
   assert.equal(state.evidence.rows.length, 20);
   assert.ok(state.evidence.rows.every((item) => item.matches.length === MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY));
   assert.ok(state.evidence.rows.every((item) => item.matches.some((match) => match.product?.sourceUrl.startsWith("https://rival.test/rival/"))));
-  assert.ok(Buffer.byteLength(JSON.stringify(checkpoint), "utf8") < 1_500_000);
+  assert.equal(checkpoint.evidence.enrichment.gaps.length, 20);
+  assert.ok(Buffer.byteLength(JSON.stringify(checkpoint), "utf8") < 1_400_000);
 });
 
 test("a later unpriced observation does not evict an earlier valid priced comparison", () => {
