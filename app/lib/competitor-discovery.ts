@@ -3,6 +3,12 @@ import { inferBusinessProfile, profileTerms, type BusinessProfile, type Business
 import { canonicalDomain } from "./domain.ts";
 import type { ProductRecord } from "./product-intelligence.ts";
 import { publicHttpUrl } from "./public-url.ts";
+import {
+  validateDiscoverySearchLedger,
+  type DiscoverySearchLedger,
+  type DiscoverySearchLedgerEntry,
+  type DiscoverySearchLedgerFailureCategory,
+} from "../../src/shared/discovery-search-ledger.ts";
 
 export type DiscoveryEvidence = {
   url: string;
@@ -46,25 +52,9 @@ export type DiscoveryCandidate = {
 
 export type DiscoveryProfile = BusinessProfileInput;
 
-export type DiscoverySearchFailureCategory = "none" | "http-4xx" | "http-5xx" | "timeout" | "unreadable" | "incomplete-search" | "network" | "not-configured" | "internal" | "mixed";
-
-export type ProductSearchLedgerEntry = {
-  anchorIndex: number;
-  attempts: number;
-  completed: boolean;
-  failureCategory: Exclude<DiscoverySearchFailureCategory, "mixed">;
-  queries: string[];
-  candidates: DiscoveryCandidate[];
-  gap?: string;
-};
-
-export type ProductSearchLedger = {
-  version: 1;
-  anchorSetHash: string;
-  startIndex: number;
-  endIndex: number;
-  entries: ProductSearchLedgerEntry[];
-};
+export type DiscoverySearchFailureCategory = DiscoverySearchLedgerFailureCategory | "mixed";
+export type ProductSearchLedgerEntry = DiscoverySearchLedgerEntry<DiscoveryCandidate>;
+export type ProductSearchLedger = DiscoverySearchLedger<DiscoveryCandidate>;
 
 export type DiscoveryResult = {
   available: boolean;
@@ -141,7 +131,6 @@ const MAX_SOURCE_FIRST_CANDIDATES = 2;
 const MAX_MODEL_STRUCTURED_LEADS_PER_LANE = 1;
 const SEARCH_TIMEOUT_MS = 60_000;
 const MAX_PRODUCT_SEARCH_ATTEMPTS_PER_ANCHOR = 2;
-const MAX_PRODUCT_SEARCH_LEDGER_BYTES = 1 * 1_024 * 1_024;
 export const MAX_DISCOVERY_PROVIDER_BODY_BYTES = 4 * 1_024 * 1_024;
 
 async function readBoundedProviderJson(response: Response) {
@@ -774,42 +763,6 @@ function failureCategoryForStatus(status: number): Exclude<DiscoverySearchFailur
   return status >= 400 && status < 500 ? "http-4xx" : "http-5xx";
 }
 
-function encodedBytes(value: unknown) {
-  try { return new TextEncoder().encode(JSON.stringify(value)).byteLength; } catch { return Number.POSITIVE_INFINITY; }
-}
-
-function validLedgerCandidate(value: unknown) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const candidate = value as Partial<DiscoveryCandidate>;
-  try {
-    if (!candidate.domain || canonicalDomain(candidate.domain) !== candidate.domain) return false;
-    if (typeof candidate.companyName !== "string" || typeof candidate.reason !== "string" || typeof candidate.searchQuery !== "string") return false;
-    if (publicHttpUrl(candidate.sourceUrl, false) !== candidate.sourceUrl || publicHttpUrl(candidate.websiteUrl, false) !== candidate.websiteUrl) return false;
-    if (!Array.isArray(candidate.evidence) || candidate.evidence.length > 20 || !Array.isArray(candidate.sharedOfferings) || candidate.sharedOfferings.length > 10) return false;
-    if (candidate.matchedProductUrl && publicHttpUrl(candidate.matchedProductUrl, false) !== candidate.matchedProductUrl) return false;
-    if ((candidate.matchedProductUrls?.length || 0) > MAX_CANDIDATES || candidate.matchedProductUrls?.some((url) => publicHttpUrl(url, false) !== url)) return false;
-    if ((candidate.inferredProductLeads?.length || 0) > MAX_CANDIDATES || candidate.inferredProductLeads?.some((lead) => canonicalDomain(lead.candidateDomain) !== lead.candidateDomain || publicHttpUrl(lead.candidateSourceUrl, false) !== lead.candidateSourceUrl || publicHttpUrl(lead.primarySourceUrl, false) !== lead.primarySourceUrl)) return false;
-    return true;
-  } catch { return false; }
-}
-
-function validPriorProductSearchLedger(value: unknown, anchorSetHash: string, startIndex: number, endIndex: number): ProductSearchLedger | null {
-  if (!value || typeof value !== "object" || Array.isArray(value) || encodedBytes(value) > MAX_PRODUCT_SEARCH_LEDGER_BYTES) return null;
-  const ledger = value as Partial<ProductSearchLedger>;
-  if (ledger.version !== 1 || ledger.anchorSetHash !== anchorSetHash || ledger.startIndex !== startIndex || ledger.endIndex !== endIndex || !Array.isArray(ledger.entries) || ledger.entries.length !== endIndex - startIndex) return null;
-  const categories = new Set<DiscoverySearchFailureCategory>(["none", "http-4xx", "http-5xx", "timeout", "unreadable", "incomplete-search", "network", "not-configured", "internal"]);
-  const indices = new Set<number>();
-  for (const entry of ledger.entries) {
-    if (!entry || !Number.isInteger(entry.anchorIndex) || entry.anchorIndex < startIndex || entry.anchorIndex >= endIndex || indices.has(entry.anchorIndex)) return null;
-    indices.add(entry.anchorIndex);
-    if (!Number.isInteger(entry.attempts) || entry.attempts < 1 || entry.attempts > MAX_PRODUCT_SEARCH_ATTEMPTS_PER_ANCHOR || typeof entry.completed !== "boolean" || !categories.has(entry.failureCategory)) return null;
-    if (entry.completed !== (entry.failureCategory === "none") || !Array.isArray(entry.queries) || entry.queries.length > 8 || entry.queries.some((query) => typeof query !== "string" || query.length > 300)) return null;
-    if (!Array.isArray(entry.candidates) || entry.candidates.length > MAX_CANDIDATES || entry.candidates.some((candidate) => !validLedgerCandidate(candidate))) return null;
-    if (entry.gap !== undefined && (typeof entry.gap !== "string" || entry.gap.length > 500)) return null;
-  }
-  return ledger as ProductSearchLedger;
-}
-
 function structurallyValidDiscovery(value: Record<string, unknown>) {
   if (typeof value.category !== "string" || !value.category.trim() || typeof value.region !== "string" || !value.region.trim()) return false;
   if (!Array.isArray(value.queries) || !value.queries.every((item) => typeof item === "string")) return false;
@@ -1043,8 +996,10 @@ export async function discoverCompetitors(profile: DiscoveryProfile, options: Di
   if (!apiKey) return { available: false, provider: "unavailable", model, category: business.category, region: business.region, businessType: business.businessType, strategy: "not-run", queries: [], candidates: [], gaps: ["Web discovery is not configured."], gap: "Web discovery is not configured. A search-capable provider is required before competitors can be discovered automatically.", productSearchCoverage: { ...baseCoverage, ...(comparisonTargetMode ? { providerFailureCategory: "not-configured", providerFailureCount: anchors.length, providerCircuitOpen: true } as const : {}) } };
 
   const endpoint = `${(process.env.OPENAI_RESPONSES_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "")}/responses`;
-  const priorLedger = comparisonTargetMode ? validPriorProductSearchLedger(options.priorProductSearchLedger, anchorSetHash, startIndex, endIndex) : null;
-  if (comparisonTargetMode && options.priorProductSearchLedger !== undefined && !priorLedger) {
+  const suppliedPriorLedger = comparisonTargetMode && options.priorProductSearchLedger !== undefined
+    ? validateDiscoverySearchLedger(options.priorProductSearchLedger)
+    : null;
+  if (comparisonTargetMode && options.priorProductSearchLedger !== undefined && !suppliedPriorLedger) {
     const gap = "The durable product-search checkpoint was invalid; paid search stopped instead of replaying previously purchased work.";
     return {
       available: false,
@@ -1061,7 +1016,12 @@ export async function discoverCompetitors(profile: DiscoveryProfile, options: Di
       productSearchCoverage: { ...baseCoverage, providerFailureCategory: "internal", providerFailureCount: 1, providerCircuitOpen: true },
     };
   }
-  const priorEntries = new Map((priorLedger?.entries || []).map((entry) => [entry.anchorIndex, entry]));
+  const priorLedger = suppliedPriorLedger?.anchorSetHash === anchorSetHash
+    ? suppliedPriorLedger as ProductSearchLedger
+    : null;
+  const priorEntries = new Map((priorLedger?.entries || [])
+    .filter((entry) => entry.anchorIndex >= startIndex && entry.anchorIndex < endIndex)
+    .map((entry) => [entry.anchorIndex, entry]));
   const indexedAnchors = anchors.map((anchor, index) => ({ anchor, anchorIndex: startIndex + index }));
   const productResults = await mapConcurrent(indexedAnchors, PRODUCT_SEARCH_CONCURRENCY, async ({ anchor, anchorIndex }) => {
     const previous = priorEntries.get(anchorIndex);

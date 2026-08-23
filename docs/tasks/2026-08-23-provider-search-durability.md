@@ -29,6 +29,15 @@ repair is per-anchor durability, a bounded sanitized failure taxonomy, reuse of
 already-paid search leads, and a fail-fast circuit for systemic provider
 failure. Truth, market, product-identity, and price gates must remain unchanged.
 
+On its first exact-head implementation review, Fable found that a structurally
+valid ledger from the completed `0-10` window was being treated as corrupt when
+the checkpoint advanced to `10-20`. That would have opened the provider circuit
+before the next window searched. The repair now validates ledger structure
+separately from window applicability: stale disjoint windows are ignored,
+overlapping completed entries are reused when a window shrinks, and malformed
+ledgers still fail closed before any provider call. Discovery and Trigger use
+the same shared validator so their acceptance rules cannot drift.
+
 ## Scope
 
 1. Treat a completed web-search call as completed search evidence even when the
@@ -78,6 +87,9 @@ and mocked provider responses only.
 - Completed anchors are reused, failed anchors receive at most one paid retry,
   and a same-category full-wave failure opens the usage-protection circuit.
 - The 20-pair selection and downstream competitor-domain derivation are unchanged.
-- `npm.cmd test`: PASS (build, browser and Node type checks, 1,118 tests).
+- Regression coverage includes cursor advancement from `0-10` to `10-20`, a
+  shrinking overlapping window, stale-ledger handling, and malformed-ledger
+  fail-closed behavior.
+- `npm.cmd test`: PASS (build, browser and Node type checks, 1,121 tests).
 - `npm.cmd run lint`: PASS with two pre-existing `no-img-element` warnings.
 - No live report, evaluation, or provider request was launched during validation.

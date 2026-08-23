@@ -1010,6 +1010,83 @@ test("comparison-target discovery reuses nine completed lanes and retries only o
   }
 });
 
+test("comparison-target discovery treats a valid prior wave ledger as stale and searches the next offset", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  const searchProfile = {
+    ...profile,
+    products: Array.from({ length: 20 }, (_, index) => product(
+      `Beef Mince ${String(index + 1).padStart(2, "0")} 500g`,
+      `https://myjam.co.uk/products/mince-${index + 1}`,
+    )),
+  };
+  globalThis.fetch = async () => searchResponse({ category: "Grocery", region: "United Kingdom", queries: [], candidates: [] });
+  try {
+    const first = await discoverCompetitors(searchProfile, { productComparisonsOnly: true, maxProductSearches: 10 });
+    assert.ok(first.productSearchLedger);
+    let nextWaveCalls = 0;
+    globalThis.fetch = async () => {
+      nextWaveCalls += 1;
+      return searchResponse({ category: "Grocery", region: "United Kingdom", queries: [], candidates: [] });
+    };
+    const next = await discoverCompetitors(searchProfile, {
+      productComparisonsOnly: true,
+      maxProductSearches: 10,
+      searchOffset: 10,
+      expectedAnchorSetHash: first.productSearchCoverage.anchorSetHash,
+      priorProductSearchLedger: first.productSearchLedger,
+    });
+    assert.equal(nextWaveCalls, 10);
+    assert.equal(next.productSearchCoverage.startIndex, 10);
+    assert.equal(next.productSearchCoverage.endIndex, 20);
+    assert.equal(next.productSearchCoverage.paidSearchesStarted, 10);
+    assert.equal(next.productSearchCoverage.reusedSearches, 0);
+    assert.equal(next.productSearchCoverage.providerCircuitOpen, undefined);
+    assert.equal(next.productSearchLedger?.startIndex, 10);
+    assert.equal(next.productSearchLedger?.endIndex, 20);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
+test("comparison-target discovery reuses the overlapping prefix when the retry window shrinks", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  const searchProfile = {
+    ...profile,
+    products: Array.from({ length: 10 }, (_, index) => product(
+      `Lamb Mince ${String(index + 1).padStart(2, "0")} 500g`,
+      `https://myjam.co.uk/products/lamb-mince-${index + 1}`,
+    )),
+  };
+  globalThis.fetch = async () => searchResponse({ category: "Grocery", region: "United Kingdom", queries: [], candidates: [] });
+  try {
+    const first = await discoverCompetitors(searchProfile, { productComparisonsOnly: true, maxProductSearches: 10 });
+    let retryCalls = 0;
+    globalThis.fetch = async () => {
+      retryCalls += 1;
+      throw new Error("overlapping completed anchors must not be re-bought");
+    };
+    const shrunk = await discoverCompetitors(searchProfile, {
+      productComparisonsOnly: true,
+      maxProductSearches: 5,
+      priorProductSearchLedger: first.productSearchLedger,
+    });
+    assert.equal(retryCalls, 0);
+    assert.equal(shrunk.productSearchCoverage.paidSearchesStarted, 0);
+    assert.equal(shrunk.productSearchCoverage.reusedSearches, 5);
+    assert.equal(shrunk.productSearchCoverage.startIndex, 0);
+    assert.equal(shrunk.productSearchCoverage.endIndex, 5);
+    assert.deepEqual(shrunk.productSearchLedger?.entries.map((entry) => entry.anchorIndex), [0, 1, 2, 3, 4]);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
 test("comparison-target discovery never pays a third time for one terminally failed anchor", async () => {
   const previousKey = process.env.OPENAI_API_KEY;
   const previousFetch = globalThis.fetch;

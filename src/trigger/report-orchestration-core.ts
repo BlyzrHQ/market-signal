@@ -34,6 +34,7 @@ import {
 } from "../shared/report-orchestration-contract.ts";
 import { buildReportFactBundle } from "../shared/report-facts.ts";
 import { compactTerminalReportDocument, encodedJsonBytes, REPORT_MATCH_CHECKPOINT_RESULT_BYTES } from "../shared/report-document-compaction.ts";
+import { validateDiscoverySearchLedger } from "../shared/discovery-search-ledger.ts";
 import type { ReportFactChunkInput, ReportFactManifestInput } from "../../app/lib/report-store.ts";
 import type { PinnedProductPair } from "../../app/lib/ai-product-matching.ts";
 import { screenedComparisonFromJudgeCheckpoints } from "../../app/lib/ai-product-matching.ts";
@@ -690,7 +691,6 @@ type CrawlOutcome = CrawlSuccess | ParkedDomainOutcome | UnavailableDomainOutcom
 
 const MAX_CRAWL_CHECKPOINT_UNCOMPRESSED_BYTES = 16 * 1_024 * 1_024;
 const MAX_CRAWL_CHECKPOINT_RECOVERY_CANDIDATES = 2;
-const MAX_DISCOVERY_SEARCH_LEDGER_BYTES = 1 * 1_024 * 1_024;
 
 class CrawlCheckpointProjectionError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -777,26 +777,6 @@ function crawlCheckpointSnapshot(crawl: CrawlSuccess, document: JsonDocument): C
   };
 }
 
-function validDiscoverySearchLedger(value: unknown) {
-  if (value === undefined) return true;
-  if (!value || typeof value !== "object" || Array.isArray(value) || encodedJsonBytes(value) > MAX_DISCOVERY_SEARCH_LEDGER_BYTES) return false;
-  const ledger = value as { version?: unknown; anchorSetHash?: unknown; startIndex?: unknown; endIndex?: unknown; entries?: unknown };
-  if (ledger.version !== 1 || !/^[a-f0-9]{64}$/.test(String(ledger.anchorSetHash || "")) || !Number.isInteger(ledger.startIndex) || !Number.isInteger(ledger.endIndex) || Number(ledger.startIndex) < 0 || Number(ledger.endIndex) < Number(ledger.startIndex) || !Array.isArray(ledger.entries) || ledger.entries.length > 200 || ledger.entries.length !== Number(ledger.endIndex) - Number(ledger.startIndex)) return false;
-  const indices = new Set<number>();
-  return ledger.entries.every((entry) => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
-    const row = entry as { anchorIndex?: unknown; attempts?: unknown; completed?: unknown; failureCategory?: unknown; queries?: unknown; candidates?: unknown; gap?: unknown };
-    const anchorIndex = Number(row.anchorIndex);
-    if (!Number.isInteger(anchorIndex) || anchorIndex < Number(ledger.startIndex) || anchorIndex >= Number(ledger.endIndex) || indices.has(anchorIndex)) return false;
-    indices.add(anchorIndex);
-    return Number.isInteger(row.attempts) && Number(row.attempts) >= 1 && Number(row.attempts) <= 2
-      && typeof row.completed === "boolean" && typeof row.failureCategory === "string" && row.failureCategory.length <= 40
-      && Array.isArray(row.queries) && row.queries.length <= 8 && row.queries.every((query) => typeof query === "string" && query.length <= 300)
-      && Array.isArray(row.candidates) && row.candidates.length <= 6
-      && (row.gap === undefined || (typeof row.gap === "string" && row.gap.length <= 500));
-  });
-}
-
 function projectedCrawlCheckpointSnapshot(crawl: CrawlSuccess): CrawlSuccess {
   const sourceDocument = ensureDocument(crawl.document);
   const presentation = compactTerminalReportDocument({ primaryDomain: crawl.primaryDomain, document: sourceDocument, marketBrief: null }, 650_000, { factsAuthoritative: false, factCounts: null }) as { document: JsonDocument };
@@ -855,7 +835,7 @@ function validCrawlSuccess(value: unknown, payload: ReportOrchestrationPayload):
     for (const result of crawl.results) {
       if (!result || canonicalDomain(String(result.domain || "")) !== result.domain || !Array.isArray(result.products)) return null;
     }
-    if (!validDiscoverySearchLedger(crawl.discoverySearchLedger)) return null;
+    if (crawl.discoverySearchLedger !== undefined && !validateDiscoverySearchLedger(crawl.discoverySearchLedger)) return null;
     return crawl as CrawlSuccess;
   } catch {
     return null;

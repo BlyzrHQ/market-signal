@@ -1880,6 +1880,77 @@ test("a task retry forwards the durable per-anchor search ledger to the next cra
   assert.equal(crawlInputs[1].comparisonPairsNeeded, 20);
 });
 
+test("a completed discovery wave advances its cursor while forwarding the prior window ledger as stale reuse input", async () => {
+  const empty = comparison({ withPair: false, count: 20 });
+  empty.matching.resultShortfall = 20;
+  empty.matching.resultShortfallReason = "processing-incomplete";
+  empty.matching.gaps = ["The next discovery wave is required to reach the comparison target."];
+  const anchorSetHash = "a".repeat(64);
+  const ledgerForWindow = (startIndex) => ({
+    version: 1,
+    anchorSetHash,
+    startIndex,
+    endIndex: startIndex + 10,
+    entries: Array.from({ length: 10 }, (_, index) => ({
+      anchorIndex: startIndex + index,
+      attempts: 1,
+      completed: true,
+      failureCategory: "none",
+      queries: [],
+      candidates: [],
+    })),
+  });
+  const firstLedger = ledgerForWindow(0);
+  const crawlInputs = [];
+  const base = mockPort();
+  let port;
+  port = mockPort({
+    async loadReport() {
+      const stored = await base.loadReport();
+      return { ...stored, events: [...port.events] };
+    },
+    async crawl(input) {
+      crawlInputs.push(structuredClone(input));
+      const result = await base.crawl();
+      const startIndex = input.discoverySearchOffset;
+      result.discovery.productSearchCoverage = {
+        eligibleAnchors: 1_000,
+        anchorSetHash,
+        searchedAnchors: 10,
+        startIndex,
+        endIndex: startIndex + 10,
+        truncated: true,
+        searchesComplete: true,
+        searchAttemptsComplete: true,
+        paidSearchesStarted: 10,
+        reusedSearches: 0,
+        candidateDomainsFound: 0,
+        candidateDomainsInvestigated: 0,
+        candidateTruncated: false,
+        verificationComplete: true,
+        batchComplete: true,
+        complete: false,
+      };
+      result.discoverySearchLedger = ledgerForWindow(startIndex);
+      return result;
+    },
+    async match() { return { ok: true, comparison: structuredClone(empty) }; },
+    async enrich() { throw new Error("zero-row wave must not schedule enrichment"); },
+  });
+
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port),
+    /remained incomplete/,
+  );
+  const terminal = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port);
+
+  assert.equal(terminal.reportStatus, "limited");
+  assert.equal(crawlInputs.length, 2);
+  assert.equal(crawlInputs[1].discoverySearchOffset, 10);
+  assert.equal(crawlInputs[1].discoveryExpectedAnchorSetHash, anchorSetHash);
+  assert.deepEqual(crawlInputs[1].discoverySearchLedger, firstLedger);
+});
+
 test("the final bounded task does not misreport total matcher failure as zero-row exhaustion", async () => {
   const port = mockPort({ async match() { throw new Error("matcher contract authorization failed"); } });
 
