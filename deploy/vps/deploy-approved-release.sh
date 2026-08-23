@@ -15,17 +15,25 @@ previous_release=""
 previous_revision=""
 previous_image_tag=""
 
-wait_for_health() {
+wait_for_service_health() {
+  local service="$1"
   local health=""
   for _ in $(seq 1 60); do
     health="$(
-      docker inspect --format '{{.State.Health.Status}}' "${project_name}-app-1" \
+      docker inspect --format '{{.State.Health.Status}}' "${project_name}-${service}-1" \
         2>/dev/null || true
     )"
     [[ "${health}" == "healthy" ]] && return 0
     sleep 2
   done
   return 1
+}
+
+wait_for_health() {
+  wait_for_service_health app || return 1
+  if docker compose --env-file "${env_file}" config --services | grep -qx worker; then
+    wait_for_service_health worker || return 1
+  fi
 }
 
 restore_previous_release() {
@@ -40,7 +48,7 @@ restore_previous_release() {
   export MARKET_SIGNAL_REVISION="${previous_revision}"
   timeout 3m docker compose --env-file "${env_file}" config --quiet
   timeout 5m docker compose --env-file "${env_file}" \
-    up -d --no-build --pull never
+    up -d --no-build --pull never --remove-orphans
   wait_for_health
   restored_revision="$(
     docker inspect --format \
@@ -152,9 +160,10 @@ export MARKET_SIGNAL_REVISION="${revision}"
 timeout 3m docker compose --env-file "${env_file}" config --quiet
 switched="true"
 timeout 5m docker compose --env-file "${env_file}" \
-  up -d --no-build --pull never ||
+  up -d --no-build --pull never --remove-orphans ||
   fail "candidate Compose startup failed"
-wait_for_health || fail "candidate app did not become healthy"
+wait_for_service_health app || fail "candidate app did not become healthy"
+wait_for_service_health worker || fail "candidate worker did not become healthy"
 
 running_revision="$(
   docker inspect --format \
@@ -170,6 +179,17 @@ expected_image_id="$(docker image inspect --format '{{.Id}}' "${local_ref}")"
 [[ "${running_image_id}" == "${expected_image_id}" ]] \
   || fail "running container image does not match the approved image"
 
+worker_revision="$(
+  docker inspect --format \
+    '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+    "${project_name}-worker-1"
+)"
+[[ "${worker_revision}" == "${revision}" ]] \
+  || fail "running worker revision does not match the approved revision"
+worker_image_id="$(docker inspect --format '{{.Image}}' "${project_name}-worker-1")"
+[[ "${worker_image_id}" == "${expected_image_id}" ]] \
+  || fail "running worker image does not match the approved image"
+
 docker exec "${project_name}-app-1" node -e '
   const token = process.env.MARKET_SIGNAL_CALLBACK_TOKEN;
   if (!token) process.exit(1);
@@ -182,6 +202,18 @@ docker exec "${project_name}-app-1" node -e '
   }).catch(() => process.exit(1));
 ' || fail "candidate internal capability probe failed"
 
+docker exec "${project_name}-worker-1" node -e '
+  const token = process.env.MARKET_SIGNAL_CALLBACK_TOKEN;
+  if (!token) process.exit(1);
+  fetch("http://127.0.0.1:3000/api/internal/capabilities", {
+    headers: { authorization: `Bearer ${token}` },
+  }).then(async (response) => {
+    if (!response.ok) process.exit(1);
+    const body = await response.json();
+    if (!body || typeof body !== "object") process.exit(1);
+  }).catch(() => process.exit(1));
+' || fail "candidate worker internal capability probe failed"
+
 docker exec "${project_name}-app-1" node -e '
   const Database = require("better-sqlite3");
   const database = new Database(process.env.MARKET_SIGNAL_SQLITE_PATH, {
@@ -191,6 +223,16 @@ docker exec "${project_name}-app-1" node -e '
   database.close();
   if (value !== 1) process.exit(1);
 ' || fail "candidate SQLite read probe failed"
+
+docker exec "${project_name}-worker-1" node -e '
+  const Database = require("better-sqlite3");
+  const database = new Database(process.env.MARKET_SIGNAL_SQLITE_PATH, {
+    readonly: true,
+  });
+  const value = database.prepare("SELECT 1 AS ok").pluck().get();
+  database.close();
+  if (value !== 1) process.exit(1);
+' || fail "candidate worker SQLite read probe failed"
 
 ln -sfn "${release_dir}" /opt/market-signal/current
 switched="false"

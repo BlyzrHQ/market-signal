@@ -1,6 +1,7 @@
 import { buildAIProductActions, type ProductActionFact, type ProductActionInput } from "../../lib/ai-action-planner.ts";
 import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../lib/internal-auth.ts";
 import type { ProductActionLever } from "../../lib/product-intelligence.ts";
+import { workerOnlyResponse } from "../../lib/process-role.ts";
 
 const MAX_INPUTS = 480;
 const MAX_FACTS = 32;
@@ -52,6 +53,8 @@ export function parseActionInputs(value: unknown): ProductActionInput[] {
 }
 
 export async function POST(request: Request) {
+  const roleResponse = workerOnlyResponse();
+  if (roleResponse) return roleResponse;
   if (!await hasValidInternalAuthorization(request.headers.get("authorization"))) return unauthorizedInternalResponse();
   try {
     const body = await request.json() as { inputs?: unknown };

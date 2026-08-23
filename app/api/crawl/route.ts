@@ -18,6 +18,7 @@ import { hasObservedAddToCartControl } from "../../lib/experience-signals.ts";
 import { buildAIProductComparison, type AIProductMatchingOptions } from "../../lib/ai-product-matching.ts";
 import { isSallaCatalogRecoveryEligible, recoverSallaStorefrontCatalog, type SallaStorefrontRecovery } from "../../lib/salla-mcp-catalog-recovery.ts";
 import { redirectedMarketRetryUrl } from "../../lib/market-localization.ts";
+import { workerOnlyResponse } from "../../lib/process-role.ts";
 import { MARKET_SIGNAL_USER_AGENT } from "../../lib/crawler-identity.ts";
 
 type ClaimType = "Observed" | "Inferred";
@@ -1105,6 +1106,8 @@ function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?
 }
 
 export async function POST(request: Request) {
+  const roleResponse = workerOnlyResponse();
+  if (roleResponse) return roleResponse;
   if (!await hasValidAnalysisAuthorization(request.headers.get("authorization"))) return unauthorizedInternalResponse();
   try {
     const payload = await request.json() as { primary?: unknown; domains?: unknown; productLimit?: unknown; catalogProductLimit?: unknown; discoverySearchOffset?: unknown; discoveryPriorCoverageComplete?: unknown; discoveryExpectedAnchorSetHash?: unknown };

@@ -8,19 +8,37 @@
 		-Server
 	}
 
-	reverse_proxy app:3000 {
-		# ChatGPT Sites injects these headers at a trusted edge. They are not an
-		# identity boundary on the public VPS and must never reach the app.
-		header_up -oai-authenticated-user-email
-		header_up -oai-authenticated-user-full-name
-		header_up -oai-authenticated-user-full-name-encoding
+	@report_worker path /api/crawl /api/report /api/ads /api/match /api/enrich-products /api/actions
 
-		transport http {
-			dial_timeout 10s
-			# Complete bounded crawling has a 40-minute application budget. Keep
-			# the edge above it so Caddy does not turn a still-valid crawl response
-			# into a retryable 504.
-			response_header_timeout 2460s
+	handle @report_worker {
+		reverse_proxy worker:3000 {
+			# ChatGPT Sites injects these headers at a trusted edge. They are not an
+			# identity boundary on the public VPS and must never reach the worker.
+			header_up -oai-authenticated-user-email
+			header_up -oai-authenticated-user-full-name
+			header_up -oai-authenticated-user-full-name-encoding
+
+			transport http {
+				dial_timeout 10s
+				# Complete bounded crawling has a 40-minute application budget.
+				response_header_timeout 2460s
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy app:3000 {
+			# ChatGPT Sites injects these headers at a trusted edge. They are not an
+			# identity boundary on the public VPS and must never reach the app.
+			header_up -oai-authenticated-user-email
+			header_up -oai-authenticated-user-full-name
+			header_up -oai-authenticated-user-full-name-encoding
+
+			transport http {
+				dial_timeout 10s
+				# Internal recovery callers have a 120-second request budget.
+				response_header_timeout 130s
+			}
 		}
 	}
 

@@ -1,6 +1,7 @@
 import { enrichProductTargets, publicProductTarget, type EnrichmentDependencies } from "../../lib/storefront-product-enrichment.ts";
 import { canonicalDomain } from "../../lib/domain.ts";
 import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../lib/internal-auth.ts";
+import { workerOnlyResponse } from "../../lib/process-role.ts";
 
 const MAX_TARGETS = 64;
 
@@ -32,6 +33,8 @@ export async function handleProductEnrichmentRequest(request: Request, localDepe
 }
 
 export async function POST(request: Request) {
+  const roleResponse = workerOnlyResponse();
+  if (roleResponse) return roleResponse;
   if (!await hasValidInternalAuthorization(request.headers.get("authorization"))) return unauthorizedInternalResponse();
   return handleProductEnrichmentRequest(request);
 }

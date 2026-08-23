@@ -1,8 +1,12 @@
 # Market Signal VPS deployment
 
-This package runs the public web application and its Node crawl runtime on one
-VPS. Trigger.dev remains the durable job coordinator and calls the protected
-VPS API. The VPS owns the SQLite database and backup files.
+This package runs the public web application and a CPU- and memory-bounded report worker as
+separate containers on one VPS. Caddy sends only the exact protected crawl,
+matching, enrichment, brief, ads, and action paths to the worker. Trigger.dev
+remains the durable job coordinator and calls the protected VPS API. The VPS
+owns the shared SQLite/WAL database and backup files.
+The app process also rejects those processing routes by role, so a Caddy route
+regression fails closed instead of executing heavy work on the web process.
 
 ## 1. Provision the host
 
@@ -47,9 +51,11 @@ docker compose --env-file "$MARKET_SIGNAL_ENV_FILE" up -d
 docker compose --env-file "$MARKET_SIGNAL_ENV_FILE" ps
 ```
 
-Verify `https://$MARKET_SIGNAL_DOMAIN/` and the internal capability endpoint
-from an authenticated operational client. Do not move Trigger traffic until a
-real-domain report succeeds and persists after an app restart.
+Verify both `app` and `worker` are healthy, then verify
+`https://$MARKET_SIGNAL_DOMAIN/` and the internal capability endpoint from an
+authenticated operational client. Do not move Trigger traffic until a
+real-domain report succeeds, the public site remains responsive during report
+processing, and the report persists after both containers restart.
 
 ## 4. Backup and verify
 
