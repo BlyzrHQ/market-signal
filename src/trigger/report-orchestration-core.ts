@@ -1344,7 +1344,13 @@ export async function orchestrateReport(
         : publishedTargetCount(accumulatedPublished, publishedResultTargetKind);
       if ((publishedResultTargetKind !== "pairs" || firstPublishedCount < payload.productLimit) && shouldRetryProductMatch(attempts[0], transportFailed)) {
         try {
-          await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "matching-retry-started"), "matching", "Resuming only incomplete product judge batches from durable checkpoints."));
+          await port.appendEvent(payload.publicId, event(
+            progressEventKey(attempt, "matching-retry-started"),
+            "matching",
+            directProductSearch
+              ? "Reusing durable product-search checkpoints while retrying incomplete comparison processing."
+              : "Resuming only incomplete product judge batches from durable checkpoints.",
+          ));
           requestCount += 1;
           const retry = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, taskAttemptNumber: attempt.taskAttemptNumber || 1, reportObservedAt: stored.run.createdAt, primaryDomain: crawl.primaryDomain, marketCountryCode, productLimit: payload.productLimit, catalogs, ...(directProductSearch ? { matchingMode: "direct-product-search" as const } : { pinnedPairs: crawl.matchHints }) });
           attempts.push({ ...retry.comparison, ...(marketCountryCode ? { marketCountryCode } : {}) });

@@ -14,8 +14,8 @@ test("matching checkpoints have disjoint task-attempt namespaces", () => {
 });
 
 test("direct product search owns one stable checkpoint per primary catalog position", () => {
-  assert.equal(directSearchCheckpointIndex(0), 1_400);
-  assert.equal(directSearchCheckpointIndex(999), 2_399);
+  assert.equal(directSearchCheckpointIndex(0), 4_000);
+  assert.equal(directSearchCheckpointIndex(999), 4_999);
   assert.throws(() => directSearchCheckpointIndex(1_000), /exceeds/i);
 });
 
@@ -38,7 +38,7 @@ test("the direct route bypasses the AI matcher and reuses its paid-search checkp
       };
     },
     async loadCheckpoints(_publicId, input) {
-      assert.equal(input.batchIndex, 1_407);
+      assert.equal(input.batchIndex, 4_007);
       return [{ inputHash: "a".repeat(64), result: { version: 1, primaryProductId: "primary", primarySourceUrl: "https://shop.test/products/primary", completed: true, queries: [], candidates: [] } }];
     },
     async saveCheckpoint(_publicId, input) { saved.push(input); },
@@ -56,7 +56,7 @@ test("the direct route bypasses the AI matcher and reuses its paid-search checkp
   assert.equal(response.status, 200);
   assert.equal(legacyCalls, 0);
   assert.equal(directCalls, 1);
-  assert.equal(saved[0].batchIndex, 1_407);
+  assert.equal(saved[0].batchIndex, 4_007);
 });
 
 test("AI matching input keeps a broad but bounded first-party catalog", () => {

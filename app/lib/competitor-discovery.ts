@@ -1002,7 +1002,7 @@ export async function searchDirectProductPages(primaryDomainValue: string, prima
     queries: result.queries,
     candidates: result.candidates.flatMap((candidate) => {
       const sourceUrl = cleanSearchUrl(candidate.matchedProductUrl || candidate.sourceUrl);
-      if (!sourceUrl) return [];
+      if (!sourceUrl || new URL(sourceUrl).protocol !== "https:") return [];
       const title = candidate.evidence.find((entry) => cleanSearchUrl(entry.url) === sourceUrl)?.title
         || candidate.matchedPrimaryProductName
         || new URL(sourceUrl).pathname.split("/").filter(Boolean).at(-1)?.replace(/[-_]+/g, " ")

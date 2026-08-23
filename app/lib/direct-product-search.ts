@@ -70,7 +70,9 @@ function validSearchCheckpoint(value: unknown, primary: ProductRecord): DirectPr
     const title = typeof item.title === "string" ? item.title.replace(/\s+/g, " ").trim().slice(0, 240) : "";
     return domain && sourceUrl && title ? [{ domain, sourceUrl, title }] : [];
   });
-  if (candidates.length !== candidate.candidates.length) return null;
+  // Search results are external input. Keep the paid checkpoint usable while
+  // dropping individual malformed or non-HTTPS candidates instead of turning
+  // one bad URL into a retry of every search completed earlier in this pass.
   return {
     version: 1,
     primaryProductId: primary.id,

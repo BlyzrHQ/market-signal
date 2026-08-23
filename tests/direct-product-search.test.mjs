@@ -108,6 +108,36 @@ test("direct search reuses a durable paid-search checkpoint", async () => {
   assert.equal(saved.primaryProductId, primary.id);
 });
 
+test("a non-HTTPS search result is dropped without losing or repaying the checkpoint", async () => {
+  const primary = product("shop.test", "primary-a", "Apple Juice 1L", 3.5);
+  const pricedCandidate = { domain: "seller.test", sourceUrl: "https://seller.test/products/apple", title: "Apple Juice 1L" };
+  const unsafeCandidate = { domain: "legacy.test", sourceUrl: "http://legacy.test/products/apple", title: "Apple Juice 1L" };
+  let searches = 0;
+  let saved;
+  const options = {
+    resultTarget: 20,
+    referenceTimeMs: Date.parse(observedAt),
+    search: async () => {
+      searches += 1;
+      return { completed: true, queries: ["Apple Juice 1L"], candidates: [unsafeCandidate, pricedCandidate] };
+    },
+    enrich: async (targets) => ({
+      products: targets.map((target) => product("seller.test", "seller-a", pricedCandidate.title, 4, "GBP", target.sourceUrl)),
+      coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: targets.length, gaps: [] },
+    }),
+    loadSearchCheckpoint: async () => saved,
+    saveSearchCheckpoint: async (_key, checkpoint) => { saved = checkpoint; },
+  };
+
+  const first = await buildDirectProductSearchComparison("shop.test", [{ domain: "shop.test", products: [primary] }], options);
+  const second = await buildDirectProductSearchComparison("shop.test", [{ domain: "shop.test", products: [primary] }], options);
+
+  assert.equal(searches, 1);
+  assert.deepEqual(saved.candidates, [pricedCandidate]);
+  assert.equal(first.coverage.assignedPairCount, 1);
+  assert.equal(second.coverage.assignedPairCount, 1);
+});
+
 test("an incomplete direct search reports processing incompleteness instead of false exhaustion", async () => {
   const primary = product("shop.test", "primary-a", "Apple Juice 1L", 3.5);
   const comparison = await buildDirectProductSearchComparison("shop.test", [{ domain: "shop.test", products: [primary] }], {
