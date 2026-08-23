@@ -200,6 +200,20 @@ test("GitHub VPS deployment is manual, pinned, immutable, and non-destructive", 
   assert.match(originalDecision, /rejection of a self-hosted runner is superseded/);
 });
 
+test("production acceptance reports are owner-authorized, single-dispatch, and exact-revision gated", () => {
+  const workflow = read(".github/workflows/run-production-acceptance-report.yml");
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /environment:\s*\n\s+name: production/);
+  assert.match(workflow, /market-signal-production-acceptance/);
+  assert.match(workflow, /org\.opencontainers\.image\.revision/);
+  assert.match(workflow, /\^\(\[A-Za-z0-9\]\(\[A-Za-z0-9-\]\{0,61\}\[A-Za-z0-9\]\)\?\\\.\)\+\[A-Za-z\]\{2,63\}\$/);
+  assert.doesNotMatch(workflow, /\(\?:/);
+  assert.match(workflow, /MARKET_SIGNAL_OWNER_WRITE_TOKEN/);
+  assert.doesNotMatch(workflow, /MARKET_SIGNAL_CALLBACK_TOKEN|TRIGGER_SECRET_KEY|OPENAI_API_KEY/);
+  assert.match(workflow, /api\/internal\/acceptance-reports/);
+  assert.match(workflow, /options:\s*\n\s+- starter\s*\n\s+- solo\s*\n\s+- growth\s*\n\s+- agency/);
+});
+
 test("Stripe billing secret updater bootstraps absent entries and rejects duplicates", () => {
   const bash = process.platform === "win32" ? "C:\\Program Files\\Git\\bin\\bash.exe" : "/bin/bash";
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "market-signal-billing-update-"));
