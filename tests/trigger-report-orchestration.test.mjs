@@ -454,6 +454,7 @@ test("successful orchestration persists ordered heartbeats and a complete docume
   const port = mockPort({
     async crawl(input) {
       assert.equal(input.productLimit, 20);
+      assert.equal(input.comparisonPairsNeeded, 20);
       assert.equal(input.catalogProductLimit, 1_000);
       assert.equal(input.discoverySearchOffset, 0);
       assert.equal(input.discoveryPriorCoverageComplete, true);
@@ -1974,6 +1975,49 @@ test("task retries accumulate distinct priced results from earlier discovery wav
   assert.equal(result.reportStatus, "complete");
   assert.equal(port.saves.at(-1).document.document.blocks.find((block) => block.type === "product-comparison").rows.length, 20);
   assert.ok(port.checkpoints.has(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX - 1));
+});
+
+test("a durable twenty-pair checkpoint prevents paid crawl and matching from repeating after persistence failure", async () => {
+  const pairPayload = { ...payload, contractVersion: "5" };
+  const targetComparison = comparison({ withPair: true, count: 20 });
+  const base = mockPort();
+  let crawlCalls = 0;
+  let matchCalls = 0;
+  let failPersistence = true;
+  const port = mockPort({
+    async crawl(input) {
+      crawlCalls += 1;
+      assert.equal(input.comparisonPairsNeeded, 20);
+      const value = await base.crawl();
+      value.results[0].products = targetComparison.rows.map((row) => row.primary);
+      value.results[0].homepage.regionCountryCode = "GB";
+      value.discovery.productSearchCoverage.anchorSetHash = "target-complete-catalog";
+      return value;
+    },
+    async match() {
+      matchCalls += 1;
+      return { ok: true, comparison: structuredClone(targetComparison) };
+    },
+    async persistFactChunk(_publicId, value) {
+      if (failPersistence) throw new Error("temporary fact persistence failure");
+      port.factChunks.push(value);
+    },
+  });
+  const now = () => new Date("2026-07-20T10:01:00.000Z");
+
+  await assert.rejects(
+    () => orchestrateReport(pairPayload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port, now),
+    /persistence remained incomplete/i,
+  );
+  assert.equal(crawlCalls, 1);
+  assert.equal(matchCalls, 1);
+  assert.ok(port.checkpoints.has(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX));
+
+  failPersistence = false;
+  const result = await orchestrateReport(pairPayload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port, now);
+  assert.equal(result.reportStatus, "complete");
+  assert.equal(crawlCalls, 1);
+  assert.equal(matchCalls, 1);
 });
 
 test("report recovery restores priced results accumulated by a later task attempt", async () => {

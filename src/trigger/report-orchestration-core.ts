@@ -682,7 +682,7 @@ type StoredReport = {
 type JsonBlock = { type: string; id: string } & Record<string, unknown>;
 type JsonDocument = { blocks: JsonBlock[] } & Record<string, unknown>;
 type CrawlResult = { domain: string; homepage?: unknown; products: ProductRecord[]; role?: string; fetchedAt?: string; discovery?: { verificationScore?: number; category?: string; region?: string; sourceIds?: string[]; reason?: string; source?: string } };
-type DiscoveryCoverage = { eligibleAnchors?: number; anchorSetHash?: string; searchedAnchors?: number; startIndex?: number; endIndex?: number; truncated?: boolean; searchesComplete?: boolean; candidateDomainsFound?: number; candidateDomainsInvestigated?: number; candidateTruncated?: boolean; verificationComplete?: boolean; batchComplete?: boolean; complete?: boolean };
+type DiscoveryCoverage = { eligibleAnchors?: number; anchorSetHash?: string; anchorSetChanged?: boolean; searchedAnchors?: number; startIndex?: number; endIndex?: number; truncated?: boolean; searchesComplete?: boolean; candidateDomainsFound?: number; candidateDomainsInvestigated?: number; candidateTruncated?: boolean; verificationComplete?: boolean; batchComplete?: boolean; complete?: boolean; acceptedPairCount?: number; pairTarget?: number };
 type CrawlSuccess = { ok: true; primaryDomain: string; results: CrawlResult[]; discovery?: { productSearchCoverage?: DiscoveryCoverage }; adRequest: unknown; matchHints?: PinnedProductPair[]; document: JsonDocument };
 type ParkedDomainOutcome = { ok: false; code: "parked-domain"; primaryDomain: string; error: string; document: JsonDocument };
 type UnavailableDomainOutcome = { ok: false; code: "unavailable-domain"; primaryDomain: string; error: string; document: JsonDocument };
@@ -857,7 +857,7 @@ export interface ReportOrchestrationPort {
   preflight(): Promise<void>;
   loadReport(publicId: string): Promise<StoredReport | null>;
   appendEvent(publicId: string, event: ReportEvent & { attemptNumber?: number }): Promise<void>;
-  crawl(input: { primary: string; domains: string[]; productLimit: number; catalogProductLimit: number; discoverySearchOffset: number; discoveryPriorCoverageComplete: boolean; discoveryExpectedAnchorSetHash: string }): Promise<CrawlOutcome>;
+  crawl(input: { primary: string; domains: string[]; productLimit: number; comparisonPairsNeeded: number; catalogProductLimit: number; discoverySearchOffset: number; discoveryPriorCoverageComplete: boolean; discoveryExpectedAnchorSetHash: string }): Promise<CrawlOutcome>;
   brief(input: { primary: string; domains: string[] }): Promise<unknown>;
   ads(input: unknown): Promise<{ ok: true; block: JsonBlock }>;
   match(input: { publicId: string; reportAttempt: number; taskAttemptNumber: number; reportObservedAt: string; primaryDomain: string; marketCountryCode?: string; productLimit: number; catalogs: Array<{ domain: string; products: ProductRecord[] }>; pinnedPairs?: PinnedProductPair[] }): Promise<{ ok: true; comparison: ProductComparison }>;
@@ -868,6 +868,60 @@ export interface ReportOrchestrationPort {
   persistFactChunk(publicId: string, input: ReportFactChunkInput): Promise<void>;
   finalizeFactManifest(publicId: string, input: ReportFactManifestInput): Promise<void>;
   saveDocument(publicId: string, input: { attemptNumber?: number; status: "complete" | "limited"; observedAt: string; expectedFactManifestHash: string; document: unknown }): Promise<void>;
+}
+
+function publishedResultContext(payload: ReportOrchestrationPayload, stored: StoredReport, crawl: CrawlSuccess) {
+  const primary = crawl.results.find((result) => result.domain === crawl.primaryDomain && result.homepage);
+  if (!primary) return null;
+  const homepage = primary.homepage as { regionCountryCode?: unknown };
+  const marketCountryCode = /^[A-Z]{2}$/.test(String(homepage.regionCountryCode || "").toUpperCase())
+    ? String(homepage.regionCountryCode).toUpperCase()
+    : "";
+  const reportReferenceTimeMs = productEvidenceReferenceTimeMs(crawl.results, stored.run.createdAt, Date.now());
+  const allowedPrimaryProductKeys = primaryCatalogProductKeys(primary.products);
+  const allowedPrimaryRecoveryIdentities = primaryCatalogRecoveryIdentities(primary.products);
+  const inputHash = createHash("sha256").update(JSON.stringify({
+    publicId: payload.publicId,
+    reportObservedAt: stored.run.createdAt,
+    marketCountryCode,
+    resultTarget: payload.productLimit,
+    discoveryAnchorSetHash: crawl.discovery?.productSearchCoverage?.anchorSetHash || "",
+    primaryCatalog: primaryCatalogIdentity(primary.products),
+  })).digest("hex");
+  return { marketCountryCode, reportReferenceTimeMs, allowedPrimaryProductKeys, allowedPrimaryRecoveryIdentities, inputHash };
+}
+
+async function recoverPublishedComparisonBeforeCrawl(
+  payload: ReportOrchestrationPayload,
+  stored: StoredReport,
+  crawl: CrawlSuccess,
+  targetKind: "primary-products" | "pairs",
+  port: ReportOrchestrationPort,
+) {
+  const context = publishedResultContext(payload, stored, crawl);
+  if (!context) return null;
+  const checkpoints = await port.loadCheckpoint(payload.publicId, { attemptNumber: payload.reportAttempt, batchIndexStart: 270, batchIndexEnd: PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX, latestPerBatch: true });
+  let accumulated: ProductComparison | null = null;
+  for (const checkpoint of checkpoints
+    .filter((candidate) => candidate.inputHash === context.inputHash)
+    .sort((left, right) => left.attemptNumber - right.attemptNumber || right.batchIndex - left.batchIndex)) {
+    const validated = validPublishedResultCheckpoint(
+      checkpoint.result,
+      payload.productLimit,
+      context.reportReferenceTimeMs,
+      context.allowedPrimaryProductKeys,
+      context.allowedPrimaryRecoveryIdentities,
+      targetKind,
+    );
+    if (!validated) throw new Error("The durable published-result checkpoint is invalid.");
+    accumulated = mergePublishedProductComparisonState(validated.evidence, accumulated, payload.productLimit, context.reportReferenceTimeMs, targetKind).evidence;
+  }
+  return accumulated;
+}
+
+function publishedTargetCount(comparison: ProductComparison | null, targetKind: "primary-products" | "pairs") {
+  if (!comparison) return 0;
+  return targetKind === "pairs" ? comparison.coverage.assignedPairCount : comparison.rows.length;
 }
 
 const MAX_PRIMARY_CATALOG_PRODUCTS = 1_000;
@@ -1045,8 +1099,13 @@ export async function orchestrateReport(
     priorDurableCrawl = { taskAttemptNumber: checkpointTaskAttempt, crawl: value };
     break;
   }
+  const preCrawlPublished = priorDurableCrawl && publishedResultTargetKind === "pairs"
+    ? await recoverPublishedComparisonBeforeCrawl(payload, stored, priorDurableCrawl.crawl, publishedResultTargetKind, port)
+    : null;
+  const preCrawlPublishedCount = publishedTargetCount(preCrawlPublished, publishedResultTargetKind);
+  const preCrawlTargetComplete = preCrawlPublishedCount >= payload.productLimit;
   const priorCoverageComplete = priorDurableCrawl?.crawl.discovery?.productSearchCoverage?.complete === true;
-  const shouldRefreshCrawl = !priorDurableCrawl || (!priorCoverageComplete && priorDurableCrawl.taskAttemptNumber < taskAttemptNumber);
+  const shouldRefreshCrawl = !priorDurableCrawl || (!preCrawlTargetComplete && !priorCoverageComplete && priorDurableCrawl.taskAttemptNumber < taskAttemptNumber);
   if (!shouldRefreshCrawl && priorDurableCrawl) {
     crawl = priorDurableCrawl.crawl;
     await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "crawl-resumed"), "crawl", "Resuming from the durable successful crawl; collected public facts were not fetched or replaced again.", {
@@ -1057,7 +1116,7 @@ export async function orchestrateReport(
     await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "crawl-started"), "crawl", "Crawling the submitted website and collecting public product pages."));
     try {
       const discoveryCursor = completedDiscoveryCursor(stored.events, attempt.attemptNumber, legacyCompletedManifestWithoutPresentation);
-      const freshCrawl = await port.crawl({ primary: payload.primaryDomain, domains: [payload.primaryDomain], productLimit: payload.productLimit, catalogProductLimit: MAX_PRIMARY_CATALOG_PRODUCTS, discoverySearchOffset: discoveryCursor.offset, discoveryPriorCoverageComplete: true, discoveryExpectedAnchorSetHash: discoveryCursor.anchorSetHash });
+      const freshCrawl = await port.crawl({ primary: payload.primaryDomain, domains: [payload.primaryDomain], productLimit: payload.productLimit, comparisonPairsNeeded: Math.max(0, payload.productLimit - preCrawlPublishedCount), catalogProductLimit: MAX_PRIMARY_CATALOG_PRODUCTS, discoverySearchOffset: discoveryCursor.offset, discoveryPriorCoverageComplete: true, discoveryExpectedAnchorSetHash: discoveryCursor.anchorSetHash });
       if (!freshCrawl || (freshCrawl.ok !== true && freshCrawl.code !== "parked-domain" && freshCrawl.code !== "unavailable-domain")) throw new Error("The public crawl could not be completed.");
       const validatedFreshCrawl = freshCrawl.ok === true ? validCrawlSuccess(freshCrawl, payload) : null;
       if (freshCrawl.ok === true && !validatedFreshCrawl) throw new Error("The successful crawl did not contain a valid primary result.");
@@ -1254,11 +1313,16 @@ export async function orchestrateReport(
       accumulatedPublished = mergePublishedProductComparisonState(validated.evidence, accumulatedPublished, payload.productLimit, reportReferenceTimeMs, publishedResultTargetKind).evidence;
     }
     const recoveredPublishedMatcherResult = accumulatedPublished !== null;
+    const recoveredPublishedTargetComplete = publishedResultTargetKind === "pairs"
+      && publishedTargetCount(accumulatedPublished, publishedResultTargetKind) >= payload.productLimit;
     let requestCount = 0;
     let transportFailed = false;
     if (resumeMatcherForEnrichmentRetry && recoveredMatcherState) {
       comparison = recoveredMatcherState.comparison;
       await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "matching-resumed"), "matching", "Reusing the durable matcher state while retrying only transient product-price enrichment.", { taskAttempt: taskAttemptNumber }));
+    } else if (recoveredPublishedTargetComplete && accumulatedPublished) {
+      comparison = accumulatedPublished;
+      await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "matching-resumed"), "matching", "Reusing the durable completed product-comparison target; paid matching was not repeated.", { taskAttempt: taskAttemptNumber, pairs: accumulatedPublished.coverage.assignedPairCount }));
     } else {
       try {
         requestCount += 1;
@@ -1267,7 +1331,10 @@ export async function orchestrateReport(
       } catch {
         transportFailed = true;
       }
-      if (shouldRetryProductMatch(attempts[0], transportFailed)) {
+      const firstPublishedCount = attempts[0]
+        ? publishedTargetCount(mergePublishedProductComparisonState(attempts[0], accumulatedPublished, payload.productLimit, reportReferenceTimeMs, publishedResultTargetKind).evidence, publishedResultTargetKind)
+        : publishedTargetCount(accumulatedPublished, publishedResultTargetKind);
+      if ((publishedResultTargetKind !== "pairs" || firstPublishedCount < payload.productLimit) && shouldRetryProductMatch(attempts[0], transportFailed)) {
         try {
           await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "matching-retry-started"), "matching", "Resuming only incomplete product judge batches from durable checkpoints."));
           requestCount += 1;
@@ -1676,7 +1743,7 @@ export async function orchestrateReport(
       screenedComparison = mergePublishedSelectionIntoScreenedComparison(screenedComparison, comparison);
       document = upsertProductComparisonBlock(document, comparison) as JsonDocument;
     }
-    const matcherResponseAvailable = attempts.length > 0 || Boolean(resumeMatcherForEnrichmentRetry && recoveredMatcherState);
+    const matcherResponseAvailable = attempts.length > 0 || Boolean(resumeMatcherForEnrichmentRetry && recoveredMatcherState) || recoveredPublishedTargetComplete;
     const limited = !matcherResponseAvailable || hasProductMatchCoverageDefect(comparison);
     const processingIncomplete = !matcherResponseAvailable || comparison?.matching?.resultShortfallReason === "processing-incomplete";
     // The final bounded task publishes the strongest verified facts after at

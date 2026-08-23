@@ -72,7 +72,18 @@ export type DiscoveryResult = {
     verificationComplete: boolean;
     batchComplete: boolean;
     complete: boolean;
+    anchorSetChanged?: boolean;
+    acceptedPairCount?: number;
+    pairTarget?: number;
   };
+};
+
+export type DiscoveryOptions = {
+  searchOffset?: number;
+  priorCoverageComplete?: boolean;
+  expectedAnchorSetHash?: string;
+  maxProductSearches?: number;
+  productComparisonsOnly?: boolean;
 };
 
 type SearchLane = "entity" | "category" | "product";
@@ -888,7 +899,7 @@ async function runLane(endpoint: string, apiKey: string, model: string, lane: Se
   }
 }
 
-export async function discoverCompetitors(profile: DiscoveryProfile, options: { searchOffset?: number; priorCoverageComplete?: boolean; expectedAnchorSetHash?: string } = {}): Promise<DiscoveryResult> {
+export async function discoverCompetitors(profile: DiscoveryProfile, options: DiscoveryOptions = {}): Promise<DiscoveryResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   const model = process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini";
   const business = inferBusinessProfile(profile);
@@ -896,23 +907,46 @@ export async function discoverCompetitors(profile: DiscoveryProfile, options: { 
   const anchorSetHash = discoveryAnchorSetHash(business, eligibleAnchors);
   const requestedOffset = Math.max(0, Math.min(eligibleAnchors.length, Math.floor(options.searchOffset || 0)));
   const anchorSetMatches = requestedOffset === 0 || (Boolean(options.expectedAnchorSetHash) && options.expectedAnchorSetHash === anchorSetHash);
-  const startIndex = anchorSetMatches ? requestedOffset : 0;
-  const anchors = eligibleAnchors.slice(startIndex, startIndex + MAX_PRODUCT_SEARCHES);
+  const comparisonTargetMode = options.productComparisonsOnly === true && business.businessType === "ecommerce";
+  const searchBatchSize = options.maxProductSearches === undefined
+    ? MAX_PRODUCT_SEARCHES
+    : Math.max(0, Math.min(MAX_PRODUCT_SEARCHES, Math.floor(options.maxProductSearches)));
+  const startIndex = anchorSetMatches ? requestedOffset : comparisonTargetMode ? requestedOffset : 0;
+  const anchors = eligibleAnchors.slice(startIndex, startIndex + searchBatchSize);
   const endIndex = startIndex + anchors.length;
   const baseCoverage = { eligibleAnchors: eligibleAnchors.length, anchorSetHash, searchedAnchors: 0, startIndex, endIndex, truncated: endIndex < eligibleAnchors.length, searchesComplete: false, candidateDomainsFound: 0, candidateDomainsInvestigated: 0, candidateTruncated: false, verificationComplete: false, batchComplete: false, complete: false };
+  if (!anchorSetMatches && comparisonTargetMode) {
+    const gap = "The primary product anchor set changed after comparison search began; paid search stopped instead of restarting from the first product.";
+    return {
+      available: false,
+      provider: apiKey ? "openai-web-search" : "unavailable",
+      model,
+      category: business.category,
+      region: business.region,
+      businessType: business.businessType,
+      strategy: "product-first",
+      queries: [],
+      candidates: [],
+      gaps: [gap],
+      gap,
+      productSearchCoverage: { ...baseCoverage, endIndex: startIndex, truncated: startIndex < eligibleAnchors.length, anchorSetChanged: true },
+    };
+  }
   if (!apiKey) return { available: false, provider: "unavailable", model, category: business.category, region: business.region, businessType: business.businessType, strategy: "not-run", queries: [], candidates: [], gaps: ["Web discovery is not configured."], gap: "Web discovery is not configured. A search-capable provider is required before competitors can be discovered automatically.", productSearchCoverage: baseCoverage };
 
   const endpoint = `${(process.env.OPENAI_RESPONSES_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "")}/responses`;
   const productResults = await mapConcurrent(anchors, PRODUCT_SEARCH_CONCURRENCY, (anchor) => runLane(endpoint, apiKey, model, "product", { ...business, offerings: [anchor] }, { ...profile, products: [anchor] }));
   const productCandidates = mergeCandidates(productResults.flatMap((result) => result.candidates), MAX_DISCOVERY_CANDIDATES_PER_ATTEMPT, MAX_DISCOVERY_CANDIDATES_PER_ATTEMPT);
-  const companyResults = await Promise.all((["entity", "category"] as SearchLane[]).map((lane) => runLane(endpoint, apiKey, model, lane, business, profile)));
+  const companyResults = comparisonTargetMode
+    ? []
+    : await Promise.all((["entity", "category"] as SearchLane[]).map((lane) => runLane(endpoint, apiKey, model, lane, business, profile)));
   const strategy: DiscoveryResult["strategy"] = business.businessType !== "ecommerce"
     ? "company-first"
-    : productCandidates.length
+    : comparisonTargetMode || productCandidates.length
       ? "product-first"
       : "company-fallback";
   const productSearchesCompleted = productResults.every((result) => result.completed);
-  const fallbackGap = strategy === "company-fallback"
+  const fallbackGap = !comparisonTargetMode && strategy === "company-fallback"
     ? [anchors.length ? (productSearchesCompleted ? "Product searches completed with no attributable seller, so company/category discovery ran as a fallback; every ecommerce lead still requires current product overlap before inclusion." : "Product search did not produce an attributable seller because one or more searches failed or returned no usable product page, so company/category discovery ran as a fallback; every ecommerce lead still requires current product overlap before inclusion.") : "No attributable ecommerce product was available for search, so company/category discovery ran as a fallback; every ecommerce lead still requires current product overlap before inclusion."]
     : [];
   const settled = [...productResults, ...companyResults];

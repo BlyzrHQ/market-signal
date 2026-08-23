@@ -104,7 +104,9 @@ test("saved product and ad views preserve truth boundaries and source links", ()
   assert.match(report, /This report predates the current market-and-currency validation gate/);
   assert.match(report, /item === "products" && <b>\{productMatchTotal\}<\/b>/);
   assert.match(report, /authoritativeMatchTotal=\{productMatchTotal \|\| undefined\}/);
-  assert.match(report, /currentMatchSummary\?\.domainCounts\?\.\[domain\] \?\? rivalBattles\.length/);
+  assert.match(report, /publishedComparisonCompetitors\(blocks, comparison\)/);
+  assert.match(report, /currentMatchSummary\?\.domainCounts\?\.\[domain\] \?\? \(numeric\(competitor\.comparisonCount\) \|\| rivalBattles\.length\)/);
+  assert.match(report, /broad discovery does not count as a competitor/);
   assert.match(report, /\/matches\?limit=1/);
   assert.match(report, /authoritativeMatchSummary\?\.publicId === publicId/);
   assert.match(report, /<ProductDesignLab key=\{publicId\}/);
