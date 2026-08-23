@@ -5,6 +5,7 @@ import type { ProductRecord } from "../../lib/product-intelligence.ts";
 import { canonicalGtin, parseCanonicalQuantity, type ProductIdentifiers } from "../../lib/product-normalization.ts";
 import { publicHttpUrl } from "../../lib/public-url.ts";
 import { loadReportMatchBatchCheckpoints, loadReportProductEntitlement, saveReportMatchBatchCheckpoint } from "../../lib/report-store.ts";
+import { workerOnlyResponse } from "../../lib/process-role.ts";
 
 // One primary catalog plus the complete bounded attempt wave: up to 1,200
 // product-lane sellers, 12 company-lane sellers, and 500 remembered rivals.
@@ -352,4 +353,10 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
   };
 }
 
-export const POST = createMatchHandler();
+const matchHandler = createMatchHandler();
+
+export async function POST(request: Request) {
+  const roleResponse = workerOnlyResponse();
+  if (roleResponse) return roleResponse;
+  return matchHandler(request);
+}

@@ -9,7 +9,7 @@ import Database from "better-sqlite3";
 const root = process.cwd();
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 
-test("VPS image and compose keep the app private and persistent", () => {
+test("VPS image and compose keep the app and report worker private, persistent, and isolated", () => {
   const dockerfile = read("Dockerfile");
   const compose = read("compose.yaml");
 
@@ -25,10 +25,30 @@ test("VPS image and compose keep the app private and persistent", () => {
   assert.match(compose, /max-size: "10m"/);
   assert.match(compose, /expose:\s*\n\s*- "3000"/);
   assert.match(compose, /MARKET_SIGNAL_DEPLOY_TARGET:\s*node/);
+  assert.match(compose, /\n  worker:\n/);
+  const workerService = compose.split(/\r?\n  worker:\r?\n/)[1]?.split(/\r?\n  caddy:\r?\n/)[0];
+  assert.ok(workerService);
+  assert.match(workerService, /cpus: "1\.0"/);
+  assert.match(workerService, /mem_limit: 3g/);
+  assert.match(workerService, /MARKET_SIGNAL_PROCESS_ROLE:\s*worker/);
+  assert.match(workerService, /expose:\s*\n\s*- "3000"/);
+  assert.doesNotMatch(workerService, /ports:/);
+  assert.match(workerService, /\/var\/lib\/market-signal:\/data/);
+  assert.match(workerService, /\/var\/backups\/market-signal:\/backups:ro/);
+  assert.match(workerService, /read_only: true/);
+  assert.match(workerService, /cap_drop:\s*\n\s*- ALL/);
   assert.doesNotMatch(compose, /MARKET_SIGNAL_EDGE_|chatgpt\.site/);
   assert.doesNotMatch(compose, /app:[\s\S]*?ports:\s*\n\s*-\s*["']?\d+:3000/);
   const caddyfile = read("deploy/vps/Caddyfile");
   assert.match(caddyfile, /response_header_timeout 2460s/);
+  assert.match(caddyfile, /@report_worker path \/api\/crawl \/api\/report \/api\/ads \/api\/match \/api\/enrich-products \/api\/actions/);
+  assert.match(caddyfile, /handle @report_worker[\s\S]*reverse_proxy worker:3000/);
+  assert.match(caddyfile, /handle[\s\S]*reverse_proxy app:3000/);
+  assert.ok(
+    caddyfile.indexOf("handle @report_worker") < caddyfile.indexOf("\thandle {"),
+    "the worker route must precede the app catch-all",
+  );
+  assert.match(caddyfile, /response_header_timeout 130s/);
   const caddyService = compose.split(/\r?\n  caddy:\r?\n/)[1];
   assert.ok(caddyService);
   assert.doesNotMatch(caddyService, /env_file:/);
@@ -83,10 +103,15 @@ test("GitHub VPS deployment is manual, pinned, immutable, and non-destructive", 
   assert.match(deploy, /backup-sqlite\.mjs/);
   assert.match(deploy, /verify-sqlite-backup\.mjs/);
   assert.match(deploy, /up -d --no-build --pull never/);
+  assert.equal((deploy.match(/--remove-orphans/g) || []).length, 2);
   assert.match(deploy, /restore_previous_release/);
   assert.match(deploy, /ROLLBACK: restoring/);
   assert.match(deploy, /candidate Compose startup failed/);
   assert.match(deploy, /candidate app did not become healthy/);
+  assert.match(deploy, /candidate worker did not become healthy/);
+  assert.match(deploy, /config --services \| grep -qx worker/);
+  assert.match(deploy, /candidate worker internal capability probe failed/);
+  assert.match(deploy, /candidate worker SQLite read probe failed/);
   assert.match(deploy, /candidate internal capability probe failed/);
   assert.match(deploy, /candidate SQLite read probe failed/);
   assert.match(deploy, /timeout 10m docker pull/);

@@ -2,6 +2,7 @@ import { analyzeDomain } from "../analyze/route";
 import { canonicalDomain } from "../../lib/domain";
 import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../lib/internal-auth.ts";
 import { claimablePagePricePatterns } from "../../lib/storefront-product-enrichment";
+import { workerOnlyResponse } from "../../lib/process-role.ts";
 
 type ClaimType = "Observed" | "Inferred" | "Estimated" | "Recommended";
 type Confidence = "High" | "Medium" | "Low";
@@ -135,6 +136,8 @@ async function modelBrief(primary: Source, sources: Source[], claims: Claim[]) {
 }
 
 export async function POST(request: Request) {
+  const roleResponse = workerOnlyResponse();
+  if (roleResponse) return roleResponse;
   if (!await hasValidInternalAuthorization(request.headers.get("authorization"))) return unauthorizedInternalResponse();
   try {
     const payload = await request.json() as { primary?: unknown; domains?: unknown };
