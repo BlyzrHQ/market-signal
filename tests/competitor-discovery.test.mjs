@@ -857,25 +857,26 @@ test("does not count schema-incomplete HTTP 200 model output as exhausted discov
     const result = await discoverCompetitors(profile);
     assert.equal(result.productSearchCoverage.searchesComplete, false);
     assert.equal(result.productSearchCoverage.complete, false);
-    assert.match(result.gaps.join(" "), /incomplete provider response/i);
+    assert.match(result.gaps.join(" "), /no completed web-search call/i);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
   }
 });
 
-test("does not count a web-search response with malformed structured candidates as exhausted", async () => {
+test("retains completed web-search sources when the optional structured summary is malformed", async () => {
   const previousKey = process.env.OPENAI_API_KEY;
   const previousFetch = globalThis.fetch;
   process.env.OPENAI_API_KEY = "test-only";
   globalThis.fetch = async () => Response.json({ status: "completed", output: [
-    { type: "web_search_call", status: "completed", action: { query: "halal meat UK", sources: [] } },
+    { type: "web_search_call", status: "completed", action: { query: "UK buy halal beef sirloin steak 500g", sources: [{ title: "Halal Beef Sirloin Steak 500g | Oasis Market UK", url: "https://oasismarket.co.uk/product/beef-sirloin-steak-halal-500g" }] } },
     { type: "message", content: [{ type: "output_text", text: JSON.stringify({ category: "Halal grocery", region: "United Kingdom", queries: ["halal meat UK"], candidates: [{}] }) }] },
   ] });
   try {
     const result = await discoverCompetitors(profile);
-    assert.equal(result.productSearchCoverage.searchesComplete, false);
-    assert.match(result.gaps.join(" "), /incomplete provider response/i);
+    assert.equal(result.productSearchCoverage.searchesComplete, true);
+    assert.equal(result.candidates.some((candidate) => candidate.domain === "oasismarket.co.uk"), true);
+    assert.match(result.gaps.join(" "), /structured summary was unavailable/i);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
@@ -951,6 +952,247 @@ test("comparison-target discovery searches only a small product batch and never 
     assert.equal(result.productSearchCoverage.startIndex, 0);
     assert.equal(result.productSearchCoverage.endIndex, 10);
     assert.equal(result.productSearchCoverage.truncated, true);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
+test("comparison-target discovery reuses nine completed lanes and retries only one transient failure", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  const searchProfile = {
+    ...profile,
+    products: Array.from({ length: 10 }, (_, index) => product(
+      `Beef Sirloin Steak ${String(index + 1).padStart(2, "0")} 500g`,
+      `https://myjam.co.uk/products/product-${index + 1}`,
+    )),
+  };
+  let firstCalls = 0;
+  globalThis.fetch = async (_url, init) => {
+    firstCalls += 1;
+    const request = JSON.parse(init.body);
+    const input = JSON.parse(request.input[1].content);
+    return input.profile.offerings[0].name.includes("10")
+      ? new Response("rate limited", { status: 429 })
+      : searchResponse({ category: "Grocery", region: "United Kingdom", queries: [], candidates: [] });
+  };
+  try {
+    const first = await discoverCompetitors(searchProfile, { productComparisonsOnly: true, maxProductSearches: 10 });
+    assert.equal(firstCalls, 10);
+    assert.equal(first.productSearchCoverage.searchedAnchors, 9);
+    assert.equal(first.productSearchCoverage.paidSearchesStarted, 10);
+    assert.equal(first.productSearchCoverage.reusedSearches, 0);
+    assert.equal(first.productSearchCoverage.providerFailureCount, 1);
+    assert.equal(first.productSearchCoverage.providerCircuitOpen, undefined);
+    assert.ok(first.productSearchLedger);
+
+    let retryCalls = 0;
+    globalThis.fetch = async () => {
+      retryCalls += 1;
+      return searchResponse({ category: "Grocery", region: "United Kingdom", queries: [], candidates: [] });
+    };
+    const retried = await discoverCompetitors(searchProfile, {
+      productComparisonsOnly: true,
+      maxProductSearches: 10,
+      priorProductSearchLedger: first.productSearchLedger,
+    });
+    assert.equal(retryCalls, 1);
+    assert.equal(retried.productSearchCoverage.paidSearchesStarted, 1);
+    assert.equal(retried.productSearchCoverage.reusedSearches, 9);
+    assert.equal(retried.productSearchCoverage.searchedAnchors, 10);
+    assert.equal(retried.productSearchCoverage.searchesComplete, true);
+    assert.equal(retried.productSearchCoverage.searchAttemptsComplete, true);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
+test("comparison-target discovery treats a valid prior wave ledger as stale and searches the next offset", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  const searchProfile = {
+    ...profile,
+    products: Array.from({ length: 20 }, (_, index) => product(
+      `Beef Mince ${String(index + 1).padStart(2, "0")} 500g`,
+      `https://myjam.co.uk/products/mince-${index + 1}`,
+    )),
+  };
+  globalThis.fetch = async () => searchResponse({ category: "Grocery", region: "United Kingdom", queries: [], candidates: [] });
+  try {
+    const first = await discoverCompetitors(searchProfile, { productComparisonsOnly: true, maxProductSearches: 10 });
+    assert.ok(first.productSearchLedger);
+    let nextWaveCalls = 0;
+    globalThis.fetch = async () => {
+      nextWaveCalls += 1;
+      return searchResponse({ category: "Grocery", region: "United Kingdom", queries: [], candidates: [] });
+    };
+    const next = await discoverCompetitors(searchProfile, {
+      productComparisonsOnly: true,
+      maxProductSearches: 10,
+      searchOffset: 10,
+      expectedAnchorSetHash: first.productSearchCoverage.anchorSetHash,
+      priorProductSearchLedger: first.productSearchLedger,
+    });
+    assert.equal(nextWaveCalls, 10);
+    assert.equal(next.productSearchCoverage.startIndex, 10);
+    assert.equal(next.productSearchCoverage.endIndex, 20);
+    assert.equal(next.productSearchCoverage.paidSearchesStarted, 10);
+    assert.equal(next.productSearchCoverage.reusedSearches, 0);
+    assert.equal(next.productSearchCoverage.providerCircuitOpen, undefined);
+    assert.equal(next.productSearchLedger?.startIndex, 10);
+    assert.equal(next.productSearchLedger?.endIndex, 20);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
+test("comparison-target discovery reuses the overlapping prefix when the retry window shrinks", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  const searchProfile = {
+    ...profile,
+    products: Array.from({ length: 10 }, (_, index) => product(
+      `Lamb Mince ${String(index + 1).padStart(2, "0")} 500g`,
+      `https://myjam.co.uk/products/lamb-mince-${index + 1}`,
+    )),
+  };
+  globalThis.fetch = async () => searchResponse({ category: "Grocery", region: "United Kingdom", queries: [], candidates: [] });
+  try {
+    const first = await discoverCompetitors(searchProfile, { productComparisonsOnly: true, maxProductSearches: 10 });
+    let retryCalls = 0;
+    globalThis.fetch = async () => {
+      retryCalls += 1;
+      throw new Error("overlapping completed anchors must not be re-bought");
+    };
+    const shrunk = await discoverCompetitors(searchProfile, {
+      productComparisonsOnly: true,
+      maxProductSearches: 5,
+      priorProductSearchLedger: first.productSearchLedger,
+    });
+    assert.equal(retryCalls, 0);
+    assert.equal(shrunk.productSearchCoverage.paidSearchesStarted, 0);
+    assert.equal(shrunk.productSearchCoverage.reusedSearches, 5);
+    assert.equal(shrunk.productSearchCoverage.startIndex, 0);
+    assert.equal(shrunk.productSearchCoverage.endIndex, 5);
+    assert.deepEqual(shrunk.productSearchLedger?.entries.map((entry) => entry.anchorIndex), [0, 1, 2, 3, 4]);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
+test("comparison-target discovery never pays a third time for one terminally failed anchor", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  const searchProfile = {
+    ...profile,
+    products: Array.from({ length: 10 }, (_, index) => product(
+      `Lamb Shoulder ${String(index + 1).padStart(2, "0")} 500g`,
+      `https://myjam.co.uk/products/lamb-${index + 1}`,
+    )),
+  };
+  globalThis.fetch = async (_url, init) => {
+    const request = JSON.parse(init.body);
+    const input = JSON.parse(request.input[1].content);
+    return input.profile.offerings[0].name.includes("10")
+      ? new Response("temporarily unavailable", { status: 503 })
+      : searchResponse({ category: "Grocery", region: "United Kingdom", queries: [], candidates: [] });
+  };
+  try {
+    const first = await discoverCompetitors(searchProfile, { productComparisonsOnly: true, maxProductSearches: 10 });
+    let secondCalls = 0;
+    globalThis.fetch = async () => {
+      secondCalls += 1;
+      return new Response("temporarily unavailable", { status: 503 });
+    };
+    const second = await discoverCompetitors(searchProfile, {
+      productComparisonsOnly: true,
+      maxProductSearches: 10,
+      priorProductSearchLedger: first.productSearchLedger,
+    });
+    assert.equal(secondCalls, 1);
+    assert.equal(second.productSearchCoverage.searchAttemptsComplete, true);
+    assert.equal(second.productSearchCoverage.searchesComplete, false);
+    assert.equal(second.productSearchCoverage.paidSearchesStarted, 1);
+    assert.equal(second.productSearchCoverage.reusedSearches, 9);
+
+    let thirdCalls = 0;
+    globalThis.fetch = async () => {
+      thirdCalls += 1;
+      throw new Error("a terminal anchor must not be searched again");
+    };
+    const third = await discoverCompetitors(searchProfile, {
+      productComparisonsOnly: true,
+      maxProductSearches: 10,
+      priorProductSearchLedger: second.productSearchLedger,
+    });
+    assert.equal(thirdCalls, 0);
+    assert.equal(third.productSearchCoverage.paidSearchesStarted, 0);
+    assert.equal(third.productSearchCoverage.reusedSearches, 10);
+    assert.equal(third.productSearchCoverage.searchAttemptsComplete, true);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
+test("comparison-target discovery opens a bounded provider circuit when every fresh lane fails alike", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  const searchProfile = {
+    ...profile,
+    products: Array.from({ length: 10 }, (_, index) => product(
+      `Chicken Breast ${String(index + 1).padStart(2, "0")} 500g`,
+      `https://myjam.co.uk/products/chicken-${index + 1}`,
+    )),
+  };
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return new Response("rate limited", { status: 429 });
+  };
+  try {
+    const result = await discoverCompetitors(searchProfile, { productComparisonsOnly: true, maxProductSearches: 10 });
+    assert.equal(calls, 10);
+    assert.equal(result.productSearchCoverage.providerCircuitOpen, true);
+    assert.equal(result.productSearchCoverage.providerFailureCategory, "http-4xx");
+    assert.equal(result.productSearchCoverage.providerFailureCount, 10);
+    assert.equal(result.productSearchCoverage.paidSearchesStarted, 10);
+    assert.equal(result.productSearchCoverage.reusedSearches, 0);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
+test("comparison-target discovery fails closed without paid search when its durable ledger is invalid", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    throw new Error("an invalid checkpoint must not replay paid work");
+  };
+  try {
+    const result = await discoverCompetitors(profile, {
+      productComparisonsOnly: true,
+      maxProductSearches: 2,
+      priorProductSearchLedger: { version: 1, anchorSetHash: "forged", startIndex: 0, endIndex: 2, entries: [] },
+    });
+    assert.equal(calls, 0);
+    assert.equal(result.productSearchCoverage.providerCircuitOpen, true);
+    assert.equal(result.productSearchCoverage.providerFailureCategory, "internal");
+    assert.equal(result.productSearchCoverage.paidSearchesStarted, 0);
+    assert.match(result.gaps.join(" "), /checkpoint was invalid/i);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;

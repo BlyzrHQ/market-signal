@@ -417,7 +417,7 @@ export function finalizedDiscoveryCoverage(
 ) {
   const verificationComplete = settledStatuses.every((status, index) => status === "fulfilled" && competitorInvestigationComplete(results[index]));
   const candidateTruncated = candidateDomainsFound > candidateDomainsInvestigated;
-  const batchComplete = coverage.searchesComplete && !candidateTruncated && verificationComplete && persistenceComplete;
+  const batchComplete = (coverage.searchAttemptsComplete ?? coverage.searchesComplete) && !candidateTruncated && verificationComplete && persistenceComplete;
   return {
     ...coverage,
     candidateDomainsFound,
@@ -425,7 +425,7 @@ export function finalizedDiscoveryCoverage(
     candidateTruncated,
     verificationComplete,
     batchComplete,
-    complete: priorCoverageComplete && coverage.endIndex >= coverage.eligibleAnchors && batchComplete,
+    complete: priorCoverageComplete && coverage.searchesComplete && coverage.endIndex >= coverage.eligibleAnchors && batchComplete,
   };
 }
 
@@ -1183,7 +1183,7 @@ export async function POST(request: Request) {
   if (roleResponse) return roleResponse;
   if (!await hasValidAnalysisAuthorization(request.headers.get("authorization"))) return unauthorizedInternalResponse();
   try {
-    const payload = await request.json() as { primary?: unknown; domains?: unknown; productLimit?: unknown; comparisonPairsNeeded?: unknown; catalogProductLimit?: unknown; discoverySearchOffset?: unknown; discoveryPriorCoverageComplete?: unknown; discoveryExpectedAnchorSetHash?: unknown };
+    const payload = await request.json() as { primary?: unknown; domains?: unknown; productLimit?: unknown; comparisonPairsNeeded?: unknown; catalogProductLimit?: unknown; discoverySearchOffset?: unknown; discoveryPriorCoverageComplete?: unknown; discoveryExpectedAnchorSetHash?: unknown; discoverySearchLedger?: unknown };
     const productLimit = Number.isInteger(Number(payload.productLimit)) ? Math.max(1, Math.min(MAX_PRIMARY_CATALOG_PRODUCTS, Number(payload.productLimit))) : 20;
     const comparisonPairsNeeded = Number.isInteger(Number(payload.comparisonPairsNeeded)) ? Math.max(0, Math.min(productLimit, Number(payload.comparisonPairsNeeded))) : productLimit;
     const catalogProductLimit = Number.isInteger(Number(payload.catalogProductLimit)) ? Math.max(1, Math.min(MAX_PRIMARY_CATALOG_PRODUCTS, Number(payload.catalogProductLimit))) : MAX_PRIMARY_CATALOG_PRODUCTS;
@@ -1276,11 +1276,12 @@ export async function POST(request: Request) {
         searchOffset: discoverySearchOffset,
         priorCoverageComplete: discoveryPriorCoverageComplete,
         expectedAnchorSetHash: discoveryExpectedAnchorSetHash,
+        priorProductSearchLedger: payload.discoverySearchLedger,
         ...(comparisonTargetMode ? { productComparisonsOnly: true, maxProductSearches: Math.min(COMPARISON_SEARCH_BATCH_SIZE, Math.max(1, comparisonPairsNeeded)) } : {}),
       });
-    } catch (error) {
-      const gap = error instanceof Error ? error.message : "Web competitor discovery failed.";
-      discovery = { available: false, provider: "unavailable", model: process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini", category: "", region: primary.homepage.region, businessType: discoveryPolicy.businessType, strategy: discoveryPolicy.intendedStrategy, queries: [], candidates: [], gaps: [gap], gap, productSearchCoverage: { eligibleAnchors: primary.products.length, anchorSetHash: discoveryExpectedAnchorSetHash, searchedAnchors: 0, startIndex: discoverySearchOffset, endIndex: discoverySearchOffset, truncated: primary.products.length > discoverySearchOffset, searchesComplete: false, candidateDomainsFound: 0, candidateDomainsInvestigated: 0, candidateTruncated: false, verificationComplete: false, batchComplete: false, complete: false } };
+    } catch {
+      const gap = "Web competitor discovery stopped because its internal provider result could not be processed.";
+      discovery = { available: false, provider: "unavailable", model: process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini", category: "", region: primary.homepage.region, businessType: discoveryPolicy.businessType, strategy: discoveryPolicy.intendedStrategy, queries: [], candidates: [], gaps: [gap], gap, productSearchCoverage: { eligibleAnchors: primary.products.length, anchorSetHash: discoveryExpectedAnchorSetHash, searchedAnchors: 0, startIndex: discoverySearchOffset, endIndex: discoverySearchOffset, truncated: primary.products.length > discoverySearchOffset, searchesComplete: false, candidateDomainsFound: 0, candidateDomainsInvestigated: 0, candidateTruncated: false, verificationComplete: false, batchComplete: false, complete: false, searchAttemptsComplete: false, paidSearchesStarted: 0, reusedSearches: 0, providerFailureCategory: "internal", providerFailureCount: 1, providerCircuitOpen: true } };
     }
     const memory = comparisonTargetMode ? null : await loadRememberedCompetitors(primary.domain);
     const freshCandidates = discovery.candidates.filter((candidate) => !domains.includes(candidate.domain));
@@ -1392,8 +1393,8 @@ export async function POST(request: Request) {
     const publishedResults = publishedResultsForPairs.map((result) => result.discovery
       ? { ...result, verifiedExactProductPairs: undefined, discovery: publicDiscoveryCandidate(result.discovery) }
       : { ...result, verifiedExactProductPairs: undefined });
-    return Response.json({ ok: true, live: true, primaryDomain, results: publishedResults, discovery: publishedDiscovery, adRequest, matchHints, document, crawl: { maxPagesPerDomain: MAX_HTML_PAGES, maxPagesPerDiscoveredCompetitor: MAX_DISCOVERED_HTML_PAGES, maxPrimaryProductPricePages: MAX_PRIMARY_PRODUCT_PRICE_PAGES, maxMatchedProductEnrichmentPages: MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES, competitorCrawlConcurrency: COMPETITOR_CRAWL_CONCURRENCY, htmlExtractionBytes: MAX_HTML_EXTRACTION_BYTES, robotsAware: true, generatedAt: new Date().toISOString() } });
-  } catch (error) {
-    return Response.json({ ok: false, live: false, error: error instanceof Error ? error.message : "Unable to crawl the submitted domains." }, { status: 400 });
+    return Response.json({ ok: true, live: true, primaryDomain, results: publishedResults, discovery: publishedDiscovery, ...(discovery.productSearchLedger ? { discoverySearchLedger: discovery.productSearchLedger } : {}), adRequest, matchHints, document, crawl: { maxPagesPerDomain: MAX_HTML_PAGES, maxPagesPerDiscoveredCompetitor: MAX_DISCOVERED_HTML_PAGES, maxPrimaryProductPricePages: MAX_PRIMARY_PRODUCT_PRICE_PAGES, maxMatchedProductEnrichmentPages: MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES, competitorCrawlConcurrency: COMPETITOR_CRAWL_CONCURRENCY, htmlExtractionBytes: MAX_HTML_EXTRACTION_BYTES, robotsAware: true, generatedAt: new Date().toISOString() } });
+  } catch {
+    return Response.json({ ok: false, live: false, error: "Unable to crawl the submitted domains." }, { status: 400 });
   }
 }

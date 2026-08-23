@@ -34,6 +34,7 @@ import {
 } from "../shared/report-orchestration-contract.ts";
 import { buildReportFactBundle } from "../shared/report-facts.ts";
 import { compactTerminalReportDocument, encodedJsonBytes, REPORT_MATCH_CHECKPOINT_RESULT_BYTES } from "../shared/report-document-compaction.ts";
+import { validateDiscoverySearchLedger } from "../shared/discovery-search-ledger.ts";
 import type { ReportFactChunkInput, ReportFactManifestInput } from "../../app/lib/report-store.ts";
 import type { PinnedProductPair } from "../../app/lib/ai-product-matching.ts";
 import { screenedComparisonFromJudgeCheckpoints } from "../../app/lib/ai-product-matching.ts";
@@ -682,8 +683,8 @@ type StoredReport = {
 type JsonBlock = { type: string; id: string } & Record<string, unknown>;
 type JsonDocument = { blocks: JsonBlock[] } & Record<string, unknown>;
 type CrawlResult = { domain: string; homepage?: unknown; products: ProductRecord[]; role?: string; fetchedAt?: string; discovery?: { verificationScore?: number; category?: string; region?: string; sourceIds?: string[]; reason?: string; source?: string } };
-type DiscoveryCoverage = { eligibleAnchors?: number; anchorSetHash?: string; anchorSetChanged?: boolean; searchedAnchors?: number; startIndex?: number; endIndex?: number; truncated?: boolean; searchesComplete?: boolean; candidateDomainsFound?: number; candidateDomainsInvestigated?: number; candidateTruncated?: boolean; verificationComplete?: boolean; batchComplete?: boolean; complete?: boolean; acceptedPairCount?: number; pairTarget?: number };
-type CrawlSuccess = { ok: true; primaryDomain: string; results: CrawlResult[]; discovery?: { productSearchCoverage?: DiscoveryCoverage }; adRequest: unknown; matchHints?: PinnedProductPair[]; document: JsonDocument };
+type DiscoveryCoverage = { eligibleAnchors?: number; anchorSetHash?: string; anchorSetChanged?: boolean; searchedAnchors?: number; startIndex?: number; endIndex?: number; truncated?: boolean; searchesComplete?: boolean; candidateDomainsFound?: number; candidateDomainsInvestigated?: number; candidateTruncated?: boolean; verificationComplete?: boolean; batchComplete?: boolean; complete?: boolean; acceptedPairCount?: number; pairTarget?: number; searchAttemptsComplete?: boolean; paidSearchesStarted?: number; reusedSearches?: number; providerFailureCategory?: string; providerFailureCount?: number; providerCircuitOpen?: boolean };
+type CrawlSuccess = { ok: true; primaryDomain: string; results: CrawlResult[]; discovery?: { productSearchCoverage?: DiscoveryCoverage }; discoverySearchLedger?: unknown; adRequest: unknown; matchHints?: PinnedProductPair[]; document: JsonDocument };
 type ParkedDomainOutcome = { ok: false; code: "parked-domain"; primaryDomain: string; error: string; document: JsonDocument };
 type UnavailableDomainOutcome = { ok: false; code: "unavailable-domain"; primaryDomain: string; error: string; document: JsonDocument };
 type CrawlOutcome = CrawlSuccess | ParkedDomainOutcome | UnavailableDomainOutcome;
@@ -769,6 +770,7 @@ function crawlCheckpointSnapshot(crawl: CrawlSuccess, document: JsonDocument): C
       ...(result.discovery ? { discovery: checkpointDiscovery(result.discovery) } : {}),
     })),
     ...(crawl.discovery?.productSearchCoverage ? { discovery: { productSearchCoverage: crawl.discovery.productSearchCoverage } } : {}),
+    ...(crawl.discoverySearchLedger !== undefined ? { discoverySearchLedger: crawl.discoverySearchLedger } : {}),
     adRequest: crawl.adRequest,
     ...(crawl.matchHints ? { matchHints: crawl.matchHints } : {}),
     document,
@@ -833,6 +835,7 @@ function validCrawlSuccess(value: unknown, payload: ReportOrchestrationPayload):
     for (const result of crawl.results) {
       if (!result || canonicalDomain(String(result.domain || "")) !== result.domain || !Array.isArray(result.products)) return null;
     }
+    if (crawl.discoverySearchLedger !== undefined && !validateDiscoverySearchLedger(crawl.discoverySearchLedger)) return null;
     return crawl as CrawlSuccess;
   } catch {
     return null;
@@ -857,7 +860,7 @@ export interface ReportOrchestrationPort {
   preflight(): Promise<void>;
   loadReport(publicId: string): Promise<StoredReport | null>;
   appendEvent(publicId: string, event: ReportEvent & { attemptNumber?: number }): Promise<void>;
-  crawl(input: { primary: string; domains: string[]; productLimit: number; comparisonPairsNeeded: number; catalogProductLimit: number; discoverySearchOffset: number; discoveryPriorCoverageComplete: boolean; discoveryExpectedAnchorSetHash: string }): Promise<CrawlOutcome>;
+  crawl(input: { primary: string; domains: string[]; productLimit: number; comparisonPairsNeeded: number; catalogProductLimit: number; discoverySearchOffset: number; discoveryPriorCoverageComplete: boolean; discoveryExpectedAnchorSetHash: string; discoverySearchLedger?: unknown }): Promise<CrawlOutcome>;
   brief(input: { primary: string; domains: string[] }): Promise<unknown>;
   ads(input: unknown): Promise<{ ok: true; block: JsonBlock }>;
   match(input: { publicId: string; reportAttempt: number; taskAttemptNumber: number; reportObservedAt: string; primaryDomain: string; marketCountryCode?: string; productLimit: number; catalogs: Array<{ domain: string; products: ProductRecord[] }>; pinnedPairs?: PinnedProductPair[] }): Promise<{ ok: true; comparison: ProductComparison }>;
@@ -1116,7 +1119,7 @@ export async function orchestrateReport(
     await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "crawl-started"), "crawl", "Crawling the submitted website and collecting public product pages."));
     try {
       const discoveryCursor = completedDiscoveryCursor(stored.events, attempt.attemptNumber, legacyCompletedManifestWithoutPresentation);
-      const freshCrawl = await port.crawl({ primary: payload.primaryDomain, domains: [payload.primaryDomain], productLimit: payload.productLimit, comparisonPairsNeeded: Math.max(0, payload.productLimit - preCrawlPublishedCount), catalogProductLimit: MAX_PRIMARY_CATALOG_PRODUCTS, discoverySearchOffset: discoveryCursor.offset, discoveryPriorCoverageComplete: true, discoveryExpectedAnchorSetHash: discoveryCursor.anchorSetHash });
+      const freshCrawl = await port.crawl({ primary: payload.primaryDomain, domains: [payload.primaryDomain], productLimit: payload.productLimit, comparisonPairsNeeded: Math.max(0, payload.productLimit - preCrawlPublishedCount), catalogProductLimit: MAX_PRIMARY_CATALOG_PRODUCTS, discoverySearchOffset: discoveryCursor.offset, discoveryPriorCoverageComplete: true, discoveryExpectedAnchorSetHash: discoveryCursor.anchorSetHash, ...(priorDurableCrawl?.crawl.discoverySearchLedger !== undefined ? { discoverySearchLedger: priorDurableCrawl.crawl.discoverySearchLedger } : {}) });
       if (!freshCrawl || (freshCrawl.ok !== true && freshCrawl.code !== "parked-domain" && freshCrawl.code !== "unavailable-domain")) throw new Error("The public crawl could not be completed.");
       const validatedFreshCrawl = freshCrawl.ok === true ? validCrawlSuccess(freshCrawl, payload) : null;
       if (freshCrawl.ok === true && !validatedFreshCrawl) throw new Error("The successful crawl did not contain a valid primary result.");
@@ -1207,6 +1210,10 @@ export async function orchestrateReport(
     discoveryEndIndex: crawl.discovery?.productSearchCoverage?.endIndex || 0,
     discoveryBatchComplete: crawl.discovery?.productSearchCoverage?.batchComplete === true,
     discoveryAnchorSetHash: crawl.discovery?.productSearchCoverage?.anchorSetHash || "",
+    discoveryPaidSearches: crawl.discovery?.productSearchCoverage?.paidSearchesStarted || 0,
+    discoveryReusedSearches: crawl.discovery?.productSearchCoverage?.reusedSearches || 0,
+    discoveryProviderFailureCategory: crawl.discovery?.productSearchCoverage?.providerFailureCategory || "",
+    discoveryProviderCircuitOpen: crawl.discovery?.productSearchCoverage?.providerCircuitOpen === true,
   }));
 
   let document = ensureDocument(crawl.document);
@@ -1678,12 +1685,15 @@ export async function orchestrateReport(
       }
       if ((comparison.matching?.resultShortfall || 0) > 0 && crawl.discovery?.productSearchCoverage?.complete !== true) {
         const coverage = crawl.discovery?.productSearchCoverage;
+        const discoveryGap = coverage?.providerCircuitOpen === true
+          ? `Competitor product discovery stopped after ${coverage.paidSearchesStarted || 0} paid searches because every fresh lane failed with the bounded provider category “${coverage.providerFailureCategory || "unknown"}”; automatic retries were stopped to protect usage.`
+          : `Competitor product discovery searched ${coverage?.searchedAnchors || 0} of ${coverage?.eligibleAnchors || primary.products.length} eligible primary-product anchors; the bounded discovery pool was not exhausted.`;
         comparison = {
           ...comparison,
           matching: comparison.matching ? {
             ...comparison.matching,
             resultShortfallReason: "processing-incomplete",
-            gaps: [...new Set([...comparison.matching.gaps, `Competitor product discovery searched ${coverage?.searchedAnchors || 0} of ${coverage?.eligibleAnchors || primary.products.length} eligible primary-product anchors; the bounded discovery pool was not exhausted.`])],
+            gaps: [...new Set([...comparison.matching.gaps, discoveryGap])],
           } : comparison.matching,
         };
       }
@@ -1751,7 +1761,8 @@ export async function orchestrateReport(
     // honest zero-row coverage results in `running`, while accepting zero
     // successful matcher responses would mislabel transport/auth/contract
     // failure as bounded exhaustion.
-    const publishBestFinalResult = attempt.isFinalAttempt && (matcherResponseAvailable || recoveredPublishedMatcherResult);
+    const providerCircuitOpen = crawl.discovery?.productSearchCoverage?.providerCircuitOpen === true;
+    const publishBestFinalResult = (attempt.isFinalAttempt || providerCircuitOpen) && (matcherResponseAvailable || recoveredPublishedMatcherResult);
     if (processingIncomplete && !publishBestFinalResult) {
       await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "matching-task-retry"), "matching", attempt.isFinalAttempt
         ? "Product matching or enrichment remained incomplete after the final bounded task attempt; no terminal report was published."
@@ -1762,7 +1773,9 @@ export async function orchestrateReport(
     }
     if (processingIncomplete) {
       limitedPhases.push("matching");
-      await port.appendEvent(payload.publicId, limitedEvent(progressEventKey(attempt, "matching-limited"), "matching", "The final bounded attempt retained the strongest verified comparisons, with the remaining coverage gap shown explicitly.", { attempts: requestCount, rows: comparison?.rows.length || 0 }));
+      await port.appendEvent(payload.publicId, limitedEvent(progressEventKey(attempt, "matching-limited"), "matching", providerCircuitOpen
+        ? "Competitor search hit a systemic provider failure, so automatic retries stopped before they could replay paid work."
+        : "The final bounded attempt retained the strongest verified comparisons, with the remaining coverage gap shown explicitly.", { attempts: requestCount, rows: comparison?.rows.length || 0, ...(providerCircuitOpen ? { providerFailureCategory: crawl.discovery?.productSearchCoverage?.providerFailureCategory || "unknown" } : {}) }));
       return;
     }
     (limited ? limitedPhases : completedPhases).push("matching");

@@ -380,6 +380,21 @@ test("discovery exhaustion fails closed on candidate truncation or nonterminal v
   assert.equal(persistenceFailed.complete, false);
 });
 
+test("a bounded terminal search failure can advance its batch without claiming successful search exhaustion", () => {
+  const coverage = {
+    eligibleAnchors: 1_000, searchedAnchors: 9, startIndex: 0, endIndex: 10, truncated: true,
+    searchesComplete: false, searchAttemptsComplete: true, paidSearchesStarted: 1, reusedSearches: 9,
+    providerFailureCategory: "http-5xx", providerFailureCount: 1,
+    candidateDomainsFound: 0, candidateDomainsInvestigated: 0,
+    candidateTruncated: false, verificationComplete: false, batchComplete: false, complete: false,
+  };
+  const finalized = finalizedDiscoveryCoverage(coverage, 0, 0, [], [], true);
+  assert.equal(finalized.batchComplete, true);
+  assert.equal(finalized.complete, false);
+  assert.equal(finalized.searchesComplete, false);
+  assert.equal(finalized.searchAttemptsComplete, true);
+});
+
 test("a crawl-side pair target stops the batch without claiming final discovery exhaustion", () => {
   const coverage = {
     eligibleAnchors: 1_000, searchedAnchors: 10, startIndex: 0, endIndex: 10, truncated: true,
