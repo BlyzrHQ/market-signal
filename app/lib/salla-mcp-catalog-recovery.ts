@@ -2,12 +2,13 @@ import { canonicalDomain } from "./domain.ts";
 import { fetchPublicText } from "./public-fetch.ts";
 import { isSupportedCurrency, type ProductRecord } from "./product-intelligence.ts";
 import { bilingualNormalize } from "./product-normalization.ts";
+import { MARKET_SIGNAL_USER_AGENT } from "./crawler-identity.ts";
 
 const MCP_PROTOCOL_VERSION = "2025-06-18" as const;
 const REQUEST_TIMEOUT_MS = 12_000;
 const MAX_RESPONSE_BYTES = 2_500_000;
 const MAX_PAGES = 70;
-const USER_AGENT = "MarketSignalPublicScanner/0.1";
+const USER_AGENT = MARKET_SIGNAL_USER_AGENT;
 
 type FetchText = typeof fetchPublicText;
 

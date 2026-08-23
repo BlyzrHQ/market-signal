@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createRobotsPolicyResolver } from "../app/lib/robots-policy.ts";
+import { MARKET_SIGNAL_USER_AGENT } from "../app/lib/crawler-identity.ts";
 
 function result(url, overrides = {}) {
   return {
@@ -38,6 +39,18 @@ test("reuses a recent successful robots policy without laundering path denials",
   assert.equal(calls, 1);
   assert.equal(cached.policy.allows("/products/maamoul"), true);
   assert.equal(cached.policy.allows("/private"), false);
+});
+
+test("robots requests use the single honest Market Signal identity", async () => {
+  const userAgents = [];
+  const resolver = createRobotsPolicyResolver({
+    fetchText: async (url, _accept, options) => {
+      userAgents.push(options.userAgent);
+      return result(url);
+    },
+  });
+  assert.equal((await resolver.resolve("shop.test")).availability, "available");
+  assert.deepEqual(userAgents, [MARKET_SIGNAL_USER_AGENT]);
 });
 
 test("does not reuse a robots policy after its TTL", async () => {

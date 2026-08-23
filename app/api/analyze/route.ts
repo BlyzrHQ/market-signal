@@ -1,4 +1,5 @@
 import { canonicalDomain, normalizeDomain } from "../../lib/domain";
+import { MARKET_SIGNAL_USER_AGENT } from "../../lib/crawler-identity";
 
 const MAX_DOCUMENT_BYTES = 1_500_000;
 const REQUEST_TIMEOUT_MS = 12_000;
@@ -120,7 +121,7 @@ export async function analyzeDomain(input: string): Promise<DomainAnalysis | Dom
       response = await fetch(target, {
         redirect: "follow",
         signal: controller.signal,
-        headers: { Accept: "text/html,application/xhtml+xml", "User-Agent": "MarketSignalPublicScanner/0.1" },
+        headers: { Accept: "text/html,application/xhtml+xml", "User-Agent": MARKET_SIGNAL_USER_AGENT },
       });
     } finally {
       clearTimeout(timeout);

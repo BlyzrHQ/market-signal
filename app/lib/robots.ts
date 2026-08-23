@@ -1,3 +1,5 @@
+import { MARKET_SIGNAL_ROBOTS_TOKENS } from "./crawler-identity.ts";
+
 export type RobotsPolicy = {
   sitemaps: string[];
   hasRules: boolean;
@@ -30,7 +32,7 @@ function specificity(pattern: string) {
   return pattern.replace(/\*|\$$/g, "").length;
 }
 
-export function parseRobots(text: string, userAgent = "MarketSignalPublicScanner/0.1"): RobotsPolicy {
+export function parseRobots(text: string, userAgents: string | readonly string[] = MARKET_SIGNAL_ROBOTS_TOKENS): RobotsPolicy {
   const groups: Group[] = [];
   const sitemaps: string[] = [];
   let current: Group | null = null;
@@ -62,9 +64,9 @@ export function parseRobots(text: string, userAgent = "MarketSignalPublicScanner
     }
   }
 
-  const normalizedAgent = userAgent.toLowerCase();
+  const normalizedAgents = (Array.isArray(userAgents) ? userAgents : [userAgents]).map((value) => value.toLowerCase());
   const candidates = groups.flatMap((group) => group.agents.flatMap((agent) => {
-    const matches = agent === "*" || normalizedAgent.includes(agent);
+    const matches = agent === "*" || normalizedAgents.some((userAgent) => userAgent.includes(agent));
     return matches ? [{ group, agent, score: agent === "*" ? 0 : agent.length }] : [];
   }));
   const bestAgentScore = Math.max(-1, ...candidates.map((candidate) => candidate.score));

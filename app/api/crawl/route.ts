@@ -18,6 +18,7 @@ import { hasObservedAddToCartControl } from "../../lib/experience-signals.ts";
 import { buildAIProductComparison, type AIProductMatchingOptions } from "../../lib/ai-product-matching.ts";
 import { isSallaCatalogRecoveryEligible, recoverSallaStorefrontCatalog, type SallaStorefrontRecovery } from "../../lib/salla-mcp-catalog-recovery.ts";
 import { redirectedMarketRetryUrl } from "../../lib/market-localization.ts";
+import { MARKET_SIGNAL_USER_AGENT } from "../../lib/crawler-identity.ts";
 
 type ClaimType = "Observed" | "Inferred";
 type Confidence = "High" | "Medium" | "Low";
@@ -121,7 +122,7 @@ const COMPETITOR_PAGE_CONCURRENCY = 256;
 // fresh domains, plus the 500 strongest remembered rivals.
 const MAX_COMPETITOR_INVESTIGATIONS = 1_712;
 const REQUEST_TIMEOUT_MS = 6_000;
-const USER_AGENT = "MarketSignalPublicScanner/0.1";
+const USER_AGENT = MARKET_SIGNAL_USER_AGENT;
 const PRIORITY_PATHS = ["/pricing", "/plans", "/products", "/features", "/compare", "/integrations", "/about", "/customers", "/blog"];
 const PRODUCT_ROUTE_PATH = /\/(?:products?|shop|store|collections?|catalog|pricing|plans?)(?:\/|$)|\/(?:-\/)?p\d+(?:\/|$)/i;
 const SOCIAL_HOSTS = ["facebook.com", "instagram.com", "linkedin.com", "tiktok.com", "youtube.com", "x.com", "twitter.com"];
