@@ -1,0 +1,118 @@
+name: Run one production acceptance report
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Exact deployed master revision
+        required: true
+        type: string
+      primary_domain:
+        description: Public domain to assess
+        required: true
+        type: string
+      plan:
+        description: Exact comparison quota plan
+        required: true
+        type: choice
+        options:
+          - starter
+          - solo
+          - growth
+          - agency
+
+permissions: {}
+
+concurrency:
+  group: market-signal-production-acceptance
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - market-signal-production
+    timeout-minutes: 10
+    environment:
+      name: production
+      url: https://${{ vars.MARKET_SIGNAL_DOMAIN }}
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the exact deployed revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate bounded inputs and deployed image
+        id: validate
+        env:
+          REQUESTED_SHA: ${{ inputs.commit_sha }}
+          PRIMARY_DOMAIN: ${{ inputs.primary_domain }}
+          PLAN: ${{ inputs.plan }}
+        run: |
+          set -Eeuo pipefail
+          [[ "${REQUESTED_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "${REQUESTED_SHA}" ]]
+          [[ "${PRIMARY_DOMAIN}" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$ ]]
+          [[ "${PLAN}" =~ ^(starter|solo|growth|agency)$ ]]
+          mapfile -t containers < <(docker ps --filter label=com.docker.compose.project=market-signal --filter label=com.docker.compose.service=app --format '{{.ID}}')
+          [[ "${#containers[@]}" -eq 1 ]]
+          container="${containers[0]}"
+          [[ "$(docker inspect "${container}" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" == "${REQUESTED_SHA}" ]]
+          echo "container=${container}" >>"${GITHUB_OUTPUT}"
+
+      - name: Create and dispatch exactly one unbilled acceptance report
+        id: dispatch
+        env:
+          CONTAINER: ${{ steps.validate.outputs.container }}
+          PRIMARY_DOMAIN: ${{ inputs.primary_domain }}
+          PLAN: ${{ inputs.plan }}
+        run: |
+          set -Eeuo pipefail
+          body="$(jq -cn --arg primaryDomain "${PRIMARY_DOMAIN}" --arg plan "${PLAN}" '{primaryDomain:$primaryDomain,plan:$plan,locale:"en"}')"
+          if ! response="$(
+            docker exec -e "ACCEPTANCE_BODY=${body}" "${CONTAINER}" node --input-type=module -e '
+              const response = await fetch("http://127.0.0.1:3000/api/internal/acceptance-reports", {
+                method: "POST",
+                headers: { authorization: `Bearer ${process.env.MARKET_SIGNAL_OWNER_WRITE_TOKEN}`, "content-type": "application/json" },
+                body: process.env.ACCEPTANCE_BODY,
+              });
+              const payload = await response.json();
+              if (!response.ok || payload.ok !== true) throw new Error(`${response.status}:${payload.errorCode || "acceptance-dispatch-failed"}`);
+              process.stdout.write(JSON.stringify(payload));
+            '
+          )"; then
+            echo "Acceptance report dispatch failed." >&2
+            exit 1
+          fi
+          public_id="$(jq -r '.report.publicId // empty' <<<"${response}")"
+          run_id="$(jq -r '.job.runId // empty' <<<"${response}")"
+          target="$(jq -r '.report.comparisonTarget // empty' <<<"${response}")"
+          [[ "${public_id}" =~ ^[0-9a-f]{32}$ ]]
+          [[ "${run_id}" =~ ^run_[A-Za-z0-9]+$ ]]
+          [[ "${target}" =~ ^(20|50|500|1000)$ ]]
+          echo "public_id=${public_id}" >>"${GITHUB_OUTPUT}"
+          echo "run_id=${run_id}" >>"${GITHUB_OUTPUT}"
+          echo "target=${target}" >>"${GITHUB_OUTPUT}"
+
+      - name: Publish the acceptance handoff
+        env:
+          DOMAIN: ${{ vars.MARKET_SIGNAL_DOMAIN }}
+          PUBLIC_ID: ${{ steps.dispatch.outputs.public_id }}
+          RUN_ID: ${{ steps.dispatch.outputs.run_id }}
+          TARGET: ${{ steps.dispatch.outputs.target }}
+          PLAN: ${{ inputs.plan }}
+        run: |
+          set -Eeuo pipefail
+          {
+            echo "### Production acceptance report dispatched"
+            echo "- Plan: ${PLAN}"
+            echo "- Comparison target: ${TARGET}"
+            echo "- Trigger run: ${RUN_ID}"
+            echo "- Report: https://${DOMAIN}/reports/${PUBLIC_ID}?view=products&layout=table"
+          } >>"${GITHUB_STEP_SUMMARY}"
