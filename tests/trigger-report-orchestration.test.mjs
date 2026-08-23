@@ -855,7 +855,7 @@ test("a failed confirmation read after an ambiguous checkpoint save cannot fall 
   assert.equal(port.events.some((item) => item.idempotencyKey === "report-1-task-2-crawl-resumed"), false);
 });
 
-test("checkpoint presentation projection failure cannot fall back to an older durable crawl", async () => {
+test("a presentation that cannot hit the compact target uses its lossless durable crawl snapshot", async () => {
   let crawlCalls = 0;
   let saveCalls = 0;
   let matchCalls = 0;
@@ -879,10 +879,10 @@ test("checkpoint presentation projection failure cannot fall back to an older du
   const matchesBeforeRetry = matchCalls;
   await assert.rejects(
     () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port),
-    /could not be projected into a durable checkpoint/,
+    /Relational fact persistence remained incomplete/,
   );
-  assert.equal(matchCalls, matchesBeforeRetry);
-  assert.equal(port.events.some((item) => item.idempotencyKey === "report-1-task-2-crawl-resumed"), false);
+  assert.ok(matchCalls > matchesBeforeRetry);
+  assert.equal(port.checkpoints.has(CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE + 1), true);
 });
 
 test("an exact committed crawl after a lost save response keeps rich live facts in memory", async () => {
