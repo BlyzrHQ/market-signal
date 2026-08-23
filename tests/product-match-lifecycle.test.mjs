@@ -227,6 +227,26 @@ test("the final publication gate requires a valid observed primary price", () =>
   assert.equal(published.matching.publication.reasons["missing-valid-primary-price"], 1);
 });
 
+test("direct search publishes every priced result and omits empty or zero-price results entirely", () => {
+  const candidate = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "priced")], accepted: 3, method: "direct-web-search" });
+  const primary = candidate.rows[0].primary;
+  const priced = candidate.rows[0].matches[0];
+  const empty = { ...priced, product: product("empty", "rival.test") };
+  const zero = { ...priced, product: product("zero", "rival.test") };
+  primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+  priced.product.priceSignals = [{ raw: "GBP 8", currency: "GBP", amount: 8 }];
+  zero.product.priceSignals = [{ raw: "USD 0", currency: "USD", amount: 0 }];
+  candidate.rows[0].matches = [priced, empty, zero];
+
+  const published = publishPricedProductComparison(candidate);
+
+  assert.deepEqual(published.rows[0].matches.map((match) => match.product.id), ["priced"]);
+  assert.equal(published.rows[0].matches[0].publication.priceEligible, true);
+  assert.equal(published.coverage.assignedPairCount, 1);
+  assert.equal(published.matching.publication.reasons["missing-valid-rival-price"], 2);
+  assert.ok(published.rows[0].matches.every((match) => !match.excludedProduct));
+});
+
 test("the final publication gate excludes cross-currency product prices without FX conversion", () => {
   const candidate = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "r1")], accepted: 1 });
   candidate.rows[0].primary.priceSignals = [{ raw: "USD 90", currency: "USD", amount: 90 }];
@@ -717,7 +737,7 @@ test("maximum legal compact fields preserve twenty alternatives for every target
   assert.equal(state.comparison.rows.length, 20);
   assert.deepEqual(state.evidence.rows.map((item) => item.matches.length), Array(20).fill(20));
   assert.ok(Buffer.byteLength(JSON.stringify(checkpoint), "utf8") <= REPORT_MATCH_CHECKPOINT_RESULT_BYTES);
-  assert.ok(Buffer.byteLength(JSON.stringify({ action: "match-batch-checkpoint-save", attemptNumber: 20, batchIndex: 3_999, inputHash: "a".repeat(64), result: checkpoint }), "utf8") < REPORT_CALLBACK_ENVELOPE_BYTES);
+  assert.ok(Buffer.byteLength(JSON.stringify({ action: "match-batch-checkpoint-save", attemptNumber: 20, batchIndex: 4_999, inputHash: "a".repeat(64), result: checkpoint }), "utf8") < REPORT_CALLBACK_ENVELOPE_BYTES);
 });
 
 test("global assignment counts a merchant product id only once when its URL and name drift", () => {

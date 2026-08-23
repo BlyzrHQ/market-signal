@@ -126,6 +126,7 @@ function matchEvidence(value: unknown) {
   const rivalRaw = text(priceComparison.rivalRaw, 500);
   const actionPlan = record(decision.actionPlan);
   return bounded({
+    method: text(source.method, 80),
     score: finite(source.score),
     sharedTerms: strings(source.sharedTerms, 40, 120),
     claimIds: strings(source.claimIds, 100, 160),
@@ -350,6 +351,7 @@ async function matchFacts(publicId: string, comparison: ProductComparison | null
       model: assessment.model,
       promptVersion: assessment.promptVersion,
       evidence: {
+        method: assessment.method,
         score: match.score,
         sharedTerms: match.sharedTerms,
         claimIds: match.claimIds,

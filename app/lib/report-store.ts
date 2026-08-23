@@ -537,7 +537,7 @@ function requiredFactFields(kind: ReportFactKind, item: ReturnType<typeof canoni
   const value = item as Record<string, unknown>;
   const required = kind === "companies" ? ["domain", "role"] : kind === "products" ? ["domain", "productId", "name", "sourceUrl"] : kind === "matches" ? ["id", "primaryProductId", "rivalProductId", "rivalDomain", "verdict"] : ["id", "domain", "platform", "status"];
   if (required.some((key) => !value[key])) throw new Error("Report fact is missing a required field.");
-  if (kind === "matches" && !["same_product", "close_substitute"].includes(String(value.verdict))) throw new Error("Invalid report match verdict.");
+  if (kind === "matches" && !["same_product", "close_substitute", "search_result"].includes(String(value.verdict))) throw new Error("Invalid report match verdict.");
   if (kind === "ads") {
     const evidence = value.evidence as Record<string, unknown>;
     if (value.status !== "verified-active" || !cleanText(evidence?.providerId, 240) || !safeUrl(evidence?.evidenceUrl, false)) throw new Error("Invalid attributable ad fact.");
@@ -906,7 +906,7 @@ function matchPageItem(row: Record<string, unknown>) {
       sharedTerms: Array.isArray(evidence.sharedTerms) ? evidence.sharedTerms : [],
       claimIds: Array.isArray(evidence.claimIds) ? evidence.claimIds : [],
       assessment: {
-        method: row.model ? "ai-hybrid" : "",
+        method: evidence.method === "direct-web-search" ? "direct-web-search" : row.model ? "ai-hybrid" : "",
         claimType: String(row.claim_type || ""),
         verdict: String(row.verdict || ""),
         confidence: Number.isFinite(confidence) ? confidence : null,

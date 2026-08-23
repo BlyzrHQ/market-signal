@@ -105,7 +105,10 @@ function prepareRow(battle: ProductBattle, ar: boolean) {
   const primarySource = safeUrl(battle.primary.sourceUrl);
   const rivalSource = safeUrl(battle.rival.sourceUrl);
   const reasons = list(assessment.reasons).map((value) => display(value)).filter(Boolean).join(" · ") || list(battle.match.sharedTerms).map((value) => display(value)).filter(Boolean).join(" · ");
-  const verdict = display(assessment.verdict, ar ? "بديل قريب" : "Close substitute");
+  const verdictValue = display(assessment.verdict);
+  const verdict = verdictValue === "search_result"
+    ? (ar ? "نتيجة بحث بسعر معلن" : "Priced search result")
+    : display(verdictValue, ar ? "بديل قريب" : "Close substitute");
   const actionEn = display(actionPlan.actionEn, display(decision.recommendedMove));
   const actionAr = display(actionPlan.actionAr, actionEn);
   const fullAction = display(ar ? actionAr : actionEn, ar ? "راجع المنتجين قبل اتخاذ قرار." : "Review both products before acting.");

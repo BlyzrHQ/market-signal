@@ -111,9 +111,9 @@ export type ProductMatch = {
     actionPlan?: ProductActionPlan;
   } | null;
   assessment?: {
-    method: "ai-hybrid";
+    method: "ai-hybrid" | "direct-web-search";
     claimType: "Inferred";
-    verdict: "same_product" | "close_substitute";
+    verdict: "same_product" | "close_substitute" | "search_result";
     confidence: number;
     model: string;
     promptVersion: string;
@@ -151,7 +151,7 @@ export type ProductComparison = {
     truncated: boolean;
   };
   matching?: {
-    method: "ai-hybrid" | "lexical-fallback";
+    method: "ai-hybrid" | "lexical-fallback" | "direct-web-search";
     available: boolean;
     model: string;
     embeddingModel: string;

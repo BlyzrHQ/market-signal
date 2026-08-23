@@ -105,6 +105,13 @@ export type DiscoveryOptions = {
   priorProductSearchLedger?: unknown;
 };
 
+export type DirectProductPageSearchResult = {
+  completed: boolean;
+  queries: string[];
+  candidates: Array<{ domain: string; sourceUrl: string; title: string }>;
+  gap?: string;
+};
+
 type SearchLane = "entity" | "category" | "product";
 type SearchSource = { url: string; title: string; query: string; queries: string[] };
 type LaneResult = {
@@ -492,7 +499,7 @@ function excludedDomain(domain: string, primaryDomain: string) {
   return !domain || domain === primaryDomain || domain.endsWith(`.${primaryDomain}`) || sameBrand || [...NON_COMPANY_HOSTS, ...MARKETPLACE_HOSTS].some((host) => domain === host || domain.endsWith(`.${host}`));
 }
 
-export function candidatesFromSearchEvidence(payload: Record<string, unknown>, profile: DiscoveryProfile, queries: string[] = []) {
+export function candidatesFromSearchEvidence(payload: Record<string, unknown>, profile: DiscoveryProfile, queries: string[] = [], deduplicateBy: "domain" | "url" = "domain") {
   const primaryDomain = canonicalDomain(profile.domain);
   let sourceFirstLeads = 0;
   const ranked = searchSources(payload).flatMap((source) => {
@@ -544,8 +551,9 @@ export function candidatesFromSearchEvidence(payload: Record<string, unknown>, p
   }).sort((left, right) => right.score - left.score || left.candidate.domain.localeCompare(right.candidate.domain));
   const seen = new Set<string>();
   return ranked.flatMap(({ candidate }) => {
-    if (seen.has(candidate.domain)) return [];
-    seen.add(candidate.domain);
+    const identity = deduplicateBy === "url" ? cleanSearchUrl(candidate.matchedProductUrl || candidate.sourceUrl) : candidate.domain;
+    if (!identity || seen.has(identity)) return [];
+    seen.add(identity);
     return [candidate];
   }).slice(0, MAX_CANDIDATES);
 }
@@ -845,7 +853,7 @@ function lanePrompt(lane: SearchLane, business: BusinessProfile) {
   };
 }
 
-async function runLane(endpoint: string, apiKey: string, model: string, lane: SearchLane, business: BusinessProfile, profile: DiscoveryProfile): Promise<LaneResult> {
+async function runLane(endpoint: string, apiKey: string, model: string, lane: SearchLane, business: BusinessProfile, profile: DiscoveryProfile, retainDistinctProductUrls = false): Promise<LaneResult> {
   if (lane === "product" && business.offerings.length === 0) return { lane, category: business.category, region: business.region, queries: [], candidates: [], completed: true, failureCategory: "none", gap: "Product lane skipped because no attributable offering records were observed." };
   const prompt = lanePrompt(lane, business);
   const controller = new AbortController();
@@ -928,8 +936,21 @@ async function runLane(endpoint: string, apiKey: string, model: string, lane: Se
       return [privateLead];
     });
     const inferredCategory = String(structuredComplete ? parsed!.category || business.category : business.category).slice(0, 180);
-    const recovered = lane === "product" ? candidatesFromSearchEvidence(payload, profile, queries) : entityCandidatesFromSearchEvidence(payload, business, lane, inferredCategory);
-    const candidates = mergeCandidates([...modelCandidates, ...recovered]);
+    const recovered = lane === "product" ? candidatesFromSearchEvidence(payload, profile, queries, retainDistinctProductUrls ? "url" : "domain") : entityCandidatesFromSearchEvidence(payload, business, lane, inferredCategory);
+    const candidates = retainDistinctProductUrls && lane === "product"
+      ? [...modelCandidates, ...recovered].filter((candidate, index, all) => {
+          const candidateUrl = "matchedProductUrl" in candidate && typeof candidate.matchedProductUrl === "string"
+            ? candidate.matchedProductUrl
+            : candidate.sourceUrl;
+          const identity = cleanSearchUrl(candidateUrl);
+          return Boolean(identity) && all.findIndex((other) => {
+            const otherUrl = "matchedProductUrl" in other && typeof other.matchedProductUrl === "string"
+              ? other.matchedProductUrl
+              : other.sourceUrl;
+            return cleanSearchUrl(otherUrl) === identity;
+          }) === index;
+        }).slice(0, MAX_CANDIDATES)
+      : mergeCandidates([...modelCandidates, ...recovered]);
     const rejectedGap = !structuredComplete
       ? candidates.length
         ? `${lane} search completed and attributable source URLs were retained; its structured summary was unavailable.`
@@ -957,6 +978,39 @@ async function runLane(endpoint: string, apiKey: string, model: string, lane: Se
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function searchDirectProductPages(primaryDomainValue: string, primary: ProductRecord, marketCountryCode = ""): Promise<DirectProductPageSearchResult> {
+  const primaryDomain = canonicalDomain(primaryDomainValue);
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return { completed: false, queries: [], candidates: [], gap: "Web product search is not configured." };
+  const model = process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini";
+  const region = /^[A-Z]{2}$/.test(marketCountryCode) ? marketCountryCode : "the same served market";
+  const profile: DiscoveryProfile = {
+    domain: primaryDomain,
+    title: primaryDomain,
+    description: "",
+    region,
+    language: "",
+    products: [primary],
+  };
+  const business = inferBusinessProfile(profile);
+  const endpoint = `${(process.env.OPENAI_RESPONSES_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "")}/responses`;
+  const result = await runLane(endpoint, apiKey, model, "product", { ...business, offerings: [primary] }, profile, true);
+  return {
+    completed: result.completed,
+    queries: result.queries,
+    candidates: result.candidates.flatMap((candidate) => {
+      const sourceUrl = cleanSearchUrl(candidate.matchedProductUrl || candidate.sourceUrl);
+      if (!sourceUrl || new URL(sourceUrl).protocol !== "https:") return [];
+      const title = candidate.evidence.find((entry) => cleanSearchUrl(entry.url) === sourceUrl)?.title
+        || candidate.matchedPrimaryProductName
+        || new URL(sourceUrl).pathname.split("/").filter(Boolean).at(-1)?.replace(/[-_]+/g, " ")
+        || candidate.domain;
+      return [{ domain: canonicalDomain(candidate.domain), sourceUrl, title: title.replace(/\s+/g, " ").trim().slice(0, 240) }];
+    }),
+    ...(result.gap ? { gap: result.gap } : {}),
+  };
 }
 
 export async function discoverCompetitors(profile: DiscoveryProfile, options: DiscoveryOptions = {}): Promise<DiscoveryResult> {
