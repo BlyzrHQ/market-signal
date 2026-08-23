@@ -81,17 +81,6 @@ async function post(path, body) {
   }
 }
 
-function reduceAdCompany(company) {
-  const platforms = Array.isArray(company?.platforms) ? company.platforms : [];
-  const concepts = platforms.flatMap((platform) => Array.isArray(platform?.creatives) ? platform.creatives : []);
-  return {
-    domain: String(company?.domain || ""),
-    states: platforms.map((platform) => `${String(platform?.platform || "Unknown")} ${String(platform?.status || "unknown")}`),
-    verifiedCreativeConcepts: concepts.length,
-    publicEvidenceCount: platforms.reduce((sum, platform) => sum + (Array.isArray(platform?.evidenceUrls) ? platform.evidenceUrls.length : 0), 0),
-  };
-}
-
 function mergeSemanticPanelComparison(baseline, semantic) {
   const semanticRows = Array.isArray(semantic?.rows) ? semantic.rows : [];
   const semanticIds = new Set(semanticRows.map((row) => String(row?.primary?.id || "")));
@@ -131,11 +120,6 @@ async function runDomain(domain) {
   const comparison = match.payload?.ok ? mergeSemanticPanelComparison(baselineComparison, match.payload.comparison) : baselineComparison;
   const rows = Array.isArray(comparison.rows) ? comparison.rows : [];
   const matches = rows.flatMap((row) => (Array.isArray(row?.matches) ? row.matches : []).filter((match) => match?.product && match?.confidence === "Medium").map((match) => ({ primary: row.primary, match })));
-  const ad = payload?.ok && payload?.adRequest ? await post("/api/ads", payload.adRequest) : { status: 0, seconds: 0, payload: { ok: false, error: "Crawl did not return verified ad targets." } };
-  if (ad.payload?.ok) assertContract("ads", ad.payload);
-  const adBlock = ad.payload?.block || {};
-  const adCompanies = (Array.isArray(adBlock.companies) ? adBlock.companies : []).map(reduceAdCompany);
-  const verifiedCreativeConcepts = adCompanies.reduce((sum, company) => sum + company.verifiedCreativeConcepts, 0);
   const exactPriceCount = matches.filter(({ match }) => Boolean(match?.decision?.priceComparison)).length;
   const actionableMatchCount = matches.filter(({ match }) => Boolean(String(match?.decision?.recommendedMove || "").trim())).length;
   const region = cleanRegion(profile.region || primary?.homepage?.region);
@@ -144,15 +128,12 @@ async function runDomain(domain) {
   const competitorEvidenceComplete = reducedCompetitors.every((result) => Boolean(result.homepageEvidenceUrl && result.discoveryEvidenceUrl));
   const positioningComparisonCount = reducedCompetitors.filter((result) => result.positioningComparison.available).length;
   const offeringCount = Array.isArray(primary?.products) ? primary.products.length : 0;
-  const score = usefulnessBreakdown({ ok: Boolean(payload?.ok), regionCorrect, competitorCount: competitors.length, offeringCount, matchCount: matches.length, positioningComparisonCount, exactPriceCount, adsOk: Boolean(ad.payload?.ok), verifiedCreativeConcepts, competitorEvidenceComplete, actionableMatchCount });
+  const score = usefulnessBreakdown({ ok: Boolean(payload?.ok), regionCorrect, competitorCount: competitors.length, offeringCount, matchCount: matches.length, positioningComparisonCount, exactPriceCount, competitorEvidenceComplete, actionableMatchCount });
   return {
     domain,
     reportOk: Boolean(payload?.ok),
     reportStatus: crawl.status,
     crawlSeconds: crawl.seconds,
-    adScanOk: Boolean(ad.payload?.ok),
-    adStatus: ad.status,
-    adSeconds: ad.seconds,
     semanticMatchOk: Boolean(match.payload?.ok),
     semanticMatchStatus: match.status,
     semanticMatchSeconds: match.seconds,
@@ -181,11 +162,6 @@ async function runDomain(domain) {
       recommendedMove: String(match?.decision?.recommendedMove || ""),
       exactPriceComparison: Boolean(match?.decision?.priceComparison),
     })),
-    ads: {
-      companies: adCompanies,
-      verifiedCreativeConcepts,
-      limitation: String(adBlock.limitation || ad.payload?.error || ""),
-    },
     diagnosticUsefulness: {
       ...score,
       grade: score.score >= 70 ? "GOOD" : "NEEDS_WORK",
@@ -217,7 +193,6 @@ const artifact = {
     domainsWithVisibleProductOrServiceMatches: reports.filter((report) => report.visibleMatches.length > 0).length,
     domainsWithProductOrCitedPositioningComparison: reports.filter((report) => report.visibleMatches.length > 0 || report.positioningComparisonCount >= 3).length,
     domainsWithExactComparablePrices: reports.filter((report) => report.visibleMatches.some((match) => match.exactPriceComparison)).length,
-    verifiedCreativeConcepts: reports.reduce((sum, report) => sum + report.ads.verifiedCreativeConcepts, 0),
     diagnosticGoodCount: reports.filter((report) => report.diagnosticUsefulness.grade === "GOOD").length,
     diagnosticMedianScore: scores.length ? (scores[4] + scores[5]) / 2 : null,
     crawlLatencySeconds: { p50: percentile(crawlTimes, 0.5), p95: percentile(crawlTimes, 0.95) },
@@ -228,7 +203,6 @@ const artifact = {
     "Visible matches include Medium-confidence semantic rows returned by /api/match plus non-overridden Medium-confidence rows from the explicitly merged lexical baseline.",
     "A cited positioning comparison is counted only when at least three verified rivals have first-party and discovery evidence plus category alignment.",
     "Exact price comparisons require a server-approved priceComparison pair.",
-    "Missing or limited ad coverage is not evidence of zero advertising activity.",
     "Diagnostic usefulness scores are transparent heuristics and are not the Fable 5 merge verdict.",
   ],
   reports,

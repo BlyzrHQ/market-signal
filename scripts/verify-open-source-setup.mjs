@@ -28,8 +28,6 @@ const origin = `http://localhost:${port}`;
 const logs = [];
 const sensitiveEnvironment = [
   "OPENAI_API_KEY",
-  "METAPI_API_KEY",
-  "META_AD_LIBRARY_ACCESS_TOKEN",
   "TRIGGER_SECRET_KEY",
   "TRIGGER_PROJECT_REF",
   "TRIGGER_API_URL",

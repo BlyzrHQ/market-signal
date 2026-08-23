@@ -1710,7 +1710,7 @@ export function productDecision(primary: ProductRecord, candidate: ProductRecord
     } else {
       priceVerdict = `You are ${currency} ${difference.toFixed(2)} cheaper on the observed price.`;
       whyTheyMayWin = saasPlanPair ? "Price is not their visible advantage; included limits, workflow depth, or brand trust may be doing the work." : "Price is not their visible advantage; their product framing or availability may be doing the work.";
-      recommendedMove = saasPlanPair ? "Show the lower aligned plan price beside the specific limits and capabilities it includes." : "Put your lower price beside an equivalent pack-size claim and make it prominent in ads and collection pages.";
+      recommendedMove = saasPlanPair ? "Show the lower aligned plan price beside the specific limits and capabilities it includes." : "Put your lower price beside an equivalent pack-size claim and make it prominent on product and collection pages.";
     }
   } else if (!saasPlanPair && primaryHasPrice && candidateHasPrice) {
     priceVerdict = "Both expose public prices, but variant or pack-size alignment is unresolved.";

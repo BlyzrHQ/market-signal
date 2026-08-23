@@ -81,7 +81,7 @@ export function unavailableAfterBoundedAttempts(first?: PublicEndpointFailure, s
 export function unavailablePrimaryMessaging(domain: string, state: UnavailablePrimaryState) {
   const reason = state.reason.trim() || "The submitted public HTTPS endpoint was unavailable after two bounded attempts.";
   return {
-    explanation: `${reason} Competitor, product, advertising, and matching analysis did not run.`,
+    explanation: `${reason} Competitor, product, and matching analysis did not run.`,
     summaryBody: `Competitor discovery did not run. ${reason}`,
     error: `${domain}: ${reason}`,
   };

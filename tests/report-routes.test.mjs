@@ -31,6 +31,9 @@ test("reopened loading routes poll persisted events and redirect only with a doc
   assert.match(loading, /\["complete", "limited"\]\.includes\(body\.report\.run\.status\) && body\.report\.document/);
   assert.match(loading, /eventMessage\(events\.at\(-1\), ar\)/);
   assert.match(loading, /\["failed", "interrupted"\]/);
+  assert.match(loading, /visibleEvents/);
+  assert.match(loading, /!event\.idempotencyKey\.startsWith\("ads-"\)/);
+  assert.doesNotMatch(loading, /ads-started|ads-complete|Checking public ad libraries|فحص مكتبات الإعلانات/);
 });
 
 test("completed report route reconstructs the evidence renderer from D1", () => {
@@ -45,7 +48,7 @@ test("completed report route reconstructs the evidence renderer from D1", () => 
 });
 
 test("saved reports expose deep-linkable accessible intelligence tabs", () => {
-  assert.match(report, /type View = "overview" \| "competitors" \| "products" \| "ads" \| "evidence"/);
+  assert.match(report, /type View = "overview" \| "competitors" \| "products" \| "evidence"/);
   assert.match(report, /const VIEWS: View\[\] = \["competitors", "products", "overview"\]/);
   assert.match(report, /return views\.includes\(value as View\) \? value as View : views\[0\] \|\| "overview"/);
   assert.doesNotMatch(report, /value === "methodology"/);
@@ -95,7 +98,7 @@ test("paid report history is privately fetched and stays out of public report pa
   assert.match(css, /\.dashboard-brand,\.dashboard-report-identity,\.dashboard-report-history \{ display: none; \}/);
 });
 
-test("saved product and ad views preserve truth boundaries and source links", () => {
+test("saved product views preserve truth boundaries and source links", () => {
   assert.match(report, /<ProductDesignLab key=\{publicId\} comparison=\{comparison\} battles=\{battles\}/);
   assert.match(report, /object\(candidate\.publication\)\.priceEligible === true/);
   assert.match(report, /legacyUngatedMatchCount/);
@@ -145,20 +148,7 @@ test("saved product and ad views preserve truth boundaries and source links", ()
   assert.match(productLab, /row\.rivalSource && <a href=\{row\.rivalSource\}/);
   assert.doesNotMatch(productLab, /enrichmentGaps/);
   assert.doesNotMatch(productLab, /PRODUCT DATA GAP/);
-  assert.match(report, /not proof of zero ads/);
-  assert.match(report, /This does not mean the companies do not advertise/);
-  assert.match(report, /Who is verifiably advertising, and what are their ads saying\?/);
-  assert.match(report, /className="verified-creative-section"/);
-  assert.match(report, /<AdCreativeCard concept=\{concept\} ar=\{ar\}/);
-  assert.match(report, /Media unavailable — verified ad copy is shown below/);
-  assert.match(report, /active records grouped into/);
-  assert.match(report, /cross-Page records discarded/);
-  assert.match(report, /className="ad-verification-queue"/);
-  assert.match(report, /This is a coverage result, not proof that these companies are not advertising/);
-  assert.match(report, /Open \$\{display\(platform\.platform\)\} search ↗/);
-  assert.match(report, /list\(platform\.evidenceUrls\).*Ad record \$\{index \+ 1\} ↗/);
-  assert.match(report, /url\.protocol === "https:" && \["fbcdn\.net", "fbsbx\.com", "facebook\.com"\]/);
-  assert.match(report, /alt=\{headline\}/);
+  assert.doesNotMatch(report, /AdCreativeCard|ad-verification-queue|verified-creative-section|adBlock|not proof of zero ads|advertising/);
   assert.match(report, /truth-pill/);
   assert.match(report, /repairEncoding/);
 });
@@ -173,8 +163,7 @@ test("evidence and methodology become one customer-readable verification view", 
   assert.match(report, /Technical record/);
   assert.doesNotMatch(report, /view === "methodology"/);
   assert.doesNotMatch(report, /<h3>\{display\(adBlock\?\.provider/);
-  assert.match(css, /\.ad-verification-queue/);
-  assert.match(css, /\.verified-creative-section/);
+  assert.doesNotMatch(css, /\.ad-verification-queue|\.verified-creative-section|\.ad-creative-feed/);
   assert.match(css, /\.evidence-source-group/);
   assert.match(css, /\.plain-method/);
 });

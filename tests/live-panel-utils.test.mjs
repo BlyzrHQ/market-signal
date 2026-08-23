@@ -31,7 +31,7 @@ test("panel competitor evidence records fetched paths, gaps, and cited positioni
 });
 
 test("panel usefulness credits only cited positioning when no product pair exists", () => {
-  const common = { ok: true, regionCorrect: true, competitorCount: 3, offeringCount: 5, matchCount: 0, exactPriceCount: 0, adsOk: true, verifiedCreativeConcepts: 0, competitorEvidenceComplete: true, actionableMatchCount: 0 };
+  const common = { ok: true, regionCorrect: true, competitorCount: 3, offeringCount: 5, matchCount: 0, exactPriceCount: 0, competitorEvidenceComplete: true, actionableMatchCount: 0 };
   const cited = usefulnessBreakdown({ ...common, positioningComparisonCount: 3 });
   const missing = usefulnessBreakdown({ ...common, positioningComparisonCount: 0 });
   assert.equal(cited.breakdown.productOrPositioningComparison, 18);

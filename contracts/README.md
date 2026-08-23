@@ -12,5 +12,4 @@ Signal service, the Go CLI, and future crawler/comparison services.
   response outside the contract is a drift failure, not a partial success.
 
 `report.v1.schema.json` describes the successful `/api/crawl` report response.
-`ads.v1.schema.json` describes the successful `/api/ads` response.
 `evidence.v1.schema.json` documents the reusable evidence-record boundary.

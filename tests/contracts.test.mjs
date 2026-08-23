@@ -32,33 +32,3 @@ test("report v1 catches drift before rendering", () => {
   assert.equal(result.valid, false);
   assert.ok(result.errors.some((error) => error.includes("primaryDomain")));
 });
-
-test("ads v1 preserves access-limited as a data state", () => {
-  const result = validateContract("ads", {
-    ok: true,
-    block: {
-      type: "ad-intelligence",
-      id: "ad-intelligence",
-      primaryDomain: "example.com",
-      available: false,
-      provider: "official-links-only",
-      observedAt: "2026-07-15T10:00:00Z",
-      companies: [{
-        domain: "example.com",
-        brand: "Example",
-        summary: "Access is limited.",
-        recommendedAction: "Open the official library.",
-        platforms: [{
-          platform: "Meta",
-          status: "access-limited",
-          activeCreativeCount: 0,
-          message: "Approval pending.",
-          evidenceUrls: [],
-          searchUrl: "https://www.facebook.com/ads/library/",
-        }],
-      }],
-      limitation: "Missing coverage is not evidence of zero advertising.",
-    },
-  });
-  assert.deepEqual(result, { valid: true, errors: [] });
-});

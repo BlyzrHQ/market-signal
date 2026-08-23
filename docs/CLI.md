@@ -2,8 +2,8 @@
 
 The Market Signal CLI turns a public company domain into terminal-friendly
 competitive-intelligence output. It is a Go client for the Market Signal HTTP
-API: the crawler, competitor discovery, product matching, and ad checks run on
-the API service, not inside the CLI process.
+API: the crawler, competitor discovery, and product matching run on the API
+service, not inside the CLI process.
 
 ## Before you begin
 
@@ -74,7 +74,7 @@ addresses, and malformed domains as analysis targets.
 > **Current distribution boundary:** do not point a publicly distributed CLI at
 > the production deployment. It does not yet provide scoped headless tokens or
 > per-customer quotas. Use a local or otherwise controlled service deployment.
-> Report, crawl, and ads commands can consume the AI and provider resources
+> Report and crawl commands can consume the AI and provider resources
 > configured on that service.
 
 ## Commands
@@ -105,24 +105,6 @@ go -C cli run ./cmd/marketsignal crawl example.com --output json
 This is not a separate local Go scraper. Both `report` and `crawl` call the
 service's `/api/crawl` endpoint.
 
-### `ads`
-
-Check attributable public ad-library evidence for a primary company and,
-optionally, one or more known competitor domains.
-
-```bash
-go -C cli run ./cmd/marketsignal ads example.com --region "United Kingdom"
-go -C cli run ./cmd/marketsignal ads example.com \
-  --competitor rival-one.example \
-  --competitor rival-two.example \
-  --region "United Kingdom"
-```
-
-`--competitor` is repeatable. A specific country generally gives the ad
-provider better regional context than the default `Global market`. Public
-coverage can be limited; an empty or inaccessible library does not prove that a
-company has no advertising.
-
 ### `version`
 
 Print the CLI version without contacting the API:
@@ -142,7 +124,7 @@ go -C cli run ./cmd/marketsignal completion --help
 
 ## Global flags
 
-Global flags work with `report`, `crawl`, and `ads`.
+Global flags work with `report` and `crawl`.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
@@ -183,9 +165,6 @@ pipe-friendly. Use `--quiet` to suppress progress entirely.
 | `2` | Valid result with an explicit coverage limitation. | Keep the result, but read its gaps before making a decision. |
 | `3` | The API response did not match the expected contract. | Update the CLI/contracts together or investigate service drift. |
 | `4` | Transport, authentication, configuration, or API failure. | Check the service URL, server health, access policy, and timeout. |
-
-For `ads`, both `no-verified-result` and `access-limited` return code `2`.
-Neither state establishes that advertising is absent.
 
 ## Build a reusable binary
 
@@ -249,7 +228,6 @@ go -C cli vet ./...
 go -C cli run ./cmd/marketsignal --help
 go -C cli run ./cmd/marketsignal report --help
 go -C cli run ./cmd/marketsignal crawl --help
-go -C cli run ./cmd/marketsignal ads --help
 go -C cli run ./cmd/marketsignal version
 ```
 

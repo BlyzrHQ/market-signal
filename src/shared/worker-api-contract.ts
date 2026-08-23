@@ -6,7 +6,6 @@ export const REQUIRED_WORKER_API_CAPABILITIES = [
   "report.event.append",
   "report.document.save",
   "crawl.execute",
-  "ads.execute",
   "products.match",
   "products.enrich",
   "products.actions",
@@ -15,9 +14,11 @@ export const REQUIRED_WORKER_API_CAPABILITIES = [
 export const REPORT_RETENTION_CAPABILITY = "report.retention.purge" as const;
 export const REPORT_EVALUATION_CAPABILITY = "report.evaluation.execute" as const;
 export const REPORT_SEARCH_CHALLENGE_CAPABILITY = "report.search.challenge.execute" as const;
+export const LEGACY_AD_EXECUTION_CAPABILITY = "ads.execute" as const;
 
 export const ADVERTISED_WORKER_API_CAPABILITIES = [
   ...REQUIRED_WORKER_API_CAPABILITIES,
+  LEGACY_AD_EXECUTION_CAPABILITY,
   REPORT_RETENTION_CAPABILITY,
   REPORT_EVALUATION_CAPABILITY,
   REPORT_SEARCH_CHALLENGE_CAPABILITY,

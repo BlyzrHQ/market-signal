@@ -18,7 +18,7 @@ test("the saved unavailable report hides empty market tabs and explains skipped 
   assert.match(report, /\["parked", "unavailable"\]/);
   assert.match(report, /No public website response was available for this domain/);
   assert.match(report, /This is not a zero-result report/);
-  assert.match(report, /Competitors, products, and ads were not checked/);
+  assert.match(report, /Competitors and products were not checked/);
   assert.match(report, /Open attempted address/);
 });
 

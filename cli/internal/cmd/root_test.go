@@ -107,3 +107,12 @@ func TestReportCommandUsesTransportExitCode(t *testing.T) {
 		t.Fatalf("expected exit code 4, got %v", err)
 	}
 }
+
+func TestAdsCommandIsNotAvailable(t *testing.T) {
+	root := NewRoot("test")
+	root.SetArgs([]string{"ads", "myjam.co.uk"})
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), `unknown command "ads"`) {
+		t.Fatalf("expected ads to be removed from the CLI, got %v", err)
+	}
+}
