@@ -56,12 +56,15 @@ the remaining spend.
   coverage at every plan size plus the byte-budget fallback. Evidence is now
   capped to the target while preserving selected rows and bounded backup rivals;
   pair validation re-runs global alias collapse; and those regression proofs are
-  included. Exact-head re-review remains required.
-- `npm test`: PASS — typecheck, Node typecheck, production build, and 1,095
+  included. A second adversarial review also found and prompted coverage for an
+  intermediate alias-only backup row displacing a later selected row; durable
+  evidence now prioritizes all selected rows before backup-only rows. Exact-head
+  re-review remains required.
+- `npm test`: PASS — typecheck, Node typecheck, production build, and 1,096
   tests.
 - `npm run lint`: PASS with two pre-existing `no-img-element` warnings and no
   errors.
-- Focused lifecycle/orchestration suite: PASS — 174 tests, including exact
+- Focused lifecycle/orchestration suite: PASS — 175 tests, including exact
   20/50/500/1,000 checkpoint round trips with surplus primaries, duplicate-alias
   rejection, byte-budget fallback, and exact plan-sized pair output.
 - Live paid reports remain intentionally unstarted until review and deployment

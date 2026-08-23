@@ -695,7 +695,7 @@ function mergePublishedPairComparisonState(current: ProductComparison, prior: Pr
     } : currentMatching,
   };
   const comparison = limitPublishedProductComparison(publishPricedProductComparison(merged, referenceTimeMs), target, "pairs");
-  const evidenceEntries = candidateRows.flatMap((row, rowIndex) => {
+  const allEvidenceEntries = candidateRows.flatMap((row, rowIndex) => {
     const compactPrimary = compactPricedEvidenceProduct(row.primary);
     const selected = selectedByRow.get(rowIndex) || new Set<ProductMatch>();
     const ordered = [
@@ -709,7 +709,12 @@ function mergePublishedPairComparisonState(current: ProductComparison, prior: Pr
         matches: ordered.map((match) => compactPricedEvidenceMatch(compactPrimary, match, componentHash(match))),
       },
     }] : [];
-  }).slice(0, target);
+  });
+  const selectedEvidenceEntries = allEvidenceEntries.filter((entry) => entry.selectedCount > 0);
+  const evidenceEntries = [
+    ...selectedEvidenceEntries,
+    ...allEvidenceEntries.filter((entry) => entry.selectedCount === 0).slice(0, Math.max(0, target - selectedEvidenceEntries.length)),
+  ];
   const evidenceRows = evidenceEntries.map((entry) => entry.row);
   let durableRows = evidenceRows;
   try {

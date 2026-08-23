@@ -453,6 +453,25 @@ test("pair checkpoint evidence stays within the target row bound when surplus pr
   assert.deepEqual(state.evidence.rows.map((item) => item.primary.id), ["primary-0", "primary-1"]);
 });
 
+test("pair checkpoint evidence prioritizes every selected row over intermediate alias-only backups", () => {
+  const first = pricedPairRow("A Product", "a", ["shared-rival"]);
+  const aliasOnly = pricedPairRow("B Product", "b", ["shared-rival"]);
+  const last = pricedPairRow("C Product", "c", ["c-rival"]);
+  const rows = [first, aliasOnly, last];
+  const selected = rows.map((item) => item.primary.id);
+  const state = mergePublishedProductComparisonState(
+    comparison({ selected, assessed: selected, rows, accepted: 3 }),
+    null,
+    2,
+    Date.now(),
+    "pairs",
+  );
+
+  assert.deepEqual(state.comparison.rows.map((item) => item.primary.id), ["a", "c"]);
+  assert.deepEqual(state.evidence.rows.map((item) => item.primary.id), ["a", "c"]);
+  assert.equal(state.evidence.coverage.assignedPairCount, 2);
+});
+
 test("pair evidence byte-budget fallback retains every selected edge and removes surplus backup rows", () => {
   const longPath = "x".repeat(1_700);
   const rows = Array.from({ length: 1_000 }, (_, primaryIndex) => {
