@@ -134,7 +134,11 @@ function primaryRecoveryIdentity(product: ProductRecord) {
       mpn: product.identifiers.mpn || "",
       brand: product.identifiers.brand || "",
     } : null,
-    canonicalQuantity: product.quantity || null,
+    canonicalQuantity: product.quantity ? {
+      kind: product.quantity.kind,
+      amount: product.quantity.amount,
+      unit: product.quantity.unit,
+    } : null,
   };
 }
 

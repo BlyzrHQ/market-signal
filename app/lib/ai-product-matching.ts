@@ -681,7 +681,11 @@ function candidatePlanProductIdentity(product: ProductRecord) {
     attributes: product.attributes.map((item) => clean(item, 100)).filter(Boolean).slice(0, 8),
     sourceUrl: product.sourceUrl,
     observedIdentifiers: product.identifiers ? { gtins: product.identifiers.gtins, sku: product.identifiers.sku || "", mpn: product.identifiers.mpn || "", brand: product.identifiers.brand || "" } : null,
-    canonicalQuantity: product.quantity || null,
+    canonicalQuantity: product.quantity ? {
+      kind: product.quantity.kind,
+      amount: product.quantity.amount,
+      unit: product.quantity.unit,
+    } : null,
   };
 }
 
@@ -690,7 +694,11 @@ function candidatePlanProductKey(product: ProductRecord) {
 }
 
 function candidatePlanContentHash(groups: ProductCandidatePlan["groups"], candidatePairPoolTruncated: boolean) {
-  return createHash("sha256").update(JSON.stringify({ groups, candidatePairPoolTruncated })).digest("hex");
+  const canonicalGroups = groups.map((group) => ({
+    primaryKey: group.primaryKey,
+    candidateKeys: group.candidateKeys,
+  }));
+  return createHash("sha256").update(JSON.stringify({ groups: canonicalGroups, candidatePairPoolTruncated })).digest("hex");
 }
 
 export function candidatePairKeysFromPlan(value: unknown) {

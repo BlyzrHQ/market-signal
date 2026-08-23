@@ -40,6 +40,11 @@ function stableJsonValue(value) {
     .map(([key, item]) => [key, stableJsonValue(item)]));
 }
 
+function candidatePlanContentHash(groups, candidatePairPoolTruncated) {
+  const canonicalGroups = groups.map((group) => ({ primaryKey: group.primaryKey, candidateKeys: group.candidateKeys }));
+  return createHash("sha256").update(JSON.stringify({ groups: canonicalGroups, candidatePairPoolTruncated })).digest("hex");
+}
+
 test("publishes only rival products with a finite positive observed ISO price", () => {
   const priced = (price) => product("rival", "rival.test", "Honey", { price });
   assert.equal(hasValidObservedRivalPrice(priced({ raw: "GBP 8.00", currency: "GBP", amount: 8 })), true);
@@ -1133,7 +1138,7 @@ test("a persisted candidate plan makes retries independent of embedding drift", 
       if (retry) assert.deepEqual(key, savedPlanKey);
       return retry ? savedPlan : null;
     },
-    saveCandidatePlan: async (key, plan) => { savedPlanKey = key; savedPlan = plan; },
+    saveCandidatePlan: async (key, plan) => { savedPlanKey = key; savedPlan = stableJsonValue(plan); },
     fetch: async (url, init) => {
       const body = JSON.parse(init.body);
       if (String(url).endsWith("/embeddings")) {
@@ -1155,7 +1160,7 @@ test("a persisted candidate plan makes retries independent of embedding drift", 
 
   const completePlan = savedPlan;
   savedPlan = { ...savedPlan, candidatePairPoolTruncated: true };
-  savedPlan.contentHash = createHash("sha256").update(JSON.stringify({ groups: savedPlan.groups, candidatePairPoolTruncated: true })).digest("hex");
+  savedPlan.contentHash = candidatePlanContentHash(savedPlan.groups, true);
   const poolTruncated = await run(true);
   assert.match(poolTruncated.matching.gaps.join(" "), /omitted additional ordinary backup candidates/i);
 
