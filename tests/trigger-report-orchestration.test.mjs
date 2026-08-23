@@ -53,6 +53,14 @@ const payload = {
   productLimit: 20,
 };
 
+function stableJsonValue(value) {
+  if (Array.isArray(value)) return value.map(stableJsonValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, item]) => [key, stableJsonValue(item)]));
+}
+
 test("priced-result enrichment can exhaust the full bounded catalog regardless of publication target", () => {
   assert.equal(MAX_FINAL_ENRICHMENT_TARGETS, 7_000);
   assert.equal(MAX_FINAL_ENRICHMENT_BATCHES, 110);
@@ -115,11 +123,11 @@ test("orchestration recovers judge checkpoints from every task-attempt namespace
 
 test("adopted judge evidence requires the exact current primary product identity", () => {
   const current = product("shop.example", "stable-id");
-  current.quantity = { value: 500, unit: "g", normalized: "500g" };
+  current.quantity = { kind: "mass", amount: 500, unit: "g" };
   const adopted = comparison({ withPair: true, count: 1 });
-  adopted.rows[0].primary = { ...current, quantity: { value: 1_000, unit: "g", normalized: "1000g" } };
+  adopted.rows[0].primary = { ...current, quantity: { kind: "mass", amount: 1_000, unit: "g" } };
   assert.equal(comparisonWithinPrimaryCatalog(adopted, [current]), null);
-  adopted.rows[0].primary = structuredClone(current);
+  adopted.rows[0].primary = stableJsonValue(current);
   assert.equal(comparisonWithinPrimaryCatalog(adopted, [current]).rows.length, 1);
 });
 const recoveryPayload = { ...payload, reportAttempt: 2 };

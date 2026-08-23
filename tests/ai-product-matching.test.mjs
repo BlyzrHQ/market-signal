@@ -32,6 +32,19 @@ function response(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
+function stableJsonValue(value) {
+  if (Array.isArray(value)) return value.map(stableJsonValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, item]) => [key, stableJsonValue(item)]));
+}
+
+function candidatePlanContentHash(groups, candidatePairPoolTruncated) {
+  const canonicalGroups = groups.map((group) => ({ primaryKey: group.primaryKey, candidateKeys: group.candidateKeys }));
+  return createHash("sha256").update(JSON.stringify({ groups: canonicalGroups, candidatePairPoolTruncated })).digest("hex");
+}
+
 test("publishes only rival products with a finite positive observed ISO price", () => {
   const priced = (price) => product("rival", "rival.test", "Honey", { price });
   assert.equal(hasValidObservedRivalPrice(priced({ raw: "GBP 8.00", currency: "GBP", amount: 8 })), true);
@@ -1125,7 +1138,7 @@ test("a persisted candidate plan makes retries independent of embedding drift", 
       if (retry) assert.deepEqual(key, savedPlanKey);
       return retry ? savedPlan : null;
     },
-    saveCandidatePlan: async (key, plan) => { savedPlanKey = key; savedPlan = plan; },
+    saveCandidatePlan: async (key, plan) => { savedPlanKey = key; savedPlan = stableJsonValue(plan); },
     fetch: async (url, init) => {
       const body = JSON.parse(init.body);
       if (String(url).endsWith("/embeddings")) {
@@ -1147,7 +1160,7 @@ test("a persisted candidate plan makes retries independent of embedding drift", 
 
   const completePlan = savedPlan;
   savedPlan = { ...savedPlan, candidatePairPoolTruncated: true };
-  savedPlan.contentHash = createHash("sha256").update(JSON.stringify({ groups: savedPlan.groups, candidatePairPoolTruncated: true })).digest("hex");
+  savedPlan.contentHash = candidatePlanContentHash(savedPlan.groups, true);
   const poolTruncated = await run(true);
   assert.match(poolTruncated.matching.gaps.join(" "), /omitted additional ordinary backup candidates/i);
 
@@ -1232,10 +1245,12 @@ test("durable judge evidence preserves accepted backup pairs within the checkpoi
   const primary = product("evidence-p1", "shop.test", "Beef Cubes Halal 500g", {
     price: { raw: "GBP 9", currency: "GBP", amount: 9 },
     imageUrl: "https://shop.test/images/beef-cubes.jpg",
+    quantity: { kind: "mass", amount: 500, unit: "g" },
   });
   const rivals = Array.from({ length: 5 }, (_, index) => product(`evidence-r${index + 1}`, "rival.test", "Beef Cubes Halal 500g", {
     price: { raw: `GBP ${8 - index / 10}`, currency: "GBP", amount: 8 - index / 10 },
     imageUrl: `https://rival.test/images/beef-cubes-${index + 1}.jpg`,
+    quantity: { kind: "mass", amount: 500, unit: "g" },
   }));
   let savedCheckpoint = null;
   const fetch = async (url, init) => {
@@ -1271,7 +1286,13 @@ test("durable judge evidence preserves accepted backup pairs within the checkpoi
   assert.deepEqual(screened?.rows[0].matches.map((match) => match.product?.id).sort(), rivals.map((item) => item.id).sort());
   assert.ok(screened?.rows[0].matches.every((match) => match.product && match.publication === undefined));
 
-  const historicalPrimary = { ...primary, name: "Beef Cubes Halal 1kg", normalizedName: "beef cubes halal 1kg", sourceUrl: "https://shop.test/products/beef-cubes-1kg", quantity: { value: 1_000, unit: "g", normalized: "1000g" } };
+  const persistedCheckpoint = JSON.parse(JSON.stringify(stableJsonValue(savedCheckpoint)));
+  const recoveredAfterCanonicalStorage = screenedComparisonFromJudgeCheckpoints("shop.test", [persistedCheckpoint], "GB");
+  assert.equal(recoveredAfterCanonicalStorage?.rows.length, 1);
+  assert.equal(recoveredAfterCanonicalStorage?.rows[0].matches.length, 5);
+  assert.deepEqual(recoveredAfterCanonicalStorage?.rows[0].matches.map((match) => match.product?.id).sort(), rivals.map((item) => item.id).sort());
+
+  const historicalPrimary = { ...primary, name: "Beef Cubes Halal 1kg", normalizedName: "beef cubes halal 1kg", sourceUrl: "https://shop.test/products/beef-cubes-1kg", quantity: { kind: "mass", amount: 1_000, unit: "g" } };
   const historicalRival = product("evidence-old-rival", "rival.test", "Beef Cubes Halal 1kg", { price: { raw: "GBP 12", currency: "GBP", amount: 12 } });
   let historicalCheckpoint = null;
   await buildAIProductComparison("shop.test", [
