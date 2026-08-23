@@ -926,6 +926,65 @@ test("searches 200 distinct ecommerce anchors and reports the remaining catalog 
   }
 });
 
+test("comparison-target discovery searches only a small product batch and never runs company lanes", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  const calls = [];
+  const searchProfile = {
+    ...profile,
+    products: Array.from({ length: 40 }, (_, index) => product(
+      `Beef Sirloin Steak ${String(index + 1).padStart(2, "0")} 500g`,
+      `https://myjam.co.uk/products/product-${index + 1}`,
+    )),
+  };
+  globalThis.fetch = async (_url, init) => {
+    const request = JSON.parse(init.body);
+    const input = JSON.parse(request.input[1].content);
+    calls.push(input.lane);
+    return searchResponse({ category: "Grocery", region: "United Kingdom", queries: [], candidates: [] });
+  };
+  try {
+    const result = await discoverCompetitors(searchProfile, { productComparisonsOnly: true, maxProductSearches: 10 });
+    assert.deepEqual(calls, Array.from({ length: 10 }, () => "product"));
+    assert.equal(result.strategy, "product-first");
+    assert.equal(result.productSearchCoverage.startIndex, 0);
+    assert.equal(result.productSearchCoverage.endIndex, 10);
+    assert.equal(result.productSearchCoverage.truncated, true);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
+test("comparison-target discovery stops without paid search when its pinned anchor set changes", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return searchResponse({ category: "Grocery", region: "United Kingdom", queries: [], candidates: [] });
+  };
+  const searchProfile = { ...profile, products: Array.from({ length: 25 }, (_, index) => product(`Beef Sirloin Steak ${index + 1} 500g`, `https://myjam.co.uk/products/${index + 1}`)) };
+  try {
+    const result = await discoverCompetitors(searchProfile, {
+      productComparisonsOnly: true,
+      maxProductSearches: 10,
+      searchOffset: 10,
+      expectedAnchorSetHash: "0".repeat(64),
+    });
+    assert.equal(calls, 0);
+    assert.equal(result.productSearchCoverage.anchorSetChanged, true);
+    assert.equal(result.productSearchCoverage.startIndex, 10);
+    assert.equal(result.productSearchCoverage.endIndex, 10);
+    assert.match(result.gaps.join(" "), /anchor set changed/i);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
 test("bounds concurrent product-search requests while preserving every selected anchor", async () => {
   const previousKey = process.env.OPENAI_API_KEY;
   const previousFetch = globalThis.fetch;

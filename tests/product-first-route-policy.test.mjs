@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { competitorInvestigationComplete, finalizedDiscoveryCoverage, investigationGapSourceUrl, MAX_PRIMARY_CATALOG_PRODUCTS, rememberedReverificationFailures, resolvePrimaryDiscoveryPolicy, verifiedExactMatchHints, verifyDiscoveredCompetitor, verifyDiscoveredCompetitorWithInferredLeads, verifyInferredProductLead, verifyInferredProductLeads } from "../app/api/crawl/route.ts";
+import { competitorInvestigationComplete, finalizedDiscoveryCoverage, investigationGapSourceUrl, MAX_PRIMARY_CATALOG_PRODUCTS, rememberedReverificationFailures, resolvePrimaryDiscoveryPolicy, selectComparisonTarget, verifiedExactMatchHints, verifyDiscoveredCompetitor, verifyDiscoveredCompetitorWithInferredLeads, verifyInferredProductLead, verifyInferredProductLeads } from "../app/api/crawl/route.ts";
 import { resolveVerificationMarket } from "../app/lib/competitor-verification.ts";
 
 function product(domain, name) {
@@ -152,6 +152,54 @@ test("one seller preserves more than twelve verified exact pairs as match hints"
   const hints = verifiedExactMatchHints([verified]);
   assert.equal(hints.length, 13);
   assert.ok(hints.some((hint) => hint.primaryId === "primary-12" && hint.rivalDomain === "rival.example" && hint.rivalId === "rival-12"));
+});
+
+test("selects exactly twenty publication-eligible pairs before deriving competitor domains", () => {
+  const observedAt = "2026-08-23T00:00:00.000Z";
+  const primaryProducts = Array.from({ length: 5 }, (_, primaryIndex) => ({
+    ...product("myjam.co.uk", `MyJam Product ${primaryIndex + 1} 500g`),
+    id: `primary-${primaryIndex + 1}`,
+    observedAt,
+    priceSignals: [{ raw: `GBP ${primaryIndex + 5}.00`, currency: "GBP", amount: primaryIndex + 5 }],
+  }));
+  const rivals = Array.from({ length: 25 }, (_, index) => {
+    const domain = `rival-${(index % 7) + 1}.co.uk`;
+    const primary = primaryProducts[index % primaryProducts.length];
+    const rival = {
+      ...product(domain, `Comparable ${index + 1} 500g`),
+      id: `rival-${index + 1}`,
+      observedAt,
+      extraction: "json-ld",
+      ownership: "self-declared-brand",
+      priceSignals: [{ raw: `GBP ${index + 1}.00`, currency: "GBP", amount: index + 1 }],
+    };
+    return {
+      ...crawl(domain, [rival]),
+      verifiedExactProductPairs: [{ primary, rival, confidence: 0.95 }],
+      discovery: { ...rememberedCandidate(), domain, accepted: true, verificationScore: 90 },
+    };
+  });
+  const selected = selectComparisonTarget(primaryProducts, rivals, 20, "GB", Date.parse(observedAt));
+  assert.equal(selected.hints.length, 20);
+  assert.equal(new Set(selected.hints.map((pair) => `${pair.primaryId}|${pair.rivalDomain}|${pair.rivalId}`)).size, 20);
+  assert.deepEqual(selected.competitors.map((result) => result.domain), [...new Set(selected.hints.map((pair) => pair.rivalDomain))]);
+  assert.ok(selected.competitors.every((result) => result.verifiedExactProductPairs.every((pair) => selected.hints.some((hint) => hint.primaryId === pair.primary.id && hint.rivalDomain === result.domain && hint.rivalId === pair.rival.id))));
+});
+
+test("does not count a semantically verified pair whose price or market would fail publication", () => {
+  const observedAt = "2026-08-23T00:00:00.000Z";
+  const primary = { ...product("myjam.co.uk", "MyJam Product 500g"), id: "primary", observedAt, priceSignals: [{ raw: "GBP 5.00", currency: "GBP", amount: 5 }] };
+  const ukRival = { ...product("valid-rival.co.uk", "Comparable 500g"), id: "valid", observedAt, extraction: "json-ld", ownership: "self-declared-brand", priceSignals: [{ raw: "GBP 4.00", currency: "GBP", amount: 4 }] };
+  const usRival = { ...product("wrong-market.com", "Comparable 500g"), id: "wrong-market", observedAt, extraction: "json-ld", ownership: "self-declared-brand", priceSignals: [{ raw: "GBP 4.00", currency: "GBP", amount: 4 }] };
+  const unpriced = { ...product("unpriced.co.uk", "Comparable 500g"), id: "unpriced", observedAt, extraction: "json-ld", ownership: "self-declared-brand", priceSignals: [] };
+  const candidates = [ukRival, usRival, unpriced].map((rival) => ({
+    ...crawl(rival.domain, [rival]),
+    verifiedExactProductPairs: [{ primary, rival, confidence: 0.95 }],
+    discovery: { ...rememberedCandidate(), domain: rival.domain, accepted: true, verificationScore: 90 },
+  }));
+  const selected = selectComparisonTarget([primary], candidates, 20, "GB", Date.parse(observedAt));
+  assert.deepEqual(selected.hints, [{ primaryId: "primary", rivalDomain: "valid-rival.co.uk", rivalId: "valid" }]);
+  assert.deepEqual(selected.competitors.map((result) => result.domain), ["valid-rival.co.uk"]);
 });
 
 test("rejects inferred leads when the exact page is absent or the one-pair judge declines", async () => {

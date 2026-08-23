@@ -1,5 +1,5 @@
 import { canonicalDomain, normalizeDomain } from "../../lib/domain.ts";
-import { applyPreMatchCatalogEnrichment, buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemapWithCoverage, hasValidObservedRivalPrice, planPreliminaryCatalogReconciliation, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity, type ProductComparison, type ProductRecord } from "../../lib/product-intelligence.ts";
+import { applyPreMatchCatalogEnrichment, buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemapWithCoverage, hasComparablePublicPricePair, hasValidObservedRivalPrice, planPreliminaryCatalogReconciliation, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity, type ProductComparison, type ProductRecord } from "../../lib/product-intelligence.ts";
 import { sharedRobotsPolicyResolver } from "../../lib/robots-policy.ts";
 import { boundedPrimaryCatalogProducts, discoverCompetitors, publicDiscoveryCandidate, publicDiscoverySnapshot, type DiscoveryCandidate, type DiscoveryResult } from "../../lib/competitor-discovery.ts";
 import { attributableFacebookUrl, type AdIntelligenceResult } from "../../lib/ad-intelligence.ts";
@@ -116,6 +116,8 @@ const MAX_CATALOG_RECONCILIATION_PAGES = 64;
 const MAX_DOCUMENT_BYTES = 1_500_000;
 const MAX_HTML_EXTRACTION_BYTES = 400_000;
 const COMPETITOR_CRAWL_CONCURRENCY = 48;
+const COMPARISON_SEARCH_BATCH_SIZE = 10;
+const COMPARISON_VERIFICATION_BATCH_SIZE = 4;
 // A request-scoped limiter below makes this a global ceiling across all rival
 // domains, including the pathological case where one seller owns every lead.
 const COMPETITOR_PAGE_CONCURRENCY = 256;
@@ -443,6 +445,48 @@ export function verifiedExactMatchHints(confirmed: DomainCrawl[]) {
     rivalAssignments.add(rivalKey);
     return [{ primaryId, rivalDomain, rivalId }];
   }).slice(0, 6_000);
+}
+
+export function selectComparisonTarget(primaryProducts: ProductRecord[], confirmed: DomainCrawl[], pairTarget: number, marketCountryCode: string, referenceTimeMs = Date.now()) {
+  const target = Math.max(0, Math.floor(pairTarget));
+  if (!target) return { hints: [], competitors: [] as DomainCrawl[] };
+  const primaryById = new Map(primaryProducts.map((product) => [product.id, product]));
+  const candidates = confirmed.flatMap((result) => (result.verifiedExactProductPairs || []).map((pair) => {
+    const primary = primaryById.get(pair.primary.id) || pair.primary;
+    const rival = result.products.find((product) => product.id === pair.rival.id) || pair.rival;
+    return { primary, rival, rivalDomain: result.domain, confidence: pair.confidence };
+  })).filter((pair) => hasComparablePublicPricePair(pair.primary, pair.rival, referenceTimeMs, marketCountryCode))
+    .sort((left, right) => right.confidence - left.confidence
+      || left.primary.id.localeCompare(right.primary.id)
+      || left.rivalDomain.localeCompare(right.rivalDomain)
+      || left.rival.id.localeCompare(right.rival.id));
+  const selected: typeof candidates = [];
+  const pairKeys = new Set<string>();
+  const primaryDomains = new Set<string>();
+  const rivalAssignments = new Set<string>();
+  for (const pair of candidates) {
+    const pairKey = `${pair.primary.id}|${pair.rivalDomain}|${pair.rival.id}`;
+    const primaryDomainKey = `${pair.primary.id}|${pair.rivalDomain}`;
+    const rivalKey = `${pair.rivalDomain}|${pair.rival.id}`;
+    if (pairKeys.has(pairKey) || primaryDomains.has(primaryDomainKey) || rivalAssignments.has(rivalKey)) continue;
+    pairKeys.add(pairKey);
+    primaryDomains.add(primaryDomainKey);
+    rivalAssignments.add(rivalKey);
+    selected.push(pair);
+    if (selected.length >= target) break;
+  }
+  const hints = selected.map((pair) => ({ primaryId: pair.primary.id, rivalDomain: pair.rivalDomain, rivalId: pair.rival.id }));
+  const selectedKeys = new Set(selected.map((pair) => `${pair.primary.id}|${pair.rivalDomain}|${pair.rival.id}`));
+  const selectedDomains = [...new Set(hints.map((hint) => hint.rivalDomain))];
+  const byDomain = new Map(confirmed.map((result) => [result.domain, result]));
+  const competitors = selectedDomains.flatMap((domain) => {
+    const result = byDomain.get(domain);
+    if (!result) return [];
+    const verifiedExactProductPairs = (result.verifiedExactProductPairs || []).filter((pair) => selectedKeys.has(`${pair.primary.id}|${domain}|${pair.rival.id}`));
+    const rivalIds = new Set(verifiedExactProductPairs.map((pair) => pair.rival.id));
+    return [{ ...result, verifiedExactProductPairs, products: result.products.filter((product) => rivalIds.has(product.id)) }];
+  });
+  return { hints, competitors };
 }
 
 function productPathPriority(path: string) {
@@ -1110,7 +1154,9 @@ export async function POST(request: Request) {
   if (roleResponse) return roleResponse;
   if (!await hasValidAnalysisAuthorization(request.headers.get("authorization"))) return unauthorizedInternalResponse();
   try {
-    const payload = await request.json() as { primary?: unknown; domains?: unknown; productLimit?: unknown; catalogProductLimit?: unknown; discoverySearchOffset?: unknown; discoveryPriorCoverageComplete?: unknown; discoveryExpectedAnchorSetHash?: unknown };
+    const payload = await request.json() as { primary?: unknown; domains?: unknown; productLimit?: unknown; comparisonPairsNeeded?: unknown; catalogProductLimit?: unknown; discoverySearchOffset?: unknown; discoveryPriorCoverageComplete?: unknown; discoveryExpectedAnchorSetHash?: unknown };
+    const productLimit = Number.isInteger(Number(payload.productLimit)) ? Math.max(1, Math.min(MAX_PRIMARY_CATALOG_PRODUCTS, Number(payload.productLimit))) : 20;
+    const comparisonPairsNeeded = Number.isInteger(Number(payload.comparisonPairsNeeded)) ? Math.max(0, Math.min(productLimit, Number(payload.comparisonPairsNeeded))) : productLimit;
     const catalogProductLimit = Number.isInteger(Number(payload.catalogProductLimit)) ? Math.max(1, Math.min(MAX_PRIMARY_CATALOG_PRODUCTS, Number(payload.catalogProductLimit))) : MAX_PRIMARY_CATALOG_PRODUCTS;
     const discoverySearchOffset = Number.isInteger(Number(payload.discoverySearchOffset)) ? Math.max(0, Math.min(MAX_PRIMARY_CATALOG_PRODUCTS, Number(payload.discoverySearchOffset))) : 0;
     const discoveryPriorCoverageComplete = payload.discoveryPriorCoverageComplete !== false;
@@ -1191,19 +1237,28 @@ export async function POST(request: Request) {
     primary = { ...primary, products: boundedPrimaryCatalogProducts(primary.products, catalogProductLimit) };
     submittedResults = submittedResults.map((result) => result.domain === primaryDomain ? primary! : result);
     const discoveryPolicy = resolvePrimaryDiscoveryPolicy(primary);
+    const comparisonTargetMode = discoveryPolicy.requireProductOverlap;
     let discovery: DiscoveryResult;
     try {
-      discovery = await discoverCompetitors(discoveryPolicy.input, { searchOffset: discoverySearchOffset, priorCoverageComplete: discoveryPriorCoverageComplete, expectedAnchorSetHash: discoveryExpectedAnchorSetHash });
+      discovery = await discoverCompetitors(discoveryPolicy.input, {
+        searchOffset: discoverySearchOffset,
+        priorCoverageComplete: discoveryPriorCoverageComplete,
+        expectedAnchorSetHash: discoveryExpectedAnchorSetHash,
+        ...(comparisonTargetMode ? { productComparisonsOnly: true, maxProductSearches: Math.min(COMPARISON_SEARCH_BATCH_SIZE, Math.max(1, comparisonPairsNeeded)) } : {}),
+      });
     } catch (error) {
       const gap = error instanceof Error ? error.message : "Web competitor discovery failed.";
       discovery = { available: false, provider: "unavailable", model: process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini", category: "", region: primary.homepage.region, businessType: discoveryPolicy.businessType, strategy: discoveryPolicy.intendedStrategy, queries: [], candidates: [], gaps: [gap], gap, productSearchCoverage: { eligibleAnchors: primary.products.length, anchorSetHash: discoveryExpectedAnchorSetHash, searchedAnchors: 0, startIndex: discoverySearchOffset, endIndex: discoverySearchOffset, truncated: primary.products.length > discoverySearchOffset, searchesComplete: false, candidateDomainsFound: 0, candidateDomainsInvestigated: 0, candidateTruncated: false, verificationComplete: false, batchComplete: false, complete: false } };
     }
-    const memory = await loadRememberedCompetitors(primary.domain);
-    const mergedInvestigationCoverage = mergeRememberedCandidateCoverage(
-      discovery.candidates.filter((candidate) => !domains.includes(candidate.domain)),
-      memory.candidates.filter((candidate) => !domains.includes(candidate.domain)),
-      MAX_COMPETITOR_INVESTIGATIONS,
-    );
+    const memory = comparisonTargetMode ? null : await loadRememberedCompetitors(primary.domain);
+    const freshCandidates = discovery.candidates.filter((candidate) => !domains.includes(candidate.domain));
+    const mergedInvestigationCoverage = comparisonTargetMode
+      ? { candidates: freshCandidates.map((candidate): MemoryCandidate => ({ ...candidate, provenance: "discovered-this-run" })), truncated: false, freshTruncated: false, rememberedTruncated: false }
+      : mergeRememberedCandidateCoverage(
+        freshCandidates,
+        memory!.candidates.filter((candidate) => !domains.includes(candidate.domain)),
+        MAX_COMPETITOR_INVESTIGATIONS,
+      );
     const allInvestigationCandidates = mergedInvestigationCoverage.candidates;
     const investigationCandidates = allInvestigationCandidates.slice(0, MAX_COMPETITOR_INVESTIGATIONS);
     const mergedCoverageGaps = [
@@ -1214,7 +1269,7 @@ export async function POST(request: Request) {
     discovery = {
       ...discovery,
       candidates: investigationCandidates,
-      gaps: [...discovery.gaps, ...(memory.gap ? [memory.gap] : []), ...mergedCoverageGaps],
+      gaps: [...discovery.gaps, ...(memory?.gap ? [memory.gap] : []), ...mergedCoverageGaps],
     };
     const verificationMarket = resolveVerificationMarket(discovery.region, primary.homepage.region, firstPartyRegionSource(primary.homepage));
     const scheduleCompetitorRequest = createRequestLimiter(COMPETITOR_PAGE_CONCURRENCY);
@@ -1222,21 +1277,32 @@ export async function POST(request: Request) {
     const scheduledJudge = ((primaryDomain: string, catalogs: Array<{ domain: string; products: ProductRecord[] }>, requiredSourceUrlsOrOptions: Record<string, string[]> | AIProductMatchingOptions = {}, providedOptions?: AIProductMatchingOptions) => scheduleCompetitorJudge(() => providedOptions
       ? buildAIProductComparison(primaryDomain, catalogs, requiredSourceUrlsOrOptions as Record<string, string[]>, providedOptions)
       : buildAIProductComparison(primaryDomain, catalogs, requiredSourceUrlsOrOptions as AIProductMatchingOptions))) as ExactPairJudge;
-    const investigatedSettled = await settleWithConcurrency(investigationCandidates, COMPETITOR_CRAWL_CONCURRENCY, async (candidate) => {
+    const investigate = async (candidate: MemoryCandidate) => {
       const seedUrls = [...new Set([
         ...(candidate.matchedProductUrls || (candidate.matchedProductUrl ? [candidate.matchedProductUrl] : [])),
         ...(candidate.inferredProductLeads || []).map((lead) => lead.candidateSourceUrl),
       ])];
       return verifyDiscoveredCompetitorWithInferredLeads(primary, await crawlDomain(candidate.domain, "discovered-competitor", seedUrls.length ? seedUrls : [candidate.websiteUrl], { schedule: scheduleCompetitorRequest }), candidate, verificationMarket, discoveryPolicy.requireProductOverlap, scheduledJudge);
-    });
+    };
+    const investigatedSettled: PromiseSettledResult<DomainCrawl>[] = [];
+    if (comparisonTargetMode) {
+      for (let start = 0; start < investigationCandidates.length; start += COMPARISON_VERIFICATION_BATCH_SIZE) {
+        const batch = investigationCandidates.slice(start, start + COMPARISON_VERIFICATION_BATCH_SIZE);
+        investigatedSettled.push(...await settleWithConcurrency(batch, COMPARISON_VERIFICATION_BATCH_SIZE, investigate));
+        const verified = investigatedSettled.flatMap((result) => result.status === "fulfilled" && result.value.homepage && result.value.discovery?.accepted ? [result.value] : []);
+        if (selectComparisonTarget(primary.products, verified, comparisonPairsNeeded, verificationMarket.regionCode, Date.now()).hints.length >= comparisonPairsNeeded) break;
+      }
+    } else {
+      investigatedSettled.push(...await settleWithConcurrency(investigationCandidates, COMPETITOR_CRAWL_CONCURRENCY, investigate));
+    }
     const discoveredResults = investigatedSettled.map((result) => result.status === "fulfilled" ? result.value : null);
-    const continuityIncomplete = memory.truncated
+    const continuityIncomplete = Boolean(memory?.truncated)
       || mergedInvestigationCoverage.rememberedTruncated
       || primary.productCoverage.sitemapTruncated === true;
     const finalizedCoverage = finalizedDiscoveryCoverage(
       discovery.productSearchCoverage,
       allInvestigationCandidates.length + Number(mergedInvestigationCoverage.freshTruncated),
-      investigationCandidates.length,
+      investigatedSettled.length,
       investigatedSettled.map((result) => result.status),
       discoveredResults,
       discoveryPriorCoverageComplete,
@@ -1246,15 +1312,42 @@ export async function POST(request: Request) {
       productSearchCoverage: { ...finalizedCoverage, complete: finalizedCoverage.complete && !continuityIncomplete },
     };
     const confirmed: DomainCrawl[] = discoveredResults.filter((result): result is NonNullable<typeof result> => Boolean(result?.homepage && result.discovery?.accepted)).sort((left, right) => compareVerifiedCompetitors(left.discovery!, right.discovery!));
-    const rememberedFailures = rememberedReverificationFailures(investigationCandidates, discoveredResults);
-    const forgotten = await forgetRememberedCompetitors(primary.domain, rememberedFailures.map((candidate) => candidate.domain));
-    const remembered = await rememberVerifiedCompetitors(primary.domain, confirmed.map((result) => ({ candidate: result.discovery as MemoryCandidate, verificationScore: result.discovery!.verificationScore })));
-    if ((!forgotten.available && rememberedFailures.length) || (!remembered.available && confirmed.length)) {
-      discovery = { ...discovery, gaps: [...discovery.gaps, "Verified competitor memory could not be updated; this batch remains retryable so verified rivals are not lost."], productSearchCoverage: { ...discovery.productSearchCoverage, batchComplete: false, complete: false } };
+    if (!comparisonTargetMode) {
+      const rememberedFailures = rememberedReverificationFailures(investigationCandidates, discoveredResults);
+      const forgotten = await forgetRememberedCompetitors(primary.domain, rememberedFailures.map((candidate) => candidate.domain));
+      const remembered = await rememberVerifiedCompetitors(primary.domain, confirmed.map((result) => ({ candidate: result.discovery as MemoryCandidate, verificationScore: result.discovery!.verificationScore })));
+      if ((!forgotten.available && rememberedFailures.length) || (!remembered.available && confirmed.length)) {
+        discovery = { ...discovery, gaps: [...discovery.gaps, "Verified competitor memory could not be updated; this batch remains retryable so verified rivals are not lost."], productSearchCoverage: { ...discovery.productSearchCoverage, batchComplete: false, complete: false } };
+      }
     }
-    const results = await enrichMatchedProductPages([...submittedResults, ...confirmed], primaryDomain);
+    const preEnrichmentSelection = comparisonTargetMode
+      ? selectComparisonTarget(primary.products, confirmed, comparisonPairsNeeded, verificationMarket.regionCode, Date.now())
+      : { hints: verifiedExactMatchHints(confirmed), competitors: confirmed };
+    const results = await enrichMatchedProductPages([...submittedResults, ...preEnrichmentSelection.competitors], primaryDomain);
     const enrichedPrimary = results.find((result) => result.domain === primaryDomain) || primary;
-    const enrichedConfirmed = results.filter((result) => result.role === "discovered-competitor");
+    const enrichedCandidates = results.filter((result) => result.role === "discovered-competitor");
+    const finalSelection = comparisonTargetMode
+      ? selectComparisonTarget(enrichedPrimary.products, enrichedCandidates, comparisonPairsNeeded, verificationMarket.regionCode, Date.now())
+      : { hints: verifiedExactMatchHints(enrichedCandidates), competitors: enrichedCandidates };
+    const enrichedConfirmed = finalSelection.competitors;
+    const pairTargetComplete = comparisonTargetMode && finalSelection.hints.length >= comparisonPairsNeeded;
+    if (comparisonTargetMode) discovery = {
+      ...discovery,
+      candidates: enrichedConfirmed.map((result) => result.discovery!).filter(Boolean),
+      productSearchCoverage: {
+        ...discovery.productSearchCoverage,
+        candidateDomainsInvestigated: investigatedSettled.length,
+        candidateTruncated: !pairTargetComplete && investigationCandidates.length > investigatedSettled.length,
+        verificationComplete: pairTargetComplete || investigatedSettled.every((result, index) => result.status === "fulfilled" && competitorInvestigationComplete(discoveredResults[index])),
+        batchComplete: pairTargetComplete || (discovery.productSearchCoverage.searchesComplete && investigationCandidates.length === investigatedSettled.length),
+        complete: pairTargetComplete || discovery.productSearchCoverage.complete,
+        acceptedPairCount: finalSelection.hints.length,
+        pairTarget: comparisonPairsNeeded,
+      },
+    };
+    const publishedResultsForPairs = comparisonTargetMode
+      ? [enrichedPrimary, ...enrichedConfirmed]
+      : results;
     const adTargets = [enrichedPrimary, ...enrichedConfirmed].filter((result, index, all) => all.findIndex((candidate) => candidate.domain === result.domain) === index);
     const adRequest = {
       region: discovery.region || primary.homepage.region,
@@ -1264,10 +1357,10 @@ export async function POST(request: Request) {
         facebookUrl: attributableFacebookUrl(result.pages.flatMap((page) => page.socialLinks)),
       })),
     };
-    const document = compactCatalogSnapshots(buildDocument(results, primaryDomain, discovery, discoveredResults));
-    const matchHints = verifiedExactMatchHints(confirmed);
-    const publishedDiscovery = publicDiscoverySnapshot(discovery, confirmed.map((result) => result.discovery!));
-    const publishedResults = results.map((result) => result.discovery
+    const document = compactCatalogSnapshots(buildDocument(publishedResultsForPairs, primaryDomain, discovery, comparisonTargetMode ? [] : discoveredResults));
+    const matchHints = finalSelection.hints;
+    const publishedDiscovery = publicDiscoverySnapshot(discovery, enrichedConfirmed.map((result) => result.discovery!));
+    const publishedResults = publishedResultsForPairs.map((result) => result.discovery
       ? { ...result, verifiedExactProductPairs: undefined, discovery: publicDiscoveryCandidate(result.discovery) }
       : { ...result, verifiedExactProductPairs: undefined });
     return Response.json({ ok: true, live: true, primaryDomain, results: publishedResults, discovery: publishedDiscovery, adRequest, matchHints, document, crawl: { maxPagesPerDomain: MAX_HTML_PAGES, maxPagesPerDiscoveredCompetitor: MAX_DISCOVERED_HTML_PAGES, maxPrimaryProductPricePages: MAX_PRIMARY_PRODUCT_PRICE_PAGES, maxMatchedProductEnrichmentPages: MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES, competitorCrawlConcurrency: COMPETITOR_CRAWL_CONCURRENCY, htmlExtractionBytes: MAX_HTML_EXTRACTION_BYTES, robotsAware: true, generatedAt: new Date().toISOString() } });
