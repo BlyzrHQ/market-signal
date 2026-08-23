@@ -432,6 +432,26 @@ test("every plan target is measured in valid published pairs rather than rows", 
   }
 });
 
+test("pair checkpoint evidence stays within the target row bound when surplus primaries are available", () => {
+  const rows = Array.from({ length: 5 }, (_, index) => pricedPairRow(
+    `Product ${String(index).padStart(2, "0")}`,
+    `primary-${index}`,
+    [`rival-${index}`],
+  ));
+  const selected = rows.map((item) => item.primary.id);
+  const state = mergePublishedProductComparisonState(
+    comparison({ selected, assessed: selected, rows, accepted: rows.length }),
+    null,
+    2,
+    Date.now(),
+    "pairs",
+  );
+
+  assert.equal(state.comparison.coverage.assignedPairCount, 2);
+  assert.equal(state.evidence.rows.length, 2);
+  assert.deepEqual(state.evidence.rows.map((item) => item.primary.id), ["primary-0", "primary-1"]);
+});
+
 test("priced result backfill exposes exactly the requested number of publishable products", () => {
   const rows = Array.from({ length: 4 }, (_, index) => row(`p${index}`, `r${index}`));
   for (const [index, item] of rows.entries()) {

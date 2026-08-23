@@ -49,12 +49,16 @@ the remaining spend.
 - Fable 5 pre-implementation review required a new contract version, explicit
   row-versus-pair migration state, deterministic codepoint ordering, global
   rival alias collapse, and a 1,000-pair checkpoint proof. The implementation
-  includes each requirement; an exact-head merge-gate review remains required.
-- `npm test`: PASS — typecheck, Node typecheck, production build, and 1,090
+  includes each requirement. Its first exact-head review reproduced a blocker
+  where pair-mode retry evidence could contain more primary rows than the
+  purchased target and fail checkpoint validation. Evidence is now capped to
+  the target while preserving selected rows and bounded backup rivals; exact-head
+  re-review remains required.
+- `npm test`: PASS — typecheck, Node typecheck, production build, and 1,092
   tests.
 - `npm run lint`: PASS with two pre-existing `no-img-element` warnings and no
   errors.
-- Focused persistence/orchestration/publication suite: PASS — 220 tests,
-  including historical entitlement migration and exact plan-sized pair output.
+- Focused lifecycle/orchestration suite: PASS — 171 tests, including the exact
+  surplus-primary checkpoint regression and exact plan-sized pair output.
 - Live paid reports remain intentionally unstarted until review and deployment
   complete.

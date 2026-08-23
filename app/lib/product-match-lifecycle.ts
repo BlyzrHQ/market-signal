@@ -695,7 +695,7 @@ function mergePublishedPairComparisonState(current: ProductComparison, prior: Pr
     } : currentMatching,
   };
   const comparison = limitPublishedProductComparison(publishPricedProductComparison(merged, referenceTimeMs), target, "pairs");
-  const evidenceRows = candidateRows.flatMap((row, rowIndex) => {
+  const evidenceEntries = candidateRows.flatMap((row, rowIndex) => {
     const compactPrimary = compactPricedEvidenceProduct(row.primary);
     const selected = selectedByRow.get(rowIndex) || new Set<ProductMatch>();
     const ordered = [
@@ -703,17 +703,21 @@ function mergePublishedPairComparisonState(current: ProductComparison, prior: Pr
       ...dedupedCandidates[rowIndex].filter((match) => !selected.has(match)).slice(0, MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY),
     ];
     return ordered.length ? [{
-      primary: compactPrimary,
-      matches: ordered.map((match) => compactPricedEvidenceMatch(compactPrimary, match, componentHash(match))),
+      selectedCount: selected.size,
+      row: {
+        primary: compactPrimary,
+        matches: ordered.map((match) => compactPricedEvidenceMatch(compactPrimary, match, componentHash(match))),
+      },
     }] : [];
-  });
+  }).slice(0, target);
+  const evidenceRows = evidenceEntries.map((entry) => entry.row);
   let durableRows = evidenceRows;
   try {
     evidenceRowsWithinByteBudget(durableRows, MAX_DURABLE_EVIDENCE_ROWS_BYTES);
   } catch {
     durableRows = evidenceRows.map((row, rowIndex) => ({
       ...row,
-      matches: row.matches.slice(0, selectedByRow.get(rowIndex)?.size || 0),
+      matches: row.matches.slice(0, evidenceEntries[rowIndex].selectedCount),
     })).filter((row) => row.matches.length > 0);
     evidenceRowsWithinByteBudget(durableRows, MAX_DURABLE_EVIDENCE_ROWS_BYTES);
   }

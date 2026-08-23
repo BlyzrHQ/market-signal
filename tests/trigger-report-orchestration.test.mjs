@@ -36,6 +36,7 @@ import {
   isRetryableHttpStatus,
 } from "../src/trigger/report-orchestration-http.ts";
 import { planFinalProductEnrichmentTargets } from "../app/lib/product-intelligence.ts";
+import { mergePublishedProductComparisonState } from "../app/lib/product-match-lifecycle.ts";
 import { encodedJsonBytes, REPORT_CALLBACK_ENVELOPE_BYTES, REPORT_PRESENTATION_TARGET_BYTES } from "../src/shared/report-document-compaction.ts";
 import { babanujScaleDocument } from "./fixtures/babanuj-report-document.mjs";
 import { createWorkerApiManifest } from "../src/shared/worker-api-contract.ts";
@@ -247,6 +248,33 @@ test("published checkpoint validation rejects any evidence edge lost during reva
     new Set([key]),
     new Map([[key, recoveryIdentityHash]]),
   ), null);
+});
+
+test("pair checkpoint validation accepts a met target drawn from surplus primary rows", () => {
+  const referenceTimeMs = Date.parse("2026-07-20T10:01:00.000Z");
+  const source = comparison({ withPair: true, count: 5 });
+  source.rows.forEach((row, index) => {
+    row.primary.recoveryIdentityHash = String(index + 1).repeat(64);
+  });
+  const state = mergePublishedProductComparisonState(source, null, 2, referenceTimeMs, "pairs");
+  const allowedKeys = new Set(source.rows.map((row) => `${row.primary.id}\nshop.example`));
+  const allowedIdentities = new Map(source.rows.map((row) => [
+    `${row.primary.id}\nshop.example`,
+    row.primary.recoveryIdentityHash,
+  ]));
+
+  const validated = validPublishedResultCheckpoint(
+    { version: 4, comparison: state.comparison, evidence: state.evidence },
+    2,
+    referenceTimeMs,
+    allowedKeys,
+    allowedIdentities,
+    "pairs",
+  );
+
+  assert.ok(validated);
+  assert.equal(validated.comparison.coverage.assignedPairCount, 2);
+  assert.equal(validated.evidence.rows.length, 2);
 });
 
 test("enrichment checkpoint validation rejects an outcome from a different explicit market", () => {
