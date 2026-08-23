@@ -39,7 +39,7 @@ export function reduceCompetitorForPanel(result) {
   };
 }
 
-export function usefulnessBreakdown({ ok, regionCorrect, competitorCount, offeringCount, matchCount, positioningComparisonCount, exactPriceCount, adsOk, verifiedCreativeConcepts, competitorEvidenceComplete, actionableMatchCount }) {
+export function usefulnessBreakdown({ ok, regionCorrect, competitorCount, offeringCount, matchCount, positioningComparisonCount, exactPriceCount, competitorEvidenceComplete, actionableMatchCount }) {
   const comparisonScore = matchCount >= 3 ? 30 : matchCount === 2 ? 25 : matchCount === 1 || positioningComparisonCount >= 3 ? 18 : 0;
   const breakdown = {
     reliableLiveReport: ok ? 10 : 0,
@@ -47,8 +47,7 @@ export function usefulnessBreakdown({ ok, regionCorrect, competitorCount, offeri
     credibleCompetitorSet: competitorCount >= 3 ? 20 : competitorCount === 2 ? 12 : competitorCount === 1 ? 5 : 0,
     specificOfferings: offeringCount >= 5 ? 10 : offeringCount >= 3 ? 6 : offeringCount ? 3 : 0,
     productOrPositioningComparison: comparisonScore,
-    exactComparablePrice: exactPriceCount ? 5 : 0,
-    truthfulAdCoverage: verifiedCreativeConcepts ? 5 : adsOk ? 3 : 0,
+    exactComparablePrice: exactPriceCount ? 10 : 0,
     firstPartyCompetitorEvidence: competitorEvidenceComplete && competitorCount ? 5 : 0,
     actionableComparison: actionableMatchCount ? 5 : 0,
   };

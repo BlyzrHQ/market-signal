@@ -41,7 +41,8 @@ test("VPS image and compose keep the app and report worker private, persistent, 
   assert.doesNotMatch(compose, /app:[\s\S]*?ports:\s*\n\s*-\s*["']?\d+:3000/);
   const caddyfile = read("deploy/vps/Caddyfile");
   assert.match(caddyfile, /response_header_timeout 2460s/);
-  assert.match(caddyfile, /@report_worker path \/api\/crawl \/api\/report \/api\/ads \/api\/match \/api\/enrich-products \/api\/actions/);
+  assert.match(caddyfile, /@report_worker path \/api\/crawl \/api\/report \/api\/match \/api\/enrich-products \/api\/actions/);
+  assert.doesNotMatch(caddyfile, /\/api\/ads/);
   assert.match(caddyfile, /handle @report_worker[\s\S]*reverse_proxy worker:3000/);
   assert.match(caddyfile, /handle[\s\S]*reverse_proxy app:3000/);
   assert.ok(

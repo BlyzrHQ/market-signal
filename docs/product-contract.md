@@ -2,7 +2,7 @@
 
 ## Working promise
 
-Enter a company domain and receive an evidence-backed competitive intelligence report that explains who the company competes with, how the market is positioned, how products and pricing compare, and what competitors are publicly advertising and publishing.
+Enter a company domain and receive an evidence-backed competitive intelligence report that explains who the company competes with, how the market is positioned, and how products and pricing compare.
 
 ## Initial audience
 
@@ -73,9 +73,8 @@ Meta, Google, and TikTok adapters should return normalized evidence records rath
 2. Build domain intake and a credible first report using a small, inspectable evidence set.
 3. Add competitor discovery and transparent market-positioning scorecards.
 4. Add product/pricing comparison with source evidence and confidence labels.
-5. Add public ads and social monitoring with configurable refresh cadence.
-6. Add recommendations, alerts, exports, and free-trial conversion.
-7. Add authentication, workspaces, billing, and team features after demand validation.
+5. Add recommendations, alerts, exports, and free-trial conversion.
+6. Add authentication, workspaces, billing, and team features after demand validation.
 
 ## Open decisions before data implementation
 

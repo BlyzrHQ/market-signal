@@ -2,17 +2,15 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { POST as crawl } from "../app/api/crawl/route.ts";
-import { POST as ads } from "../app/api/ads/route.ts";
 import { POST as enrichProducts } from "../app/api/enrich-products/route.ts";
 
 const TOKEN = "worker-endpoint-auth-test-token-1234567890";
 const routes = [
   ["crawl", crawl],
-  ["ads", ads],
   ["enrich-products", enrichProducts],
 ];
 
-const routeSources = ["crawl", "report", "ads", "enrich-products"];
+const routeSources = ["crawl", "report", "enrich-products"];
 
 async function request(handler, authorization) {
   return handler(new Request("https://signal.example/api/internal-worker", {
@@ -81,7 +79,7 @@ test("analysis endpoints accept a separate configured CLI token", async () => {
   delete process.env.MARKET_SIGNAL_CALLBACK_TOKEN;
   process.env.MARKET_SIGNAL_API_TOKEN = TOKEN;
   try {
-    for (const [name, handler] of [["crawl", crawl], ["ads", ads]]) {
+    for (const [name, handler] of [["crawl", crawl]]) {
       const response = await request(handler, `Bearer ${TOKEN}`);
       assert.equal(response.status, 400, `${name} must reach body validation with a valid CLI token`);
     }

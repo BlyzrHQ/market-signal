@@ -684,7 +684,7 @@ type JsonBlock = { type: string; id: string } & Record<string, unknown>;
 type JsonDocument = { blocks: JsonBlock[] } & Record<string, unknown>;
 type CrawlResult = { domain: string; homepage?: unknown; products: ProductRecord[]; role?: string; fetchedAt?: string; discovery?: { verificationScore?: number; category?: string; region?: string; sourceIds?: string[]; reason?: string; source?: string } };
 type DiscoveryCoverage = { eligibleAnchors?: number; anchorSetHash?: string; anchorSetChanged?: boolean; searchedAnchors?: number; startIndex?: number; endIndex?: number; truncated?: boolean; searchesComplete?: boolean; candidateDomainsFound?: number; candidateDomainsInvestigated?: number; candidateTruncated?: boolean; verificationComplete?: boolean; batchComplete?: boolean; complete?: boolean; acceptedPairCount?: number; pairTarget?: number; searchAttemptsComplete?: boolean; paidSearchesStarted?: number; reusedSearches?: number; providerFailureCategory?: string; providerFailureCount?: number; providerCircuitOpen?: boolean };
-type CrawlSuccess = { ok: true; primaryDomain: string; results: CrawlResult[]; discovery?: { productSearchCoverage?: DiscoveryCoverage }; discoverySearchLedger?: unknown; adRequest: unknown; matchHints?: PinnedProductPair[]; document: JsonDocument };
+type CrawlSuccess = { ok: true; primaryDomain: string; results: CrawlResult[]; discovery?: { productSearchCoverage?: DiscoveryCoverage }; discoverySearchLedger?: unknown; matchHints?: PinnedProductPair[]; document: JsonDocument };
 type ParkedDomainOutcome = { ok: false; code: "parked-domain"; primaryDomain: string; error: string; document: JsonDocument };
 type UnavailableDomainOutcome = { ok: false; code: "unavailable-domain"; primaryDomain: string; error: string; document: JsonDocument };
 type CrawlOutcome = CrawlSuccess | ParkedDomainOutcome | UnavailableDomainOutcome;
@@ -771,7 +771,6 @@ function crawlCheckpointSnapshot(crawl: CrawlSuccess, document: JsonDocument): C
     })),
     ...(crawl.discovery?.productSearchCoverage ? { discovery: { productSearchCoverage: crawl.discovery.productSearchCoverage } } : {}),
     ...(crawl.discoverySearchLedger !== undefined ? { discoverySearchLedger: crawl.discoverySearchLedger } : {}),
-    adRequest: crawl.adRequest,
     ...(crawl.matchHints ? { matchHints: crawl.matchHints } : {}),
     document,
   };
@@ -862,7 +861,6 @@ export interface ReportOrchestrationPort {
   appendEvent(publicId: string, event: ReportEvent & { attemptNumber?: number }): Promise<void>;
   crawl(input: { primary: string; domains: string[]; productLimit: number; comparisonPairsNeeded: number; catalogProductLimit: number; discoverySearchOffset: number; discoveryPriorCoverageComplete: boolean; discoveryExpectedAnchorSetHash: string; discoverySearchLedger?: unknown; directProductSearch?: boolean }): Promise<CrawlOutcome>;
   brief(input: { primary: string; domains: string[] }): Promise<unknown>;
-  ads(input: unknown): Promise<{ ok: true; block: JsonBlock }>;
   match(input: { publicId: string; reportAttempt: number; taskAttemptNumber: number; reportObservedAt: string; primaryDomain: string; marketCountryCode?: string; productLimit: number; catalogs: Array<{ domain: string; products: ProductRecord[] }>; pinnedPairs?: PinnedProductPair[]; matchingMode?: "direct-product-search" }): Promise<{ ok: true; comparison: ProductComparison }>;
   enrich(input: { targets: unknown[] }): Promise<{ ok: true; products: ProductRecord[]; coverage: NonNullable<ProductComparison["enrichment"]> }>;
   loadCheckpoint(publicId: string, input: { attemptNumber: number; batchIndex?: number; batchIndexStart?: number; batchIndexEnd?: number; latestPerBatch?: boolean; limit?: number }): Promise<Array<{ attemptNumber: number; batchIndex: number; inputHash: string; result: unknown }>>;
@@ -974,11 +972,11 @@ function limitedEvent(idempotencyKey: string, phase: string, message: string, me
 }
 
 function phasesFromStored(report: StoredReport) {
-  return [...new Set(report.events.flatMap((item) => item.idempotencyKey === "report-saved" ? ["persistence"] : /-complete$/.test(item.idempotencyKey || "") ? [item.phase] : []).filter(Boolean))];
+  return [...new Set(report.events.flatMap((item) => item.idempotencyKey === "report-saved" ? ["persistence"] : /-complete$/.test(item.idempotencyKey || "") ? [item.phase] : []).filter((phase) => Boolean(phase) && phase !== "ads"))];
 }
 
 function limitedPhasesFromStored(report: StoredReport) {
-  return [...new Set(report.events.filter((item) => /-limited$/.test(item.idempotencyKey || "")).map((item) => item.phase).filter(Boolean))];
+  return [...new Set(report.events.filter((item) => /-limited$/.test(item.idempotencyKey || "")).map((item) => item.phase).filter((phase) => Boolean(phase) && phase !== "ads"))];
 }
 
 function replaySummary(report: StoredReport, now: () => Date): ReportOrchestrationSummary {
@@ -1000,10 +998,6 @@ function ensureDocument(value: unknown): JsonDocument {
     throw new Error("The crawl did not return a report document.");
   }
   return value as JsonDocument;
-}
-
-function replaceBlock(document: JsonDocument, block: JsonBlock) {
-  return { ...document, blocks: [...document.blocks.filter((item) => item.type !== block.type), block] };
 }
 
 function message(error: unknown, fallback: string) {
@@ -1173,7 +1167,6 @@ export async function orchestrateReport(
     const targetUrl = typeof domainStatus?.attemptedUrl === "string" ? domainStatus.attemptedUrl : typeof domainStatus?.evidenceUrl === "string" ? domainStatus.evidenceUrl : "";
     const reason = crawl.error || (unavailable ? `${payload.primaryDomain} did not return a public network response.` : `${payload.primaryDomain} is parked, so market analysis could not run.`);
     await port.appendEvent(payload.publicId, limitedEvent("crawl-limited", "crawl", unavailable ? "The submitted domain did not return a public network response after bounded attempts, so the company crawl ended with a visible limitation." : "The submitted domain is parked, so the company crawl ended with a source-linked limitation.", unavailable ? { reason, targetUrl, attemptedUrl: targetUrl } : { reason, targetUrl, evidenceUrl: targetUrl }));
-    await port.appendEvent(payload.publicId, limitedEvent("ads-limited", "ads", "Ad-library checks did not run because the primary crawl was terminally limited.", { upstream: "crawl", reason }));
     await port.appendEvent(payload.publicId, limitedEvent("matching-limited", "matching", "Product matching did not run because the primary crawl was terminally limited.", { upstream: "crawl", reason }));
     const finishedAt = now().toISOString();
     await port.saveDocument(payload.publicId, {
@@ -1188,7 +1181,7 @@ export async function orchestrateReport(
       publicId: payload.publicId,
       reportStatus: "limited",
       completedPhases: ["persistence"],
-      limitedPhases: ["crawl", "ads", "matching"],
+      limitedPhases: ["crawl", "matching"],
       startedAt,
       finishedAt,
     };
@@ -1220,23 +1213,6 @@ export async function orchestrateReport(
   let document = ensureDocument(crawl.document);
   let comparison: ProductComparison | null = null;
   let screenedComparison: ProductComparison | null = null;
-  let adBlock: JsonBlock | null = null;
-
-  const adsWork = (async () => {
-    await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "ads-started"), "ads", "Checking attributable public advertiser records for the verified companies."));
-    try {
-      const result = await port.ads(crawl.adRequest);
-      if (!result?.ok || !result.block) throw new Error("The public ad-library scan was unavailable.");
-      adBlock = result.block;
-      document = replaceBlock(document, result.block);
-      completedPhases.push("ads");
-      await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "ads-complete"), "ads", "The public ad-library phase finished with explicit advertiser coverage states."));
-    } catch (error) {
-      limitedPhases.push("ads");
-      await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "ads-limited"), "ads", "Advertiser coverage is limited and no ad activity was invented.", { reason: message(error, "Ad scan unavailable.") }));
-    }
-  })();
-
   const matchWork = (async () => {
     await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "matching-started"), "matching", "Comparing the strongest product families across the synchronized catalogs."));
     if (!primary.products.length) {
@@ -1789,7 +1765,7 @@ export async function orchestrateReport(
     await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "matching-complete"), "matching", limited ? "Product matching finished with a visible coverage limitation." : "Product matching finished and accepted comparisons were source-linked.", { limited, attempts: requestCount }));
   })();
 
-  await Promise.all([adsWork, matchWork]);
+  await matchWork;
   const finishedAt = now().toISOString();
   const reportStatus = limitedPhases.length ? "limited" : "complete";
   let persistedCounts: Record<"companies" | "products" | "matches" | "ads", number> | null = null;
@@ -1807,7 +1783,7 @@ export async function orchestrateReport(
       }
     }
     const factReferenceTime = new Date(productEvidenceReferenceTimeMs(crawl.results.map((result) => ({ products: result.products })), stored.run.createdAt, Date.now())).toISOString();
-    const facts = await buildReportFactBundle({ publicId: payload.publicId, crawlResults: crawl.results, comparison: screenedComparison || comparison, adBlock, observedAt: factReferenceTime, attemptNumber: attempt.attemptNumber });
+    const facts = await buildReportFactBundle({ publicId: payload.publicId, crawlResults: crawl.results, comparison: screenedComparison || comparison, adBlock: null, observedAt: factReferenceTime, attemptNumber: attempt.attemptNumber });
     terminalDocument = compactTerminalReportDocument({ primaryDomain: crawl.primaryDomain, document, marketBrief: null }, 430_000, { factsAuthoritative: true, factCounts: facts.manifest.counts });
     const presentationCheckpoint = { version: 2, taskAttemptNumber: attempt.taskAttemptNumber || 1, manifestHash: facts.manifest.manifestHash, status: reportStatus, observedAt: finishedAt, document: terminalDocument };
     const presentationInputHash = createHash("sha256").update(JSON.stringify(presentationCheckpoint)).digest("hex");
@@ -1834,7 +1810,7 @@ export async function orchestrateReport(
       ? "Relational fact persistence remained incomplete after the final task attempt."
       : "Relational fact persistence remained incomplete before the final task attempt.");
   }
-  if (persistedCounts) try { await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "facts-complete"), "persistence", "The complete company, product, match, and attributable ad facts were saved for evaluation.", persistedCounts)); } catch { /* the manifest is authoritative and the terminal document still saves */ }
+  if (persistedCounts) try { await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "facts-complete"), "persistence", "The complete company, product, and match facts were saved for evaluation.", persistedCounts)); } catch { /* the manifest is authoritative and the terminal document still saves */ }
   await port.saveDocument(payload.publicId, {
     status: reportStatus,
     observedAt: finishedAt,

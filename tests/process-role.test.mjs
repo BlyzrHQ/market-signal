@@ -10,7 +10,7 @@ test("customer app rejects report-processing routes while worker and local tests
   assert.equal(workerOnlyResponse("worker"), null);
   assert.equal(workerOnlyResponse(""), null);
 
-  for (const route of ["crawl", "report", "ads", "match", "enrich-products", "actions"]) {
+  for (const route of ["crawl", "report", "match", "enrich-products", "actions"]) {
     const source = fs.readFileSync(new URL(`../app/api/${route}/route.ts`, import.meta.url), "utf8");
     assert.match(source, /workerOnlyResponse\(\)/, `${route} must enforce the process role`);
   }

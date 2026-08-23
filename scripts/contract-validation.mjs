@@ -7,7 +7,6 @@ addFormats(ajv);
 
 const schemas = Object.fromEntries(await Promise.all([
   ["report", "report.v1.schema.json"],
-  ["ads", "ads.v1.schema.json"],
 ].map(async ([kind, filename]) => {
   const data = await readFile(new URL(`../contracts/${filename}`, import.meta.url), "utf8");
   return [kind, JSON.parse(data)];

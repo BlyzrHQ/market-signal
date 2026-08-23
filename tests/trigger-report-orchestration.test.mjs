@@ -392,12 +392,10 @@ function mockPort(overrides = {}) {
         primaryDomain: payload.primaryDomain,
         results: [{ domain: payload.primaryDomain, homepage: { sourceUrl: "https://shop.example" }, products: primaryProducts }],
         discovery: { productSearchCoverage: { eligibleAnchors: 1, searchedAnchors: 1, startIndex: 0, endIndex: 1, truncated: false, searchesComplete: true, candidateDomainsFound: 1, candidateDomainsInvestigated: 1, candidateTruncated: false, verificationComplete: true, batchComplete: true, complete: true } },
-        adRequest: { companies: [{ domain: payload.primaryDomain }], region: "GB" },
         document: { version: "1", blocks: [] },
       };
     },
     async brief() { return { ok: true, summary: "Observed market" }; },
-    async ads() { return { ok: true, block: { type: "ad-intelligence", id: "ad-intelligence" } }; },
     async match() { return { ok: true, comparison: comparison({ withPair: true }) }; },
     async enrich({ targets }) { return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: targets.length, gaps: targets.map((target) => ({ url: target.sourceUrl, productId: target.productId, role: target.role, reason: "Test fixture did not fetch this page.", code: "fetch_failed", failureKind: "content" })) } }; },
     async loadCheckpoint(_publicId, input) {
@@ -472,7 +470,7 @@ test("successful orchestration persists ordered heartbeats and a complete docume
   assert.equal(port.saves.length, 1);
   assert.equal(port.saves[0].status, "complete");
   assert.ok(port.events.some((item) => item.idempotencyKey.endsWith("-crawl-started")));
-  assert.ok(port.events.some((item) => item.idempotencyKey.endsWith("-ads-complete")));
+  assert.equal(port.events.some((item) => item.phase === "ads" || item.idempotencyKey.includes("ads")), false);
   assert.ok(port.events.some((item) => item.idempotencyKey.endsWith("-matching-complete")));
   assert.ok(port.events.some((item) => item.idempotencyKey.endsWith("-facts-complete")));
   assert.equal(port.factChunks.length, 4);
@@ -1161,13 +1159,14 @@ test("non-terminal orchestration preflights before its first mutation", async ()
   assert.equal(order[1], "event:report-1-task-1-crawl-started");
 });
 
-test("independent phase failures remain visible and produce a limited report", async () => {
-  const port = mockPort({ async ads() { throw new Error("provider unavailable"); } });
+test("removed ad hooks are never invoked by report orchestration", async () => {
+  let calls = 0;
+  const port = mockPort({ async ads() { calls += 1; throw new Error("removed hook must not run"); } });
   const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
-  assert.equal(result.reportStatus, "limited");
-  assert.deepEqual(result.limitedPhases, ["ads"]);
-  assert.equal(port.saves[0].status, "limited");
-  assert.match(port.events.find((item) => item.idempotencyKey.endsWith("-ads-limited")).metadata.reason, /provider unavailable/);
+  assert.equal(result.reportStatus, "complete");
+  assert.deepEqual(result.limitedPhases, []);
+  assert.equal(calls, 0);
+  assert.equal(port.events.some((item) => item.phase === "ads"), false);
 });
 
 test("Trigger task retries keep the same database report-attempt ownership", async () => {
@@ -1386,7 +1385,7 @@ test("crawl failure becomes terminal only on the final task attempt", async () =
 });
 
 test("a source-linked parked domain persists one terminal limited report without downstream work", async () => {
-  const calls = { brief: 0, ads: 0, match: 0, enrich: 0 };
+  const calls = { brief: 0, match: 0, enrich: 0 };
   const port = mockPort({
     async crawl() {
       return {
@@ -1404,15 +1403,14 @@ test("a source-linked parked domain persists one terminal limited report without
       };
     },
     async brief() { calls.brief += 1; throw new Error("must not run"); },
-    async ads() { calls.ads += 1; throw new Error("must not run"); },
     async match() { calls.match += 1; throw new Error("must not run"); },
     async enrich() { calls.enrich += 1; throw new Error("must not run"); },
   });
   const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
   assert.equal(result.reportStatus, "limited");
   assert.deepEqual(result.completedPhases, ["persistence"]);
-  assert.deepEqual(result.limitedPhases, ["crawl", "ads", "matching"]);
-  assert.deepEqual(calls, { brief: 0, ads: 0, match: 0, enrich: 0 });
+  assert.deepEqual(result.limitedPhases, ["crawl", "matching"]);
+  assert.deepEqual(calls, { brief: 0, match: 0, enrich: 0 });
   assert.equal(port.saves.length, 1);
   assert.equal(port.saves[0].status, "limited");
   for (const phase of result.limitedPhases) {
@@ -1423,7 +1421,7 @@ test("a source-linked parked domain persists one terminal limited report without
 });
 
 test("a bounded unavailable domain persists one terminal limited report without downstream work", async () => {
-  const calls = { brief: 0, ads: 0, match: 0, enrich: 0 };
+  const calls = { brief: 0, match: 0, enrich: 0 };
   const observedAt = "2026-07-20T10:00:00.000Z";
   const port = mockPort({
     async crawl() {
@@ -1439,15 +1437,14 @@ test("a bounded unavailable domain persists one terminal limited report without 
       };
     },
     async brief() { calls.brief += 1; throw new Error("must not run"); },
-    async ads() { calls.ads += 1; throw new Error("must not run"); },
     async match() { calls.match += 1; throw new Error("must not run"); },
     async enrich() { calls.enrich += 1; throw new Error("must not run"); },
   });
   const result = await orchestrateReport(payload, { attemptNumber: 1, isFinalAttempt: false }, port);
   assert.equal(result.reportStatus, "limited");
   assert.deepEqual(result.completedPhases, ["persistence"]);
-  assert.deepEqual(result.limitedPhases, ["crawl", "ads", "matching"]);
-  assert.deepEqual(calls, { brief: 0, ads: 0, match: 0, enrich: 0 });
+  assert.deepEqual(result.limitedPhases, ["crawl", "matching"]);
+  assert.deepEqual(calls, { brief: 0, match: 0, enrich: 0 });
   assert.equal(port.saves.length, 1);
   assert.equal(port.saves[0].status, "limited");
   assert.match(port.events.find((item) => item.idempotencyKey === "crawl-limited").message, /did not return a public network response/i);
@@ -1494,7 +1491,7 @@ test("a parked-domain retry replays partial event writes without an idempotency 
   assert.equal(result.reportStatus, "limited");
   assert.equal(saveAttempts, 2);
   assert.equal(storedEvents.get("crawl-limited").metadata.attempt, undefined);
-  assert.equal([...storedEvents.keys()].filter((key) => key.endsWith("-limited")).length, 3);
+  assert.equal([...storedEvents.keys()].filter((key) => key.endsWith("-limited")).length, 2);
 });
 
 test("the HTTP crawl adapter accepts only a bounded source-linked parked-domain 409", async () => {
@@ -1622,7 +1619,7 @@ test("a replayed parked report preserves the live canonical phase summary", asyn
   });
   const result = await orchestrateReport(recoveryPayload, { attemptNumber: 2, isFinalAttempt: true }, port);
   assert.deepEqual(result.completedPhases, ["persistence"]);
-  assert.deepEqual(result.limitedPhases, ["crawl", "brief", "ads", "matching"]);
+  assert.deepEqual(result.limitedPhases, ["crawl", "brief", "matching"]);
   assert.equal(port.events.length, 0);
   assert.equal(port.saves.length, 0);
 });
@@ -1641,7 +1638,7 @@ test("terminal success replay derives its summary and issues no mutations", asyn
   const result = await orchestrateReport(recoveryPayload, { attemptNumber: 2, isFinalAttempt: true }, port);
   assert.equal(result.reportStatus, "limited");
   assert.deepEqual(result.completedPhases, ["competitors"]);
-  assert.deepEqual(result.limitedPhases, ["ads"]);
+  assert.deepEqual(result.limitedPhases, []);
   assert.equal(port.events.length, 0);
   assert.equal(port.saves.length, 0);
   assert.equal(preflights, 0);
@@ -2195,7 +2192,6 @@ test("task retries accumulate distinct priced results from earlier discovery wav
         primaryDomain: payload.primaryDomain,
         results: [{ domain: payload.primaryDomain, homepage: { sourceUrl: "https://shop.example", regionCountryCode: "GB" }, products: primaryProducts }],
         discovery: { productSearchCoverage: { eligibleAnchors: 1_000, searchedAnchors: 200, startIndex: 0, endIndex: 200, anchorSetHash: "stable-primary-catalog", truncated: true, searchesComplete: true, candidateDomainsFound: 1, candidateDomainsInvestigated: 1, candidateTruncated: false, verificationComplete: true, batchComplete: true, complete: false } },
-        adRequest: { companies: [{ domain: payload.primaryDomain }], region: "GB" },
         document: { version: "1", blocks: [] },
       };
     },
@@ -2283,7 +2279,6 @@ test("report recovery restores priced results accumulated by a later task attemp
         primaryDomain: payload.primaryDomain,
         results: [{ domain: payload.primaryDomain, homepage: { sourceUrl: "https://shop.example", regionCountryCode: "GB" }, products: primaryProducts }],
         discovery: { productSearchCoverage: { eligibleAnchors: 1_000, searchedAnchors: 200, startIndex: 0, endIndex: 200, anchorSetHash: "stable-recovery-catalog", truncated: true, searchesComplete: true, candidateDomainsFound: 1, candidateDomainsInvestigated: 1, candidateTruncated: false, verificationComplete: true, batchComplete: true, complete: false } },
-        adRequest: { companies: [{ domain: payload.primaryDomain }], region: "GB" },
         document: { version: "1", blocks: [] },
       };
     },
@@ -2375,7 +2370,7 @@ test("an ambiguous publication save cannot adopt an older report attempt checkpo
   const port = mockPort({
     async crawl() {
       const products = Array.from({ length: 20 }, (_, index) => ({ ...product("shop.example", `owned-p${index + 1}`), name: `Honey ${index + 1} 500g`, normalizedName: `honey ${index + 1} 500g`, sourceUrl: `https://shop.example/products/owned-${index + 1}?country=GB` }));
-      return { ok: true, primaryDomain: payload.primaryDomain, results: [{ domain: payload.primaryDomain, homepage: { sourceUrl: "https://shop.example", regionCountryCode: "GB" }, products }], discovery: { productSearchCoverage: { eligibleAnchors: 1_000, searchedAnchors: 200, startIndex: 0, endIndex: 200, anchorSetHash: "owned-catalog", truncated: true, searchesComplete: true, candidateDomainsFound: 1, candidateDomainsInvestigated: 1, candidateTruncated: false, verificationComplete: true, batchComplete: true, complete: false } }, adRequest: { companies: [{ domain: payload.primaryDomain }], region: "GB" }, document: { version: "1", blocks: [] } };
+      return { ok: true, primaryDomain: payload.primaryDomain, results: [{ domain: payload.primaryDomain, homepage: { sourceUrl: "https://shop.example", regionCountryCode: "GB" }, products }], discovery: { productSearchCoverage: { eligibleAnchors: 1_000, searchedAnchors: 200, startIndex: 0, endIndex: 200, anchorSetHash: "owned-catalog", truncated: true, searchesComplete: true, candidateDomainsFound: 1, candidateDomainsInvestigated: 1, candidateTruncated: false, verificationComplete: true, batchComplete: true, complete: false } }, document: { version: "1", blocks: [] } };
     },
     async match() { const value = wave(matchCall * 10); matchCall += 1; return { ok: true, comparison: value }; },
   });
@@ -2427,7 +2422,6 @@ test("catalog drift prevents stale priced-result accumulation", async () => {
         primaryDomain: payload.primaryDomain,
         results: [{ domain: payload.primaryDomain, homepage: { sourceUrl: "https://shop.example", regionCountryCode: "GB" }, products: primaryProducts }],
         discovery: { productSearchCoverage: { eligibleAnchors: count, searchedAnchors: count, startIndex: 0, endIndex: count, anchorSetHash: crawlCall === 1 ? "catalog-v1" : "catalog-v2", truncated: crawlCall === 1, searchesComplete: true, candidateDomainsFound: 1, candidateDomainsInvestigated: 1, candidateTruncated: false, verificationComplete: true, batchComplete: true, complete: crawlCall > 1 } },
-        adRequest: { companies: [{ domain: payload.primaryDomain }], region: "GB" },
         document: { version: "1", blocks: [] },
       };
     },

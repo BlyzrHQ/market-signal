@@ -50,7 +50,6 @@ func NewRoot(version string) *cobra.Command {
 
 	root.AddCommand(newReportCommand(opts, false))
 	root.AddCommand(newReportCommand(opts, true))
-	root.AddCommand(newAdsCommand(opts))
 	root.AddCommand(&cobra.Command{
 		Use:   "version",
 		Short: "Print the CLI version",

@@ -14,7 +14,6 @@ test("public collection call sites import the shared crawler identity", async ()
   const files = [
     "../app/api/analyze/route.ts",
     "../app/api/crawl/route.ts",
-    "../app/lib/ad-intelligence.ts",
     "../app/lib/robots-policy.ts",
     "../app/lib/salla-mcp-catalog-recovery.ts",
     "../app/lib/storefront-product-enrichment.ts",

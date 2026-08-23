@@ -55,7 +55,7 @@ test("deterministic ecommerce formulas reach 100 only from complete relational e
   assert.deepEqual(result.deterministic.hardCaps, []);
   assert.equal(result.deterministic.components.evidenceIntegrity.unavailablePhaseExplanation.score, 5);
   assert.equal(result.deterministic.components.presentation.renderedGapCoverage.score, 15);
-  assert.ok(result.signals.some((signal) => signal.issueKey === "ad-coverage-unknown"));
+  assert.equal(result.signals.some((signal) => signal.issueKey === "ad-coverage-unknown"), false);
 });
 
 test("excluded semantic matches never earn accepted-pair or observed-price evaluation credit", () => {
@@ -123,7 +123,7 @@ test("a completed manifest that disagrees with relational facts cannot be scored
   assert.equal(result.signals[0].severity, "critical");
 });
 
-test("gap coverage is matched to unavailable phases instead of counting unrelated reasons", () => {
+test("legacy ad events and gaps do not affect current report scoring", () => {
   const input = ecommerceInput();
   input.events = [
     { phase: "crawl", status: "limited", message: "Website crawl was limited." },
@@ -136,9 +136,9 @@ test("gap coverage is matched to unavailable phases instead of counting unrelate
   const result = profileDeterministicEvaluation(input);
   const evidenceGap = result.deterministic.components.evidenceIntegrity.unavailablePhaseExplanation;
   const presentationGap = result.deterministic.components.presentation.renderedGapCoverage;
-  assert.equal(evidenceGap.numerator, 1);
-  assert.equal(evidenceGap.denominator, 2);
-  assert.equal(evidenceGap.score, 2.5);
-  assert.equal(presentationGap.score, 7.5);
-  assert.deepEqual(result.deterministic.raw.explainedUnavailablePhases, ["ads"]);
+  assert.equal(evidenceGap.numerator, 0);
+  assert.equal(evidenceGap.denominator, 1);
+  assert.equal(evidenceGap.score, 0);
+  assert.equal(presentationGap.score, 0);
+  assert.deepEqual(result.deterministic.raw.explainedUnavailablePhases, []);
 });

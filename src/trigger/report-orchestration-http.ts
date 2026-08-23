@@ -58,7 +58,6 @@ const PATHS = {
   report: (publicId: string) => `/api/internal/reports/${publicId}`,
   crawl: "/api/crawl",
   brief: "/api/report",
-  ads: "/api/ads",
   match: "/api/match",
   enrich: "/api/enrich-products",
   actions: "/api/actions",
@@ -70,7 +69,6 @@ export const OPERATION_BUDGETS_MS = {
   factCallback: 2_000,
   crawl: 2_400_000,
   brief: 90_000,
-  ads: 90_000,
   match: 750_000,
   enrich: 120_000,
   actions: 35_000,
@@ -333,11 +331,6 @@ export function createReportOrchestrationHttpPort(configuration: { appOrigin: st
     },
     async brief(input) {
       return await call(PATHS.brief, "Market brief", OPERATION_BUDGETS_MS.brief, input);
-    },
-    async ads(input) {
-      const payload = requiredObject<Awaited<ReturnType<ReportOrchestrationPort["ads"]>>>(await call(PATHS.ads, "Ad intelligence", OPERATION_BUDGETS_MS.ads, input), "Ad intelligence");
-      if (payload.ok !== true) throw new OrchestrationHttpError("Ad intelligence", 422, false);
-      return payload;
     },
     async match(input) {
       const payload = requiredObject<Awaited<ReturnType<ReportOrchestrationPort["match"]>>>(await call(PATHS.match, "Product matching", OPERATION_BUDGETS_MS.match, input), "Product matching");

@@ -144,14 +144,13 @@ function gapReasons(blocks: unknown[]) {
       if (text(block.gap)) reasons.push(text(block.gap));
       for (const gap of array(block.gaps)) if (text(gap)) reasons.push(text(gap));
     }
-    if (block.type === "ad-intelligence" && block.available === false && text(block.limitation)) reasons.push(text(block.limitation));
   }
   return [...new Set(reasons)];
 }
 
 function unavailablePhases(events: JsonRecord[]) {
   const failure = /unavailable|failed|could not|not configured|skipped|limited|incomplete|timed out/i;
-  return [...new Set(events.filter((event) => ["limited", "failed", "interrupted"].includes(text(event.status).toLowerCase()) || failure.test(text(event.message))).map((event) => text(event.phase)).filter(Boolean))];
+  return [...new Set(events.filter((event) => ["limited", "failed", "interrupted"].includes(text(event.status).toLowerCase()) || failure.test(text(event.message))).map((event) => text(event.phase)).filter((phase) => Boolean(phase) && phase !== "ads"))];
 }
 
 function explainedPhases(phases: string[], reasons: string[]) {
@@ -163,7 +162,6 @@ function explainedPhases(phases: string[], reasons: string[]) {
     matching: /match|comparison|pair|substitute|same product/i,
     enrichment: /enrichment|price|image|product page|variant/i,
     actions: /action|recommendation|next move|advice/i,
-    ads: /\bad\b|advert|campaign|meta|facebook|google|tiktok/i,
     persistence: /persist|storage|database|fact|save/i,
   };
   return phases.filter((phase) => {
@@ -286,7 +284,6 @@ export function profileDeterministicEvaluation(input: DeterministicEvaluationInp
 
   const ecommerce = primaryProducts.length > 0 || rivalProducts.length > 0;
   const unknowns = [
-    ...(input.manifest.adCount === 0 ? [{ field: "adActivity", handling: "No attributable ad record was observed; this is not scored as zero market activity." }] : []),
     ...(rivalProducts.length === 0 ? [{ field: "rivalProductCoverage", handling: "No rival products were persisted; ratio components use their explicit zero-denominator rule." }] : []),
     ...(matches.length === 0 ? [{ field: "acceptedPairs", handling: "No accepted pair was persisted; pair-dependent ratios earn zero." }] : []),
   ];
@@ -344,7 +341,6 @@ export function profileDeterministicEvaluation(input: DeterministicEvaluationInp
   if (competitors.length > 0 && sourceLinkedMatches.length === 0) caps.push({ issueKey: "no-defensible-product-pair", maximumOverallScore: 55, competitorCount: competitors.length, acceptedSourceLinkedPairs: 0 });
   if (primaryProducts.length === 0 && gaps.length === 0 && unavailable.length === 0) caps.push({ issueKey: "no-primary-products-without-access-explanation", maximumOverallScore: 35, primaryProductCount: 0 });
   const signals: DeterministicEvaluationResult["signals"] = caps.map((cap) => ({ stage: "evaluation", issueKey: text(cap.issueKey), severity: cap.issueKey === "unsupported-material-claims" ? "critical" : "warning", evidence: cap }));
-  if (input.manifest.adCount === 0) signals.push({ stage: "ads", issueKey: "ad-coverage-unknown", severity: "info", evidence: { attributableAdCount: 0, interpretation: "no attributable record observed; activity unknown" } });
   const findings = caps.map((cap) => ({ issueKey: cap.issueKey, message: `Future hybrid overall score is capped at ${cap.maximumOverallScore}.`, evidence: cap }));
 
   return {

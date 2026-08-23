@@ -76,7 +76,7 @@ const ARABIC_FALLBACKS = new Map<string, string>([
   ["Verify included limits, then justify the premium with a named capability or test the aligned plan price.", "تحقق من الحدود المشمولة ثم برر السعر الأعلى بميزة محددة أو اختبر سعراً متوافقاً للخطة."],
   ["Either justify your premium with a concrete product advantage or test a matched-price offer.", "برر السعر الأعلى بميزة ملموسة في المنتج أو اختبر عرضاً بسعر مماثل."],
   ["Show the lower aligned plan price beside the specific limits and capabilities it includes.", "اعرض سعر الخطة الأقل بجانب الحدود والقدرات المحددة التي تشملها."],
-  ["Put your lower price beside an equivalent pack-size claim and make it prominent in ads and collection pages.", "ضع سعرك الأقل بجانب توضيح حجم العبوة المكافئ وأبرزه في الإعلانات وصفحات التصنيف."],
+  ["Put your lower price beside an equivalent pack-size claim and make it prominent on product and collection pages.", "ضع سعرك الأقل بجانب توضيح حجم العبوة المكافئ وأبرزه في صفحات المنتج والتصنيف."],
   ["Normalize pack size and variant before using price in a campaign or merchandising decision.", "وحّد حجم العبوة والنوع قبل استخدام السعر في حملة أو قرار عرض."],
   ["Expose the comparable price earlier on the product or collection page.", "اعرض السعر القابل للمقارنة مبكراً في صفحة المنتج أو التصنيف."],
   ["Keep price clarity and strengthen the product-specific reason to choose you.", "حافظ على وضوح السعر وقوّ السبب الخاص بالمنتج لاختيارك."],
@@ -156,7 +156,7 @@ function fallbackLever(decision: NonNullable<ProductMatch["decision"]>): Product
   if (/expose|clarity|collection page/.test(move)) return "price_transparency";
   if (/pack|variant|billing|commitment|included/.test(move)) return "packaging";
   if (/price|premium|matched-price/.test(move)) return "price_response";
-  if (/availability|delivery|ads|prominent/.test(move)) return "merchandising";
+  if (/availability|delivery|prominent/.test(move)) return "merchandising";
   if (/compare|verify|normalize/.test(move)) return "evidence_gap";
   return "positioning";
 }

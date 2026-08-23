@@ -2,7 +2,7 @@
 
 This package runs the public web application and a CPU- and memory-bounded report worker as
 separate containers on one VPS. Caddy sends only the exact protected crawl,
-matching, enrichment, brief, ads, and action paths to the worker. Trigger.dev
+matching, enrichment, brief, and action paths to the worker. Trigger.dev
 remains the durable job coordinator and calls the protected VPS API. The VPS
 owns the shared SQLite/WAL database and backup files.
 The app process also rejects those processing routes by role, so a Caddy route

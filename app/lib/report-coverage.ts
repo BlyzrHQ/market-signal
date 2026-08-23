@@ -32,8 +32,8 @@ export function reportCoverage(status: string, events: ReportCoverageEvent[], ar
   let detail: string;
   if (crawl || skippedAfterCrawl) {
     detail = ar
-      ? "لم يكن موقع الشركة العام متاحاً لتحليل السوق، لذلك لم تبدأ فحوص المنافسين والمنتجات والإعلانات. هذه ليست نتيجة صفرية."
-      : "The public company website was not available for market analysis, so competitor, product, and ad checks did not run. This is not a zero-result report.";
+      ? "لم يكن موقع الشركة العام متاحاً لتحليل السوق، لذلك لم تبدأ فحوص المنافسين والمنتجات. هذه ليست نتيجة صفرية."
+      : "The public company website was not available for market analysis, so competitor and product checks did not run. This is not a zero-result report.";
   } else if (persistence) {
     detail = ar
       ? "تم حفظ التقرير المرئي، لكن تعذر حفظ مجموعة الحقائق المهيكلة الكاملة للتقييم والمتابعة المستقبلية."
@@ -54,10 +54,6 @@ export function reportCoverage(status: string, events: ReportCoverageEvent[], ar
     detail = ar
       ? "اكتمل التقرير بالنتائج الموثقة، لكن اكتشاف المنافسين أو ملخص السوق لم يغطِّ كل المصادر المخطط لها."
       : "The report contains verified findings, but competitor discovery or the market brief did not cover every planned source.";
-  } else if (has("ads")) {
-    detail = ar
-      ? "اكتملت أجزاء التقرير الأخرى، لكن فحص سجلات الإعلانات العامة لم يغطِّ كل الشركات أو المنصات المخطط لها."
-      : "The other report sections completed, but public ad-record checks did not cover every planned company or platform.";
   } else {
     detail = ar
       ? "اكتملت أجزاء رئيسية من التقرير، لكن السجل القديم لا يحدد الفحص الذي كانت تغطيته جزئية. النتائج الظاهرة فقط هي التي يمكن الاعتماد عليها."

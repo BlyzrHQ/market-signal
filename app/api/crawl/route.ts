@@ -2,7 +2,6 @@ import { canonicalDomain, normalizeDomain } from "../../lib/domain.ts";
 import { applyPreMatchCatalogEnrichment, buildProductComparison, extractFirstPartyOfferings, extractProductsFromHtml, extractProductsFromSitemapWithCoverage, hasComparablePublicPricePair, hasValidObservedRivalPrice, planPreliminaryCatalogReconciliation, selectPreferredProducts, selectProductEnrichmentTargets, validateProductPageIdentity, type ProductComparison, type ProductRecord } from "../../lib/product-intelligence.ts";
 import { sharedRobotsPolicyResolver } from "../../lib/robots-policy.ts";
 import { boundedPrimaryCatalogProducts, discoverCompetitors, publicDiscoveryCandidate, publicDiscoverySnapshot, type DiscoveryCandidate, type DiscoveryResult } from "../../lib/competitor-discovery.ts";
-import { attributableFacebookUrl, type AdIntelligenceResult } from "../../lib/ad-intelligence.ts";
 import { compareVerifiedCompetitors, resolveVerificationMarket, verifyCompetitorEntity, type CompetitorVerification, type FirstPartyRegionSource, type VerificationMarket } from "../../lib/competitor-verification.ts";
 import { inferBusinessProfile } from "../../lib/business-profile.ts";
 import { seededCrawlPaths } from "../../lib/crawl-planning.ts";
@@ -1118,7 +1117,7 @@ export function investigationGapSourceUrl(candidate: DomainCrawl) {
   return candidate.homepage?.sourceUrl || (candidate.discovery?.observedAdmission ? candidate.discovery.sourceUrl : "");
 }
 
-function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?: DiscoveryResult, investigated: Array<DomainCrawl | null> = [], ads?: AdIntelligenceResult, productComparison?: ProductComparison): { version: "1"; generatedAt: string; blocks: ReportBlock[] } {
+function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?: DiscoveryResult, investigated: Array<DomainCrawl | null> = [], productComparison?: ProductComparison): { version: "1"; generatedAt: string; blocks: ReportBlock[] } {
   const discovered = results.filter((result) => result.role === "discovered-competitor" && result.homepage && result.discovery);
   const productMatched = discovered.filter((result) => result.discovery?.hasProductOverlap).length;
   const productLed = discovery?.businessType === "ecommerce";
@@ -1169,7 +1168,6 @@ function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?
     blocks.push({ type: "gap", id: "product-coverage-gap", domain: primary.domain, url: primary.homepage.sourceUrl, reason: `No attributable public product or service record was observed across ${primary.productCoverage.scannedPages} scanned page${primary.productCoverage.scannedPages === 1 ? "" : "s"}. No product comparison was generated.`, observedAt: new Date().toISOString() });
   }
   if (discovered.length === 0) blocks.push({ type: "gap", id: "candidate-gap", domain: primary?.domain || primaryDomain, url: primary?.homepage?.sourceUrl || "", reason: discovery?.gap || "No searched candidate passed independent public-site verification.", observedAt: new Date().toISOString() });
-  if (ads) blocks.push({ type: "ad-intelligence", id: "ad-intelligence", primaryDomain, ...ads });
   for (const candidate of investigated) {
     if (!candidate || results.some((result) => result.domain === candidate.domain)) continue;
     const rememberedPrefix = candidate.discovery?.provenance === "remembered-reverified" ? "Remembered lead was re-crawled, not reconfirmed, and removed from memory: " : "Investigated but not confirmed: ";
@@ -1218,7 +1216,7 @@ export async function POST(request: Request) {
         evidenceUrl: primary.siteState.evidenceUrl,
         redirectDomain: primary.siteState.redirectDomain,
         observedAt,
-        explanation: `${primaryDomain} redirects to a public domain-for-sale service, so competitor, product, and advertising analysis did not run.`,
+        explanation: `${primaryDomain} redirects to a public domain-for-sale service, so competitor and product analysis did not run.`,
         alternatives: alternatives.map((item) => ({ ...item, verifiedIdentity: false })),
       });
       return Response.json({ ok: false, live: false, code: "parked-domain", primaryDomain, error: `${primaryDomain} appears to be parked or offered for sale through ${primary.siteState.provider}. Select another domain only if it belongs to your company.`, alternatives, results: submittedResults, document }, { status: 409 });
@@ -1303,14 +1301,6 @@ export async function POST(request: Request) {
           reusedSearches: 0,
         },
       };
-      const adRequest = {
-        region: primary.homepage.region,
-        companies: [{
-          domain: primary.domain,
-          brand: primary.homepage.title.split(/\s[–—-]\s|\|/)[0].trim() || primary.domain,
-          facebookUrl: attributableFacebookUrl(primary.pages.flatMap((page) => page.socialLinks)),
-        }],
-      };
       const document = compactCatalogSnapshots(buildDocument([primary], primaryDomain, discovery, []));
       return Response.json({
         ok: true,
@@ -1318,7 +1308,6 @@ export async function POST(request: Request) {
         primaryDomain,
         results: [primary],
         discovery,
-        adRequest,
         matchHints: [],
         document,
         crawl: { maxPagesPerDomain: MAX_HTML_PAGES, maxPagesPerDiscoveredCompetitor: 0, maxPrimaryProductPricePages: MAX_PRIMARY_PRODUCT_PRICE_PAGES, maxMatchedProductEnrichmentPages: 0, competitorCrawlConcurrency: 0, htmlExtractionBytes: MAX_HTML_EXTRACTION_BYTES, robotsAware: true, generatedAt: new Date().toISOString() },
@@ -1432,22 +1421,13 @@ export async function POST(request: Request) {
     const publishedResultsForPairs = comparisonTargetMode
       ? [enrichedPrimary, ...enrichedConfirmed]
       : results;
-    const adTargets = [enrichedPrimary, ...enrichedConfirmed].filter((result, index, all) => all.findIndex((candidate) => candidate.domain === result.domain) === index);
-    const adRequest = {
-      region: discovery.region || primary.homepage.region,
-      companies: adTargets.map((result) => ({
-        domain: result.domain,
-        brand: result.discovery?.companyName || result.homepage?.title.split(/\s[–—-]\s|\|/)[0].trim() || result.domain,
-        facebookUrl: attributableFacebookUrl(result.pages.flatMap((page) => page.socialLinks)),
-      })),
-    };
     const document = compactCatalogSnapshots(buildDocument(publishedResultsForPairs, primaryDomain, discovery, comparisonTargetMode ? [] : discoveredResults));
     const matchHints = finalSelection.hints;
     const publishedDiscovery = publicDiscoverySnapshot(discovery, enrichedConfirmed.map((result) => result.discovery!));
     const publishedResults = publishedResultsForPairs.map((result) => result.discovery
       ? { ...result, verifiedExactProductPairs: undefined, discovery: publicDiscoveryCandidate(result.discovery) }
       : { ...result, verifiedExactProductPairs: undefined });
-    return Response.json({ ok: true, live: true, primaryDomain, results: publishedResults, discovery: publishedDiscovery, ...(discovery.productSearchLedger ? { discoverySearchLedger: discovery.productSearchLedger } : {}), adRequest, matchHints, document, crawl: { maxPagesPerDomain: MAX_HTML_PAGES, maxPagesPerDiscoveredCompetitor: MAX_DISCOVERED_HTML_PAGES, maxPrimaryProductPricePages: MAX_PRIMARY_PRODUCT_PRICE_PAGES, maxMatchedProductEnrichmentPages: MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES, competitorCrawlConcurrency: COMPETITOR_CRAWL_CONCURRENCY, htmlExtractionBytes: MAX_HTML_EXTRACTION_BYTES, robotsAware: true, generatedAt: new Date().toISOString() } });
+    return Response.json({ ok: true, live: true, primaryDomain, results: publishedResults, discovery: publishedDiscovery, ...(discovery.productSearchLedger ? { discoverySearchLedger: discovery.productSearchLedger } : {}), matchHints, document, crawl: { maxPagesPerDomain: MAX_HTML_PAGES, maxPagesPerDiscoveredCompetitor: MAX_DISCOVERED_HTML_PAGES, maxPrimaryProductPricePages: MAX_PRIMARY_PRODUCT_PRICE_PAGES, maxMatchedProductEnrichmentPages: MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES, competitorCrawlConcurrency: COMPETITOR_CRAWL_CONCURRENCY, htmlExtractionBytes: MAX_HTML_EXTRACTION_BYTES, robotsAware: true, generatedAt: new Date().toISOString() } });
   } catch {
     return Response.json({ ok: false, live: false, error: "Unable to crawl the submitted domains." }, { status: 400 });
   }

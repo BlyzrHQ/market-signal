@@ -7,9 +7,13 @@ import { jsonResponseErrorMessage, readJsonResponse } from "../../../lib/json-re
 type Event = { sequence: number; idempotencyKey: string; message: string };
 type Run = { status: string; primaryDomain: string; errorMessage: string; locale: "en" | "ar" };
 
+function visibleEvents(events: Event[]) {
+  return events.filter((event) => !event.idempotencyKey.startsWith("ads-") && !event.idempotencyKey.includes("-ads-"));
+}
+
 function eventMessage(event: Event | undefined, ar: boolean) {
   if (!event || !ar) return event?.message || (ar ? "جارٍ فتح تشغيل التقرير المحفوظ." : "Opening the saved report run.");
-  const messages: Record<string, string> = { "run-created": "تم إنشاء التقرير وبدأ جمع المصادر العامة.", "crawl-started": "نفحص موقعك وصفحات المنتجات العامة.", "crawl-complete": "اكتمل جمع الكتالوج والتحقق من المنافسين.", "ads-started": "نفحص سجلات المعلنين العامة.", "ads-complete": "اكتمل فحص مكتبات الإعلانات.", "matching-started": "نقارن أقوى عائلات المنتجات.", "matching-complete": "اكتملت مطابقة المنتجات وربط المصادر.", "report-saved": "تم حفظ التقرير." };
+  const messages: Record<string, string> = { "run-created": "تم إنشاء التقرير وبدأ جمع المصادر العامة.", "crawl-started": "نفحص موقعك وصفحات المنتجات العامة.", "crawl-complete": "اكتمل جمع الكتالوج والتحقق من المنافسين.", "matching-started": "نقارن أقوى عائلات المنتجات.", "matching-complete": "اكتملت مطابقة المنتجات وربط المصادر.", "report-saved": "تم حفظ التقرير." };
   return messages[event.idempotencyKey] || event.message;
 }
 
@@ -36,7 +40,7 @@ export default function PersistedLoadingPage({ params }: { params: Promise<{ pub
           if (!body.report?.run) throw new Error("Report progress returned incomplete report data. Run the scan again.");
           setError("");
           setRun(body.report.run);
-          setEvents(body.report.events || []);
+          setEvents(visibleEvents(body.report.events || []));
           if (["complete", "limited"].includes(body.report.run.status) && body.report.document) window.location.replace(`/reports/${publicId}`);
           else if (!["failed", "interrupted"].includes(body.report.run.status)) timer = window.setTimeout(poll, 1800);
         } catch (cause) {
