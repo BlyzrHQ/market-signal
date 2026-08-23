@@ -737,7 +737,7 @@ test("maximum legal compact fields preserve twenty alternatives for every target
   assert.equal(state.comparison.rows.length, 20);
   assert.deepEqual(state.evidence.rows.map((item) => item.matches.length), Array(20).fill(20));
   assert.ok(Buffer.byteLength(JSON.stringify(checkpoint), "utf8") <= REPORT_MATCH_CHECKPOINT_RESULT_BYTES);
-  assert.ok(Buffer.byteLength(JSON.stringify({ action: "match-batch-checkpoint-save", attemptNumber: 20, batchIndex: 3_999, inputHash: "a".repeat(64), result: checkpoint }), "utf8") < REPORT_CALLBACK_ENVELOPE_BYTES);
+  assert.ok(Buffer.byteLength(JSON.stringify({ action: "match-batch-checkpoint-save", attemptNumber: 20, batchIndex: 4_999, inputHash: "a".repeat(64), result: checkpoint }), "utf8") < REPORT_CALLBACK_ENVELOPE_BYTES);
 });
 
 test("global assignment counts a merchant product id only once when its URL and name drift", () => {

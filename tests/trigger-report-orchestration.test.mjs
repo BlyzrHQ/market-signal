@@ -3274,7 +3274,7 @@ test("the HTTP report adapter pages checkpoint recovery below the response trans
   assert.equal(bodies[1].afterAttemptNumber, 3);
   assert.equal(bodies[1].afterBatchIndex, 19);
   assert.ok(bodies.every((body) => body.batchIndexStart === 1_400 && body.batchIndexEnd === 1_649 && body.latestPerBatch === true));
-  assert.equal(checkpointReadPageBound(11, 20), 2_201);
+  assert.equal(checkpointReadPageBound(11, 20), 2_751);
   assert.equal(checkpointReadPageBound(20, 20, 1_400, 1_649, true), 14);
   assert.throws(() => checkpointReadPageBound(21, 20), /Invalid checkpoint paging bound/);
 });

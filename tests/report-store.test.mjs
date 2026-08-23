@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { appendReportEvent, compactReportDocument, createReportRun, createReportRunResult, getStoredReport, loadReportMatchBatchCheckpoints, markReportDispatched, MAX_REPORT_DOCUMENT_BYTES, MAX_REPORT_MATCH_BATCH_RESULT_BYTES, recoverInterruptedReport, reportStorageDiagnosticCode, ReportStorageError, saveReportDocument, saveReportMatchBatchCheckpoint } from "../app/lib/report-store.ts";
-import { MAX_REPORT_ATTEMPTS } from "../src/shared/report-orchestration-contract.ts";
+import { directSearchCheckpointIndex } from "../app/api/match/route.ts";
+import { MAX_REPORT_ATTEMPTS, MAX_REPORT_MATCH_CHECKPOINTS_PER_ATTEMPT } from "../src/shared/report-orchestration-contract.ts";
 import { encodedJsonBytes, REPORT_CALLBACK_ENVELOPE_BYTES } from "../src/shared/report-document-compaction.ts";
 
 class FakeStatement {
@@ -129,6 +130,22 @@ test("match batch checkpoints persist bounded canonical results and replay idemp
   await assert.rejects(() => loadReportMatchBatchCheckpoints(database.publicId, { attemptNumber: 1, batchIndex: 0 }, database), /integrity validation/);
 });
 
+test("the real checkpoint store accepts the complete direct-search namespace", async () => {
+  const database = new CheckpointDatabase();
+  const inputHash = "9".repeat(64);
+  const firstIndex = directSearchCheckpointIndex(0);
+  const lastIndex = directSearchCheckpointIndex(999);
+
+  await saveReportMatchBatchCheckpoint(database.publicId, { attemptNumber: 1, batchIndex: firstIndex, inputHash, result: { completed: true } }, new Date(), database);
+  await saveReportMatchBatchCheckpoint(database.publicId, { attemptNumber: 1, batchIndex: lastIndex, inputHash, result: { completed: true } }, new Date(), database);
+
+  assert.deepEqual(database.checkpoints.map((checkpoint) => checkpoint.batch_index), [firstIndex, lastIndex]);
+  await assert.rejects(
+    () => saveReportMatchBatchCheckpoint(database.publicId, { attemptNumber: 1, batchIndex: MAX_REPORT_MATCH_CHECKPOINTS_PER_ATTEMPT, inputHash, result: {} }, new Date(), database),
+    /Invalid report match batch checkpoint index/,
+  );
+});
+
 test("match batch checkpoints reject conflicts, invalid hashes, stale attempts, terminal reports, and oversized results", async () => {
   const database = new CheckpointDatabase();
   const inputHash = "2".repeat(64);
@@ -137,7 +154,7 @@ test("match batch checkpoints reject conflicts, invalid hashes, stale attempts, 
   await assert.rejects(() => saveReportMatchBatchCheckpoint(database.publicId, { attemptNumber: 1, batchIndex: 4, inputHash: "3".repeat(64), result: { accepted: ["p-1"] } }, new Date(), database), /conflicts/);
   await assert.rejects(() => saveReportMatchBatchCheckpoint(database.publicId, { attemptNumber: 1, batchIndex: 5, inputHash, result: {}, resultHash: "4".repeat(64) }, new Date(), database), /does not match/);
   await assert.rejects(() => saveReportMatchBatchCheckpoint(database.publicId, { attemptNumber: 1, batchIndex: 5, inputHash, result: { value: "x".repeat(MAX_REPORT_MATCH_BATCH_RESULT_BYTES) } }, new Date(), database), /too large/);
-  const legalEnvelope = { action: "match-batch-checkpoint-save", attemptNumber: 20, batchIndex: 3_999, inputHash, result: { value: "x".repeat(MAX_REPORT_MATCH_BATCH_RESULT_BYTES - 1_000) } };
+  const legalEnvelope = { action: "match-batch-checkpoint-save", attemptNumber: 20, batchIndex: 4_999, inputHash, result: { value: "x".repeat(MAX_REPORT_MATCH_BATCH_RESULT_BYTES - 1_000) } };
   assert.ok(encodedJsonBytes(legalEnvelope) < REPORT_CALLBACK_ENVELOPE_BYTES);
 
   database.runs[0].attempt_count = 2;

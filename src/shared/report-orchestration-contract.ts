@@ -1,5 +1,5 @@
 export const REPORT_ORCHESTRATION_CONTRACT_VERSION = "6" as const;
-export const MAX_REPORT_MATCH_CHECKPOINTS_PER_ATTEMPT = 4_000;
+export const MAX_REPORT_MATCH_CHECKPOINTS_PER_ATTEMPT = 5_000;
 export const MAX_REPORT_ATTEMPTS = 20;
 
 export type ReportOrchestrationPayload = {

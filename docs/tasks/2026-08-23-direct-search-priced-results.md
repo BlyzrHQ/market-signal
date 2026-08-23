@@ -36,13 +36,14 @@ Search results are leads, not independently proven semantic equivalence. The cus
 - Verified Fable 5 (`claude-fable-5`) reviewed exact head `3449f1bbc717fd8dd376e592a73cc7a02da2fe5d` and initially returned `BLOCKED`.
 - The blocking finding was that one malformed or non-HTTPS external candidate could invalidate a durable checkpoint and repay an already completed search on retry.
 - Remediation filters non-HTTPS candidates individually, keeps the remaining checkpoint usable, and adds a regression proving the search is not repaid.
-- Direct-search checkpoint slots moved to `4000-4999`, disjoint from the legacy AI-judge and plan namespaces.
+- A second exact-head Fable review found that the disjoint `4000-4999` range exceeded the store's former `<4000` validation bound and correctly blocked merge.
+- The shared store/transport bound is now `5000`, covering the disjoint direct-search range without colliding with orchestration state, enrichment, legacy AI-judge, or plan slots. A real-store regression accepts indices `4000` and `4999` and rejects `5000`.
 - The incomplete-retry event now states that durable product-search checkpoints are being reused.
 
 ## Validation evidence
 
-- Focused direct-search, route, lifecycle, and orchestration suite: 211 tests passed, 0 failed.
-- `npm test`: 1,130 tests passed, 0 failed; includes typecheck, Node typecheck, and production build.
+- Focused direct-search, route, real-store, lifecycle, and orchestration suite: 232 tests passed, 0 failed.
+- `npm test`: 1,131 tests passed, 0 failed; includes typecheck, Node typecheck, and production build.
 - `npm run lint`: 0 errors (two existing `no-img-element` warnings).
 - Direct-search regression coverage proves empty and zero prices are omitted, valid positive prices remain, distinct URLs from one seller remain, and paid-search checkpoints are reused.
 - Contract-v6 orchestration coverage proves crawl/search separation and persists 20 priced `search_result` facts without an AI semantic verdict.
