@@ -1,6 +1,7 @@
 import { canonicalDomain, normalizeDomain } from "./domain.ts";
 import { fetchPublicText, type PublicFetchOptions } from "./public-fetch.ts";
 import { parseRobots, robotsAvailability, type RobotsAvailability, type RobotsPolicy } from "./robots.ts";
+import { MARKET_SIGNAL_USER_AGENT } from "./crawler-identity.ts";
 
 const DEFAULT_TTL_MS = 15 * 60 * 1_000;
 const DEFAULT_MAX_ENTRIES = 256;
@@ -8,7 +9,7 @@ const DEFAULT_ATTEMPTS_PER_HOST = 2;
 const DEFAULT_MAX_HOSTS = 2;
 const ROBOTS_TIMEOUT_MS = 8_000;
 const ROBOTS_DOCUMENT_BYTES = 256_000;
-const USER_AGENT = "MarketSignalPublicScanner/0.1";
+const USER_AGENT = MARKET_SIGNAL_USER_AGENT;
 const TERMINAL_REFUSALS = new Set([401, 403, 407, 429, 451]);
 
 type PublicTextResult = Awaited<ReturnType<typeof fetchPublicText>>;

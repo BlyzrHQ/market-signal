@@ -35,8 +35,23 @@ test("the longest matching rule wins and Allow wins an equal-length tie", () => 
 });
 
 test("specific user-agent groups override the wildcard group", () => {
-  const policy = parseRobots(`User-agent: *\nDisallow: /private\nUser-agent: MarketSignalPublicScanner\nAllow: /private`);
+  const policy = parseRobots(`User-agent: *\nDisallow: /private\nUser-agent: MarketSignal\nAllow: /private`);
   assert.equal(policy.allows("/private"), true);
+});
+
+test("legacy crawler opt-outs remain binding after the identity rename", () => {
+  const policy = parseRobots(`User-agent: *\nAllow: /\nUser-agent: MarketSignalPublicScanner\nDisallow: /`);
+  assert.equal(policy.allows("/"), false);
+});
+
+test("the longer legacy crawler group conservatively wins when both identities are present", () => {
+  const policy = parseRobots(`User-agent: MarketSignal\nAllow: /private\nUser-agent: MarketSignalPublicScanner\nDisallow: /private`);
+  assert.equal(policy.allows("/private"), false);
+});
+
+test("unrelated crawler directives do not apply to Market Signal", () => {
+  const policy = parseRobots(`User-agent: SomeOtherBot\nDisallow: /`);
+  assert.equal(policy.allows("/"), true);
 });
 
 test("end anchors and empty disallow directives follow robots semantics", () => {

@@ -6,12 +6,13 @@ import { confirmedProductCurrency, confirmedShopifyRuntimeMarket, hasConflicting
 import { fetchPublicText } from "./public-fetch.ts";
 import { sharedRobotsPolicyResolver } from "./robots-policy.ts";
 import { stripInactiveHtmlMarkup } from "./active-html-markup.ts";
+import { MARKET_SIGNAL_USER_AGENT } from "./crawler-identity.ts";
 
 const MAX_DOCUMENT_BYTES = 1_500_000;
 export const MAX_ENRICHMENT_TARGETS = 64;
 const MAX_PER_DOMAIN_CONCURRENCY = 2;
 const REQUEST_TIMEOUT_MS = 8_000;
-const USER_AGENT = "MarketSignalPublicScanner/0.1";
+const USER_AGENT = MARKET_SIGNAL_USER_AGENT;
 
 export type EnrichmentGap = {
   url: string;

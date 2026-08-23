@@ -1,3 +1,5 @@
+import { MARKET_SIGNAL_USER_AGENT } from "./crawler-identity.ts";
+
 export type AdPlatform = "Meta" | "Google" | "TikTok";
 export type AdScanStatus = "verified-active" | "no-verified-result" | "access-limited";
 
@@ -252,7 +254,7 @@ export async function resolveFacebookPageIdentity(profileUrl: string, fetcher: t
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), META_TIMEOUT_MS);
   try {
-    const response = await fetcher(attributable, { headers: { "User-Agent": "MarketSignalPublicScanner/0.1 (+competitive-intelligence; public-page-attribution)" }, signal: controller.signal });
+    const response = await fetcher(attributable, { headers: { "User-Agent": MARKET_SIGNAL_USER_AGENT }, signal: controller.signal });
     if (!response.ok) return null;
     const html = await response.text();
     const pageId = linkedPageId || html.match(/fb:\/\/(?:profile|page)\/(\d{5,})/i)?.[1]
@@ -271,7 +273,7 @@ async function discoverCompanyFacebookUrl(domain: string, fetcher: typeof fetch)
   const host = domain.replace(/^https?:\/\//i, "").split("/")[0];
   if (!host) return "";
   try {
-    const response = await fetcher(`https://${host}/`, { headers: { "User-Agent": "MarketSignalPublicScanner/0.1 (+competitive-intelligence; public-social-attribution)" }, signal: AbortSignal.timeout(META_TIMEOUT_MS) });
+    const response = await fetcher(`https://${host}/`, { headers: { "User-Agent": MARKET_SIGNAL_USER_AGENT }, signal: AbortSignal.timeout(META_TIMEOUT_MS) });
     if (!response.ok) return "";
     const html = await response.text();
     const links = [...html.matchAll(/href=["']([^"']+)["']/gi)].map((match) => match[1].replace(/&amp;/g, "&"));
