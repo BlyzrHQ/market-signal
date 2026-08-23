@@ -1,0 +1,93 @@
+name: Cancel known runaway Starter acceptance run
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Exact deployed application revision
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: market-signal-production-acceptance-cancel
+  cancel-in-progress: false
+
+jobs:
+  cancel:
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - market-signal-production
+    timeout-minutes: 10
+    environment:
+      name: production
+      url: https://${{ vars.MARKET_SIGNAL_DOMAIN }}
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the exact deployed revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate the deployed application
+        id: validate
+        env:
+          REQUESTED_SHA: ${{ inputs.commit_sha }}
+          EXPECTED_SHA: 346c892455ae1b6b6d146bbe03aea555d87fe00c
+        run: |
+          set -Eeuo pipefail
+          [[ "${REQUESTED_SHA}" == "${EXPECTED_SHA}" ]]
+          [[ "$(git rev-parse HEAD)" == "${EXPECTED_SHA}" ]]
+          mapfile -t containers < <(docker ps --filter label=com.docker.compose.project=market-signal --filter label=com.docker.compose.service=app --format '{{.ID}}')
+          [[ "${#containers[@]}" -eq 1 ]]
+          container="${containers[0]}"
+          [[ "$(docker inspect "${container}" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" == "${EXPECTED_SHA}" ]]
+          echo "container=${container}" >>"${GITHUB_OUTPUT}"
+
+      - name: Cancel only the known runaway run
+        id: cancel
+        env:
+          CONTAINER: ${{ steps.validate.outputs.container }}
+          RUN_ID: run_06g2r0ipft5dt1t004ibvao401
+          PUBLIC_ID: e5e25dad6ae241c08bfd7845f0b99cdc
+        run: |
+          set -Eeuo pipefail
+          [[ "${RUN_ID}" == "run_06g2r0ipft5dt1t004ibvao401" ]]
+          [[ "${PUBLIC_ID}" == "e5e25dad6ae241c08bfd7845f0b99cdc" ]]
+          if ! canceled_id="$(
+            docker exec \
+              -e "CANCEL_RUN_ID=${RUN_ID}" \
+              "${CONTAINER}" node --input-type=module -e '
+              import { runs } from "@trigger.dev/sdk";
+              const runId = String(process.env.CANCEL_RUN_ID || "");
+              if (runId !== "run_06g2r0ipft5dt1t004ibvao401") throw new Error("cancel-run-id-invalid");
+              const result = await runs.cancel(runId);
+              if (String(result?.id || "") !== runId) throw new Error("cancel-response-invalid");
+              process.stdout.write(runId);
+            '
+          )"; then
+            echo "Acceptance run cancellation failed." >&2
+            exit 1
+          fi
+          [[ "${canceled_id}" == "${RUN_ID}" ]]
+          echo "run_id=${canceled_id}" >>"${GITHUB_OUTPUT}"
+
+      - name: Publish the cancellation receipt
+        env:
+          DOMAIN: ${{ vars.MARKET_SIGNAL_DOMAIN }}
+          PUBLIC_ID: e5e25dad6ae241c08bfd7845f0b99cdc
+          RUN_ID: ${{ steps.cancel.outputs.run_id }}
+        run: |
+          set -Eeuo pipefail
+          {
+            echo "### Runaway Starter acceptance run canceled"
+            echo "- Trigger run: ${RUN_ID}"
+            echo "- Report: https://${DOMAIN}/reports/${PUBLIC_ID}?view=products&layout=table"
+            echo "- This workflow launched no report or evaluator."
+          } >>"${GITHUB_STEP_SUMMARY}"
