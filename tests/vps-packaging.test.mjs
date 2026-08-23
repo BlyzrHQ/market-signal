@@ -210,6 +210,7 @@ test("production acceptance reports are owner-authorized, single-dispatch, and e
   assert.doesNotMatch(workflow, /\(\?:/);
   assert.match(workflow, /MARKET_SIGNAL_OWNER_WRITE_TOKEN/);
   assert.doesNotMatch(workflow, /MARKET_SIGNAL_CALLBACK_TOKEN|TRIGGER_SECRET_KEY|OPENAI_API_KEY/);
+  assert.doesNotMatch(workflow, /\bjq\b/);
   assert.match(workflow, /api\/internal\/acceptance-reports/);
   assert.match(workflow, /options:\s*\n\s+- starter\s*\n\s+- solo\s*\n\s+- growth\s*\n\s+- agency/);
 });
