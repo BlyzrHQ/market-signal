@@ -1762,6 +1762,124 @@ test("the final bounded task publishes a limited report when processing has zero
   assert.deepEqual(compaction.factCounts, port.factManifests[0].counts);
 });
 
+test("a systemic provider circuit terminalizes immediately without replaying the paid discovery wave", async () => {
+  const empty = comparison({ withPair: false, count: 20 });
+  empty.matching.resultShortfall = 20;
+  empty.matching.resultShortfallReason = "processing-incomplete";
+  empty.matching.gaps = ["No verified comparison rows were available from the completed crawl."];
+  const base = mockPort();
+  let crawlCalls = 0;
+  const port = mockPort({
+    async crawl() {
+      crawlCalls += 1;
+      const result = await base.crawl();
+      result.discovery.productSearchCoverage = {
+        eligibleAnchors: 1_000,
+        searchedAnchors: 0,
+        startIndex: 0,
+        endIndex: 10,
+        truncated: true,
+        searchesComplete: false,
+        searchAttemptsComplete: false,
+        paidSearchesStarted: 10,
+        reusedSearches: 0,
+        providerFailureCategory: "http-4xx",
+        providerFailureCount: 10,
+        providerCircuitOpen: true,
+        candidateDomainsFound: 0,
+        candidateDomainsInvestigated: 0,
+        candidateTruncated: false,
+        verificationComplete: true,
+        batchComplete: false,
+        complete: false,
+      };
+      return result;
+    },
+    async match() { return { ok: true, comparison: structuredClone(empty) }; },
+    async enrich() { throw new Error("zero-row provider failure must not schedule enrichment"); },
+  });
+
+  const terminal = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port);
+
+  assert.equal(terminal.reportStatus, "limited");
+  assert.equal(crawlCalls, 1);
+  assert.equal(port.saves.length, 1);
+  const limited = port.events.find((item) => item.idempotencyKey === "report-1-task-1-matching-limited");
+  assert.equal(limited?.metadata?.providerFailureCategory, "http-4xx");
+  const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
+  assert.match(block.matching.gaps.join(" "), /automatic retries were stopped to protect usage/i);
+});
+
+test("a task retry forwards the durable per-anchor search ledger to the next crawl", async () => {
+  const empty = comparison({ withPair: false, count: 20 });
+  empty.matching.resultShortfall = 20;
+  empty.matching.resultShortfallReason = "processing-incomplete";
+  empty.matching.gaps = ["Candidate processing remained incomplete within the bounded worker attempts."];
+  const firstLedger = {
+    version: 1,
+    anchorSetHash: "a".repeat(64),
+    startIndex: 0,
+    endIndex: 10,
+    entries: Array.from({ length: 10 }, (_, index) => ({
+      anchorIndex: index,
+      attempts: 1,
+      completed: index < 9,
+      failureCategory: index < 9 ? "none" : "http-5xx",
+      queries: [],
+      candidates: [],
+      ...(index < 9 ? {} : { gap: "product search returned HTTP 503." }),
+    })),
+  };
+  const secondLedger = {
+    ...firstLedger,
+    entries: firstLedger.entries.map((entry) => entry.anchorIndex === 9 ? { ...entry, attempts: 2 } : entry),
+  };
+  const base = mockPort();
+  const crawlInputs = [];
+  let crawlCalls = 0;
+  const port = mockPort({
+    async crawl(input) {
+      crawlInputs.push(input);
+      crawlCalls += 1;
+      const result = await base.crawl();
+      result.discovery.productSearchCoverage = {
+        eligibleAnchors: 1_000,
+        searchedAnchors: 9,
+        startIndex: 0,
+        endIndex: 10,
+        truncated: true,
+        searchesComplete: false,
+        searchAttemptsComplete: crawlCalls === 2,
+        paidSearchesStarted: crawlCalls === 1 ? 10 : 1,
+        reusedSearches: crawlCalls === 1 ? 0 : 9,
+        providerFailureCategory: "http-5xx",
+        providerFailureCount: 1,
+        candidateDomainsFound: 0,
+        candidateDomainsInvestigated: 0,
+        candidateTruncated: false,
+        verificationComplete: true,
+        batchComplete: crawlCalls === 2,
+        complete: false,
+      };
+      result.discoverySearchLedger = crawlCalls === 1 ? firstLedger : secondLedger;
+      return result;
+    },
+    async match() { return { ok: true, comparison: structuredClone(empty) }; },
+    async enrich() { throw new Error("zero-row retry must not schedule enrichment"); },
+  });
+
+  await assert.rejects(
+    () => orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port),
+    /remained incomplete/,
+  );
+  const terminal = await orchestrateReport(payload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: true }, port);
+
+  assert.equal(terminal.reportStatus, "limited");
+  assert.equal(crawlCalls, 2);
+  assert.deepEqual(crawlInputs[1].discoverySearchLedger, firstLedger);
+  assert.equal(crawlInputs[1].comparisonPairsNeeded, 20);
+});
+
 test("the final bounded task does not misreport total matcher failure as zero-row exhaustion", async () => {
   const port = mockPort({ async match() { throw new Error("matcher contract authorization failed"); } });
 

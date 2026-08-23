@@ -46,6 +46,26 @@ export type DiscoveryCandidate = {
 
 export type DiscoveryProfile = BusinessProfileInput;
 
+export type DiscoverySearchFailureCategory = "none" | "http-4xx" | "http-5xx" | "timeout" | "unreadable" | "incomplete-search" | "network" | "not-configured" | "internal" | "mixed";
+
+export type ProductSearchLedgerEntry = {
+  anchorIndex: number;
+  attempts: number;
+  completed: boolean;
+  failureCategory: Exclude<DiscoverySearchFailureCategory, "mixed">;
+  queries: string[];
+  candidates: DiscoveryCandidate[];
+  gap?: string;
+};
+
+export type ProductSearchLedger = {
+  version: 1;
+  anchorSetHash: string;
+  startIndex: number;
+  endIndex: number;
+  entries: ProductSearchLedgerEntry[];
+};
+
 export type DiscoveryResult = {
   available: boolean;
   provider: "openai-web-search" | "unavailable";
@@ -75,7 +95,15 @@ export type DiscoveryResult = {
     anchorSetChanged?: boolean;
     acceptedPairCount?: number;
     pairTarget?: number;
+    searchAttemptsComplete?: boolean;
+    paidSearchesStarted?: number;
+    reusedSearches?: number;
+    providerFailureCategory?: DiscoverySearchFailureCategory;
+    providerFailureCount?: number;
+    providerCircuitOpen?: boolean;
   };
+  /** Private internal checkpoint data. publicDiscoverySnapshot always removes it. */
+  productSearchLedger?: ProductSearchLedger;
 };
 
 export type DiscoveryOptions = {
@@ -84,11 +112,24 @@ export type DiscoveryOptions = {
   expectedAnchorSetHash?: string;
   maxProductSearches?: number;
   productComparisonsOnly?: boolean;
+  priorProductSearchLedger?: unknown;
 };
 
 type SearchLane = "entity" | "category" | "product";
 type SearchSource = { url: string; title: string; query: string; queries: string[] };
-type LaneResult = { lane: SearchLane; category: string; region: string; queries: string[]; candidates: DiscoveryCandidate[]; completed: boolean; gap?: string };
+type LaneResult = {
+  lane: SearchLane;
+  category: string;
+  region: string;
+  queries: string[];
+  candidates: DiscoveryCandidate[];
+  completed: boolean;
+  failureCategory: Exclude<DiscoverySearchFailureCategory, "mixed">;
+  gap?: string;
+  anchorIndex?: number;
+  attempts?: number;
+  reused?: boolean;
+};
 
 const MAX_CANDIDATES = 6;
 const MAX_PRODUCT_SEARCHES = 200;
@@ -98,7 +139,9 @@ const MAX_DISCOVERY_CANDIDATES_PER_ATTEMPT = (MAX_PRODUCT_SEARCHES * MAX_CANDIDA
 const MAX_SOURCE_FIRST_LEADS_PER_SEARCH = 2;
 const MAX_SOURCE_FIRST_CANDIDATES = 2;
 const MAX_MODEL_STRUCTURED_LEADS_PER_LANE = 1;
-const SEARCH_TIMEOUT_MS = 24_000;
+const SEARCH_TIMEOUT_MS = 60_000;
+const MAX_PRODUCT_SEARCH_ATTEMPTS_PER_ANCHOR = 2;
+const MAX_PRODUCT_SEARCH_LEDGER_BYTES = 1 * 1_024 * 1_024;
 export const MAX_DISCOVERY_PROVIDER_BODY_BYTES = 4 * 1_024 * 1_024;
 
 async function readBoundedProviderJson(response: Response) {
@@ -701,7 +744,6 @@ export function mergeCandidates(candidates: DiscoveryCandidate[], maxCandidates 
 }
 
 function completedWebSearch(payload: Record<string, unknown>) {
-  if (payload.status !== "completed") return false;
   return (Array.isArray(payload.output) ? payload.output : []).some((item) => {
     if (!item || typeof item !== "object" || (item as { type?: unknown }).type !== "web_search_call" || (item as { status?: unknown }).status !== "completed") return false;
     const action = (item as { action?: unknown }).action;
@@ -711,6 +753,61 @@ function completedWebSearch(payload: Record<string, unknown>) {
     return (typeof query === "string" && Boolean(query.trim()))
       || (Array.isArray(queries) && queries.some((value) => typeof value === "string" && Boolean(value.trim())));
   });
+}
+
+function completedWebSearchQueries(payload: Record<string, unknown>) {
+  return [...new Set((Array.isArray(payload.output) ? payload.output : []).flatMap((item) => {
+    if (!item || typeof item !== "object" || (item as { type?: unknown }).type !== "web_search_call" || (item as { status?: unknown }).status !== "completed") return [];
+    const action = (item as { action?: unknown }).action;
+    if (!action || typeof action !== "object" || Array.isArray(action)) return [];
+    const query = (action as { query?: unknown }).query;
+    const queries = (action as { queries?: unknown }).queries;
+    return typeof query === "string"
+      ? [query]
+      : Array.isArray(queries)
+        ? queries.flatMap((value) => typeof value === "string" ? [value] : [])
+        : [];
+  }).map((query) => query.trim()).filter(Boolean))].slice(0, 8);
+}
+
+function failureCategoryForStatus(status: number): Exclude<DiscoverySearchFailureCategory, "none" | "mixed"> {
+  return status >= 400 && status < 500 ? "http-4xx" : "http-5xx";
+}
+
+function encodedBytes(value: unknown) {
+  try { return new TextEncoder().encode(JSON.stringify(value)).byteLength; } catch { return Number.POSITIVE_INFINITY; }
+}
+
+function validLedgerCandidate(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Partial<DiscoveryCandidate>;
+  try {
+    if (!candidate.domain || canonicalDomain(candidate.domain) !== candidate.domain) return false;
+    if (typeof candidate.companyName !== "string" || typeof candidate.reason !== "string" || typeof candidate.searchQuery !== "string") return false;
+    if (publicHttpUrl(candidate.sourceUrl, false) !== candidate.sourceUrl || publicHttpUrl(candidate.websiteUrl, false) !== candidate.websiteUrl) return false;
+    if (!Array.isArray(candidate.evidence) || candidate.evidence.length > 20 || !Array.isArray(candidate.sharedOfferings) || candidate.sharedOfferings.length > 10) return false;
+    if (candidate.matchedProductUrl && publicHttpUrl(candidate.matchedProductUrl, false) !== candidate.matchedProductUrl) return false;
+    if ((candidate.matchedProductUrls?.length || 0) > MAX_CANDIDATES || candidate.matchedProductUrls?.some((url) => publicHttpUrl(url, false) !== url)) return false;
+    if ((candidate.inferredProductLeads?.length || 0) > MAX_CANDIDATES || candidate.inferredProductLeads?.some((lead) => canonicalDomain(lead.candidateDomain) !== lead.candidateDomain || publicHttpUrl(lead.candidateSourceUrl, false) !== lead.candidateSourceUrl || publicHttpUrl(lead.primarySourceUrl, false) !== lead.primarySourceUrl)) return false;
+    return true;
+  } catch { return false; }
+}
+
+function validPriorProductSearchLedger(value: unknown, anchorSetHash: string, startIndex: number, endIndex: number): ProductSearchLedger | null {
+  if (!value || typeof value !== "object" || Array.isArray(value) || encodedBytes(value) > MAX_PRODUCT_SEARCH_LEDGER_BYTES) return null;
+  const ledger = value as Partial<ProductSearchLedger>;
+  if (ledger.version !== 1 || ledger.anchorSetHash !== anchorSetHash || ledger.startIndex !== startIndex || ledger.endIndex !== endIndex || !Array.isArray(ledger.entries) || ledger.entries.length !== endIndex - startIndex) return null;
+  const categories = new Set<DiscoverySearchFailureCategory>(["none", "http-4xx", "http-5xx", "timeout", "unreadable", "incomplete-search", "network", "not-configured", "internal"]);
+  const indices = new Set<number>();
+  for (const entry of ledger.entries) {
+    if (!entry || !Number.isInteger(entry.anchorIndex) || entry.anchorIndex < startIndex || entry.anchorIndex >= endIndex || indices.has(entry.anchorIndex)) return null;
+    indices.add(entry.anchorIndex);
+    if (!Number.isInteger(entry.attempts) || entry.attempts < 1 || entry.attempts > MAX_PRODUCT_SEARCH_ATTEMPTS_PER_ANCHOR || typeof entry.completed !== "boolean" || !categories.has(entry.failureCategory)) return null;
+    if (entry.completed !== (entry.failureCategory === "none") || !Array.isArray(entry.queries) || entry.queries.length > 8 || entry.queries.some((query) => typeof query !== "string" || query.length > 300)) return null;
+    if (!Array.isArray(entry.candidates) || entry.candidates.length > MAX_CANDIDATES || entry.candidates.some((candidate) => !validLedgerCandidate(candidate))) return null;
+    if (entry.gap !== undefined && (typeof entry.gap !== "string" || entry.gap.length > 500)) return null;
+  }
+  return ledger as ProductSearchLedger;
 }
 
 function structurallyValidDiscovery(value: Record<string, unknown>) {
@@ -763,8 +860,10 @@ export function publicDiscoveryCandidate<T extends DiscoveryCandidate>(candidate
 }
 
 export function publicDiscoverySnapshot(discovery: DiscoveryResult, verifiedCandidates: Array<DiscoveryCandidate & { accepted?: boolean }>): DiscoveryResult {
+  const publishedDiscovery = { ...discovery };
+  delete publishedDiscovery.productSearchLedger;
   return {
-    ...discovery,
+    ...publishedDiscovery,
     candidates: verifiedCandidates.flatMap((candidate) => {
       if (candidate.accepted !== true) return [];
       return [publicDiscoveryCandidate(candidate)];
@@ -794,7 +893,7 @@ function lanePrompt(lane: SearchLane, business: BusinessProfile) {
 }
 
 async function runLane(endpoint: string, apiKey: string, model: string, lane: SearchLane, business: BusinessProfile, profile: DiscoveryProfile): Promise<LaneResult> {
-  if (lane === "product" && business.offerings.length === 0) return { lane, category: business.category, region: business.region, queries: [], candidates: [], completed: true, gap: "Product lane skipped because no attributable offering records were observed." };
+  if (lane === "product" && business.offerings.length === 0) return { lane, category: business.category, region: business.region, queries: [], candidates: [], completed: true, failureCategory: "none", gap: "Product lane skipped because no attributable offering records were observed." };
   const prompt = lanePrompt(lane, business);
   const controller = new AbortController();
   const timeoutMs = Number(process.env.MARKET_SIGNAL_DISCOVERY_TIMEOUT_MS || SEARCH_TIMEOUT_MS);
@@ -841,13 +940,13 @@ async function runLane(endpoint: string, apiKey: string, model: string, lane: Se
       }),
       signal: controller.signal,
     });
-    if (!response.ok) return { lane, category: business.category, region: business.region, queries: [], candidates: [], completed: false, gap: `${lane} search returned HTTP ${response.status}.` };
+    if (!response.ok) return { lane, category: business.category, region: business.region, queries: [], candidates: [], completed: false, failureCategory: failureCategoryForStatus(response.status), gap: `${lane} search returned HTTP ${response.status}.` };
     let payload: Record<string, unknown>;
     try {
       payload = await readBoundedProviderJson(response) as Record<string, unknown>;
       if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("invalid payload");
     } catch {
-      return { lane, category: business.category, region: business.region, queries: [], candidates: [], completed: false, gap: `${lane} search returned an unreadable response.` };
+      return { lane, category: business.category, region: business.region, queries: [], candidates: [], completed: false, failureCategory: "unreadable", gap: `${lane} search returned an unreadable response.` };
     }
     const raw = outputText(payload);
     let parsed: Record<string, unknown> | null = null;
@@ -859,9 +958,12 @@ async function runLane(endpoint: string, apiKey: string, model: string, lane: Se
           && Array.isArray((value as Record<string, unknown>).candidates)) parsed = value as Record<string, unknown>;
       } catch { parsed = null; }
     }
-    if (!parsed || !completedWebSearch(payload) || !structurallyValidDiscovery(parsed)) return { lane, category: business.category, region: business.region, queries: [], candidates: [], completed: false, gap: `${lane} search returned an incomplete provider response or no completed web search; it cannot count as an exhausted search.` };
-    const queries = (Array.isArray(parsed.queries) ? parsed.queries : []).map(String).filter(Boolean).slice(0, 8);
-    const rawCandidates = Array.isArray(parsed.candidates) ? parsed.candidates : [];
+    if (!completedWebSearch(payload)) return { lane, category: business.category, region: business.region, queries: [], candidates: [], completed: false, failureCategory: "incomplete-search", gap: `${lane} search returned no completed web-search call; it cannot count as an exhausted search.` };
+    const structuredComplete = Boolean(parsed && structurallyValidDiscovery(parsed));
+    const queries = structuredComplete
+      ? (Array.isArray(parsed!.queries) ? parsed!.queries : []).map(String).filter(Boolean).slice(0, 8)
+      : completedWebSearchQueries(payload);
+    const rawCandidates = structuredComplete && Array.isArray(parsed!.candidates) ? parsed!.candidates : [];
     let privateStructuredLeads = 0;
     const modelCandidates = rawCandidates.flatMap((item) => {
       const candidate = lane === "product" ? null : sanitizeCandidate(item, business.domain, lane, profile);
@@ -872,28 +974,33 @@ async function runLane(endpoint: string, apiKey: string, model: string, lane: Se
       privateStructuredLeads += 1;
       return [privateLead];
     });
-    const inferredCategory = String(parsed.category || business.category).slice(0, 180);
+    const inferredCategory = String(structuredComplete ? parsed!.category || business.category : business.category).slice(0, 180);
     const recovered = lane === "product" ? candidatesFromSearchEvidence(payload, profile, queries) : entityCandidatesFromSearchEvidence(payload, business, lane, inferredCategory);
     const candidates = mergeCandidates([...modelCandidates, ...recovered]);
-    const rejectedGap = candidates.length
-      ? undefined
-      : rawCandidates.length
-        ? lane === "product"
-          ? `${lane} search returned ${rawCandidates.length} structured suggestion${rawCandidates.length === 1 ? "" : "s"}, but none qualified for attributable admission or a bounded private exact-page investigation.`
-          : `${lane} search returned ${rawCandidates.length} structured candidate${rawCandidates.length === 1 ? "" : "s"}, but none survived attributable first-party source validation.`
-        : `${lane} search returned no attributable company or exact seller source.`;
+    const rejectedGap = !structuredComplete
+      ? candidates.length
+        ? `${lane} search completed and attributable source URLs were retained; its structured summary was unavailable.`
+        : `${lane} search completed with no attributable seller source; its structured summary was unavailable.`
+      : candidates.length
+        ? undefined
+        : rawCandidates.length
+          ? lane === "product"
+            ? `${lane} search returned ${rawCandidates.length} structured suggestion${rawCandidates.length === 1 ? "" : "s"}, but none qualified for attributable admission or a bounded private exact-page investigation.`
+            : `${lane} search returned ${rawCandidates.length} structured candidate${rawCandidates.length === 1 ? "" : "s"}, but none survived attributable first-party source validation.`
+          : `${lane} search returned no attributable company or exact seller source.`;
     return {
       lane,
       category: inferredCategory,
-      region: String(parsed.region || business.region).slice(0, 160),
+      region: String(structuredComplete ? parsed!.region || business.region : business.region).slice(0, 160),
       queries,
       candidates,
       completed: true,
+      failureCategory: "none",
       ...(rejectedGap ? { gap: rejectedGap } : {}),
     };
   } catch (error) {
     const timedOut = error instanceof Error && error.name === "AbortError";
-    return { lane, category: business.category, region: business.region, queries: [], candidates: [], completed: false, gap: timedOut ? `${lane} search timed out after ${Math.round(timeoutMs / 1000)} seconds; completed lanes were retained.` : `${lane} search failed; completed lanes were retained.` };
+    return { lane, category: business.category, region: business.region, queries: [], candidates: [], completed: false, failureCategory: timedOut ? "timeout" : "network", gap: timedOut ? `${lane} search timed out after ${Math.round(timeoutMs / 1000)} seconds; completed lanes were retained.` : `${lane} search failed; completed lanes were retained.` };
   } finally {
     clearTimeout(timeout);
   }
@@ -914,7 +1021,8 @@ export async function discoverCompetitors(profile: DiscoveryProfile, options: Di
   const startIndex = anchorSetMatches ? requestedOffset : comparisonTargetMode ? requestedOffset : 0;
   const anchors = eligibleAnchors.slice(startIndex, startIndex + searchBatchSize);
   const endIndex = startIndex + anchors.length;
-  const baseCoverage = { eligibleAnchors: eligibleAnchors.length, anchorSetHash, searchedAnchors: 0, startIndex, endIndex, truncated: endIndex < eligibleAnchors.length, searchesComplete: false, candidateDomainsFound: 0, candidateDomainsInvestigated: 0, candidateTruncated: false, verificationComplete: false, batchComplete: false, complete: false };
+  const comparisonCoverage = comparisonTargetMode ? { searchAttemptsComplete: false, paidSearchesStarted: 0, reusedSearches: 0 } : {};
+  const baseCoverage = { eligibleAnchors: eligibleAnchors.length, anchorSetHash, searchedAnchors: 0, startIndex, endIndex, truncated: endIndex < eligibleAnchors.length, searchesComplete: false, candidateDomainsFound: 0, candidateDomainsInvestigated: 0, candidateTruncated: false, verificationComplete: false, batchComplete: false, complete: false, ...comparisonCoverage };
   if (!anchorSetMatches && comparisonTargetMode) {
     const gap = "The primary product anchor set changed after comparison search began; paid search stopped instead of restarting from the first product.";
     return {
@@ -929,13 +1037,67 @@ export async function discoverCompetitors(profile: DiscoveryProfile, options: Di
       candidates: [],
       gaps: [gap],
       gap,
-      productSearchCoverage: { ...baseCoverage, endIndex: startIndex, truncated: startIndex < eligibleAnchors.length, anchorSetChanged: true },
+      productSearchCoverage: { ...baseCoverage, endIndex: startIndex, truncated: startIndex < eligibleAnchors.length, anchorSetChanged: true, providerFailureCategory: "internal", providerFailureCount: 1, providerCircuitOpen: true },
     };
   }
-  if (!apiKey) return { available: false, provider: "unavailable", model, category: business.category, region: business.region, businessType: business.businessType, strategy: "not-run", queries: [], candidates: [], gaps: ["Web discovery is not configured."], gap: "Web discovery is not configured. A search-capable provider is required before competitors can be discovered automatically.", productSearchCoverage: baseCoverage };
+  if (!apiKey) return { available: false, provider: "unavailable", model, category: business.category, region: business.region, businessType: business.businessType, strategy: "not-run", queries: [], candidates: [], gaps: ["Web discovery is not configured."], gap: "Web discovery is not configured. A search-capable provider is required before competitors can be discovered automatically.", productSearchCoverage: { ...baseCoverage, ...(comparisonTargetMode ? { providerFailureCategory: "not-configured", providerFailureCount: anchors.length, providerCircuitOpen: true } as const : {}) } };
 
   const endpoint = `${(process.env.OPENAI_RESPONSES_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "")}/responses`;
-  const productResults = await mapConcurrent(anchors, PRODUCT_SEARCH_CONCURRENCY, (anchor) => runLane(endpoint, apiKey, model, "product", { ...business, offerings: [anchor] }, { ...profile, products: [anchor] }));
+  const priorLedger = comparisonTargetMode ? validPriorProductSearchLedger(options.priorProductSearchLedger, anchorSetHash, startIndex, endIndex) : null;
+  if (comparisonTargetMode && options.priorProductSearchLedger !== undefined && !priorLedger) {
+    const gap = "The durable product-search checkpoint was invalid; paid search stopped instead of replaying previously purchased work.";
+    return {
+      available: false,
+      provider: "openai-web-search",
+      model,
+      category: business.category,
+      region: business.region,
+      businessType: business.businessType,
+      strategy: "product-first",
+      queries: [],
+      candidates: [],
+      gaps: [gap],
+      gap,
+      productSearchCoverage: { ...baseCoverage, providerFailureCategory: "internal", providerFailureCount: 1, providerCircuitOpen: true },
+    };
+  }
+  const priorEntries = new Map((priorLedger?.entries || []).map((entry) => [entry.anchorIndex, entry]));
+  const indexedAnchors = anchors.map((anchor, index) => ({ anchor, anchorIndex: startIndex + index }));
+  const productResults = await mapConcurrent(indexedAnchors, PRODUCT_SEARCH_CONCURRENCY, async ({ anchor, anchorIndex }) => {
+    const previous = priorEntries.get(anchorIndex);
+    if (previous && (previous.completed || previous.attempts >= MAX_PRODUCT_SEARCH_ATTEMPTS_PER_ANCHOR)) {
+      return {
+        lane: "product" as const,
+        category: business.category,
+        region: business.region,
+        queries: previous.queries,
+        candidates: previous.candidates,
+        completed: previous.completed,
+        failureCategory: previous.failureCategory,
+        ...(previous.gap ? { gap: previous.gap } : {}),
+        anchorIndex,
+        attempts: previous.attempts,
+        reused: true,
+      };
+    }
+    const result = await runLane(endpoint, apiKey, model, "product", { ...business, offerings: [anchor] }, { ...profile, products: [anchor] });
+    return { ...result, anchorIndex, attempts: Math.min(MAX_PRODUCT_SEARCH_ATTEMPTS_PER_ANCHOR, (previous?.attempts || 0) + 1), reused: false };
+  });
+  const productSearchLedger: ProductSearchLedger | undefined = comparisonTargetMode ? {
+    version: 1,
+    anchorSetHash,
+    startIndex,
+    endIndex,
+    entries: productResults.map((result) => ({
+      anchorIndex: result.anchorIndex!,
+      attempts: result.attempts || 1,
+      completed: result.completed,
+      failureCategory: result.failureCategory,
+      queries: result.queries.slice(0, 8),
+      candidates: result.candidates.slice(0, MAX_CANDIDATES),
+      ...(result.gap ? { gap: result.gap.slice(0, 500) } : {}),
+    })),
+  } : undefined;
   const productCandidates = mergeCandidates(productResults.flatMap((result) => result.candidates), MAX_DISCOVERY_CANDIDATES_PER_ATTEMPT, MAX_DISCOVERY_CANDIDATES_PER_ATTEMPT);
   const companyResults = comparisonTargetMode
     ? []
@@ -957,7 +1119,18 @@ export async function discoverCompetitors(profile: DiscoveryProfile, options: Di
   const category = business.category;
   const region = completed.find((result) => result.region && result.region !== business.region)?.region || business.region;
   const gap = candidates.length ? undefined : gaps[0] || "Product and fallback searches completed, but no attributable seller candidate was returned.";
-  const productSearchCoverage = {
+  const productFailures = productResults.filter((result) => !result.completed);
+  const failureCategories = [...new Set(productFailures.map((result) => result.failureCategory))];
+  const providerFailureCategory: DiscoverySearchFailureCategory | undefined = failureCategories.length === 0 ? undefined : failureCategories.length === 1 ? failureCategories[0] : "mixed";
+  const paidSearchesStarted = productResults.filter((result) => result.reused !== true).length;
+  const reusedSearches = productResults.length - paidSearchesStarted;
+  const freshFailures = productResults.filter((result) => result.reused !== true && !result.completed);
+  const providerCircuitOpen = comparisonTargetMode
+    && productResults.length > 0
+    && freshFailures.length === productResults.length
+    && new Set(freshFailures.map((result) => result.failureCategory)).size === 1;
+  const searchAttemptsComplete = productResults.every((result) => result.completed || (result.attempts || 0) >= MAX_PRODUCT_SEARCH_ATTEMPTS_PER_ANCHOR);
+  const productSearchCoverage: DiscoveryResult["productSearchCoverage"] = {
     eligibleAnchors: eligibleAnchors.length,
     anchorSetHash,
     searchedAnchors: productResults.filter((result) => result.completed).length,
@@ -971,6 +1144,13 @@ export async function discoverCompetitors(profile: DiscoveryProfile, options: Di
     verificationComplete: false,
     batchComplete: false,
     complete: Boolean(options.priorCoverageComplete !== false && startIndex === 0 && endIndex >= eligibleAnchors.length && productSearchesCompleted && settled.every((result) => result.completed)),
+    ...(comparisonTargetMode ? {
+      searchAttemptsComplete,
+      paidSearchesStarted,
+      reusedSearches,
+      ...(providerFailureCategory ? { providerFailureCategory, providerFailureCount: productFailures.length } : {}),
+      ...(providerCircuitOpen ? { providerCircuitOpen: true } : {}),
+    } : {}),
   };
-  return { available: completed.length > 0, provider: "openai-web-search", model, category, region, businessType: business.businessType, strategy, queries, candidates, gaps, productSearchCoverage, ...(gap ? { gap } : {}) };
+  return { available: completed.length > 0, provider: "openai-web-search", model, category, region, businessType: business.businessType, strategy, queries, candidates, gaps, productSearchCoverage, ...(productSearchLedger ? { productSearchLedger } : {}), ...(gap ? { gap } : {}) };
 }
