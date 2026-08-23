@@ -74,25 +74,31 @@ jobs:
           PLAN: ${{ inputs.plan }}
         run: |
           set -Eeuo pipefail
-          body="$(jq -cn --arg primaryDomain "${PRIMARY_DOMAIN}" --arg plan "${PLAN}" '{primaryDomain:$primaryDomain,plan:$plan,locale:"en"}')"
           if ! response="$(
-            docker exec -e "ACCEPTANCE_BODY=${body}" "${CONTAINER}" node --input-type=module -e '
+            docker exec \
+              -e "ACCEPTANCE_PRIMARY_DOMAIN=${PRIMARY_DOMAIN}" \
+              -e "ACCEPTANCE_PLAN=${PLAN}" \
+              "${CONTAINER}" node --input-type=module -e '
               const response = await fetch("http://127.0.0.1:3000/api/internal/acceptance-reports", {
                 method: "POST",
                 headers: { authorization: `Bearer ${process.env.MARKET_SIGNAL_OWNER_WRITE_TOKEN}`, "content-type": "application/json" },
-                body: process.env.ACCEPTANCE_BODY,
+                body: JSON.stringify({ primaryDomain: process.env.ACCEPTANCE_PRIMARY_DOMAIN, plan: process.env.ACCEPTANCE_PLAN, locale: "en" }),
               });
               const payload = await response.json();
               if (!response.ok || payload.ok !== true) throw new Error(`${response.status}:${payload.errorCode || "acceptance-dispatch-failed"}`);
-              process.stdout.write(JSON.stringify(payload));
+              const publicId = String(payload.report?.publicId || "");
+              const runId = String(payload.job?.runId || "");
+              const target = Number(payload.report?.comparisonTarget);
+              if (!/^[0-9a-f]{32}$/.test(publicId) || !/^run_[A-Za-z0-9]+$/.test(runId) || ![20, 50, 500, 1000].includes(target)) {
+                throw new Error("acceptance-dispatch-response-invalid");
+              }
+              process.stdout.write(`${publicId}\t${runId}\t${target}`);
             '
           )"; then
             echo "Acceptance report dispatch failed." >&2
             exit 1
           fi
-          public_id="$(jq -r '.report.publicId // empty' <<<"${response}")"
-          run_id="$(jq -r '.job.runId // empty' <<<"${response}")"
-          target="$(jq -r '.report.comparisonTarget // empty' <<<"${response}")"
+          IFS=$'\t' read -r public_id run_id target <<<"${response}"
           [[ "${public_id}" =~ ^[0-9a-f]{32}$ ]]
           [[ "${run_id}" =~ ^run_[A-Za-z0-9]+$ ]]
           [[ "${target}" =~ ^(20|50|500|1000)$ ]]
