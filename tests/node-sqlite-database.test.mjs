@@ -170,6 +170,7 @@ test("Node SQLite preserves reports and competitor memory after reopening", asyn
     assert.equal(report.run.status, "complete");
     assert.equal(report.run.productPlan, "agency");
     assert.equal(report.run.productLimit, 1_000);
+    assert.equal(report.run.productTargetKind, "pairs");
     assert.equal(report.events.filter((event) => event.idempotencyKey === "crawl-started").length, 1);
     assert.equal(report.events.at(-1).idempotencyKey, "report-saved");
     assert.equal(report.document.blocks[0].title, "Saved on the VPS");
@@ -178,6 +179,25 @@ test("Node SQLite preserves reports and competitor memory after reopening", asyn
     assert.equal(memory.candidates[0].domain, "oasismarket.co.uk");
   } finally {
     database?.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("entitlement migration preserves historical row semantics while new reports target pairs", async () => {
+  const { directory, databasePath } = await fixture();
+  const database = await NodeSqliteDatabase.open(databasePath);
+  try {
+    await database.prepare("CREATE TABLE report_product_entitlements (run_id text PRIMARY KEY NOT NULL, plan_tier text NOT NULL, product_limit integer NOT NULL, resolved_at text NOT NULL)").run();
+    const created = await createReportRun({ primaryDomain: "migration.example", entitlement: { plan: "solo", productLimit: 50 } }, new Date("2026-08-23T00:00:00.000Z"), database);
+    const columns = await database.prepare("PRAGMA table_info(report_product_entitlements)").all();
+    assert.equal(columns.results.some((column) => column.name === "target_kind" && column.dflt_value === "'primary-products'"), true);
+    const current = await database.prepare("SELECT target_kind FROM report_product_entitlements WHERE run_id = ?").bind(created.id).all();
+    assert.equal(current.results[0].target_kind, "pairs");
+    await database.prepare("INSERT INTO report_product_entitlements (run_id, plan_tier, product_limit, resolved_at) VALUES ('historical-run', 'agency', 1000, '2026-08-22T00:00:00.000Z')").run();
+    const historical = await database.prepare("SELECT target_kind FROM report_product_entitlements WHERE run_id = 'historical-run'").all();
+    assert.equal(historical.results[0].target_kind, "primary-products");
+  } finally {
+    database.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

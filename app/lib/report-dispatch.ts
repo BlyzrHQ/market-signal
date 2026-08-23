@@ -2,6 +2,7 @@ import { auth, tasks } from "@trigger.dev/sdk";
 import type { marketSignalReportOrchestration } from "../../src/trigger/report-orchestration.ts";
 import {
   reportOrchestrationWireVersion,
+  type PublishedResultTargetKind,
   type ReportOrchestrationPayload,
   type ReportOrchestrationWirePayload,
 } from "../../src/shared/report-orchestration-contract.ts";
@@ -18,6 +19,7 @@ export type DispatchableReport = {
   attemptCount: number;
   productPlan?: ProductPlan;
   productLimit?: number;
+  productTargetKind?: PublishedResultTargetKind;
 };
 
 type TriggerHandle = { id: string };
@@ -26,7 +28,8 @@ type TriggerReport = (payload: ReportOrchestrationWirePayload, options: { idempo
 function dispatchIdentity(report: DispatchableReport) {
   const productPlan = report.productPlan || "starter";
   const productLimit = report.productLimit || 20;
-  return { productPlan, productLimit, contractVersion: reportOrchestrationWireVersion(productPlan, productLimit) };
+  const productTargetKind = report.productTargetKind || "pairs";
+  return { productPlan, productLimit, contractVersion: reportOrchestrationWireVersion(productPlan, productLimit, productTargetKind) };
 }
 
 export function reportDispatchIdempotencyKey(report: DispatchableReport) {

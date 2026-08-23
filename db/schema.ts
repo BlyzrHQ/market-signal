@@ -151,6 +151,7 @@ export const reportProductEntitlements = sqliteTable("report_product_entitlement
   runId: text("run_id").primaryKey(),
   planTier: text("plan_tier").notNull(),
   productLimit: integer("product_limit").notNull(),
+  targetKind: text("target_kind").notNull().default("primary-products"),
   resolvedAt: text("resolved_at").notNull(),
 });
 

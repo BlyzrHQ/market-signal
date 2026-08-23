@@ -7,6 +7,7 @@ import { gunzipSync, gzipSync } from "node:zlib";
 import {
   PermanentOrchestrationError,
   parseReportOrchestrationPayload,
+  reportOrchestrationWireVersion,
 } from "../src/trigger/contracts/report-orchestration.ts";
 import {
   MAX_FINAL_ENRICHMENT_TARGETS,
@@ -35,11 +36,11 @@ import {
   isRetryableHttpStatus,
 } from "../src/trigger/report-orchestration-http.ts";
 import { planFinalProductEnrichmentTargets } from "../app/lib/product-intelligence.ts";
+import { compactPublishedProductComparisonCheckpoint, mergePublishedProductComparisonState, publishPricedProductComparison } from "../app/lib/product-match-lifecycle.ts";
 import { encodedJsonBytes, REPORT_CALLBACK_ENVELOPE_BYTES, REPORT_PRESENTATION_TARGET_BYTES } from "../src/shared/report-document-compaction.ts";
 import { babanujScaleDocument } from "./fixtures/babanuj-report-document.mjs";
 import { createWorkerApiManifest } from "../src/shared/worker-api-contract.ts";
 import { AI_ACTION_PLANNER_LIMITS, deterministicProductActionResult } from "../app/lib/ai-action-planner.ts";
-import { publishPricedProductComparison } from "../app/lib/product-match-lifecycle.ts";
 import { judgeBatchKey } from "../app/lib/ai-product-matching.ts";
 
 const payload = {
@@ -248,6 +249,88 @@ test("published checkpoint validation rejects any evidence edge lost during reva
   ), null);
 });
 
+test("pair checkpoint validation accepts a met target drawn from surplus primary rows", () => {
+  const referenceTimeMs = Date.parse("2026-07-20T10:01:00.000Z");
+  const source = comparison({ withPair: true, count: 5 });
+  source.rows.forEach((row, index) => {
+    row.primary.recoveryIdentityHash = String(index + 1).repeat(64);
+  });
+  const state = mergePublishedProductComparisonState(source, null, 2, referenceTimeMs, "pairs");
+  const allowedKeys = new Set(source.rows.map((row) => `${row.primary.id}\nshop.example`));
+  const allowedIdentities = new Map(source.rows.map((row) => [
+    `${row.primary.id}\nshop.example`,
+    row.primary.recoveryIdentityHash,
+  ]));
+
+  const validated = validPublishedResultCheckpoint(
+    { version: 4, comparison: state.comparison, evidence: state.evidence },
+    2,
+    referenceTimeMs,
+    allowedKeys,
+    allowedIdentities,
+    "pairs",
+  );
+
+  assert.ok(validated);
+  assert.equal(validated.comparison.coverage.assignedPairCount, 2);
+  assert.equal(validated.evidence.rows.length, 2);
+});
+
+test("all four pair plan checkpoints round-trip with surplus publishable primaries", () => {
+  const referenceTimeMs = Date.parse("2026-07-20T10:01:00.000Z");
+  for (const target of [20, 50, 500, 1_000]) {
+    const source = comparison({ withPair: true, count: target + 1 });
+    source.rows.forEach((row) => {
+      row.primary.recoveryIdentityHash = createHash("sha256").update(row.primary.id).digest("hex");
+    });
+    const state = mergePublishedProductComparisonState(source, null, target, referenceTimeMs, "pairs");
+    const checkpoint = {
+      version: 4,
+      comparison: compactPublishedProductComparisonCheckpoint(state.comparison),
+      evidence: compactPublishedProductComparisonCheckpoint(state.evidence),
+    };
+    const allowedKeys = new Set(source.rows.map((row) => `${row.primary.id}\nshop.example`));
+    const allowedIdentities = new Map(source.rows.map((row) => [
+      `${row.primary.id}\nshop.example`,
+      row.primary.recoveryIdentityHash,
+    ]));
+
+    const validated = validPublishedResultCheckpoint(
+      checkpoint,
+      target,
+      referenceTimeMs,
+      allowedKeys,
+      allowedIdentities,
+      "pairs",
+    );
+
+    assert.ok(validated, `target ${target}`);
+    assert.equal(validated.comparison.coverage.assignedPairCount, target);
+  }
+});
+
+test("pair checkpoint validation rejects duplicate aliases of one rival offering", () => {
+  const referenceTimeMs = Date.parse("2026-07-20T10:01:00.000Z");
+  const published = publishPricedProductComparison(comparison({ withPair: true, count: 1 }), referenceTimeMs);
+  published.rows[0].primary.recoveryIdentityHash = "a".repeat(64);
+  const alias = structuredClone(published.rows[0].matches[0]);
+  alias.product.sourceUrl = "https://rival.example/products/honey-alias?country=GB";
+  published.rows[0].matches.push(alias);
+  published.coverage.assignedPairCount = 2;
+  published.coverage.verifiedPairCount = 2;
+  published.matching.publishedPairs = 2;
+  const key = `${published.rows[0].primary.id}\nshop.example`;
+
+  assert.equal(validPublishedResultCheckpoint(
+    { version: 4, comparison: published, evidence: structuredClone(published) },
+    2,
+    referenceTimeMs,
+    new Set([key]),
+    new Map([[key, published.rows[0].primary.recoveryIdentityHash]]),
+    "pairs",
+  ), null);
+});
+
 test("enrichment checkpoint validation rejects an outcome from a different explicit market", () => {
   const target = { domain: "rival.example", productId: "r1", sourceUrl: "https://rival.example/en-US/products/honey", expectedName: "Honey", role: "rival" };
   const outcome = { ...product("rival.example", "r1"), sourceUrl: "https://rival.example/ar-SA/products/honey", priceSignals: [{ raw: "SAR 30", currency: "SAR", amount: 30 }] };
@@ -337,7 +420,14 @@ function mockPort(overrides = {}) {
 test("payload contract accepts only a canonical, exact, versioned payload", () => {
   assert.deepEqual(parseReportOrchestrationPayload(payload), payload);
   assert.deepEqual(parseReportOrchestrationPayload({ contractVersion: "2", publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, reportAttempt: 1 }), { ...payload, productPlan: "starter", productLimit: 20 });
-  assert.deepEqual(parseReportOrchestrationPayload({ ...payload, contractVersion: "3", productPlan: "agency", productLimit: 1_000 }), { ...payload, productPlan: "agency", productLimit: 1_000 });
+  assert.deepEqual(parseReportOrchestrationPayload({ ...payload, contractVersion: "3", productPlan: "agency", productLimit: 1_000 }), { ...payload, contractVersion: "3", productPlan: "agency", productLimit: 1_000 });
+  for (const [productPlan, productLimit] of Object.entries({ starter: 20, solo: 50, growth: 500, agency: 1_000 })) {
+    const version5 = { ...payload, contractVersion: "5", productPlan, productLimit };
+    assert.deepEqual(parseReportOrchestrationPayload(version5), version5);
+    assert.equal(reportOrchestrationWireVersion(productPlan, productLimit), "5");
+  }
+  assert.equal(reportOrchestrationWireVersion("agency", 1_000, "primary-products"), "3");
+  assert.equal(reportOrchestrationWireVersion("starter", 20, "primary-products"), "4");
   for (const invalid of [
     { ...payload, primaryDomain: "https://shop.example" },
     { ...payload, primaryDomain: "Shop.example" },
@@ -346,7 +436,7 @@ test("payload contract accepts only a canonical, exact, versioned payload", () =
     { ...payload, callbackUrl: "https://attacker.example" },
     { ...payload, contractVersion: "1" },
     { ...payload, reportAttempt: 0 },
-    { ...payload, productPlan: "agency", productLimit: 1_000 },
+    { ...payload, contractVersion: "5", productPlan: "agency", productLimit: 20 },
     { ...payload, productPlan: "unlimited", productLimit: 1_000 },
   ]) assert.throws(() => parseReportOrchestrationPayload(invalid), PermanentOrchestrationError);
 });

@@ -159,6 +159,7 @@ export type ProductComparison = {
     primaryProductsAssessed: number;
     primaryProductsScreened?: number;
     resultTarget?: number;
+    publishedPairs?: number;
     publishedPrimaryProducts?: number;
     resultShortfall?: number;
     resultShortfallReason?: "bounded-candidate-pool-exhausted" | "processing-incomplete";

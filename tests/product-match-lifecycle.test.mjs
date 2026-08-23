@@ -374,6 +374,133 @@ test("publication freshness is stable against the report observation timestamp",
   assert.equal(published.rows[0].matches[0].publication.priceEligible, true);
 });
 
+function pricedPairRow(primaryName, primaryId, rivalIds) {
+  const primary = product(primaryId);
+  primary.name = primaryName;
+  primary.normalizedName = primaryName.toLowerCase();
+  primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+  return {
+    primary,
+    matches: rivalIds.map((rivalId, index) => {
+      const rival = product(rivalId, "rival.test");
+      rival.priceSignals = [{ raw: `USD ${8 + index}`, currency: "USD", amount: 8 + index }];
+      return { domain: rival.domain, product: rival, score: 0.99 - (index / 100), confidence: "Medium", sharedTerms: [], claimIds: [], decision: null };
+    }),
+  };
+}
+
+test("pair targets exhaust alphabetically ordered primaries and retain several rivals per product", () => {
+  const rows = [
+    pricedPairRow("Blueberry Jam", "blueberry", ["blue-1", "blue-2", "blue-3"]),
+    pricedPairRow("Apricot Jam", "apricot", ["apricot-1", "apricot-2", "apricot-3"]),
+  ];
+  const selected = rows.map((item) => item.primary.id);
+  const state = mergePublishedProductComparisonState(comparison({ selected, assessed: selected, rows, accepted: 6 }), null, 4, Date.now(), "pairs");
+
+  assert.equal(state.comparison.coverage.assignedPairCount, 4);
+  assert.equal(state.comparison.matching.publishedPairs, 4);
+  assert.equal(state.comparison.matching.publishedPrimaryProducts, 2);
+  assert.equal(state.comparison.coverage.truncated, false);
+  assert.deepEqual(state.comparison.rows.map((item) => [item.primary.name, item.matches.length]), [["Apricot Jam", 3], ["Blueberry Jam", 1]]);
+});
+
+test("pair publication is deterministic when input rows and rivals are shuffled", () => {
+  const apricot = pricedPairRow("Apricot Jam", "apricot", ["apricot-1", "apricot-2", "apricot-3"]);
+  const blueberry = pricedPairRow("Blueberry Jam", "blueberry", ["blue-1", "blue-2", "blue-3"]);
+  const selected = ["apricot", "blueberry"];
+  const first = mergePublishedProductComparisonState(comparison({ selected, assessed: selected, rows: [blueberry, apricot], accepted: 6 }), null, 4, Date.now(), "pairs").comparison;
+  const shuffled = structuredClone([apricot, blueberry]);
+  shuffled.forEach((item) => item.matches.reverse());
+  const second = mergePublishedProductComparisonState(comparison({ selected, assessed: selected, rows: shuffled, accepted: 6 }), null, 4, Date.now(), "pairs").comparison;
+
+  assert.deepEqual(second.rows.map((item) => [item.primary.id, item.matches.map((match) => match.product.id)]), first.rows.map((item) => [item.primary.id, item.matches.map((match) => match.product.id)]));
+});
+
+test("every plan target is measured in valid published pairs rather than rows", () => {
+  const rows = Array.from({ length: 50 }, (_, primaryIndex) => pricedPairRow(
+    `Product ${String(primaryIndex).padStart(2, "0")}`,
+    `primary-${primaryIndex}`,
+    Array.from({ length: 20 }, (_, rivalIndex) => `rival-${primaryIndex}-${rivalIndex}`),
+  ));
+  const selected = rows.map((item) => item.primary.id);
+  const source = comparison({ selected, assessed: selected, rows, accepted: 1_000 });
+
+  for (const target of [20, 50, 500, 1_000]) {
+    const result = mergePublishedProductComparisonState(source, null, target, Date.now(), "pairs").comparison;
+    assert.equal(result.coverage.assignedPairCount, target);
+    assert.equal(result.matching.publishedPairs, target);
+    assert.equal(result.matching.resultShortfall, 0);
+  }
+});
+
+test("pair checkpoint evidence stays within the target row bound when surplus primaries are available", () => {
+  const rows = Array.from({ length: 5 }, (_, index) => pricedPairRow(
+    `Product ${String(index).padStart(2, "0")}`,
+    `primary-${index}`,
+    [`rival-${index}`],
+  ));
+  const selected = rows.map((item) => item.primary.id);
+  const state = mergePublishedProductComparisonState(
+    comparison({ selected, assessed: selected, rows, accepted: rows.length }),
+    null,
+    2,
+    Date.now(),
+    "pairs",
+  );
+
+  assert.equal(state.comparison.coverage.assignedPairCount, 2);
+  assert.equal(state.evidence.rows.length, 2);
+  assert.deepEqual(state.evidence.rows.map((item) => item.primary.id), ["primary-0", "primary-1"]);
+});
+
+test("pair checkpoint evidence prioritizes every selected row over intermediate alias-only backups", () => {
+  const first = pricedPairRow("A Product", "a", ["shared-rival"]);
+  const aliasOnly = pricedPairRow("B Product", "b", ["shared-rival"]);
+  const last = pricedPairRow("C Product", "c", ["c-rival"]);
+  const rows = [first, aliasOnly, last];
+  const selected = rows.map((item) => item.primary.id);
+  const state = mergePublishedProductComparisonState(
+    comparison({ selected, assessed: selected, rows, accepted: 3 }),
+    null,
+    2,
+    Date.now(),
+    "pairs",
+  );
+
+  assert.deepEqual(state.comparison.rows.map((item) => item.primary.id), ["a", "c"]);
+  assert.deepEqual(state.evidence.rows.map((item) => item.primary.id), ["a", "c"]);
+  assert.equal(state.evidence.coverage.assignedPairCount, 2);
+});
+
+test("pair evidence byte-budget fallback retains every selected edge and removes surplus backup rows", () => {
+  const longPath = "x".repeat(1_700);
+  const rows = Array.from({ length: 1_000 }, (_, primaryIndex) => {
+    const item = pricedPairRow(
+      `Oversized Product ${String(primaryIndex).padStart(4, "0")}`,
+      `oversized-primary-${primaryIndex}`,
+      [`oversized-rival-${primaryIndex}-a`, `oversized-rival-${primaryIndex}-b`],
+    );
+    item.primary.sourceUrl = `https://shop.test/products/${primaryIndex}/${longPath}?country=US`;
+    item.matches.forEach((match, rivalIndex) => {
+      match.product.sourceUrl = `https://rival.test/products/${primaryIndex}/${rivalIndex}/${longPath}?country=US`;
+    });
+    return item;
+  });
+  const selected = rows.map((item) => item.primary.id);
+  const state = mergePublishedProductComparisonState(
+    comparison({ selected, assessed: selected, rows, accepted: 2_000 }),
+    null,
+    1_000,
+    Date.now(),
+    "pairs",
+  );
+
+  assert.equal(state.comparison.coverage.assignedPairCount, 1_000);
+  assert.equal(state.evidence.coverage.assignedPairCount, 1_000);
+  assert.equal(state.evidence.rows.length, 500);
+  assert.ok(state.evidence.rows.every((item) => item.matches.length === 2));
+});
+
 test("priced result backfill exposes exactly the requested number of publishable products", () => {
   const rows = Array.from({ length: 4 }, (_, index) => row(`p${index}`, `r${index}`));
   for (const [index, item] of rows.entries()) {

@@ -133,10 +133,9 @@ export function durablePublishedMatchAssessment(primary: ProductRecord, match: P
 }
 
 function evidenceRowsWithinByteBudget(rows: ProductComparison["rows"], maxBytes = MAX_DURABLE_EVIDENCE_ROWS_BYTES) {
-  const retained = rows.map((row) => ({ ...row, matches: row.matches.slice(0, MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY) }));
-  const byteLength = new TextEncoder().encode(JSON.stringify(retained)).byteLength;
+  const byteLength = new TextEncoder().encode(JSON.stringify(rows)).byteLength;
   if (byteLength > maxBytes) throw new Error("The complete durable priced-evidence graph exceeds its persistence budget.");
-  return retained;
+  return rows;
 }
 
 export function compactPublishedProductComparisonCheckpoint(comparison: ProductComparison): ProductComparison {
@@ -394,9 +393,88 @@ export function publishPricedProductComparison(comparison: ProductComparison, re
   };
 }
 
-export function limitPublishedProductComparison(comparison: ProductComparison, resultTarget: number): ProductComparison {
+type PublishedResultTargetKind = "primary-products" | "pairs";
+
+function compareCodepoint(left: string, right: string) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function primaryAlphabeticalKey(product: ProductRecord) {
+  return String(product.name || product.normalizedName || "").normalize("NFKC").toLowerCase();
+}
+
+function publishedPairCount(comparison: ProductComparison) {
+  return comparison.rows.reduce((sum, row) => sum + row.matches.filter((match) => match.product).length, 0);
+}
+
+export function limitPublishedProductComparison(comparison: ProductComparison, resultTarget: number, targetKind: PublishedResultTargetKind = "primary-products"): ProductComparison {
   const requestedTarget = Math.max(1, Math.floor(resultTarget));
   const target = requestedTarget;
+  if (targetKind === "pairs") {
+    let remaining = target;
+    const rows = [...comparison.rows]
+      .sort((left, right) => compareCodepoint(primaryAlphabeticalKey(left.primary), primaryAlphabeticalKey(right.primary))
+        || compareCodepoint(left.primary.normalizedName, right.primary.normalizedName)
+        || compareCodepoint(left.primary.id, right.primary.id)
+        || compareCodepoint(left.primary.sourceUrl, right.primary.sourceUrl))
+      .flatMap((row) => {
+        if (remaining <= 0) return [];
+        const matches = row.matches
+          .filter((match): match is ProductMatch & { product: ProductRecord } => Boolean(match.product && match.publication?.priceEligible === true))
+          .sort((left, right) => exactProductPriority(right) - exactProductPriority(left)
+            || right.score - left.score
+            || compareCodepoint(productIdentityKey(left.product), productIdentityKey(right.product))
+            || compareCodepoint(left.product.sourceUrl, right.product.sourceUrl))
+          .slice(0, remaining);
+        remaining -= matches.length;
+        return matches.length ? [{ ...row, matches }] : [];
+      });
+    const pairs = publishedPairCount({ ...comparison, rows });
+    const publishedPrimaryProducts = rows.length;
+    const resultShortfall = Math.max(0, target - pairs);
+    const priorMatching = comparison.matching;
+    const screened = priorMatching?.primaryProductsScreened || priorMatching?.primaryProductsAssessed || 0;
+    const selectedIds = new Set(priorMatching?.selectedPrimaryIds || []);
+    const completedIds = new Set(priorMatching?.processedPrimaryIds?.length ? priorMatching.processedPrimaryIds : priorMatching?.assessedPrimaryIds || []);
+    const marketResolved = /^[A-Z]{2}$/.test(String(comparison.marketCountryCode || "").toUpperCase());
+    const emptyRivalPool = priorMatching?.competitorProductsSynchronized === 0 && priorMatching?.candidatePairsAssessed === 0;
+    const matchingCompleted = priorMatching?.available === true && (marketResolved || emptyRivalPool)
+      && priorMatching.gaps.length === 0 && [...selectedIds].every((id) => completedIds.has(id));
+    const enrichmentCompleted = !comparison.enrichment?.failedBatchCount && comparison.enrichment?.pagesTruncated !== true;
+    const resultShortfallReason = resultShortfall
+      ? matchingCompleted && enrichmentCompleted ? "bounded-candidate-pool-exhausted" as const : "processing-incomplete" as const
+      : undefined;
+    const shortfallGap = resultShortfall
+      ? resultShortfallReason === "bounded-candidate-pool-exhausted"
+        ? `Published ${pairs} of ${target} requested priced product comparisons after fully processing the bounded pool of ${screened} screened primary products; no additional eligible priced pair remained in that pool.`
+        : `Published ${pairs} of ${target} requested priced product comparisons after screening ${screened} primary products; matching or enrichment did not fully process the bounded pool.`
+      : "";
+    return {
+      ...comparison,
+      rows,
+      coverage: {
+        ...comparison.coverage,
+        primaryProductFamiliesCompared: publishedPrimaryProducts,
+        assignedPairCount: pairs,
+        verifiedPairCount: rows.reduce((sum, row) => sum + row.matches.filter((match) => match.product && match.confidence === "Medium").length, 0),
+        rowsReturned: publishedPrimaryProducts,
+        rowLimit: target,
+        truncated: pairs > target || comparison.coverage.truncated,
+      },
+      matching: priorMatching ? {
+        ...priorMatching,
+        primaryProductsScreened: screened,
+        resultTarget: target,
+        publishedPairs: pairs,
+        publishedPrimaryProducts,
+        resultShortfall,
+        resultShortfallReason,
+        gaps: shortfallGap
+          ? [...new Set([...priorMatching.gaps.filter((gap) => !/^Published \d+ of \d+ requested priced product comparisons/i.test(gap)), shortfallGap])]
+          : priorMatching.gaps.filter((gap) => !/^Published \d+ of \d+ requested priced product comparisons/i.test(gap)),
+      } : priorMatching,
+    };
+  }
   const candidates = comparison.rows.flatMap((row) => {
     const strongest = row.matches
       .filter((match) => match.product && match.publication?.priceEligible === true)
@@ -470,7 +548,208 @@ export function limitPublishedProductComparison(comparison: ProductComparison, r
   };
 }
 
-export function mergePublishedProductComparisonState(current: ProductComparison, prior: ProductComparison | null, resultTarget: number, referenceTimeMs = Date.now()) {
+function mergePublishedPairComparisonState(current: ProductComparison, prior: ProductComparison | null, resultTarget: number, referenceTimeMs: number) {
+  const target = Math.min(1_000, Math.max(1, Math.floor(resultTarget)));
+  const evaluated = (comparison: ProductComparison) => comparison.rows.some((row) => row.matches.some((match) => match.publication !== undefined))
+    ? comparison
+    : publishPricedProductComparison(comparison, referenceTimeMs);
+  const publishedCurrent = evaluated(current);
+  const publishedPrior = prior ? evaluated(prior) : null;
+  const publishable = (row: ProductComparison["rows"][number]) => row.matches.some((match) => match.product && match.publication?.priceEligible === true);
+  const currentRows = publishedCurrent.rows.filter(publishable);
+  const currentIdentityById = new Map(publishedCurrent.rows.map((row) => [row.primary.id, durablePrimaryIdentity(row.primary)]));
+  const priorRows = (publishedPrior?.rows.filter(publishable) || []).filter((row) => {
+    const currentIdentity = currentIdentityById.get(row.primary.id);
+    return currentIdentity === undefined || currentIdentity === durablePrimaryIdentity(row.primary);
+  });
+  const candidateRows: ProductComparison["rows"] = [];
+  const rowByPrimary = new Map<string, number>();
+  for (const row of [...currentRows, ...priorRows]) {
+    const identity = durablePrimaryIdentity(row.primary);
+    const index = rowByPrimary.get(identity);
+    if (index === undefined) {
+      rowByPrimary.set(identity, candidateRows.length);
+      candidateRows.push(row);
+    } else {
+      candidateRows[index] = { ...candidateRows[index], matches: [...candidateRows[index].matches, ...row.matches] };
+    }
+  }
+  candidateRows.sort((left, right) => compareCodepoint(primaryAlphabeticalKey(left.primary), primaryAlphabeticalKey(right.primary))
+    || compareCodepoint(left.primary.normalizedName, right.primary.normalizedName)
+    || compareCodepoint(left.primary.id, right.primary.id)
+    || compareCodepoint(left.primary.sourceUrl, right.primary.sourceUrl));
+
+  const rivalConstraintKeys = (product: ProductRecord) => {
+    const source = canonicalProductSourceKey(product);
+    const domain = canonicalDomain(product.domain);
+    const market = publicSourceMarketCountryCode(product.sourceUrl) || "";
+    const gtins = [...new Set((product.identifiers?.gtins || []).map(canonicalGtin).filter((gtin): gtin is string => Boolean(gtin)))];
+    return [
+      `physical:${productIdentityKey(product)}`,
+      ...gtins.map((gtin) => `gtin:${domain}|${market}|${gtin}`),
+      ...(source ? [`source:${source}`] : []),
+      `merchant:${domain}|${product.id}`,
+      ...(/^[a-f0-9]{64}$/.test(product.assignmentComponentHash || "") ? [`assignment:${product.assignmentComponentHash}`] : []),
+    ];
+  };
+  const rankedCandidates = candidateRows.map((row) => row.matches
+    .filter((match): match is ProductMatch & { product: ProductRecord } => Boolean(match.product && match.publication?.priceEligible === true))
+    .sort((left, right) => exactProductPriority(right) - exactProductPriority(left)
+      || right.score - left.score
+      || compareCodepoint(productIdentityKey(left.product), productIdentityKey(right.product))
+      || compareCodepoint(left.product.sourceUrl, right.product.sourceUrl)));
+  const allCandidates = rankedCandidates.flat();
+  const parents = allCandidates.map((_match, index) => index);
+  const findRoot = (index: number): number => parents[index] === index ? index : (parents[index] = findRoot(parents[index]));
+  const union = (left: number, right: number) => {
+    const leftRoot = findRoot(left);
+    const rightRoot = findRoot(right);
+    if (leftRoot !== rightRoot) parents[rightRoot] = leftRoot;
+  };
+  const firstByConstraint = new Map<string, number>();
+  allCandidates.forEach((match, index) => {
+    for (const key of rivalConstraintKeys(match.product)) {
+      const first = firstByConstraint.get(key);
+      if (first === undefined) firstByConstraint.set(key, index);
+      else union(first, index);
+    }
+  });
+  const candidateIndex = new Map(allCandidates.map((match, index) => [match, index]));
+  const componentKey = (match: ProductMatch) => {
+    const index = candidateIndex.get(match as ProductMatch & { product: ProductRecord });
+    return index === undefined ? "missing" : `component:${findRoot(index)}`;
+  };
+  const componentConstraints = new Map<number, Set<string>>();
+  allCandidates.forEach((match, index) => {
+    const root = findRoot(index);
+    const constraints = componentConstraints.get(root) || new Set<string>();
+    rivalConstraintKeys(match.product).forEach((key) => constraints.add(key));
+    componentConstraints.set(root, constraints);
+  });
+  const componentHash = (match: ProductMatch) => {
+    const index = candidateIndex.get(match as ProductMatch & { product: ProductRecord });
+    if (index === undefined) return "";
+    const root = findRoot(index);
+    const members = allCandidates.filter((_candidate, memberIndex) => findRoot(memberIndex) === root);
+    const priorHashes = [...new Set(members.map((member) => member.product.assignmentComponentHash || "").filter((hash) => /^[a-f0-9]{64}$/.test(hash)))];
+    if (members.length === 1 && priorHashes.length <= 1) return priorHashes[0] || "";
+    return createHash("sha256").update(JSON.stringify([...(componentConstraints.get(root) || [])].sort())).digest("hex");
+  };
+  const dedupedCandidates = rankedCandidates.map((matches) => {
+    const seen = new Set<string>();
+    return matches.filter((match) => {
+      const key = componentKey(match);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  });
+  const usedComponents = new Set<string>();
+  const selectedByRow = new Map<number, Set<ProductMatch>>();
+  let selectedCount = 0;
+  for (let rowIndex = 0; rowIndex < candidateRows.length && selectedCount < target; rowIndex += 1) {
+    const selected = new Set<ProductMatch>();
+    for (const match of dedupedCandidates[rowIndex]) {
+      const key = componentKey(match);
+      if (usedComponents.has(key)) continue;
+      usedComponents.add(key);
+      selected.add(match);
+      selectedCount += 1;
+      if (selectedCount >= target) break;
+    }
+    if (selected.size) selectedByRow.set(rowIndex, selected);
+  }
+  const rows = candidateRows.flatMap((row, rowIndex) => {
+    const selected = selectedByRow.get(rowIndex);
+    if (!selected) return [];
+    return [{
+      ...row,
+      matches: dedupedCandidates[rowIndex].filter((match) => selected.has(match)).map((match) => ({
+        ...match,
+        decision: match.product
+          ? (match.decision || productDecision(row.primary, match.product, match.score, match.assessment?.verdict !== "close_substitute"))
+          : null,
+      })),
+    }];
+  });
+  const currentMatching = publishedCurrent.matching;
+  const priorMatching = publishedPrior?.matching;
+  const unionIds = (left: string[] = [], right: string[] = []) => [...new Set([...left, ...right])];
+  const merged: ProductComparison = {
+    ...publishedCurrent,
+    rows,
+    coverage: {
+      ...publishedCurrent.coverage,
+      primaryProductFamiliesCompared: rows.length,
+      rowsReturned: rows.length,
+      assignedPairCount: selectedCount,
+      verifiedPairCount: rows.reduce((sum, row) => sum + row.matches.filter((match) => match.confidence === "Medium").length, 0),
+      truncated: selectedCount > target || Boolean(publishedCurrent.coverage.truncated || publishedPrior?.coverage.truncated),
+    },
+    matching: currentMatching ? {
+      ...currentMatching,
+      primaryProductsScreened: Math.max(currentMatching.primaryProductsScreened || 0, priorMatching?.primaryProductsScreened || 0),
+      selectedPrimaryIds: unionIds(currentMatching.selectedPrimaryIds, priorMatching?.selectedPrimaryIds),
+      assessedPrimaryIds: unionIds(currentMatching.assessedPrimaryIds, priorMatching?.assessedPrimaryIds).sort(),
+      processedPrimaryIds: unionIds(currentMatching.processedPrimaryIds, priorMatching?.processedPrimaryIds).sort(),
+    } : currentMatching,
+  };
+  const comparison = limitPublishedProductComparison(publishPricedProductComparison(merged, referenceTimeMs), target, "pairs");
+  const allEvidenceEntries = candidateRows.flatMap((row, rowIndex) => {
+    const compactPrimary = compactPricedEvidenceProduct(row.primary);
+    const selected = selectedByRow.get(rowIndex) || new Set<ProductMatch>();
+    const ordered = [
+      ...dedupedCandidates[rowIndex].filter((match) => selected.has(match)),
+      ...dedupedCandidates[rowIndex].filter((match) => !selected.has(match)).slice(0, MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY),
+    ];
+    return ordered.length ? [{
+      selectedCount: selected.size,
+      row: {
+        primary: compactPrimary,
+        matches: ordered.map((match) => compactPricedEvidenceMatch(compactPrimary, match, componentHash(match))),
+      },
+    }] : [];
+  });
+  const selectedEvidenceEntries = allEvidenceEntries.filter((entry) => entry.selectedCount > 0);
+  const evidenceEntries = [
+    ...selectedEvidenceEntries,
+    ...allEvidenceEntries.filter((entry) => entry.selectedCount === 0).slice(0, Math.max(0, target - selectedEvidenceEntries.length)),
+  ];
+  const evidenceRows = evidenceEntries.map((entry) => entry.row);
+  let durableRows = evidenceRows;
+  try {
+    evidenceRowsWithinByteBudget(durableRows, MAX_DURABLE_EVIDENCE_ROWS_BYTES);
+  } catch {
+    durableRows = evidenceRows.map((row, rowIndex) => ({
+      ...row,
+      matches: row.matches.slice(0, evidenceEntries[rowIndex].selectedCount),
+    })).filter((row) => row.matches.length > 0);
+    evidenceRowsWithinByteBudget(durableRows, MAX_DURABLE_EVIDENCE_ROWS_BYTES);
+  }
+  const evidencePrimaryIds = durableRows.map((row) => row.primary.id);
+  const evidence: ProductComparison = {
+    ...comparison,
+    rows: durableRows,
+    coverage: {
+      ...comparison.coverage,
+      primaryProductFamiliesCompared: durableRows.length,
+      rowsReturned: durableRows.length,
+      assignedPairCount: durableRows.reduce((sum, row) => sum + row.matches.length, 0),
+      verifiedPairCount: durableRows.reduce((sum, row) => sum + row.matches.filter((match) => match.confidence === "Medium").length, 0),
+    },
+    matching: comparison.matching ? {
+      ...comparison.matching,
+      selectedPrimaryIds: evidencePrimaryIds,
+      assessedPrimaryIds: evidencePrimaryIds,
+      processedPrimaryIds: evidencePrimaryIds,
+      gaps: comparison.matching.gaps.slice(0, 4).map((gap) => compactEvidenceText(gap, 240)),
+    } : comparison.matching,
+  };
+  return { comparison, evidence };
+}
+
+export function mergePublishedProductComparisonState(current: ProductComparison, prior: ProductComparison | null, resultTarget: number, referenceTimeMs = Date.now(), targetKind: PublishedResultTargetKind = "primary-products") {
+  if (targetKind === "pairs") return mergePublishedPairComparisonState(current, prior, resultTarget, referenceTimeMs);
   const boundedResultTarget = Math.min(MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY, Math.max(1, Math.floor(resultTarget)));
   const evaluated = (comparison: ProductComparison) => comparison.rows.some((row) => row.matches.some((match) => match.publication !== undefined))
     ? comparison
@@ -735,6 +1014,6 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
   return { comparison, evidence };
 }
 
-export function mergePublishedProductComparisons(current: ProductComparison, prior: ProductComparison | null, resultTarget: number, referenceTimeMs = Date.now()) {
-  return mergePublishedProductComparisonState(current, prior, resultTarget, referenceTimeMs).comparison;
+export function mergePublishedProductComparisons(current: ProductComparison, prior: ProductComparison | null, resultTarget: number, referenceTimeMs = Date.now(), targetKind: PublishedResultTargetKind = "primary-products") {
+  return mergePublishedProductComparisonState(current, prior, resultTarget, referenceTimeMs, targetKind).comparison;
 }

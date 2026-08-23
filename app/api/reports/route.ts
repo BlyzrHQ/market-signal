@@ -18,6 +18,7 @@ type CreatedReport = {
   expiresAt: string;
   productPlan: ProductPlan;
   productLimit: number;
+  productTargetKind: "pairs";
 };
 
 type CreationBoundaryDiagnostic = "create-not-callable" | "create-rejected" | "create-malformed" | "create-access-failed";
@@ -89,6 +90,7 @@ async function consumeReportCreation(create: unknown, input: { primaryDomain: st
         expiresAt: report.expiresAt,
         productPlan: ["starter", "solo", "growth", "agency"].includes(String(report.productPlan)) ? report.productPlan as ProductPlan : "starter",
         productLimit: Number.isInteger(report.productLimit) && Number(report.productLimit) > 0 && Number(report.productLimit) <= 1_000 ? Number(report.productLimit) : 20,
+        productTargetKind: "pairs",
       },
     };
   } catch {
