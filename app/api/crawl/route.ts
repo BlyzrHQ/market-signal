@@ -429,6 +429,35 @@ export function finalizedDiscoveryCoverage(
   };
 }
 
+export function finalizedComparisonTargetCoverage(
+  coverage: DiscoveryResult["productSearchCoverage"],
+  candidateDomainsScheduled: number,
+  settledStatuses: Array<"fulfilled" | "rejected">,
+  results: Array<Pick<DomainCrawl, "homepage" | "gaps"> | null>,
+  acceptedPairCount: number,
+  pairTarget: number,
+) {
+  const target = Math.max(0, Math.floor(pairTarget));
+  const accepted = Math.max(0, Math.floor(acceptedPairCount));
+  const pairTargetComplete = target > 0 && accepted >= target;
+  const verificationComplete = pairTargetComplete || settledStatuses.every((status, index) => status === "fulfilled" && competitorInvestigationComplete(results[index]));
+  const candidateTruncated = !pairTargetComplete && (coverage.candidateTruncated || candidateDomainsScheduled > settledStatuses.length);
+  const batchComplete = pairTargetComplete || (coverage.batchComplete && !candidateTruncated && candidateDomainsScheduled === settledStatuses.length && verificationComplete);
+  return {
+    ...coverage,
+    candidateDomainsInvestigated: settledStatuses.length,
+    candidateTruncated,
+    verificationComplete,
+    batchComplete,
+    // A crawl-side pair target is provisional. Final enrichment and the
+    // publication graph may still suppress or collapse a pair, so only true
+    // exhaustion of the searched universe may close discovery permanently.
+    complete: coverage.complete,
+    acceptedPairCount: accepted,
+    pairTarget: target,
+  };
+}
+
 export function verifiedExactMatchHints(confirmed: DomainCrawl[]) {
   const candidates = confirmed.flatMap((result) => result.verifiedExactProductPairs?.length
     ? result.verifiedExactProductPairs.map((pair) => ({ primaryId: pair.primary.id, rivalDomain: result.domain, rivalId: pair.rival.id, confidence: pair.confidence }))
@@ -1236,6 +1265,9 @@ export async function POST(request: Request) {
     primary = await enrichPrimaryProductPrices(primary);
     primary = { ...primary, products: boundedPrimaryCatalogProducts(primary.products, catalogProductLimit) };
     submittedResults = submittedResults.map((result) => result.domain === primaryDomain ? primary! : result);
+    const publicationMarketCountryCode = /^[A-Z]{2}$/.test(String(primary.homepage.regionCountryCode || "").toUpperCase())
+      ? String(primary.homepage.regionCountryCode).toUpperCase()
+      : "";
     const discoveryPolicy = resolvePrimaryDiscoveryPolicy(primary);
     const comparisonTargetMode = discoveryPolicy.requireProductOverlap;
     let discovery: DiscoveryResult;
@@ -1290,7 +1322,7 @@ export async function POST(request: Request) {
         const batch = investigationCandidates.slice(start, start + COMPARISON_VERIFICATION_BATCH_SIZE);
         investigatedSettled.push(...await settleWithConcurrency(batch, COMPARISON_VERIFICATION_BATCH_SIZE, investigate));
         const verified = investigatedSettled.flatMap((result) => result.status === "fulfilled" && result.value.homepage && result.value.discovery?.accepted ? [result.value] : []);
-        if (selectComparisonTarget(primary.products, verified, comparisonPairsNeeded, verificationMarket.regionCode, Date.now()).hints.length >= comparisonPairsNeeded) break;
+        if (selectComparisonTarget(primary.products, verified, comparisonPairsNeeded, publicationMarketCountryCode, Date.now()).hints.length >= comparisonPairsNeeded) break;
       }
     } else {
       investigatedSettled.push(...await settleWithConcurrency(investigationCandidates, COMPETITOR_CRAWL_CONCURRENCY, investigate));
@@ -1321,29 +1353,26 @@ export async function POST(request: Request) {
       }
     }
     const preEnrichmentSelection = comparisonTargetMode
-      ? selectComparisonTarget(primary.products, confirmed, comparisonPairsNeeded, verificationMarket.regionCode, Date.now())
+      ? selectComparisonTarget(primary.products, confirmed, comparisonPairsNeeded, publicationMarketCountryCode, Date.now())
       : { hints: verifiedExactMatchHints(confirmed), competitors: confirmed };
     const results = await enrichMatchedProductPages([...submittedResults, ...preEnrichmentSelection.competitors], primaryDomain);
     const enrichedPrimary = results.find((result) => result.domain === primaryDomain) || primary;
     const enrichedCandidates = results.filter((result) => result.role === "discovered-competitor");
     const finalSelection = comparisonTargetMode
-      ? selectComparisonTarget(enrichedPrimary.products, enrichedCandidates, comparisonPairsNeeded, verificationMarket.regionCode, Date.now())
+      ? selectComparisonTarget(enrichedPrimary.products, enrichedCandidates, comparisonPairsNeeded, publicationMarketCountryCode, Date.now())
       : { hints: verifiedExactMatchHints(enrichedCandidates), competitors: enrichedCandidates };
     const enrichedConfirmed = finalSelection.competitors;
-    const pairTargetComplete = comparisonTargetMode && finalSelection.hints.length >= comparisonPairsNeeded;
     if (comparisonTargetMode) discovery = {
       ...discovery,
       candidates: enrichedConfirmed.map((result) => result.discovery!).filter(Boolean),
-      productSearchCoverage: {
-        ...discovery.productSearchCoverage,
-        candidateDomainsInvestigated: investigatedSettled.length,
-        candidateTruncated: !pairTargetComplete && investigationCandidates.length > investigatedSettled.length,
-        verificationComplete: pairTargetComplete || investigatedSettled.every((result, index) => result.status === "fulfilled" && competitorInvestigationComplete(discoveredResults[index])),
-        batchComplete: pairTargetComplete || (discovery.productSearchCoverage.searchesComplete && investigationCandidates.length === investigatedSettled.length),
-        complete: pairTargetComplete || discovery.productSearchCoverage.complete,
-        acceptedPairCount: finalSelection.hints.length,
-        pairTarget: comparisonPairsNeeded,
-      },
+      productSearchCoverage: finalizedComparisonTargetCoverage(
+        discovery.productSearchCoverage,
+        investigationCandidates.length,
+        investigatedSettled.map((result) => result.status),
+        discoveredResults,
+        finalSelection.hints.length,
+        comparisonPairsNeeded,
+      ),
     };
     const publishedResultsForPairs = comparisonTargetMode
       ? [enrichedPrimary, ...enrichedConfirmed]

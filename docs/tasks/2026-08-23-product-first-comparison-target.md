@@ -39,6 +39,8 @@ The customer-facing unit is a priced product comparison, not a catalog item or a
 
 The verified Fable 5 session identified retry amplification, unconditional company-search lanes, anchor-set drift, a weaker crawl gate than the publication gate, nondeterministic stopping risk, and company blocks not being tied to final pairs. The implementation addresses these with pre-crawl target recovery, comparison-only lanes, explicit anchor-hash failure, publication-gate parity, ordered batches, and pair-derived company projection. Exact-head review remains required before merge.
 
+The first exact-head review of commit `06865da` blocked merge on three stop/resume defects: provisional crawl attainment could incorrectly persist full exhaustion, the crawl counter used the search-model market instead of the primary homepage market used by publication, and transient verification failures could advance an under-target cursor. The correction preserves provisional pair counts without closing discovery, uses the publication market at every target-selection call site, and requires terminal verification before an under-target batch can advance.
+
 ## Validation
 
 - Product search runs in stable small batches and never invokes company lanes for ecommerce.
@@ -57,7 +59,7 @@ Local results on the implementation branch:
 - `npm.cmd run typecheck:node`: pass.
 - `npm.cmd run lint`: pass with two pre-existing `no-img-element` warnings and no errors.
 - `npm.cmd run build`: pass.
-- `node --test --test-reporter=dot tests/*.test.mjs`: 1,109 tests pass.
+- `npm.cmd test -- --test-reporter=dot`: 1,111 tests pass, including typechecks and the production build.
 - Focused discovery, route policy, report projection, and retry tests: pass.
 
 ## Data boundaries

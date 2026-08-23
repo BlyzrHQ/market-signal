@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { competitorInvestigationComplete, finalizedDiscoveryCoverage, investigationGapSourceUrl, MAX_PRIMARY_CATALOG_PRODUCTS, rememberedReverificationFailures, resolvePrimaryDiscoveryPolicy, selectComparisonTarget, verifiedExactMatchHints, verifyDiscoveredCompetitor, verifyDiscoveredCompetitorWithInferredLeads, verifyInferredProductLead, verifyInferredProductLeads } from "../app/api/crawl/route.ts";
+import { competitorInvestigationComplete, finalizedComparisonTargetCoverage, finalizedDiscoveryCoverage, investigationGapSourceUrl, MAX_PRIMARY_CATALOG_PRODUCTS, rememberedReverificationFailures, resolvePrimaryDiscoveryPolicy, selectComparisonTarget, verifiedExactMatchHints, verifyDiscoveredCompetitor, verifyDiscoveredCompetitorWithInferredLeads, verifyInferredProductLead, verifyInferredProductLeads } from "../app/api/crawl/route.ts";
 import { resolveVerificationMarket } from "../app/lib/competitor-verification.ts";
 
 function product(domain, name) {
@@ -200,6 +200,7 @@ test("does not count a semantically verified pair whose price or market would fa
   const selected = selectComparisonTarget([primary], candidates, 20, "GB", Date.parse(observedAt));
   assert.deepEqual(selected.hints, [{ primaryId: "primary", rivalDomain: "valid-rival.co.uk", rivalId: "valid" }]);
   assert.deepEqual(selected.competitors.map((result) => result.domain), ["valid-rival.co.uk"]);
+  assert.deepEqual(selectComparisonTarget([primary], candidates, 20, "US", Date.parse(observedAt)).hints, []);
 });
 
 test("rejects inferred leads when the exact page is absent or the one-pair judge declines", async () => {
@@ -377,4 +378,39 @@ test("discovery exhaustion fails closed on candidate truncation or nonterminal v
   const persistenceFailed = finalizedDiscoveryCoverage(coverage, 1, 1, ["fulfilled"], [verified], true, false);
   assert.equal(persistenceFailed.batchComplete, false);
   assert.equal(persistenceFailed.complete, false);
+});
+
+test("a crawl-side pair target stops the batch without claiming final discovery exhaustion", () => {
+  const coverage = {
+    eligibleAnchors: 1_000, searchedAnchors: 10, startIndex: 0, endIndex: 10, truncated: true,
+    searchesComplete: true, candidateDomainsFound: 24, candidateDomainsInvestigated: 20,
+    candidateTruncated: true, verificationComplete: false, batchComplete: false, complete: false,
+  };
+  const verified = crawl("verified.example", []);
+  const finalized = finalizedComparisonTargetCoverage(
+    coverage,
+    24,
+    Array(20).fill("fulfilled"),
+    Array(20).fill(verified),
+    20,
+    20,
+  );
+  assert.equal(finalized.acceptedPairCount, 20);
+  assert.equal(finalized.batchComplete, true);
+  assert.equal(finalized.complete, false);
+});
+
+test("a transient candidate verification failure cannot advance an under-target comparison batch", () => {
+  const coverage = {
+    eligibleAnchors: 1_000, searchedAnchors: 10, startIndex: 0, endIndex: 10, truncated: true,
+    searchesComplete: true, candidateDomainsFound: 2, candidateDomainsInvestigated: 0,
+    candidateTruncated: false, verificationComplete: false, batchComplete: false, complete: false,
+  };
+  const verified = crawl("verified.example", []);
+  const timedOut = { ...crawl("timeout.example", []), homepage: null, gaps: [{ url: "https://timeout.example/", reason: "request timed out", observedAt: "2026-08-23T00:00:00.000Z" }] };
+  const base = finalizedDiscoveryCoverage(coverage, 2, 2, ["fulfilled", "fulfilled"], [verified, timedOut], true);
+  const finalized = finalizedComparisonTargetCoverage(base, 2, ["fulfilled", "fulfilled"], [verified, timedOut], 12, 20);
+  assert.equal(finalized.verificationComplete, false);
+  assert.equal(finalized.batchComplete, false);
+  assert.equal(finalized.complete, false);
 });
