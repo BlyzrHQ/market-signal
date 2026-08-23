@@ -1,4 +1,5 @@
 import { buildAIProductComparison, candidatePairKeysFromPlan, MAX_JUDGE_CANDIDATE_PAIRS, PRODUCT_CANDIDATE_PLAN_BATCH_INDEX, type JudgeBatchCheckpoint, type JudgeBatchCheckpointKey, type PinnedProductPair, type ProductCandidatePlan, type ProductCandidatePlanKey } from "../../lib/ai-product-matching.ts";
+import { buildDirectProductSearchComparison, type DirectProductSearchCheckpoint, type DirectProductSearchCheckpointKey } from "../../lib/direct-product-search.ts";
 import { canonicalDomain, normalizeDomain } from "../../lib/domain.ts";
 import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../lib/internal-auth.ts";
 import type { ProductRecord } from "../../lib/product-intelligence.ts";
@@ -22,6 +23,13 @@ const MAX_TASK_ATTEMPTS = 10;
 const MAX_JUDGE_BATCHES_PER_TASK_ATTEMPT = 250;
 const JUDGE_CHECKPOINT_BASE = 1_400;
 const PLAN_CHECKPOINT_BASE = 3_900;
+const DIRECT_SEARCH_CHECKPOINT_BASE = 1_400;
+const MAX_DIRECT_SEARCH_CHECKPOINTS = 1_000;
+
+export function directSearchCheckpointIndex(primaryIndex: number) {
+  if (!Number.isInteger(primaryIndex) || primaryIndex < 0 || primaryIndex >= MAX_DIRECT_SEARCH_CHECKPOINTS) throw new Error("The direct product-search checkpoint index exceeds its bounded primary catalog.");
+  return DIRECT_SEARCH_CHECKPOINT_BASE + primaryIndex;
+}
 
 export function persistedCheckpointIndex(taskAttemptNumber: number, batchIndex: number) {
   if (batchIndex === PRODUCT_CANDIDATE_PLAN_BATCH_INDEX) return PLAN_CHECKPOINT_BASE + taskAttemptNumber - 1;
@@ -262,6 +270,7 @@ export function parsePinnedPairs(value: unknown, catalogs: Array<{ domain: strin
 
 type MatchServices = {
   build: typeof buildAIProductComparison;
+  buildDirect: typeof buildDirectProductSearchComparison;
   loadCheckpoints: typeof loadReportMatchBatchCheckpoints;
   saveCheckpoint: typeof saveReportMatchBatchCheckpoint;
   loadEntitlement: typeof loadReportProductEntitlement;
@@ -269,22 +278,26 @@ type MatchServices = {
 
 const liveServices: MatchServices = {
   build: buildAIProductComparison,
+  buildDirect: buildDirectProductSearchComparison,
   loadCheckpoints: loadReportMatchBatchCheckpoints,
   saveCheckpoint: saveReportMatchBatchCheckpoint,
   loadEntitlement: loadReportProductEntitlement,
 };
 
-export function createMatchHandler(services: MatchServices = liveServices, expectedToken?: string) {
+export function createMatchHandler(serviceOverrides: Partial<MatchServices> = {}, expectedToken?: string) {
+  const services: MatchServices = { ...liveServices, ...serviceOverrides };
   return async function matchHandler(request: Request) {
     if (!await hasValidInternalAuthorization(request.headers.get("authorization"), expectedToken)) return unauthorizedInternalResponse();
     try {
-      const body = await boundedJsonBody(request) as { publicId?: unknown; reportAttempt?: unknown; taskAttemptNumber?: unknown; reportObservedAt?: unknown; primaryDomain?: unknown; marketCountryCode?: unknown; productLimit?: unknown; catalogs?: unknown; pinnedPairs?: unknown };
+      const body = await boundedJsonBody(request) as { publicId?: unknown; reportAttempt?: unknown; taskAttemptNumber?: unknown; reportObservedAt?: unknown; primaryDomain?: unknown; marketCountryCode?: unknown; productLimit?: unknown; catalogs?: unknown; pinnedPairs?: unknown; matchingMode?: unknown };
       const publicId = text(body.publicId, 32);
       const reportAttempt = Number(body.reportAttempt);
       const taskAttemptNumber = Number(body.taskAttemptNumber);
       const primaryDomain = canonicalDomain(text(body.primaryDomain, 300));
       const reportObservedAt = text(body.reportObservedAt, 40);
       const marketCountryCode = text(body.marketCountryCode, 2).toUpperCase();
+      const directProductSearch = body.matchingMode === "direct-product-search";
+      if (body.matchingMode !== undefined && !directProductSearch) return Response.json({ ok: false, error: "Unsupported product matching mode." }, { status: 400 });
       if (body.pinnedPairs !== undefined && !Array.isArray(body.pinnedPairs)) return Response.json({ ok: false, error: "Pinned product pairs must be an array." }, { status: 400 });
       const catalogs = parseCatalogs(body.catalogs, primaryDomain, body.pinnedPairs);
       const pinnedPairs = parsePinnedPairs(body.pinnedPairs, catalogs, primaryDomain);
@@ -299,6 +312,31 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
       if (body.marketCountryCode !== undefined && !/^[A-Z]{2}$/.test(marketCountryCode)) return Response.json({ ok: false, error: "The report market country code must be a two-letter country code." }, { status: 400 });
       const primaryCatalogSize = catalogs.find((catalog) => catalog.domain === primaryDomain)?.products.length || 0;
       const maxPrimaryProducts = Math.min(productBackfillPoolSize(resultTarget), primaryCatalogSize);
+      if (directProductSearch) {
+        const checkpointOptions = hasReportAttempt ? {
+          loadSearchCheckpoint: async (key: DirectProductSearchCheckpointKey) => {
+            const checkpoints = await services.loadCheckpoints(publicId, { attemptNumber: reportAttempt, batchIndex: directSearchCheckpointIndex(key.primaryIndex) });
+            const checkpoint = checkpoints[0];
+            return checkpoint?.inputHash === key.inputHash ? checkpoint.result : null;
+          },
+          saveSearchCheckpoint: async (key: DirectProductSearchCheckpointKey, checkpoint: DirectProductSearchCheckpoint) => {
+            await services.saveCheckpoint(publicId, {
+              attemptNumber: reportAttempt,
+              batchIndex: directSearchCheckpointIndex(key.primaryIndex),
+              inputHash: key.inputHash,
+              result: checkpoint,
+            });
+          },
+        } : {};
+        const comparison = await services.buildDirect(primaryDomain, catalogs, {
+          resultTarget,
+          maxPrimaryProducts,
+          referenceTimeMs: Date.now(),
+          marketCountryCode,
+          ...checkpointOptions,
+        });
+        return Response.json({ ok: true, comparison });
+      }
       const priorCandidatePairKeys = hasReportAttempt ? await (async () => {
         const currentPlanIndex = persistedCheckpointIndex(taskAttemptNumber, PRODUCT_CANDIDATE_PLAN_BATCH_INDEX);
         const checkpoints = await services.loadCheckpoints(publicId, { attemptNumber: reportAttempt, batchIndexStart: PLAN_CHECKPOINT_BASE, batchIndexEnd: PLAN_CHECKPOINT_BASE + MAX_TASK_ATTEMPTS - 1 });
@@ -348,7 +386,7 @@ export function createMatchHandler(services: MatchServices = liveServices, expec
       });
       return Response.json({ ok: true, comparison: comparison.matching ? { ...comparison, matching: { ...comparison.matching, resultTarget } } : comparison });
     } catch (error) {
-      return Response.json({ ok: false, error: error instanceof Error ? error.message : "AI product matching was unavailable." }, { status: 400 });
+      return Response.json({ ok: false, error: error instanceof Error ? error.message : "Product comparison search was unavailable." }, { status: 400 });
     }
   };
 }

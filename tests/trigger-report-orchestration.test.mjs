@@ -432,7 +432,7 @@ test("payload contract accepts only a canonical, exact, versioned payload", () =
   for (const [productPlan, productLimit] of Object.entries({ starter: 20, solo: 50, growth: 500, agency: 1_000 })) {
     const version5 = { ...payload, contractVersion: "5", productPlan, productLimit };
     assert.deepEqual(parseReportOrchestrationPayload(version5), version5);
-    assert.equal(reportOrchestrationWireVersion(productPlan, productLimit), "5");
+    assert.equal(reportOrchestrationWireVersion(productPlan, productLimit), "6");
   }
   assert.equal(reportOrchestrationWireVersion("agency", 1_000, "primary-products"), "3");
   assert.equal(reportOrchestrationWireVersion("starter", 20, "primary-products"), "4");
@@ -482,6 +482,51 @@ test("successful orchestration persists ordered heartbeats and a complete docume
   const compaction = port.saves[0].document.document.blocks.find((block) => block.type === "presentation-compaction");
   assert.equal(compaction.relationalFactsAuthoritative, true);
   assert.deepEqual(compaction.factCounts, { companies: 2, products: 40, matches: 20, ads: 0 });
+});
+
+test("the current contract crawls only the primary catalog and publishes priced direct-search results", async () => {
+  const base = mockPort();
+  let crawlInput;
+  let matchInput;
+  const direct = comparison({ withPair: true });
+  direct.matching = {
+    ...direct.matching,
+    method: "direct-web-search",
+    embeddingModel: "",
+    promptVersion: "direct-product-search-v1",
+    primaryProductsScreened: 20,
+    resultTarget: 20,
+    publishedPairs: 20,
+    publishedPrimaryProducts: 20,
+    resultShortfall: 0,
+    resultShortfallReason: "bounded-candidate-pool-exhausted",
+    judgeCalls: 0,
+    embeddingCalls: 0,
+    processedPrimaryIds: direct.matching.selectedPrimaryIds,
+  };
+  direct.rows.forEach((row) => row.matches.forEach((match) => { delete match.assessment; }));
+  const port = mockPort({
+    async crawl(input) {
+      crawlInput = structuredClone(input);
+      return base.crawl();
+    },
+    async match(input) {
+      matchInput = structuredClone(input);
+      return { ok: true, comparison: direct };
+    },
+  });
+
+  const result = await orchestrateReport({ ...payload, contractVersion: "6" }, { attemptNumber: 1, isFinalAttempt: false }, port);
+
+  assert.equal(result.reportStatus, "complete");
+  assert.equal(crawlInput.directProductSearch, true);
+  assert.equal(matchInput.matchingMode, "direct-product-search");
+  assert.equal(Object.hasOwn(matchInput, "pinnedPairs"), false);
+  const matchFacts = port.factChunks.filter((chunk) => chunk.kind === "matches").flatMap((chunk) => chunk.items);
+  assert.equal(matchFacts.length, 20);
+  assert.ok(matchFacts.every((fact) => fact.verdict === "search_result"));
+  assert.ok(matchFacts.every((fact) => fact.evidence.method === "direct-web-search"));
+  assert.ok(matchFacts.every((fact) => fact.evidence.publication?.priceEligible === true));
 });
 
 test("a task retry resumes the durable successful crawl without another network crawl", async () => {

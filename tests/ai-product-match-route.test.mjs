@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { createMatchHandler, MAX_MATCH_BODY_BYTES, parseCatalogs, parsePinnedPairs, persistedCheckpointIndex, productAnalysisBudgetMs, productAnalysisConcurrency, productAnalysisLimit, productBackfillPoolSize } from "../app/api/match/route.ts";
+import { createMatchHandler, directSearchCheckpointIndex, MAX_MATCH_BODY_BYTES, parseCatalogs, parsePinnedPairs, persistedCheckpointIndex, productAnalysisBudgetMs, productAnalysisConcurrency, productAnalysisLimit, productBackfillPoolSize } from "../app/api/match/route.ts";
 
 test("matching checkpoints have disjoint task-attempt namespaces", () => {
   assert.equal(persistedCheckpointIndex(1, 0), 1_400);
@@ -11,6 +11,52 @@ test("matching checkpoints have disjoint task-attempt namespaces", () => {
   assert.equal(persistedCheckpointIndex(1, 999), 3_900);
   assert.equal(persistedCheckpointIndex(10, 999), 3_909);
   assert.throws(() => persistedCheckpointIndex(1, 250), /exceeds/i);
+});
+
+test("direct product search owns one stable checkpoint per primary catalog position", () => {
+  assert.equal(directSearchCheckpointIndex(0), 1_400);
+  assert.equal(directSearchCheckpointIndex(999), 2_399);
+  assert.throws(() => directSearchCheckpointIndex(1_000), /exceeds/i);
+});
+
+test("the direct route bypasses the AI matcher and reuses its paid-search checkpoint", async () => {
+  const token = "direct-route-token-that-is-long-enough";
+  let legacyCalls = 0;
+  let directCalls = 0;
+  const saved = [];
+  const handler = createMatchHandler({
+    async build() { legacyCalls += 1; throw new Error("legacy matcher must not run"); },
+    async buildDirect(_domain, _catalogs, options) {
+      directCalls += 1;
+      const key = { primaryIndex: 7, inputHash: "a".repeat(64) };
+      assert.deepEqual(await options.loadSearchCheckpoint(key), { version: 1, primaryProductId: "primary", primarySourceUrl: "https://shop.test/products/primary", completed: true, queries: [], candidates: [] });
+      await options.saveSearchCheckpoint(key, { version: 1, primaryProductId: "primary", primarySourceUrl: "https://shop.test/products/primary", completed: true, queries: [], candidates: [] });
+      return {
+        primaryDomain: "shop.test", comparisonDomains: [], rows: [], unmatched: [],
+        coverage: { primaryProductsAvailable: 1, primaryProductsScanned: 1, primaryProductFamiliesCompared: 0, competitorProductsAvailable: 0, competitorProductsScanned: 0, assignedPairCount: 0, verifiedPairCount: 0, rowsReturned: 0, rowLimit: 20, truncated: false },
+        matching: { method: "direct-web-search", available: true, model: "", embeddingModel: "", promptVersion: "direct-product-search-v1", primaryProductsAssessed: 1, candidatePairsAssessed: 0, retrievalPairsScored: 0, judgeCalls: 0, embeddingCalls: 0, durationMs: 0, gaps: [], resultTarget: 20, publishedPairs: 0, publishedPrimaryProducts: 0, resultShortfall: 20, resultShortfallReason: "bounded-candidate-pool-exhausted", selectedPrimaryIds: ["primary"], assessedPrimaryIds: ["primary"], processedPrimaryIds: ["primary"] },
+      };
+    },
+    async loadCheckpoints(_publicId, input) {
+      assert.equal(input.batchIndex, 1_407);
+      return [{ inputHash: "a".repeat(64), result: { version: 1, primaryProductId: "primary", primarySourceUrl: "https://shop.test/products/primary", completed: true, queries: [], candidates: [] } }];
+    },
+    async saveCheckpoint(_publicId, input) { saved.push(input); },
+    async loadEntitlement() { return { plan: "starter", productLimit: 20, reportObservedAt: "2026-08-23T10:00:00.000Z" }; },
+  }, token);
+  const response = await handler(new Request("https://signal.test/api/match", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      publicId: "d".repeat(32), reportAttempt: 1, taskAttemptNumber: 1, reportObservedAt: "2026-08-23T10:00:00.000Z",
+      primaryDomain: "shop.test", productLimit: 20, matchingMode: "direct-product-search",
+      catalogs: [{ domain: "shop.test", products: [{ id: "primary", name: "Honey", sourceUrl: "https://shop.test/products/primary" }] }],
+    }),
+  }));
+  assert.equal(response.status, 200);
+  assert.equal(legacyCalls, 0);
+  assert.equal(directCalls, 1);
+  assert.equal(saved[0].batchIndex, 1_407);
 });
 
 test("AI matching input keeps a broad but bounded first-party catalog", () => {

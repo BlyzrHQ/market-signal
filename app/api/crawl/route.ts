@@ -1183,11 +1183,13 @@ export async function POST(request: Request) {
   if (roleResponse) return roleResponse;
   if (!await hasValidAnalysisAuthorization(request.headers.get("authorization"))) return unauthorizedInternalResponse();
   try {
-    const payload = await request.json() as { primary?: unknown; domains?: unknown; productLimit?: unknown; comparisonPairsNeeded?: unknown; catalogProductLimit?: unknown; discoverySearchOffset?: unknown; discoveryPriorCoverageComplete?: unknown; discoveryExpectedAnchorSetHash?: unknown; discoverySearchLedger?: unknown };
+    const payload = await request.json() as { primary?: unknown; domains?: unknown; productLimit?: unknown; comparisonPairsNeeded?: unknown; catalogProductLimit?: unknown; discoverySearchOffset?: unknown; discoveryPriorCoverageComplete?: unknown; discoveryExpectedAnchorSetHash?: unknown; discoverySearchLedger?: unknown; directProductSearch?: unknown };
     const productLimit = Number.isInteger(Number(payload.productLimit)) ? Math.max(1, Math.min(MAX_PRIMARY_CATALOG_PRODUCTS, Number(payload.productLimit))) : 20;
     const comparisonPairsNeeded = Number.isInteger(Number(payload.comparisonPairsNeeded)) ? Math.max(0, Math.min(productLimit, Number(payload.comparisonPairsNeeded))) : productLimit;
     const catalogProductLimit = Number.isInteger(Number(payload.catalogProductLimit)) ? Math.max(1, Math.min(MAX_PRIMARY_CATALOG_PRODUCTS, Number(payload.catalogProductLimit))) : MAX_PRIMARY_CATALOG_PRODUCTS;
     const discoverySearchOffset = Number.isInteger(Number(payload.discoverySearchOffset)) ? Math.max(0, Math.min(MAX_PRIMARY_CATALOG_PRODUCTS, Number(payload.discoverySearchOffset))) : 0;
+    if (payload.directProductSearch !== undefined && payload.directProductSearch !== true) return Response.json({ ok: false, live: false, error: "directProductSearch must be true when provided." }, { status: 400 });
+    const directProductSearch = payload.directProductSearch === true;
     const discoveryPriorCoverageComplete = payload.discoveryPriorCoverageComplete !== false;
     const discoveryExpectedAnchorSetHash = typeof payload.discoveryExpectedAnchorSetHash === "string" && /^[a-f0-9]{64}$/.test(payload.discoveryExpectedAnchorSetHash) ? payload.discoveryExpectedAnchorSetHash : "";
     const rawDomains = Array.isArray(payload.domains) ? payload.domains.filter((domain): domain is string => typeof domain === "string" && Boolean(domain.trim())).map((domain) => canonicalDomain(domain)) : [];
@@ -1270,6 +1272,58 @@ export async function POST(request: Request) {
       : "";
     const discoveryPolicy = resolvePrimaryDiscoveryPolicy(primary);
     const comparisonTargetMode = discoveryPolicy.requireProductOverlap;
+    if (directProductSearch && comparisonTargetMode) {
+      const discovery: DiscoveryResult = {
+        available: true,
+        provider: "unavailable",
+        model: "",
+        category: "",
+        region: primary.homepage.region,
+        businessType: discoveryPolicy.businessType,
+        strategy: "not-run",
+        queries: [],
+        candidates: [],
+        gaps: [],
+        productSearchCoverage: {
+          eligibleAnchors: primary.products.length,
+          anchorSetHash: discoveryExpectedAnchorSetHash,
+          searchedAnchors: 0,
+          startIndex: 0,
+          endIndex: 0,
+          truncated: false,
+          searchesComplete: true,
+          candidateDomainsFound: 0,
+          candidateDomainsInvestigated: 0,
+          candidateTruncated: false,
+          verificationComplete: true,
+          batchComplete: true,
+          complete: true,
+          searchAttemptsComplete: true,
+          paidSearchesStarted: 0,
+          reusedSearches: 0,
+        },
+      };
+      const adRequest = {
+        region: primary.homepage.region,
+        companies: [{
+          domain: primary.domain,
+          brand: primary.homepage.title.split(/\s[–—-]\s|\|/)[0].trim() || primary.domain,
+          facebookUrl: attributableFacebookUrl(primary.pages.flatMap((page) => page.socialLinks)),
+        }],
+      };
+      const document = compactCatalogSnapshots(buildDocument([primary], primaryDomain, discovery, []));
+      return Response.json({
+        ok: true,
+        live: true,
+        primaryDomain,
+        results: [primary],
+        discovery,
+        adRequest,
+        matchHints: [],
+        document,
+        crawl: { maxPagesPerDomain: MAX_HTML_PAGES, maxPagesPerDiscoveredCompetitor: 0, maxPrimaryProductPricePages: MAX_PRIMARY_PRODUCT_PRICE_PAGES, maxMatchedProductEnrichmentPages: 0, competitorCrawlConcurrency: 0, htmlExtractionBytes: MAX_HTML_EXTRACTION_BYTES, robotsAware: true, generatedAt: new Date().toISOString() },
+      });
+    }
     let discovery: DiscoveryResult;
     try {
       discovery = await discoverCompetitors(discoveryPolicy.input, {

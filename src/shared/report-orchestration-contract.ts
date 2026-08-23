@@ -1,9 +1,9 @@
-export const REPORT_ORCHESTRATION_CONTRACT_VERSION = "5" as const;
+export const REPORT_ORCHESTRATION_CONTRACT_VERSION = "6" as const;
 export const MAX_REPORT_MATCH_CHECKPOINTS_PER_ATTEMPT = 4_000;
 export const MAX_REPORT_ATTEMPTS = 20;
 
 export type ReportOrchestrationPayload = {
-  contractVersion: "3" | "4" | typeof REPORT_ORCHESTRATION_CONTRACT_VERSION;
+  contractVersion: "3" | "4" | "5" | typeof REPORT_ORCHESTRATION_CONTRACT_VERSION;
   publicId: string;
   primaryDomain: string;
   locale: "en" | "ar";
@@ -48,8 +48,9 @@ export function parseReportOrchestrationPayload(value: unknown): ReportOrchestra
   const version2 = input.contractVersion === "2" && JSON.stringify(Object.keys(input).sort()) === JSON.stringify(LEGACY_KEYS);
   const version3 = input.contractVersion === "3" && JSON.stringify(Object.keys(input).sort()) === JSON.stringify(KEYS);
   const version4 = input.contractVersion === "4" && JSON.stringify(Object.keys(input).sort()) === JSON.stringify(KEYS);
+  const version5 = input.contractVersion === "5" && JSON.stringify(Object.keys(input).sort()) === JSON.stringify(KEYS);
   if (!version2 && JSON.stringify(Object.keys(input).sort()) !== JSON.stringify(KEYS)) throw new PermanentOrchestrationError("Report orchestration payload contains unsupported fields.");
-  if (!version2 && !version3 && !version4 && input.contractVersion !== REPORT_ORCHESTRATION_CONTRACT_VERSION) throw new PermanentOrchestrationError("Unsupported report orchestration contract version.");
+  if (!version2 && !version3 && !version4 && !version5 && input.contractVersion !== REPORT_ORCHESTRATION_CONTRACT_VERSION) throw new PermanentOrchestrationError("Unsupported report orchestration contract version.");
   if (typeof input.publicId !== "string" || !PUBLIC_ID_PATTERN.test(input.publicId)) throw new PermanentOrchestrationError("Invalid report id.");
   if (typeof input.primaryDomain !== "string" || input.primaryDomain !== input.primaryDomain.trim().toLowerCase() || !DOMAIN_PATTERN.test(input.primaryDomain)) {
     throw new PermanentOrchestrationError("primaryDomain must be a canonical public hostname.");

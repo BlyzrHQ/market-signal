@@ -110,6 +110,24 @@ function exactProductPriority(match: ProductMatch) {
 }
 
 export function durablePublishedMatchAssessment(primary: ProductRecord, match: ProductMatch, comparison: ProductComparison): ProductMatch["assessment"] | null {
+  if (comparison.matching?.method === "direct-web-search") {
+    if (!match.product || match.publication?.priceEligible !== true) return null;
+    return {
+      method: "direct-web-search",
+      claimType: "Inferred",
+      verdict: "search_result",
+      confidence: typeof match.score === "number" && Number.isFinite(match.score) ? match.score : 0,
+      model: comparison.matching.model || "",
+      promptVersion: comparison.matching.promptVersion || "direct-product-search-v1",
+      reasons: ["Returned by a direct web search for the primary product and verified as a public product page with a positive observed price."],
+      contradictions: [],
+      normalizedCategory: "",
+      normalizedVariant: "",
+      normalizedSize: "",
+      primarySourceUrl: primary.sourceUrl,
+      rivalSourceUrl: match.product.sourceUrl,
+    };
+  }
   if (match.assessment && ["same_product", "close_substitute"].includes(match.assessment.verdict)) return match.assessment;
   if (!match.product || match.publication?.priceEligible !== true) return null;
   // Compact durable checkpoints intentionally encode an accepted exact match
@@ -208,7 +226,9 @@ function withoutUnassessedMatches(comparison: ProductComparison) {
 }
 
 export function hasProductMatchCoverageDefect(comparison: ProductComparison | null | undefined) {
-  if (!comparison?.matching || comparison.matching.method !== "ai-hybrid" || !comparison.matching.available) return true;
+  if (!comparison?.matching || !comparison.matching.available) return true;
+  if (comparison.matching.method === "direct-web-search") return comparison.matching.resultShortfallReason === "processing-incomplete";
+  if (comparison.matching.method !== "ai-hybrid") return true;
   const selected = selectedIds(comparison);
   const processed = processedIds(comparison);
   return gapCount(comparison) > 0 || processed.size < selected.size;
@@ -232,7 +252,7 @@ function attemptRank(left: ProductComparison, right: ProductComparison) {
 }
 
 export function composeProductMatchAttempts(baseline: ProductComparison | null, attempts: ProductComparison[], requestCount = attempts.length) {
-  const usable = attempts.filter((attempt) => attempt.matching?.method === "ai-hybrid" && attempt.matching.available);
+  const usable = attempts.filter((attempt) => (attempt.matching?.method === "ai-hybrid" || attempt.matching?.method === "direct-web-search") && attempt.matching.available);
   if (!usable.length) {
     const latest = attempts.at(-1) || baseline;
     if (!latest) return latest;
@@ -258,7 +278,7 @@ export function composeProductMatchAttempts(baseline: ProductComparison | null, 
   const unresolved = [...selected].filter((id) => !processed.has(id));
   const preferredGaps = preferred.matching?.gaps || [];
   const gaps = unresolved.length
-    ? [...preferredGaps, `AI product matching did not assess ${unresolved.length} selected primary product${unresolved.length === 1 ? "" : "s"} after the bounded retry.`]
+    ? [...preferredGaps, `${preferred.matching?.method === "direct-web-search" ? "Direct product search did not process" : "AI product matching did not assess"} ${unresolved.length} selected primary product${unresolved.length === 1 ? "" : "s"} after the bounded retry.`]
     : preferredGaps.filter((gap) => !/judging (?:reached|failed|returned incomplete|hit an incomplete)|deadline for \d+ primary/i.test(gap));
   const assignedPairCount = rows.reduce((sum, row) => sum + row.matches.filter((match) => match.product).length, 0);
   const verifiedPairCount = rows.reduce((sum, row) => sum + row.matches.filter((match) => match.product && match.confidence === "Medium").length, 0);
@@ -348,8 +368,20 @@ export function publishPricedProductComparison(comparison: ProductComparison, re
   };
   const rows = comparison.rows.map((row) => ({
     ...row,
-    matches: row.matches.map((match) => {
-      if (!match.product) return match;
+    matches: row.matches.flatMap((match) => {
+      if (!match.product) return comparison.matching?.method === "direct-web-search" ? [] : [match];
+      const directSearch = comparison.matching?.method === "direct-web-search";
+      if (directSearch) {
+        if (!completeObservedPrice(row.primary)) {
+          suppress("missing-valid-primary-price");
+          return [];
+        }
+        if (!completeObservedPrice(match.product)) {
+          suppress("missing-valid-rival-price");
+          return [];
+        }
+        return [{ ...match, publication: { priceEligible: true } }];
+      }
       if (match.confidence !== "Medium") suppress("insufficient-match-confidence");
       else if (!completeObservedPrice(row.primary)) suppress("missing-valid-primary-price");
       else if (!completeObservedPrice(match.product)) suppress("missing-valid-rival-price");
@@ -358,7 +390,7 @@ export function publishPricedProductComparison(comparison: ProductComparison, re
         const primaryCurrencies = observedCurrencies(row.primary);
         const rivalCurrencies = observedCurrencies(match.product);
         if (primaryCurrencies.size === 1 && rivalCurrencies.size === 1 && [...primaryCurrencies][0] === [...rivalCurrencies][0]) {
-          return { ...match, publication: { priceEligible: true } };
+          return [{ ...match, publication: { priceEligible: true } }];
         }
         suppress("incompatible-price-currency");
       }
@@ -371,13 +403,13 @@ export function publishPricedProductComparison(comparison: ProductComparison, re
             : !marketCompatible(row.primary, match.product)
               ? "incompatible-market"
             : "incompatible-price-currency";
-      return {
+      return [{
         ...match,
         excludedProduct: match.product,
         product: null,
         decision: null,
         publication: { priceEligible: false, reason },
-      };
+      }];
     }),
   }));
   const assignedPairCount = rows.reduce((sum, row) => sum + row.matches.filter((match) => match.product).length, 0);
@@ -438,8 +470,11 @@ export function limitPublishedProductComparison(comparison: ProductComparison, r
     const completedIds = new Set(priorMatching?.processedPrimaryIds?.length ? priorMatching.processedPrimaryIds : priorMatching?.assessedPrimaryIds || []);
     const marketResolved = /^[A-Z]{2}$/.test(String(comparison.marketCountryCode || "").toUpperCase());
     const emptyRivalPool = priorMatching?.competitorProductsSynchronized === 0 && priorMatching?.candidatePairsAssessed === 0;
-    const matchingCompleted = priorMatching?.available === true && (marketResolved || emptyRivalPool)
-      && priorMatching.gaps.length === 0 && [...selectedIds].every((id) => completedIds.has(id));
+    const matchingCompleted = priorMatching?.available === true
+      && (priorMatching.method === "direct-web-search"
+        ? priorMatching.resultShortfallReason !== "processing-incomplete"
+        : (marketResolved || emptyRivalPool) && priorMatching.gaps.length === 0)
+      && [...selectedIds].every((id) => completedIds.has(id));
     const enrichmentCompleted = !comparison.enrichment?.failedBatchCount && comparison.enrichment?.pagesTruncated !== true;
     const resultShortfallReason = resultShortfall
       ? matchingCompleted && enrichmentCompleted ? "bounded-candidate-pool-exhausted" as const : "processing-incomplete" as const
@@ -507,8 +542,9 @@ export function limitPublishedProductComparison(comparison: ProductComparison, r
   const emptyRivalPool = priorMatching?.competitorProductsSynchronized === 0
     && priorMatching?.candidatePairsAssessed === 0;
   const matchingCompleted = priorMatching?.available === true
-    && (marketResolved || emptyRivalPool)
-    && priorMatching.gaps.length === 0
+    && (priorMatching.method === "direct-web-search"
+      ? priorMatching.resultShortfallReason !== "processing-incomplete"
+      : (marketResolved || emptyRivalPool) && priorMatching.gaps.length === 0)
     && [...selectedIds].every((id) => completedIds.has(id));
   const enrichmentCompleted = !comparison.enrichment?.failedBatchCount
     && comparison.enrichment?.pagesTruncated !== true;
