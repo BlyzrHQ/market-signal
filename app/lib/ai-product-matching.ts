@@ -450,7 +450,17 @@ function safeProduct(product: ProductRecord) {
     attributes: product.attributes.map((item) => clean(item, 100)).filter(Boolean).slice(0, 8),
     sourceUrl: product.sourceUrl,
     observedIdentifiers: product.identifiers ? { gtins: product.identifiers.gtins, sku: product.identifiers.sku || "", mpn: product.identifiers.mpn || "", brand: product.identifiers.brand || "" } : null,
-    canonicalQuantity: product.quantity || null,
+    // Checkpoints are persisted through a canonical JSON writer that sorts
+    // nested object keys. Rebuild quantity in one stable field order before
+    // hashing so the saved evidence reproduces the exact batch identity after
+    // a database round trip. Product quantities created by the parser use
+    // this same order, which also preserves compatibility with existing v4
+    // checkpoints.
+    canonicalQuantity: product.quantity ? {
+      kind: product.quantity.kind,
+      amount: product.quantity.amount,
+      unit: product.quantity.unit,
+    } : null,
   };
 }
 

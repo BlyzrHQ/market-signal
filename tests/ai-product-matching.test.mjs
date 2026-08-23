@@ -32,6 +32,14 @@ function response(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
+function stableJsonValue(value) {
+  if (Array.isArray(value)) return value.map(stableJsonValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, item]) => [key, stableJsonValue(item)]));
+}
+
 test("publishes only rival products with a finite positive observed ISO price", () => {
   const priced = (price) => product("rival", "rival.test", "Honey", { price });
   assert.equal(hasValidObservedRivalPrice(priced({ raw: "GBP 8.00", currency: "GBP", amount: 8 })), true);
@@ -1232,10 +1240,12 @@ test("durable judge evidence preserves accepted backup pairs within the checkpoi
   const primary = product("evidence-p1", "shop.test", "Beef Cubes Halal 500g", {
     price: { raw: "GBP 9", currency: "GBP", amount: 9 },
     imageUrl: "https://shop.test/images/beef-cubes.jpg",
+    quantity: { kind: "mass", amount: 500, unit: "g" },
   });
   const rivals = Array.from({ length: 5 }, (_, index) => product(`evidence-r${index + 1}`, "rival.test", "Beef Cubes Halal 500g", {
     price: { raw: `GBP ${8 - index / 10}`, currency: "GBP", amount: 8 - index / 10 },
     imageUrl: `https://rival.test/images/beef-cubes-${index + 1}.jpg`,
+    quantity: { kind: "mass", amount: 500, unit: "g" },
   }));
   let savedCheckpoint = null;
   const fetch = async (url, init) => {
@@ -1271,7 +1281,13 @@ test("durable judge evidence preserves accepted backup pairs within the checkpoi
   assert.deepEqual(screened?.rows[0].matches.map((match) => match.product?.id).sort(), rivals.map((item) => item.id).sort());
   assert.ok(screened?.rows[0].matches.every((match) => match.product && match.publication === undefined));
 
-  const historicalPrimary = { ...primary, name: "Beef Cubes Halal 1kg", normalizedName: "beef cubes halal 1kg", sourceUrl: "https://shop.test/products/beef-cubes-1kg", quantity: { value: 1_000, unit: "g", normalized: "1000g" } };
+  const persistedCheckpoint = JSON.parse(JSON.stringify(stableJsonValue(savedCheckpoint)));
+  const recoveredAfterCanonicalStorage = screenedComparisonFromJudgeCheckpoints("shop.test", [persistedCheckpoint], "GB");
+  assert.equal(recoveredAfterCanonicalStorage?.rows.length, 1);
+  assert.equal(recoveredAfterCanonicalStorage?.rows[0].matches.length, 5);
+  assert.deepEqual(recoveredAfterCanonicalStorage?.rows[0].matches.map((match) => match.product?.id).sort(), rivals.map((item) => item.id).sort());
+
+  const historicalPrimary = { ...primary, name: "Beef Cubes Halal 1kg", normalizedName: "beef cubes halal 1kg", sourceUrl: "https://shop.test/products/beef-cubes-1kg", quantity: { kind: "mass", amount: 1_000, unit: "g" } };
   const historicalRival = product("evidence-old-rival", "rival.test", "Beef Cubes Halal 1kg", { price: { raw: "GBP 12", currency: "GBP", amount: 12 } });
   let historicalCheckpoint = null;
   await buildAIProductComparison("shop.test", [
