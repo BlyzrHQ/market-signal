@@ -7,6 +7,7 @@ import { gunzipSync, gzipSync } from "node:zlib";
 import {
   PermanentOrchestrationError,
   parseReportOrchestrationPayload,
+  reportOrchestrationWireVersion,
 } from "../src/trigger/contracts/report-orchestration.ts";
 import {
   MAX_FINAL_ENRICHMENT_TARGETS,
@@ -337,7 +338,14 @@ function mockPort(overrides = {}) {
 test("payload contract accepts only a canonical, exact, versioned payload", () => {
   assert.deepEqual(parseReportOrchestrationPayload(payload), payload);
   assert.deepEqual(parseReportOrchestrationPayload({ contractVersion: "2", publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, reportAttempt: 1 }), { ...payload, productPlan: "starter", productLimit: 20 });
-  assert.deepEqual(parseReportOrchestrationPayload({ ...payload, contractVersion: "3", productPlan: "agency", productLimit: 1_000 }), { ...payload, productPlan: "agency", productLimit: 1_000 });
+  assert.deepEqual(parseReportOrchestrationPayload({ ...payload, contractVersion: "3", productPlan: "agency", productLimit: 1_000 }), { ...payload, contractVersion: "3", productPlan: "agency", productLimit: 1_000 });
+  for (const [productPlan, productLimit] of Object.entries({ starter: 20, solo: 50, growth: 500, agency: 1_000 })) {
+    const version5 = { ...payload, contractVersion: "5", productPlan, productLimit };
+    assert.deepEqual(parseReportOrchestrationPayload(version5), version5);
+    assert.equal(reportOrchestrationWireVersion(productPlan, productLimit), "5");
+  }
+  assert.equal(reportOrchestrationWireVersion("agency", 1_000, "primary-products"), "3");
+  assert.equal(reportOrchestrationWireVersion("starter", 20, "primary-products"), "4");
   for (const invalid of [
     { ...payload, primaryDomain: "https://shop.example" },
     { ...payload, primaryDomain: "Shop.example" },
@@ -346,7 +354,7 @@ test("payload contract accepts only a canonical, exact, versioned payload", () =
     { ...payload, callbackUrl: "https://attacker.example" },
     { ...payload, contractVersion: "1" },
     { ...payload, reportAttempt: 0 },
-    { ...payload, productPlan: "agency", productLimit: 1_000 },
+    { ...payload, contractVersion: "5", productPlan: "agency", productLimit: 20 },
     { ...payload, productPlan: "unlimited", productLimit: 1_000 },
   ]) assert.throws(() => parseReportOrchestrationPayload(invalid), PermanentOrchestrationError);
 });

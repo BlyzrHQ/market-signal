@@ -36,9 +36,10 @@ test("landing proves the product and moves supporting pages to dedicated routes"
 
   assert.match(pricing, /price: "\$8"/);
   assert.match(pricing, /reports: "5"/);
-  assert.equal((pricing.match(/products: "20"/g) || []).length, 4);
-  assert.doesNotMatch(pricing, /products: "(?:50|500|1,000)"/);
-  assert.match(pricing, /Plans differ by monthly report allowance/);
+  assert.equal((pricing.match(/products: "20"/g) || []).length, 1);
+  for (const target of ["50", "500", "1,000"]) assert.match(pricing, new RegExp(`products: "${target}"`));
+  assert.match(pricing, /One product can appear against several different rival alternatives/);
+  assert.match(pricing, /target priced comparisons \/ report/);
   assert.match(pricing, /price: "\$79"/);
   assert.match(pricing, /price: "\$199"/);
   assert.match(pricing, /Self-hosted edition/);

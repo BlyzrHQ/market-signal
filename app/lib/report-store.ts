@@ -6,7 +6,7 @@ import { publicHttpUrl } from "./public-url.ts";
 import { officialAdRecordUrl } from "./ad-intelligence.ts";
 import { DETERMINISTIC_EVALUATOR_VERSION, DETERMINISTIC_RUBRIC_VERSION, profileDeterministicEvaluation } from "./report-evaluator.ts";
 import { compactTerminalReportDocument, REPORT_MATCH_CHECKPOINT_RESULT_BYTES, REPORT_SNAPSHOT_HARD_BYTES } from "../../src/shared/report-document-compaction.ts";
-import { MAX_REPORT_ATTEMPTS, MAX_REPORT_MATCH_CHECKPOINTS_PER_ATTEMPT } from "../../src/shared/report-orchestration-contract.ts";
+import { MAX_REPORT_ATTEMPTS, MAX_REPORT_MATCH_CHECKPOINTS_PER_ATTEMPT, type PublishedResultTargetKind } from "../../src/shared/report-orchestration-contract.ts";
 import { PRODUCT_PLAN_LIMITS, type ProductEntitlement, type ProductPlan } from "./product-entitlements.ts";
 import { enrichProductTargets } from "./storefront-product-enrichment.ts";
 import { isSupportedCurrency, type ProductEnrichmentTarget } from "./product-intelligence.ts";
@@ -60,6 +60,7 @@ export type StoredReportRun = {
   billingReservationId: string;
   productPlan: ProductPlan;
   productLimit: number;
+  productTargetKind: PublishedResultTargetKind;
 };
 
 export type WorkspaceReportSummary = {
@@ -338,7 +339,7 @@ const SCHEMA_STATEMENTS = [
   `CREATE TRIGGER IF NOT EXISTS report_evaluation_feedback_receipts_immutable BEFORE UPDATE ON report_evaluation_feedback_receipts BEGIN SELECT RAISE(ABORT, 'immutable evaluation feedback receipt'); END`,
   `CREATE TABLE IF NOT EXISTS report_purge_audits (id text PRIMARY KEY NOT NULL, cutoff text NOT NULL, heartbeat_guard text NOT NULL, runs_deleted integer NOT NULL, quality_signals_deleted integer NOT NULL, human_review_requests_deleted integer DEFAULT 0 NOT NULL, human_review_responses_deleted integer DEFAULT 0 NOT NULL, human_review_open_deleted integer DEFAULT 0 NOT NULL, evaluation_feedback_pending_deleted integer DEFAULT 0 NOT NULL, evaluation_feedback_outbox_deleted integer DEFAULT 0 NOT NULL, evaluation_feedback_claims_deleted integer DEFAULT 0 NOT NULL, evaluation_feedback_receipts_deleted integer DEFAULT 0 NOT NULL, evaluations_deleted integer NOT NULL, ads_deleted integer NOT NULL, matches_deleted integer NOT NULL, products_deleted integer NOT NULL, companies_deleted integer NOT NULL, fact_chunks_deleted integer NOT NULL, fact_manifests_deleted integer NOT NULL, documents_deleted integer NOT NULL, events_deleted integer NOT NULL, observed_at text NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS report_purge_audits_observed_idx ON report_purge_audits (observed_at)`,
-  `CREATE TABLE IF NOT EXISTS report_product_entitlements (run_id text PRIMARY KEY NOT NULL, plan_tier text NOT NULL, product_limit integer NOT NULL, resolved_at text NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS report_product_entitlements (run_id text PRIMARY KEY NOT NULL, plan_tier text NOT NULL, product_limit integer NOT NULL, target_kind text DEFAULT 'primary-products' NOT NULL CHECK (target_kind IN ('primary-products','pairs')), resolved_at text NOT NULL)`,
 ];
 
 const REPORT_EVALUATION_COLUMN_MIGRATIONS = [
@@ -362,6 +363,10 @@ const REPORT_EVALUATION_COLUMN_MIGRATIONS = [
 const REPORT_RUN_COLUMN_MIGRATIONS = [
   ["workspace_id", "ALTER TABLE report_runs ADD COLUMN workspace_id text DEFAULT '' NOT NULL"],
   ["billing_reservation_id", "ALTER TABLE report_runs ADD COLUMN billing_reservation_id text DEFAULT '' NOT NULL"],
+] as const;
+
+const REPORT_PRODUCT_ENTITLEMENT_COLUMN_MIGRATIONS = [
+  ["target_kind", "ALTER TABLE report_product_entitlements ADD COLUMN target_kind text DEFAULT 'primary-products' NOT NULL CHECK (target_kind IN ('primary-products','pairs'))"],
 ] as const;
 
 const REPORT_PURGE_AUDIT_COLUMN_MIGRATIONS = [
@@ -564,6 +569,7 @@ function rowRun(row: Record<string, unknown>): StoredReportRun {
     productLimit: Number.isInteger(persistedProductLimit) && persistedProductLimit > 0 && persistedProductLimit <= 1_000
       ? persistedProductLimit
       : PRODUCT_PLAN_LIMITS[productPlan],
+    productTargetKind: row.target_kind === "pairs" ? "pairs" : "primary-products",
   };
 }
 
@@ -704,6 +710,12 @@ async function initializeSchema(database: D1DatabaseLike) {
     if (runNames.has(name)) continue;
     await database.prepare(statement).run();
   }
+  const entitlementColumns = await database.prepare("PRAGMA table_info(report_product_entitlements)").all<Record<string, unknown>>();
+  const entitlementNames = new Set((entitlementColumns.results || []).map((column) => String(column.name || "")));
+  for (const [name, statement] of REPORT_PRODUCT_ENTITLEMENT_COLUMN_MIGRATIONS) {
+    if (entitlementNames.has(name)) continue;
+    await database.prepare(statement).run();
+  }
   await database.prepare(`CREATE INDEX IF NOT EXISTS report_runs_workspace_recent_idx ON report_runs (workspace_id, created_at)`).run();
   const auditColumns = await database.prepare("PRAGMA table_info(report_purge_audits)").all<Record<string, unknown>>();
   const auditNames = new Set((auditColumns.results || []).map((column) => String(column.name || "")));
@@ -827,7 +839,7 @@ async function findRun(database: D1DatabaseLike, id: string) {
   const result = await database.prepare(`SELECT * FROM report_runs WHERE ${PUBLIC_ID_PATTERN.test(id) ? "public_id" : "id"} = ? LIMIT 1`).bind(id).all<Record<string, unknown>>();
   const row = result.results?.[0];
   if (!row) return null;
-  const entitlement = await database.prepare(`SELECT plan_tier, product_limit FROM report_product_entitlements WHERE run_id = ? LIMIT 1`).bind(String(row.id || "")).all<Record<string, unknown>>();
+  const entitlement = await database.prepare(`SELECT plan_tier, product_limit, target_kind FROM report_product_entitlements WHERE run_id = ? LIMIT 1`).bind(String(row.id || "")).all<Record<string, unknown>>();
   return rowRun({ ...row, ...(entitlement.results?.[0] || {}) });
 }
 
@@ -1089,15 +1101,15 @@ export async function createReportRun(input: { primaryDomain: string; locale?: s
   try {
     await database.batch([
       database.prepare(`INSERT INTO report_runs (id, public_id, primary_domain, locale, workspace_id, billing_reservation_id, status, current_phase, attempt_count, created_at, updated_at, heartbeat_at, expires_at, error_code, error_message) VALUES (?, ?, ?, ?, ?, ?, 'queued', 'queued', 1, ?, ?, ?, ?, '', '')`).bind(id, shareId, primaryDomain, locale, String(input.workspaceId || ""), String(input.billingReservationId || ""), observedAt, observedAt, observedAt, expiresAt),
-      database.prepare(`INSERT INTO report_product_entitlements (run_id, plan_tier, product_limit, resolved_at) VALUES (?, ?, ?, ?)`).bind(id, productPlan, productLimit, observedAt),
-      database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) VALUES (?, 1, 'run-created', 'queued', 'queued', 'Report queued for public-source collection.', ?, ?)`).bind(id, JSON.stringify({ productPlan, productLimit }), observedAt),
+      database.prepare(`INSERT INTO report_product_entitlements (run_id, plan_tier, product_limit, target_kind, resolved_at) VALUES (?, ?, ?, 'pairs', ?)`).bind(id, productPlan, productLimit, observedAt),
+      database.prepare(`INSERT INTO report_events (run_id, sequence, idempotency_key, phase, status, message, metadata_json, observed_at) VALUES (?, 1, 'run-created', 'queued', 'queued', 'Report queued for public-source collection.', ?, ?)`).bind(id, JSON.stringify({ productPlan, productLimit, productTargetKind: "pairs" }), observedAt),
     ]);
   } catch (error) {
     const diagnosticCode = `run-create-batch-${batchFailureClass(error)}`;
     logStorageDiagnostic(diagnosticCode);
     throw new ReportStorageError(diagnosticCode);
   }
-  return { id, publicId: shareId, primaryDomain, locale, status: "queued" as const, currentPhase: "queued" as const, attemptCount: 1, createdAt: observedAt, expiresAt, productPlan, productLimit };
+  return { id, publicId: shareId, primaryDomain, locale, status: "queued" as const, currentPhase: "queued" as const, attemptCount: 1, createdAt: observedAt, expiresAt, productPlan, productLimit, productTargetKind: "pairs" as const };
 }
 
 export async function createReportRunResult(input: { primaryDomain: string; locale?: string; entitlement?: ProductEntitlement; workspaceId?: string; billingReservationId?: string }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {

@@ -55,8 +55,8 @@ test("report dispatch deduplicates one attempt and creates a distinct recovery r
   assert.equal(first.runId, duplicate.runId);
   assert.notEqual(first.runId, recovery.runId);
   assert.deepEqual(payloads.map((payload) => payload.reportAttempt), [1, 1, 2]);
-  assert.equal(reportDispatchIdempotencyKey(initial), `${PUBLIC_ID}:4:1`);
-  assert.equal(reportDispatchIdempotencyKey({ ...initial, attemptCount: 2 }), `${PUBLIC_ID}:4:2`);
+  assert.equal(reportDispatchIdempotencyKey(initial), `${PUBLIC_ID}:5:1`);
+  assert.equal(reportDispatchIdempotencyKey({ ...initial, attemptCount: 2 }), `${PUBLIC_ID}:5:2`);
 });
 
 test("report recovery dispatches historical plan limits with the accepted version 3 contract", async () => {
@@ -69,6 +69,7 @@ test("report recovery dispatches historical plan limits with the accepted versio
     attemptCount: 2,
     productPlan: "agency",
     productLimit: 1_000,
+    productTargetKind: "primary-products",
   };
   const result = await dispatchReportJob(historical, {
     trigger: async (payload, options) => {
@@ -212,7 +213,7 @@ test("report creation consumes cross-module results through a closed route bound
     Object.defineProperty(hostileExtra, "privateValue", { get() { throw new Error("must not be read"); } });
     const accepted = await run(async () => ({ ok: true, report: hostileExtra, ignored: new Proxy({}, { get() { throw new Error("must not be read"); } }) }));
     assert.equal(accepted.status, 202);
-    assert.deepEqual((await accepted.json()).report, { ...created, productPlan: "starter", productLimit: 20 });
+    assert.deepEqual((await accepted.json()).report, { ...created, productPlan: "starter", productLimit: 20, productTargetKind: "pairs" });
 
     const known = await run(async () => ({ ok: false, diagnosticCode: "run-create-batch-schema-mismatch" }));
     assert.equal(known.status, 503);
@@ -270,9 +271,9 @@ test("authenticated recovery increments the attempt, dispatches it, and safely r
   assert.equal((await replay.json()).replayed, true);
   assert.deepEqual(calls, [
     ["recover", 2],
-    ["dispatch", `${PUBLIC_ID}:4:2`],
+    ["dispatch", `${PUBLIC_ID}:5:2`],
     ["record", "run_recovered2"],
-    ["dispatch", `${PUBLIC_ID}:4:2`],
+    ["dispatch", `${PUBLIC_ID}:5:2`],
     ["record", "run_recovered2"],
   ]);
 });

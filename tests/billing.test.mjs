@@ -248,14 +248,14 @@ test("paid report creation forwards only server-resolved workspace entitlement a
   const response = await createPersistentReport(new Request("https://signal.example/api/reports?plan=agency", { method: "POST", body: JSON.stringify({ primaryDomain: "myjam.co.uk", plan: "agency", productLimit: 1000 }) }), {
     authorize: async () => ({ user: { id: "u", name: "U", email: "u@example.com" }, workspaceId: "workspace-1" }),
     reserve: async () => ({ id: "reservation-1", plan: BILLING_PLANS.solo, used: 1, limit: 10 }),
-    create: async (value) => { input = value; return { ok: true, report: { id: "run-1", publicId: "a".repeat(32), primaryDomain: "myjam.co.uk", locale: "en", status: "queued", currentPhase: "queued", attemptCount: 1, createdAt: "now", expiresAt: "later", productPlan: "solo", productLimit: 20 } }; },
+    create: async (value) => { input = value; return { ok: true, report: { id: "run-1", publicId: "a".repeat(32), primaryDomain: "myjam.co.uk", locale: "en", status: "queued", currentPhase: "queued", attemptCount: 1, createdAt: "now", expiresAt: "later", productPlan: "solo", productLimit: 50 } }; },
     dispatch: async () => ({ runId: "trigger-1", idempotencyKey: "key" }),
     markDispatched: async () => {},
     markDispatchFailed: async () => {},
     finishReservation: async (...args) => outcomes.push(args),
   });
   assert.equal(response.status, 202);
-  assert.deepEqual(input, { primaryDomain: "myjam.co.uk", locale: "en", workspaceId: "workspace-1", billingReservationId: "reservation-1", entitlement: { plan: "solo", productLimit: 20 } });
+  assert.deepEqual(input, { primaryDomain: "myjam.co.uk", locale: "en", workspaceId: "workspace-1", billingReservationId: "reservation-1", entitlement: { plan: "solo", productLimit: 50 } });
   assert.deepEqual(outcomes, []);
 });
 

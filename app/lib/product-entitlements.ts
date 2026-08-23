@@ -2,9 +2,9 @@ import { canonicalDomain } from "./domain.ts";
 
 export const PRODUCT_PLAN_LIMITS = {
   starter: 20,
-  solo: 20,
-  growth: 20,
-  agency: 20,
+  solo: 50,
+  growth: 500,
+  agency: 1_000,
 } as const;
 
 export type ProductPlan = keyof typeof PRODUCT_PLAN_LIMITS;
