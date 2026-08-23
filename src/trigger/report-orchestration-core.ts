@@ -207,7 +207,10 @@ export function validPublishedResultCheckpoint(value: unknown, resultTarget: num
         gaps: checkpoint.comparison.matching.gaps.filter((gap) => !/^Published \d+ of \d+ requested priced product comparisons/i.test(gap)),
       },
     } : checkpoint.comparison;
-    const validated = limitPublishedProductComparison(publishPricedProductComparison(comparisonForValidation, referenceTimeMs), resultTarget, targetKind);
+    const publishableComparison = publishPricedProductComparison(comparisonForValidation, referenceTimeMs);
+    const validated = targetKind === "pairs"
+      ? mergePublishedProductComparisonState(publishableComparison, null, resultTarget, referenceTimeMs, "pairs").comparison
+      : limitPublishedProductComparison(publishableComparison, resultTarget, targetKind);
     if (validated.matching?.resultShortfallReason === "processing-incomplete") return null;
     const revalidatedEvidence = evidence
       ? publishPricedProductComparison(evidence, referenceTimeMs)

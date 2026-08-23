@@ -400,6 +400,7 @@ test("pair targets exhaust alphabetically ordered primaries and retain several r
   assert.equal(state.comparison.coverage.assignedPairCount, 4);
   assert.equal(state.comparison.matching.publishedPairs, 4);
   assert.equal(state.comparison.matching.publishedPrimaryProducts, 2);
+  assert.equal(state.comparison.coverage.truncated, false);
   assert.deepEqual(state.comparison.rows.map((item) => [item.primary.name, item.matches.length]), [["Apricot Jam", 3], ["Blueberry Jam", 1]]);
 });
 
@@ -450,6 +451,35 @@ test("pair checkpoint evidence stays within the target row bound when surplus pr
   assert.equal(state.comparison.coverage.assignedPairCount, 2);
   assert.equal(state.evidence.rows.length, 2);
   assert.deepEqual(state.evidence.rows.map((item) => item.primary.id), ["primary-0", "primary-1"]);
+});
+
+test("pair evidence byte-budget fallback retains every selected edge and removes surplus backup rows", () => {
+  const longPath = "x".repeat(1_700);
+  const rows = Array.from({ length: 1_000 }, (_, primaryIndex) => {
+    const item = pricedPairRow(
+      `Oversized Product ${String(primaryIndex).padStart(4, "0")}`,
+      `oversized-primary-${primaryIndex}`,
+      [`oversized-rival-${primaryIndex}-a`, `oversized-rival-${primaryIndex}-b`],
+    );
+    item.primary.sourceUrl = `https://shop.test/products/${primaryIndex}/${longPath}?country=US`;
+    item.matches.forEach((match, rivalIndex) => {
+      match.product.sourceUrl = `https://rival.test/products/${primaryIndex}/${rivalIndex}/${longPath}?country=US`;
+    });
+    return item;
+  });
+  const selected = rows.map((item) => item.primary.id);
+  const state = mergePublishedProductComparisonState(
+    comparison({ selected, assessed: selected, rows, accepted: 2_000 }),
+    null,
+    1_000,
+    Date.now(),
+    "pairs",
+  );
+
+  assert.equal(state.comparison.coverage.assignedPairCount, 1_000);
+  assert.equal(state.evidence.coverage.assignedPairCount, 1_000);
+  assert.equal(state.evidence.rows.length, 500);
+  assert.ok(state.evidence.rows.every((item) => item.matches.length === 2));
 });
 
 test("priced result backfill exposes exactly the requested number of publishable products", () => {

@@ -51,14 +51,18 @@ the remaining spend.
   rival alias collapse, and a 1,000-pair checkpoint proof. The implementation
   includes each requirement. Its first exact-head review reproduced a blocker
   where pair-mode retry evidence could contain more primary rows than the
-  purchased target and fail checkpoint validation. Evidence is now capped to
-  the target while preserving selected rows and bounded backup rivals; exact-head
-  re-review remains required.
-- `npm test`: PASS — typecheck, Node typecheck, production build, and 1,092
+  purchased target and fail checkpoint validation, identified a missing
+  validator-side alias-integrity check, and required real checkpoint round-trip
+  coverage at every plan size plus the byte-budget fallback. Evidence is now
+  capped to the target while preserving selected rows and bounded backup rivals;
+  pair validation re-runs global alias collapse; and those regression proofs are
+  included. Exact-head re-review remains required.
+- `npm test`: PASS — typecheck, Node typecheck, production build, and 1,095
   tests.
 - `npm run lint`: PASS with two pre-existing `no-img-element` warnings and no
   errors.
-- Focused lifecycle/orchestration suite: PASS — 171 tests, including the exact
-  surplus-primary checkpoint regression and exact plan-sized pair output.
+- Focused lifecycle/orchestration suite: PASS — 174 tests, including exact
+  20/50/500/1,000 checkpoint round trips with surplus primaries, duplicate-alias
+  rejection, byte-budget fallback, and exact plan-sized pair output.
 - Live paid reports remain intentionally unstarted until review and deployment
   complete.

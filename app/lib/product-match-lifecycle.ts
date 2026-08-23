@@ -459,7 +459,7 @@ export function limitPublishedProductComparison(comparison: ProductComparison, r
         verifiedPairCount: rows.reduce((sum, row) => sum + row.matches.filter((match) => match.product && match.confidence === "Medium").length, 0),
         rowsReturned: publishedPrimaryProducts,
         rowLimit: target,
-        truncated: pairs >= target || comparison.coverage.truncated,
+        truncated: pairs > target || comparison.coverage.truncated,
       },
       matching: priorMatching ? {
         ...priorMatching,
@@ -684,7 +684,7 @@ function mergePublishedPairComparisonState(current: ProductComparison, prior: Pr
       rowsReturned: rows.length,
       assignedPairCount: selectedCount,
       verifiedPairCount: rows.reduce((sum, row) => sum + row.matches.filter((match) => match.confidence === "Medium").length, 0),
-      truncated: selectedCount >= target || Boolean(publishedCurrent.coverage.truncated || publishedPrior?.coverage.truncated),
+      truncated: selectedCount > target || Boolean(publishedCurrent.coverage.truncated || publishedPrior?.coverage.truncated),
     },
     matching: currentMatching ? {
       ...currentMatching,
