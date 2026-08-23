@@ -215,6 +215,20 @@ test("production acceptance reports are owner-authorized, single-dispatch, and e
   assert.match(workflow, /options:\s*\n\s+- starter\s*\n\s+- solo\s*\n\s+- growth\s*\n\s+- agency/);
 });
 
+test("runaway Starter cancellation is exact-run gated and cannot dispatch work", () => {
+  const workflow = read(".github/workflows/cancel-runaway-starter-acceptance.yml");
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /environment:\s*\n\s+name: production/);
+  assert.match(workflow, /346c892455ae1b6b6d146bbe03aea555d87fe00c/g);
+  assert.match(workflow, /run_06g2r0ipft5dt1t004ibvao401/g);
+  assert.match(workflow, /e5e25dad6ae241c08bfd7845f0b99cdc/g);
+  assert.match(workflow, /import \{ runs \} from "@trigger\.dev\/sdk"/);
+  assert.match(workflow, /runs\.cancel\(runId\)/);
+  assert.match(workflow, /org\.opencontainers\.image\.revision/);
+  assert.doesNotMatch(workflow, /acceptance-reports|tasks\.trigger|report-evaluation/);
+  assert.doesNotMatch(workflow, /secrets\.|TRIGGER_SECRET_KEY|OPENAI_API_KEY|MARKET_SIGNAL_CALLBACK_TOKEN/);
+});
+
 test("Stripe billing secret updater bootstraps absent entries and rejects duplicates", () => {
   const bash = process.platform === "win32" ? "C:\\Program Files\\Git\\bin\\bash.exe" : "/bin/bash";
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "market-signal-billing-update-"));

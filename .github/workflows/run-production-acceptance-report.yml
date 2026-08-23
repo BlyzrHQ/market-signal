@@ -1,4 +1,4 @@
-name: Cancel runaway production acceptance report
+name: Run one production acceptance report
 
 on:
   workflow_dispatch:
@@ -24,7 +24,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: market-signal-production-acceptance-cancel
+  group: market-signal-production-acceptance
   cancel-in-progress: false
 
 jobs:
@@ -66,43 +66,59 @@ jobs:
           [[ "$(docker inspect "${container}" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" == "${REQUESTED_SHA}" ]]
           echo "container=${container}" >>"${GITHUB_OUTPUT}"
 
-      - name: Cancel only the known runaway acceptance run
-        id: cancel
+      - name: Create and dispatch exactly one unbilled acceptance report
+        id: dispatch
         env:
           CONTAINER: ${{ steps.validate.outputs.container }}
           PRIMARY_DOMAIN: ${{ inputs.primary_domain }}
           PLAN: ${{ inputs.plan }}
-          RUN_ID: run_06g2r0ipft5dt1t004ibvao401
         run: |
           set -Eeuo pipefail
-          [[ "${PRIMARY_DOMAIN}" == "myjam.co.uk" ]]
-          [[ "${PLAN}" == "starter" ]]
-          [[ "${RUN_ID}" == "run_06g2r0ipft5dt1t004ibvao401" ]]
-          if ! canceled_id="$(
+          if ! response="$(
             docker exec \
-              -e "CANCEL_RUN_ID=${RUN_ID}" \
+              -e "ACCEPTANCE_PRIMARY_DOMAIN=${PRIMARY_DOMAIN}" \
+              -e "ACCEPTANCE_PLAN=${PLAN}" \
               "${CONTAINER}" node --input-type=module -e '
-              import { runs } from "@trigger.dev/sdk";
-              const runId = String(process.env.CANCEL_RUN_ID || "");
-              if (!/^run_[A-Za-z0-9]+$/.test(runId)) throw new Error("cancel-run-id-invalid");
-              const result = await runs.cancel(runId);
-              if (String(result?.id || "") !== runId) throw new Error("cancel-response-invalid");
-              process.stdout.write(runId);
+              const response = await fetch("http://127.0.0.1:3000/api/internal/acceptance-reports", {
+                method: "POST",
+                headers: { authorization: `Bearer ${process.env.MARKET_SIGNAL_OWNER_WRITE_TOKEN}`, "content-type": "application/json" },
+                body: JSON.stringify({ primaryDomain: process.env.ACCEPTANCE_PRIMARY_DOMAIN, plan: process.env.ACCEPTANCE_PLAN, locale: "en" }),
+              });
+              const payload = await response.json();
+              if (!response.ok || payload.ok !== true) throw new Error(`${response.status}:${payload.errorCode || "acceptance-dispatch-failed"}`);
+              const publicId = String(payload.report?.publicId || "");
+              const runId = String(payload.job?.runId || "");
+              const target = Number(payload.report?.comparisonTarget);
+              if (!/^[0-9a-f]{32}$/.test(publicId) || !/^run_[A-Za-z0-9]+$/.test(runId) || ![20, 50, 500, 1000].includes(target)) {
+                throw new Error("acceptance-dispatch-response-invalid");
+              }
+              process.stdout.write(`${publicId}\t${runId}\t${target}`);
             '
           )"; then
-            echo "Acceptance run cancellation failed." >&2
+            echo "Acceptance report dispatch failed." >&2
             exit 1
           fi
-          [[ "${canceled_id}" == "${RUN_ID}" ]]
-          echo "run_id=${canceled_id}" >>"${GITHUB_OUTPUT}"
+          IFS=$'\t' read -r public_id run_id target <<<"${response}"
+          [[ "${public_id}" =~ ^[0-9a-f]{32}$ ]]
+          [[ "${run_id}" =~ ^run_[A-Za-z0-9]+$ ]]
+          [[ "${target}" =~ ^(20|50|500|1000)$ ]]
+          echo "public_id=${public_id}" >>"${GITHUB_OUTPUT}"
+          echo "run_id=${run_id}" >>"${GITHUB_OUTPUT}"
+          echo "target=${target}" >>"${GITHUB_OUTPUT}"
 
-      - name: Publish the cancellation receipt
+      - name: Publish the acceptance handoff
         env:
-          RUN_ID: ${{ steps.cancel.outputs.run_id }}
+          DOMAIN: ${{ vars.MARKET_SIGNAL_DOMAIN }}
+          PUBLIC_ID: ${{ steps.dispatch.outputs.public_id }}
+          RUN_ID: ${{ steps.dispatch.outputs.run_id }}
+          TARGET: ${{ steps.dispatch.outputs.target }}
+          PLAN: ${{ inputs.plan }}
         run: |
           set -Eeuo pipefail
           {
-            echo "### Production acceptance report canceled"
+            echo "### Production acceptance report dispatched"
+            echo "- Plan: ${PLAN}"
+            echo "- Comparison target: ${TARGET}"
             echo "- Trigger run: ${RUN_ID}"
-            echo "- No report was created by this workflow."
+            echo "- Report: https://${DOMAIN}/reports/${PUBLIC_ID}?view=products&layout=table"
           } >>"${GITHUB_STEP_SUMMARY}"
