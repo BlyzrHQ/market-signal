@@ -94,6 +94,10 @@ function checkpointImageUrl(value: unknown) {
   }
 }
 
+function searchablePrimaryProduct(product: ProductRecord, referenceTimeMs: number) {
+  return pricedProduct(product, referenceTimeMs) && Boolean(canonicalProductUrl(product.sourceUrl, product.domain));
+}
+
 function checkpointProduct(value: unknown, referenceTimeMs: number): ProductRecord | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const item = value as Partial<ProductRecord>;
@@ -242,7 +246,7 @@ export async function buildDirectProductSearchComparison(primaryDomainValue: str
   const marketCountryCode = /^[A-Z]{2}$/.test(String(options.marketCountryCode || "").toUpperCase()) ? String(options.marketCountryCode).toUpperCase() : "";
   const referenceTimeMs = Number.isFinite(options.referenceTimeMs) ? Number(options.referenceTimeMs) : Date.now();
   const primaryProducts = [...(catalogs.find((catalog) => canonicalDomain(catalog.domain) === primaryDomain)?.products || [])]
-    .filter((product) => product.jsonLdType === "Product")
+    .filter((product) => product.jsonLdType === "Product" || product.jsonLdType === "PageSignal")
     .sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }) || left.sourceUrl.localeCompare(right.sourceUrl) || left.id.localeCompare(right.id))
     .slice(0, Math.max(0, Math.min(1_000, Math.floor(options.maxPrimaryProducts ?? 1_000))));
   const comparison = emptyComparison(primaryDomain, primaryProducts.length, resultTarget, marketCountryCode);
@@ -293,7 +297,10 @@ export async function buildDirectProductSearchComparison(primaryDomainValue: str
     const primary = primaryProducts[primaryIndex];
     // A row can never meet the user's no-empty-price contract if the submitted
     // product itself has no displayable observed price. Do not spend search on it.
-    if (!pricedProduct(primary, referenceTimeMs)) continue;
+    // Search checkpoints and queries must remain bound to a priced,
+    // attributable public HTTPS product page. Canonicalization returns an
+    // empty string for HTTP, off-domain, private, or otherwise unsafe sources.
+    if (!searchablePrimaryProduct(primary, referenceTimeMs)) continue;
     const key = { primaryIndex, inputHash: searchInputHash(primaryDomain, primary, marketCountryCode) };
     const loaded = options.loadSearchCheckpoint ? await options.loadSearchCheckpoint(key) : null;
     const loadedResultHash = loaded && /^[a-f0-9]{64}$/.test(loaded.resultHash) ? loaded.resultHash : undefined;
@@ -378,7 +385,7 @@ export async function buildDirectProductSearchComparison(primaryDomainValue: str
 
   const assignedPairCount = rows.reduce((total, row) => total + row.matches.length, 0);
   const comparisonDomains = [...new Set(rows.flatMap((row) => row.matches.map((match) => canonicalDomain(match.domain))))];
-  const eligiblePrimaryCount = primaryProducts.filter((product) => pricedProduct(product, referenceTimeMs)).length;
+  const eligiblePrimaryCount = primaryProducts.filter((product) => searchablePrimaryProduct(product, referenceTimeMs)).length;
   const exhausted = processedPrimaryIds.length >= eligiblePrimaryCount;
   const resultShortfall = Math.max(0, resultTarget - assignedPairCount);
   return {

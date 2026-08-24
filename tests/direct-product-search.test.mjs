@@ -117,6 +117,70 @@ test("direct search durably retains priced page-scoped product evidence", async 
   assert.equal(durable.records.get(0).result.outcome.products[0].jsonLdType, "PageSignal");
 });
 
+test("direct search includes priced first-party page-signal products in its primary pool", async () => {
+  const primary = {
+    ...product("shop.test", "primary-page", "Custom Work Coverall", 89.5),
+    jsonLdType: "PageSignal",
+    extraction: "page-signal",
+    confidence: "Medium",
+  };
+  const candidate = { domain: "seller.test", sourceUrl: "https://seller.test/products/work-coverall", title: "Custom Work Coverall" };
+  let searches = 0;
+
+  const comparison = await buildDirectProductSearchComparison("shop.test", [{ domain: "shop.test", products: [primary] }], {
+    resultTarget: 20,
+    referenceTimeMs: Date.parse(observedAt),
+    search: async () => {
+      searches += 1;
+      return { completed: true, queries: [primary.name], candidates: [candidate] };
+    },
+    enrich: async () => ({
+      products: [product("seller.test", "seller-page", candidate.title, 95, "GBP", candidate.sourceUrl)],
+      coverage: { pagesRequested: 1, pagesFetched: 1, maxPages: 1, gaps: [] },
+    }),
+  });
+
+  assert.equal(searches, 1);
+  assert.deepEqual(comparison.matching?.processedPrimaryIds, [primary.id]);
+  assert.equal(comparison.coverage.assignedPairCount, 1);
+  assert.equal(comparison.rows[0].primary.jsonLdType, "PageSignal");
+  assert.equal(comparison.rows[0].matches[0].publication?.priceEligible, true);
+});
+
+test("direct search never spends on a priced page signal without a canonical HTTPS source", async () => {
+  const primary = {
+    ...product("shop.test", "unsafe-primary", "Custom Work Coverall", 89.5, "GBP", "http://shop.test/products/unsafe-primary"),
+    jsonLdType: "PageSignal",
+    extraction: "page-signal",
+    confidence: "Medium",
+  };
+  let searches = 0;
+  let checkpointLoads = 0;
+
+  const comparison = await buildDirectProductSearchComparison("shop.test", [{ domain: "shop.test", products: [primary] }], {
+    resultTarget: 20,
+    referenceTimeMs: Date.parse(observedAt),
+    search: async () => {
+      searches += 1;
+      return { completed: true, queries: [primary.name], candidates: [] };
+    },
+    enrich: async () => ({ products: [], coverage: { pagesRequested: 0, pagesFetched: 0, maxPages: 0, gaps: [] } }),
+    loadSearchCheckpoint: async () => {
+      checkpointLoads += 1;
+      return null;
+    },
+    saveSearchCheckpoint: async () => {
+      throw new Error("unsafe primary must not save a checkpoint");
+    },
+  });
+
+  assert.equal(searches, 0);
+  assert.equal(checkpointLoads, 0);
+  assert.deepEqual(comparison.matching?.processedPrimaryIds, []);
+  assert.equal(comparison.coverage.assignedPairCount, 0);
+  assert.equal(comparison.matching?.resultShortfallReason, "bounded-candidate-pool-exhausted");
+});
+
 test("direct search never spends a search on a primary product with no displayable price", async () => {
   let searches = 0;
   const comparison = await buildDirectProductSearchComparison("shop.test", [{
