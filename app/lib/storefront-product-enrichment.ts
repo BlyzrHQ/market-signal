@@ -1,6 +1,6 @@
 import { canonicalDomain } from "./domain.ts";
 import { bilingualNormalize, bilingualTokens, parseCanonicalQuantity, quantitiesConflict } from "./product-normalization.ts";
-import { CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX, catalogReplacementAuditAttribute, directProductMetadataOffer, directProductScopedMetadataOffer, extractProductsFromHtml, isSupportedCurrency, publicSourceMarketContext, publicSourceMarketEvidence, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductRecord } from "./product-intelligence.ts";
+import { CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX, catalogReplacementAuditAttribute, directProductMetadataOffer, directProductScopedMetadataOffer, extractProductsFromHtml, isSupportedCurrency, publicSourceMarketContext, publicSourceMarketEvidence, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductPriceSignal, type ProductRecord } from "./product-intelligence.ts";
 import { redirectedMarketRetryUrl } from "./market-localization.ts";
 import { confirmedProductCurrency, confirmedShopifyRuntimeMarket, hasConflictingDirectProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "./product-page-adapters.ts";
 import { fetchPublicText } from "./public-fetch.ts";
@@ -411,6 +411,13 @@ function scopedPriceSignals(currency: string, values: number[]) {
     .map((amount) => ({ raw: `${currency} ${amount}`, currency, amount }));
 }
 
+function withExplicitListContext(signals: ProductPriceSignal[], currency: string, listMarkup: string) {
+  if (signals.length !== 1 || !listMarkup || !currency) return signals;
+  const listAmounts = markedAmounts(listMarkup, currency);
+  if (listAmounts.length !== 1 || listAmounts[0] <= Number(signals[0].amount || 0)) return signals;
+  return [{ ...signals[0], listAmount: listAmounts[0], listRaw: `${currency} ${listAmounts[0]}` }];
+}
+
 function isRecurringPriceSuffix(value: string) {
   const normalized = value.trim().replace(/^(?:(?:[-:;,—–]|\()\s*)+/u, "");
   if (/^(?:billed|charged|paid|payable|due|payments?)\b[\p{L}\p{N}\s'/-]{0,80}\b(?:day|daily|week|weekly|bi[- ]?weekly|wk|fortnight|fortnightly|month|monthly|mo|quarter|quarterly|qtr|year|yearly|annual|annually|yr)s?\b/iu.test(normalized)) return true;
@@ -530,6 +537,7 @@ export function extractScopedProductPageEvidence(document: string, sourceUrl = "
     || "";
   const currentMarkup = priceMarkup.match(/<ins\b[^>]*>([\s\S]*?)<\/ins>/i)?.[1]
     || priceMarkup.replace(/<del\b[^>]*>[\s\S]*?<\/del>/gi, " ");
+  const explicitListMarkup = priceMarkup.match(/<(?:del|s)\b[^>]*>([\s\S]*?)<\/(?:del|s)\s*>/i)?.[1] || "";
   // Some Shopify themes render decimal cents as an unclosed superscript,
   // for example `£20<sup>25 </span>`. Preserve that first-party visible
   // amount before stripping markup so it can agree with product metadata and
@@ -611,7 +619,7 @@ export function extractScopedProductPageEvidence(document: string, sourceUrl = "
       .replace(/\b(?:US|CA|C|AU|A|RD|R|HK|MX|NZ|S|NT)\s*\$/gi, `${directCurrency} `)
       .replace(/\$/g, `${directCurrency} `)
     : normalizedCurrentMarkup;
-  const signals = scopedPriceSignals(currency, markedAmounts(comparableMarkup, currency));
+  const signals = withExplicitListContext(scopedPriceSignals(currency, markedAmounts(comparableMarkup, currency)), currency, explicitListMarkup);
   return {
     priceSignals: signals,
     basis: signals.length > 1 ? "range" as const : signals.length === 1 ? (/<ins\b/i.test(priceMarkup) ? "sale" as const : "point" as const) : "unavailable" as const,
@@ -745,7 +753,7 @@ function expectedProduct(item: ProductEnrichmentTarget): ProductRecord {
     imageUrl: "",
     observedAt: new Date().toISOString(),
     claimIds: [],
-    quantity: parseCanonicalQuantity(item.expectedName) || undefined,
+    quantity: item.expectedQuantity || parseCanonicalQuantity(item.expectedName) || undefined,
   };
 }
 

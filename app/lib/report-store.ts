@@ -71,6 +71,13 @@ export type WorkspaceReportSummary = {
   updatedAt: string;
 };
 
+export type StoredReportAccess = {
+  runId: string;
+  publicId: string;
+  workspaceId: string;
+  expiresAt: string;
+};
+
 export type StoredReportEvent = {
   sequence: number;
   idempotencyKey: string;
@@ -2125,6 +2132,20 @@ export async function finalizeReportFactManifest(publicReportId: string, input: 
     await database.prepare(`DELETE FROM report_fact_manifests WHERE run_id = ? AND manifest_id = ? AND attempt_number = ? AND status = 'finalizing' AND lock_owner = ?`).bind(run.id, input.manifestId, attemptNumber, lockOwner).run();
     throw error;
   }
+}
+
+export async function loadStoredReportAccess(publicReportId: string, databaseOverride?: D1DatabaseLike | null): Promise<StoredReportAccess | null> {
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error(STORAGE_UNAVAILABLE_MESSAGE);
+  if (!PUBLIC_ID_PATTERN.test(publicReportId)) throw new Error("Invalid report id.");
+  await ensureSchema(database);
+  const run = await findRun(database, publicReportId);
+  return run ? {
+    runId: run.id,
+    publicId: run.publicId,
+    workspaceId: run.workspaceId,
+    expiresAt: run.expiresAt,
+  } : null;
 }
 
 export async function getStoredReport(publicReportId: string, now = new Date(), databaseOverride?: D1DatabaseLike | null) {

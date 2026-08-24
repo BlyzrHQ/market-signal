@@ -14,8 +14,16 @@ function fixedLengthEqual(left: Uint8Array, right: Uint8Array) {
 }
 
 export async function hasValidInternalAuthorization(authorization: string | null, expectedOverride?: string) {
-  const expected = await runtimeEnvironmentValue("MARKET_SIGNAL_CALLBACK_TOKEN", expectedOverride);
-  return hasValidBearerAuthorization(authorization, expected);
+  if (expectedOverride !== undefined) return hasValidBearerAuthorization(authorization, expectedOverride, 32);
+  const [expected, previous] = await Promise.all([
+    runtimeEnvironmentValue("MARKET_SIGNAL_CALLBACK_TOKEN"),
+    runtimeEnvironmentValue("MARKET_SIGNAL_CALLBACK_TOKEN_PREVIOUS"),
+  ]);
+  const [currentValid, previousValid] = await Promise.all([
+    hasValidBearerAuthorization(authorization, expected, 32),
+    hasValidBearerAuthorization(authorization, previous, 32),
+  ]);
+  return currentValid || previousValid;
 }
 
 export type AnalysisAuthorizationOverrides = { callback: string; api: string };

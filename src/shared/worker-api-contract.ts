@@ -14,6 +14,7 @@ export const REQUIRED_WORKER_API_CAPABILITIES = [
 export const REPORT_RETENTION_CAPABILITY = "report.retention.purge" as const;
 export const REPORT_EVALUATION_CAPABILITY = "report.evaluation.execute" as const;
 export const REPORT_SEARCH_CHALLENGE_CAPABILITY = "report.search.challenge.execute" as const;
+export const PRICE_WATCH_CAPABILITY = "price.watch.execute" as const;
 export const LEGACY_AD_EXECUTION_CAPABILITY = "ads.execute" as const;
 
 export const ADVERTISED_WORKER_API_CAPABILITIES = [
@@ -22,6 +23,7 @@ export const ADVERTISED_WORKER_API_CAPABILITIES = [
   REPORT_RETENTION_CAPABILITY,
   REPORT_EVALUATION_CAPABILITY,
   REPORT_SEARCH_CHALLENGE_CAPABILITY,
+  PRICE_WATCH_CAPABILITY,
 ] as const;
 
 export type RequiredWorkerApiCapability = typeof REQUIRED_WORKER_API_CAPABILITIES[number];

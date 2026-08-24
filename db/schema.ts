@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const accountUsers = sqliteTable("user", {
   id: text("id").primaryKey(),
@@ -109,6 +109,165 @@ export const billingReportReservations = sqliteTable("billing_report_reservation
 }, (table) => [
   uniqueIndex("billing_report_reservations_run_uidx").on(table.runId).where(sql`${table.runId} != ''`),
   index("billing_report_reservations_usage_idx").on(table.workspaceId, table.periodStart, table.periodEnd, table.status),
+]);
+
+export const priceWatchEntitlements = sqliteTable("price_watch_entitlements", {
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  periodStart: text("period_start").notNull(),
+  periodEnd: text("period_end").notNull(),
+  planTier: text("plan_tier").notNull(),
+  allocation: integer("allocation").notNull(),
+  purgedUsed: integer("purged_used").notNull().default(0),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.workspaceId, table.periodStart, table.periodEnd] }),
+  index("price_watch_entitlements_period_idx").on(table.periodStart, table.periodEnd),
+  check("price_watch_entitlements_allocation_check", sql`${table.allocation} >= 0`),
+  check("price_watch_entitlements_purged_used_check", sql`${table.purgedUsed} >= 0`),
+]);
+
+export const priceWatchers = sqliteTable("price_watchers", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  canonicalUrl: text("canonical_url").notNull(),
+  resolvedUrl: text("resolved_url").notNull().default(""),
+  canonicalizationVersion: integer("canonicalization_version").notNull(),
+  sourceDomain: text("source_domain").notNull(),
+  rivalDomain: text("rival_domain").notNull(),
+  productName: text("product_name").notNull(),
+  variantKey: text("variant_key").notNull(),
+  variantJson: text("variant_json").notNull(),
+  auditTarget: text("audit_target").notNull().unique(),
+  creatorUserId: text("creator_user_id").references(() => accountUsers.id, { onDelete: "set null" }),
+  emailOwnerUserId: text("email_owner_user_id").references(() => accountUsers.id, { onDelete: "set null" }),
+  cadence: text("cadence").notNull(),
+  state: text("state").notNull(),
+  pauseReason: text("pause_reason").notNull().default(""),
+  baselineCurrency: text("baseline_currency").notNull().default(""),
+  baselineAmountMicros: integer("baseline_amount_micros"),
+  baselineRaw: text("baseline_raw").notNull().default(""),
+  baselineListAmountMicros: integer("baseline_list_amount_micros"),
+  baselineListRaw: text("baseline_list_raw").notNull().default(""),
+  baselineObservedAt: text("baseline_observed_at").notNull().default(""),
+  failureStreak: integer("failure_streak").notNull().default(0),
+  nextCheckAt: text("next_check_at").notNull().default(""),
+  lastCheckAt: text("last_check_at").notNull().default(""),
+  claimOwner: text("claim_owner").notNull().default(""),
+  claimExpiresAt: text("claim_expires_at").notNull().default(""),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("price_watchers_target_uidx").on(table.workspaceId, table.canonicalUrl, table.variantKey),
+  index("price_watchers_due_idx").on(table.state, table.nextCheckAt),
+  index("price_watchers_workspace_idx").on(table.workspaceId, table.createdAt),
+  check("price_watchers_cadence_check", sql`${table.cadence} in ('hourly', 'daily')`),
+  check("price_watchers_state_check", sql`${table.state} in ('baseline_pending', 'active', 'disabled', 'paused_credits', 'paused_subscription', 'paused_failure')`),
+  check("price_watchers_failure_streak_check", sql`${table.failureStreak} >= 0`),
+]);
+
+export const priceWatchCreditReservations = sqliteTable("price_watch_credit_reservations", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  watcherId: text("watcher_id").notNull().references(() => priceWatchers.id, { onDelete: "cascade" }),
+  periodStart: text("period_start").notNull(),
+  periodEnd: text("period_end").notNull(),
+  dueSlot: text("due_slot").notNull(),
+  status: text("status").notNull(),
+  claimOwner: text("claim_owner").notNull().default(""),
+  leaseExpiresAt: text("lease_expires_at").notNull().default(""),
+  externalAttemptAt: text("external_attempt_at").notNull().default(""),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("price_watch_credit_reservations_due_uidx").on(table.watcherId, table.dueSlot),
+  index("price_watch_credit_reservations_usage_idx").on(table.workspaceId, table.periodStart, table.periodEnd, table.status),
+  index("price_watch_credit_reservations_lease_idx").on(table.status, table.leaseExpiresAt),
+  check("price_watch_credit_reservations_status_check", sql`${table.status} in ('reserved', 'attempting', 'committed', 'released')`),
+]);
+
+export const priceWatchObservations = sqliteTable("price_watch_observations", {
+  id: text("id").primaryKey(),
+  watcherId: text("watcher_id").notNull().references(() => priceWatchers.id, { onDelete: "cascade" }),
+  reservationId: text("reservation_id").notNull().references(() => priceWatchCreditReservations.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(),
+  currency: text("currency").notNull(),
+  amountMicros: integer("amount_micros").notNull(),
+  rawPrice: text("raw_price").notNull(),
+  listAmountMicros: integer("list_amount_micros"),
+  rawListPrice: text("raw_list_price").notNull().default(""),
+  observedAt: text("observed_at").notNull(),
+}, (table) => [
+  uniqueIndex("price_watch_observations_reservation_uidx").on(table.reservationId),
+  index("price_watch_observations_history_idx").on(table.watcherId, table.observedAt),
+  check("price_watch_observations_amount_check", sql`${table.amountMicros} > 0`),
+]);
+
+export const priceWatchEvents = sqliteTable("price_watch_events", {
+  id: text("id").primaryKey(),
+  watcherId: text("watcher_id").notNull().references(() => priceWatchers.id, { onDelete: "cascade" }),
+  eventType: text("event_type").notNull(),
+  detailJson: text("detail_json").notNull().default("{}"),
+  idempotencyKey: text("idempotency_key").notNull(),
+  observedAt: text("observed_at").notNull(),
+}, (table) => [
+  uniqueIndex("price_watch_events_idempotency_uidx").on(table.watcherId, table.idempotencyKey),
+  index("price_watch_events_history_idx").on(table.watcherId, table.observedAt),
+]);
+
+export const workspaceNotifications = sqliteTable("workspace_notifications", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  watcherId: text("watcher_id").references(() => priceWatchers.id, { onDelete: "cascade" }),
+  notificationType: text("notification_type").notNull(),
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  dedupeKey: text("dedupe_key").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (table) => [
+  uniqueIndex("workspace_notifications_dedupe_uidx").on(table.workspaceId, table.dedupeKey),
+  index("workspace_notifications_recent_idx").on(table.workspaceId, table.createdAt),
+]);
+
+export const workspaceNotificationReads = sqliteTable("workspace_notification_reads", {
+  notificationId: text("notification_id").notNull().references(() => workspaceNotifications.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => accountUsers.id, { onDelete: "cascade" }),
+  readAt: text("read_at").notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.notificationId, table.userId] }),
+  index("workspace_notification_reads_user_idx").on(table.userId, table.readAt),
+]);
+
+export const priceWatchEmailOutbox = sqliteTable("price_watch_email_outbox", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  watcherId: text("watcher_id").notNull().references(() => priceWatchers.id, { onDelete: "cascade" }),
+  recipientUserId: text("recipient_user_id").references(() => accountUsers.id, { onDelete: "set null" }),
+  eventId: text("event_id").notNull().references(() => priceWatchEvents.id, { onDelete: "cascade" }),
+  status: text("status").notNull(),
+  batchAfter: text("batch_after").notNull(),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  lastErrorCode: text("last_error_code").notNull().default(""),
+  deliveredAt: text("delivered_at").notNull().default(""),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("price_watch_email_outbox_event_uidx").on(table.eventId),
+  index("price_watch_email_outbox_due_idx").on(table.status, table.batchAfter),
+  check("price_watch_email_outbox_status_check", sql`${table.status} in ('pending', 'sending', 'delivered')`),
+  check("price_watch_email_outbox_attempt_count_check", sql`${table.attemptCount} >= 0`),
+]);
+
+export const priceWatchAuditLog = sqliteTable("price_watch_audit_log", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  actorUserId: text("actor_user_id").references(() => accountUsers.id, { onDelete: "set null" }),
+  action: text("action").notNull(),
+  targetTombstone: text("target_tombstone").notNull(),
+  detailJson: text("detail_json").notNull().default("{}"),
+  createdAt: text("created_at").notNull(),
+}, (table) => [
+  index("price_watch_audit_log_workspace_idx").on(table.workspaceId, table.createdAt),
 ]);
 
 export const verifiedCompetitors = sqliteTable("verified_competitors", {
@@ -223,6 +382,16 @@ export const reportMatches = sqliteTable("report_matches", {
   observedAt: text("observed_at").notNull(),
 }, (table) => [
   index("report_matches_run_rival_idx").on(table.runId, table.rivalDomain),
+]);
+
+export const priceWatcherReportLinks = sqliteTable("price_watcher_report_links", {
+  watcherId: text("watcher_id").notNull().references(() => priceWatchers.id, { onDelete: "cascade" }),
+  reportRunId: text("report_run_id").notNull().references(() => reportRuns.id, { onDelete: "cascade" }),
+  matchId: text("match_id").notNull().references(() => reportMatches.id, { onDelete: "cascade" }),
+  createdAt: text("created_at").notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.watcherId, table.reportRunId, table.matchId] }),
+  index("price_watcher_report_links_report_idx").on(table.reportRunId, table.matchId),
 ]);
 
 export const reportAds = sqliteTable("report_ads", {

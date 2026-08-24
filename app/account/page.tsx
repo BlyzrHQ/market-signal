@@ -14,8 +14,9 @@ const PLANS = [
 type Status = {
   authenticated: boolean;
   user?: { name: string; email: string };
-  subscription?: { plan: { id: string; name: string; reportsPerMonth: number; productLimit: number } | null; status: string; cancelAtPeriodEnd: boolean; currentPeriodEnd: string } | null;
+  subscription?: { plan: { id: string; name: string; reportsPerMonth: number; productLimit: number; monitoringCredits: number } | null; status: string; cancelAtPeriodEnd: boolean; currentPeriodEnd: string } | null;
   usage?: { used: number; limit: number };
+  monitoringUsage?: { used: number; allocation: number; remaining: number };
 };
 
 async function jsonRequest(url: string, body?: unknown) {
@@ -106,7 +107,7 @@ export default function AccountPage() {
       <article>
         <span>CURRENT PLAN</span>
         <h2>{status.subscription?.plan?.name || "No active plan"}</h2>
-        {status.subscription?.plan ? <><p><b>{status.usage?.used || 0}</b> of <b>{status.usage?.limit || 0}</b> reports used this billing period</p><p>{status.subscription.plan.productLimit.toLocaleString()} products assessed per report · {status.subscription.status}</p><button disabled={busy} onClick={() => billing("portal")}>Manage billing</button></> : <p>Choose a plan to start creating hosted reports.</p>}
+        {status.subscription?.plan ? <><p><b>{status.usage?.used || 0}</b> of <b>{status.usage?.limit || 0}</b> reports used this billing period</p><p>{status.subscription.plan.productLimit.toLocaleString()} products assessed per report · {status.subscription.status}</p><p><b>{status.monitoringUsage?.remaining ?? status.subscription.plan.monitoringCredits}</b> of <b>{status.monitoringUsage?.allocation || status.subscription.plan.monitoringCredits}</b> price-check credits remaining</p><div className="account-plan-actions"><Link href="/price-watch">Manage price watchers</Link><button disabled={busy} onClick={() => billing("portal")}>Manage billing</button></div></> : <p>Choose a plan to start creating hosted reports.</p>}
       </article>
       {!status.subscription?.plan && <div className="account-plan-grid">{PLANS.map((plan) => <button disabled={busy} key={plan.id} onClick={() => billing("checkout", plan.id)}><span>{plan.name}</span><strong>${plan.monthlyPriceUsd}/mo</strong><small>{plan.reportsPerMonth} reports · {plan.productLimit.toLocaleString()} products/report</small></button>)}</div>}
       {error && <p className="account-error" role="alert">{error}</p>}

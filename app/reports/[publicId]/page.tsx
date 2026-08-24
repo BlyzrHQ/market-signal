@@ -80,6 +80,21 @@ function PaidReportHistory({ currentPublicId, ar }: { currentPublicId: string; a
   </section>;
 }
 
+function PriceWatchWorkspaceLink({ ar }: { ar: boolean }) {
+  const [unread, setUnread] = useState(0);
+  const [available, setAvailable] = useState(false);
+  useEffect(() => {
+    let current = true;
+    fetch("/api/price-watch/notifications", { cache: "no-store", credentials: "same-origin", headers: { accept: "application/json" } })
+      .then(async (response) => response.ok ? readJsonResponse<{ unread?: number }>(response, "Price-watch notifications") : null)
+      .then((payload) => { if (current && payload) { setUnread(Number(payload.unread || 0)); setAvailable(true); } })
+      .catch(() => { /* Legacy and unbilled reports do not expose workspace monitoring. */ });
+    return () => { current = false; };
+  }, []);
+  if (!available) return null;
+  return <Link className="dashboard-price-watch-link" href="/price-watch"><span aria-hidden="true">◉</span>{ar ? "مراقبة الأسعار" : "Price watch"}{unread > 0 && <b>{unread}</b>}</Link>;
+}
+
 function StoppedReportWorkspace({ run, ar, onToggleLocale }: { run: NonNullable<StoredPayload["report"]>["run"]; ar: boolean; onToggleLocale: () => void }) {
   const presentation = stoppedReportPresentation(run.errorMessage, run.errorCode, ar);
   const observedAt = run.updatedAt || run.createdAt;
@@ -101,6 +116,7 @@ function StoppedReportWorkspace({ run, ar, onToggleLocale }: { run: NonNullable<
         <time dateTime={observedAt}>{ar ? "حُدث" : "Updated"} {new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</time>
       </section>
       <PaidReportHistory currentPublicId={run.publicId} ar={ar} />
+      <PriceWatchWorkspaceLink ar={ar} />
     </aside>
     <div className="report-dashboard-main">
       <header className="report-route-header">
@@ -200,6 +216,7 @@ function ReportWorkspace({ blocks, primaryProducts, publicId, primaryDomain, obs
         <time dateTime={observedAt}>{ar ? "حُدث" : "Updated"} {new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</time>
       </section>
       <PaidReportHistory currentPublicId={publicId} ar={ar} />
+      <PriceWatchWorkspaceLink ar={ar} />
       <nav className="workspace-tabs" role="tablist" aria-orientation={compactNav ? "horizontal" : "vertical"} aria-label={ar ? "أقسام التقرير" : "Report sections"}>
         {activeViews.map((item, index) => <button key={item} ref={(node) => { tabs.current[index] = node; }} id={`tab-${item}`} type="button" role="tab" aria-selected={view === item} aria-controls={`panel-${item}`} tabIndex={view === item ? 0 : -1} onClick={() => selectView(item)} onKeyDown={(event) => onTabKey(event, index)}>{VIEW_LABELS[item][ar ? "ar" : "en"]}{item === "competitors" && <b>{competitors.length}</b>}{item === "products" && <b>{productMatchTotal}</b>}</button>)}
       </nav>
