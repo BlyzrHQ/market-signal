@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { KeyboardEvent, MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProductDesignLab } from "../../components/product-design-lab";
+import { ReportShareControl } from "../../components/report-share-control";
 import { ExperienceBenchmark } from "../../components/experience-benchmark";
 import { reportCoverage, type ReportCoverageEvent } from "../../lib/report-coverage";
 import { jsonResponseErrorMessage, readJsonResponse } from "../../lib/json-response";
@@ -12,7 +13,7 @@ import { stoppedReportPresentation } from "../../lib/stopped-report-presentation
 type Block = { type: string; id: string } & Record<string, unknown>;
 type ReportEvent = ReportCoverageEvent;
 type View = "overview" | "competitors" | "products" | "evidence";
-type StoredPayload = { ok: boolean; error?: string; report?: { run: { publicId: string; primaryDomain: string; locale: "en" | "ar"; status: string; createdAt: string; updatedAt: string; errorCode: string; errorMessage: string; productPlan: string; productLimit: number }; events: ReportEvent[]; document: { document?: { version: "1"; generatedAt: string; blocks: Block[] }; marketBrief?: Record<string, unknown> } | null; documentSchemaVersion: number; primaryProducts?: { authoritative: boolean; totalCount: number; products: Array<Record<string, unknown>>; truncated: boolean } } };
+type StoredPayload = { ok: boolean; error?: string; report?: { run: { publicId?: string; primaryDomain: string; locale: "en" | "ar"; status: string; createdAt: string; updatedAt: string; errorCode?: string; errorMessage?: string; productPlan?: string; productLimit?: number }; events: ReportEvent[]; document: { document?: { version: "1"; generatedAt: string; blocks: Block[] }; marketBrief?: Record<string, unknown> } | null; documentSchemaVersion: number; primaryProducts?: { authoritative: boolean; totalCount: number; products: Array<Record<string, unknown>>; truncated: boolean } } };
 type AccountReport = { publicId: string; primaryDomain: string; status: string; createdAt: string; updatedAt: string };
 type AccountReportsPayload = { eligible?: boolean; reports?: AccountReport[] };
 
@@ -96,7 +97,7 @@ function PriceWatchWorkspaceLink({ ar }: { ar: boolean }) {
 }
 
 function StoppedReportWorkspace({ run, ar, onToggleLocale }: { run: NonNullable<StoredPayload["report"]>["run"]; ar: boolean; onToggleLocale: () => void }) {
-  const presentation = stoppedReportPresentation(run.errorMessage, run.errorCode, ar);
+  const presentation = stoppedReportPresentation(run.errorMessage || "", run.errorCode || "", ar);
   const observedAt = run.updatedAt || run.createdAt;
   const websiteUrl = safeUrl(`https://${run.primaryDomain}`);
   useEffect(() => {
@@ -115,7 +116,7 @@ function StoppedReportWorkspace({ run, ar, onToggleLocale }: { run: NonNullable<
         <small>{ar ? "توقف هذا التشغيل قبل اكتمال الفحوص العامة." : "This run stopped before its public checks completed."}</small>
         <time dateTime={observedAt}>{ar ? "حُدث" : "Updated"} {new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</time>
       </section>
-      <PaidReportHistory currentPublicId={run.publicId} ar={ar} />
+      {run.publicId && <PaidReportHistory currentPublicId={run.publicId} ar={ar} />}
       <PriceWatchWorkspaceLink ar={ar} />
     </aside>
     <div className="report-dashboard-main">
@@ -138,7 +139,7 @@ function StoppedReportWorkspace({ run, ar, onToggleLocale }: { run: NonNullable<
   </div>;
 }
 
-function ReportWorkspace({ blocks, primaryProducts, publicId, primaryDomain, observedAt, reportStatus, reportEvents, ar, onToggleLocale }: { blocks: Block[]; primaryProducts?: { authoritative: boolean; totalCount: number; products: Array<Record<string, unknown>>; truncated: boolean }; publicId: string; primaryDomain: string; observedAt: string; reportStatus: string; reportEvents: ReportEvent[]; ar: boolean; onToggleLocale: () => void }) {
+function ReportWorkspace({ blocks, primaryProducts, resourceId, privatePublicId, matchesEndpoint, mode, primaryDomain, observedAt, reportStatus, reportEvents, ar, onToggleLocale }: { blocks: Block[]; primaryProducts?: { authoritative: boolean; totalCount: number; products: Array<Record<string, unknown>>; truncated: boolean }; resourceId: string; privatePublicId?: string; matchesEndpoint: string; mode: "workspace" | "shared"; primaryDomain: string; observedAt: string; reportStatus: string; reportEvents: ReportEvent[]; ar: boolean; onToggleLocale: () => void }) {
   const domainStatus = blocks.find((block) => block.type === "domain-status" && ["parked", "unavailable"].includes(display(block.status).toLowerCase()));
   const domainState = display(domainStatus?.status).toLowerCase();
   const terminalDomain = Boolean(domainStatus);
@@ -183,16 +184,16 @@ function ReportWorkspace({ blocks, primaryProducts, publicId, primaryDomain, obs
     return list(item.matches).flatMap((match, matchIndex) => { const candidate = object(match); const rival = object(candidate.product); return object(candidate.publication).priceEligible === true && rival.name ? [{ primary, rival, match: candidate, key: `${rowIndex}-${matchIndex}` }] : []; });
   }), [comparison]);
   const [authoritativeMatchSummary, setAuthoritativeMatchSummary] = useState<{ publicId: string; totalCount: number; domainCounts: Record<string, number> } | null>(null);
-  const receiveAuthoritativeMatchSummary = useCallback((summary: { totalCount: number; domainCounts: Record<string, number> }) => setAuthoritativeMatchSummary({ publicId, ...summary }), [publicId]);
+  const receiveAuthoritativeMatchSummary = useCallback((summary: { totalCount: number; domainCounts: Record<string, number> }) => setAuthoritativeMatchSummary({ publicId: resourceId, ...summary }), [resourceId]);
   useEffect(() => {
     let current = true;
-    fetch(`/api/reports/${publicId}/matches?limit=1`, { headers: { accept: "application/json" } })
+    fetch(`${matchesEndpoint}?limit=1`, { cache: "no-store", headers: { accept: "application/json" } })
       .then((response) => readJsonResponse<{ ok: boolean; page?: { authoritative: true; totalCount: number; domainCounts: Record<string, number> } }>(response, "Saved report match totals"))
-      .then((body) => { if (current && body.ok && body.page?.authoritative) setAuthoritativeMatchSummary({ publicId, totalCount: body.page.totalCount, domainCounts: body.page.domainCounts || {} }); })
+      .then((body) => { if (current && body.ok && body.page?.authoritative) setAuthoritativeMatchSummary({ publicId: resourceId, totalCount: body.page.totalCount, domainCounts: body.page.domainCounts || {} }); })
       .catch(() => { /* The compact report counts remain the explicit fallback. */ });
     return () => { current = false; };
-  }, [publicId]);
-  const currentMatchSummary = authoritativeMatchSummary?.publicId === publicId ? authoritativeMatchSummary : null;
+  }, [matchesEndpoint, resourceId]);
+  const currentMatchSummary = authoritativeMatchSummary?.publicId === resourceId ? authoritativeMatchSummary : null;
   const productMatchTotal = currentMatchSummary?.totalCount ?? battles.length;
   const evidence = blocks.filter((block) => block.type === "evidence");
   const gaps = blocks.filter((block) => block.type === "gap");
@@ -215,14 +216,14 @@ function ReportWorkspace({ blocks, primaryProducts, publicId, primaryDomain, obs
         <small>{coverageStatus.detail}</small>
         <time dateTime={observedAt}>{ar ? "حُدث" : "Updated"} {new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</time>
       </section>
-      <PaidReportHistory currentPublicId={publicId} ar={ar} />
-      <PriceWatchWorkspaceLink ar={ar} />
+      {mode === "workspace" && privatePublicId && <PaidReportHistory currentPublicId={privatePublicId} ar={ar} />}
+      {mode === "workspace" && <PriceWatchWorkspaceLink ar={ar} />}
       <nav className="workspace-tabs" role="tablist" aria-orientation={compactNav ? "horizontal" : "vertical"} aria-label={ar ? "أقسام التقرير" : "Report sections"}>
         {activeViews.map((item, index) => <button key={item} ref={(node) => { tabs.current[index] = node; }} id={`tab-${item}`} type="button" role="tab" aria-selected={view === item} aria-controls={`panel-${item}`} tabIndex={view === item ? 0 : -1} onClick={() => selectView(item)} onKeyDown={(event) => onTabKey(event, index)}>{VIEW_LABELS[item][ar ? "ar" : "en"]}{item === "competitors" && <b>{competitors.length}</b>}{item === "products" && <b>{productMatchTotal}</b>}</button>)}
       </nav>
     </aside>
     <div className="report-dashboard-main">
-      <header className="report-route-header"><div className="dashboard-view-title"><span>{ar ? "معلومات السوق" : "MARKET INTELLIGENCE"}</span><b>{VIEW_LABELS[view][ar ? "ar" : "en"]}</b></div><div className={`report-route-meta ${reportStatus === "limited" ? "partial" : "ready"}`} title={coverageStatus.detail}><span>{coverageStatus.label}</span><time>{ar ? "لوحظ" : "Observed"} {new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</time></div><div className="report-route-actions"><button type="button" onClick={onToggleLocale} aria-label={ar ? "Switch to English" : "التبديل إلى العربية"}>{ar ? "EN" : "ع"}</button><Link href="/">{ar ? "تقرير جديد" : "New report"}</Link></div></header>
+      <header className="report-route-header"><div className="dashboard-view-title"><span>{ar ? "معلومات السوق" : "MARKET INTELLIGENCE"}</span><b>{VIEW_LABELS[view][ar ? "ar" : "en"]}</b></div><div className={`report-route-meta ${reportStatus === "limited" ? "partial" : "ready"}`} title={coverageStatus.detail}><span>{coverageStatus.label}</span><time>{ar ? "لوحظ" : "Observed"} {new Date(observedAt).toLocaleDateString(ar ? "ar" : "en")}</time></div><div className="report-route-actions">{mode === "workspace" && privatePublicId ? <ReportShareControl publicId={privatePublicId} ar={ar} /> : <span className="shared-report-badge">{ar ? "تقرير مشترك للقراءة فقط" : "Shared · read only"}</span>}<button type="button" onClick={onToggleLocale} aria-label={ar ? "Switch to English" : "التبديل إلى العربية"}>{ar ? "EN" : "ع"}</button><Link href="/">{ar ? "تقرير جديد" : "New report"}</Link></div></header>
       <section className="workspace-panel" id={`panel-${view}`} role="tabpanel" aria-labelledby={`tab-${view}`} tabIndex={0}>
       {reportStatus === "limited" && <aside className="report-coverage-notice" role="status"><div><span>{coverageStatus.label}</span><strong>{coverageStatus.title}</strong></div><p>{coverageStatus.detail}</p></aside>}
       {view === "overview" && <>
@@ -240,7 +241,7 @@ function ReportWorkspace({ blocks, primaryProducts, publicId, primaryDomain, obs
 
       {view === "products" && <>
         {legacyUngatedMatchCount > 0 && <aside className="report-coverage-notice" role="status"><div><span>{ar ? "تقرير قديم" : "LEGACY REPORT"}</span><strong>{ar ? "تحتاج مقارنات الأسعار المحفوظة إلى إعادة التحقق" : "Saved price comparisons need revalidation"}</strong></div><p>{ar ? "أُنشئ هذا التقرير قبل بوابة التحقق الحالية للسوق والعملة. أخفينا صفوفه القديمة بدلاً من عرض أسعار قد تكون من سوق مختلف. شغّل تقريراً جديداً للحصول على مقارنات متحققة." : "This report predates the current market-and-currency validation gate. Its older rows are hidden rather than showing prices that may belong to another market. Run a new report for verified comparisons."}</p><Link href="/">{ar ? "شغّل تقريراً جديداً" : "Run a new report"}</Link></aside>}
-        <ProductDesignLab key={publicId} comparison={comparison} battles={battles} primaryProducts={primaryProducts} publicId={publicId} authoritativeMatchTotal={productMatchTotal || undefined} onAuthoritativeSummary={receiveAuthoritativeMatchSummary} primaryDomain={primaryDomain} observedAt={observedAt} ar={ar} />
+        <ProductDesignLab key={resourceId} comparison={comparison} battles={battles} primaryProducts={primaryProducts} publicId={resourceId} matchesEndpoint={matchesEndpoint} workspaceMode={mode === "workspace"} authoritativeMatchTotal={productMatchTotal || undefined} onAuthoritativeSummary={receiveAuthoritativeMatchSummary} primaryDomain={primaryDomain} observedAt={observedAt} ar={ar} />
       </>}
 
       {view === "evidence" && <>
@@ -257,13 +258,37 @@ function ReportWorkspace({ blocks, primaryProducts, publicId, primaryDomain, obs
   </div>;
 }
 
-export default function StoredReportPage({ params }: { params: Promise<{ publicId: string }> | { publicId: string } }) {
-  const [payload, setPayload] = useState<StoredPayload | null>(null); const [error, setError] = useState(""); const [localeOverride, setLocaleOverride] = useState<"en" | "ar" | null>(null);
-  useEffect(() => { let current = true; Promise.resolve(params).then(({ publicId }) => fetch(`/api/reports/${publicId}`, { cache: "no-store" })).then(async (response) => ({ response, body: await readJsonResponse<StoredPayload>(response, "Saved report") })).then(({ response, body }) => { if (!current) return; if (!response.ok || !body.ok) setError(body.error || "The saved report could not be opened."); else { setPayload(body); if (!body.report?.document && ["queued", "running"].includes(body.report?.run.status || "")) Promise.resolve(params).then(({ publicId }) => window.location.replace(`/reports/${publicId}/loading`)); } }).catch((cause) => current && setError(jsonResponseErrorMessage(cause, "Saved report"))); return () => { current = false; }; }, [params]);
+type ReportResourceParams = Promise<{ publicId?: string; token?: string }> | { publicId?: string; token?: string };
+
+export function StoredReportClient({ params, mode }: { params: ReportResourceParams; mode: "workspace" | "shared" }) {
+  const [payload, setPayload] = useState<StoredPayload | null>(null); const [resourceId, setResourceId] = useState(""); const [error, setError] = useState(""); const [localeOverride, setLocaleOverride] = useState<"en" | "ar" | null>(null);
+  useEffect(() => {
+    let current = true;
+    Promise.resolve(params).then((value) => {
+      const id = mode === "shared" ? value.token || "" : value.publicId || "";
+      if (!id) throw new Error("The report address is invalid.");
+      setResourceId(id);
+      const endpoint = mode === "shared" ? `/api/shared-reports/${id}` : `/api/reports/${id}`;
+      return fetch(endpoint, { cache: "no-store", headers: { accept: "application/json" } }).then(async (response) => ({ id, response, body: await readJsonResponse<StoredPayload>(response, mode === "shared" ? "Shared report" : "Saved report") }));
+    }).then(({ id, response, body }) => {
+      if (!current) return;
+      if (!response.ok || !body.ok) setError(body.error || (mode === "shared" ? "The shared report could not be opened." : "The saved report could not be opened."));
+      else {
+        setPayload(body);
+        if (mode === "workspace" && !body.report?.document && ["queued", "running"].includes(body.report?.run.status || "")) window.location.replace(`/reports/${id}/loading`);
+      }
+    }).catch((cause) => current && setError(jsonResponseErrorMessage(cause, mode === "shared" ? "Shared report" : "Saved report")));
+    return () => { current = false; };
+  }, [mode, params]);
   const report = payload?.report; const stored = report?.document; const document = stored?.document; const ar = localeOverride ? localeOverride === "ar" : report?.run.locale === "ar"; const dir = ar ? "rtl" : "ltr";
   if (error) return <main className="stored-report-state" lang={ar ? "ar" : "en"} dir={dir}><Link href="/">Market Signal</Link><h1>{ar ? "التقرير غير متاح" : "Report unavailable"}</h1><p>{error}</p></main>;
-  if (report && !document && ["failed", "interrupted"].includes(report.run.status)) return <main className="stored-report-page" lang={ar ? "ar" : "en"} dir={dir}><StoppedReportWorkspace run={report.run} ar={ar} onToggleLocale={() => setLocaleOverride(ar ? "en" : "ar")} /></main>;
+  if (mode === "workspace" && report && !document && ["failed", "interrupted"].includes(report.run.status)) return <main className="stored-report-page" lang={ar ? "ar" : "en"} dir={dir}><StoppedReportWorkspace run={report.run} ar={ar} onToggleLocale={() => setLocaleOverride(ar ? "en" : "ar")} /></main>;
   if (!report || !document) return <main className="stored-report-state"><div className="route-spinner" /><p>Opening the saved market report…</p></main>;
   if (report.documentSchemaVersion !== 1) return <main className="stored-report-state" lang={ar ? "ar" : "en"} dir={dir}><Link href="/">Market Signal</Link><h1>{ar ? "نسخة التقرير غير مدعومة" : "Unsupported report version"}</h1></main>;
-  return <main className="stored-report-page" lang={ar ? "ar" : "en"} dir={dir}><ReportWorkspace blocks={document.blocks} primaryProducts={report.primaryProducts} publicId={report.run.publicId} primaryDomain={report.run.primaryDomain} observedAt={report.run.updatedAt} reportStatus={report.run.status} reportEvents={report.events || []} ar={ar} onToggleLocale={() => setLocaleOverride(ar ? "en" : "ar")} /></main>;
+  const matchesEndpoint = mode === "shared" ? `/api/shared-reports/${resourceId}/matches` : `/api/reports/${resourceId}/matches`;
+  return <main className={`stored-report-page ${mode === "shared" ? "shared-report-page" : "workspace-report-page"}`} lang={ar ? "ar" : "en"} dir={dir}><ReportWorkspace blocks={document.blocks} primaryProducts={report.primaryProducts} resourceId={resourceId} privatePublicId={mode === "workspace" ? report.run.publicId || resourceId : undefined} matchesEndpoint={matchesEndpoint} mode={mode} primaryDomain={report.run.primaryDomain} observedAt={report.run.updatedAt} reportStatus={report.run.status} reportEvents={report.events || []} ar={ar} onToggleLocale={() => setLocaleOverride(ar ? "en" : "ar")} /></main>;
+}
+
+export default function StoredReportPage({ params }: { params: Promise<{ publicId: string }> | { publicId: string } }) {
+  return <StoredReportClient params={params} mode="workspace" />;
 }

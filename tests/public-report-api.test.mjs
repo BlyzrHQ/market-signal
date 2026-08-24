@@ -23,6 +23,7 @@ function dependencies(overrides = {}) {
     recover: async () => null,
     authorize: async () => ({ user: { id: "user-1", name: "Owner", email: "owner@example.com" }, workspaceId: "workspace-1" }),
     settle: async () => {},
+    allowLegacyPublic: () => true,
     ...overrides,
   };
 }
@@ -92,4 +93,19 @@ test("unowned legacy reports remain public only before their existing expiry", a
     dependencies({ loadAccess: async () => ({ runId: legacy.run.id, publicId, workspaceId: "", expiresAt: "2026-08-24T11:59:59.000Z" }) }),
   );
   assert.equal(expired.status, 404);
+});
+
+test("hosted deployments do not expose legacy unowned report ids", async () => {
+  let reads = 0;
+  const response = await getReportResponse(
+    new Request(`https://signal.example/api/reports/${publicId}`),
+    { params: { publicId } },
+    dependencies({
+      loadAccess: async () => ({ runId: "run-legacy", publicId, workspaceId: "", expiresAt: future }),
+      allowLegacyPublic: () => false,
+      loadReport: async () => { reads += 1; return storedReport("", future); },
+    }),
+  );
+  assert.equal(response.status, 404);
+  assert.equal(reads, 0);
 });

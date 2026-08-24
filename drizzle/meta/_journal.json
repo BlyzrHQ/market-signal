@@ -120,6 +120,13 @@
       "when": 1787542293441,
       "tag": "0016_next_nighthawk",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1787562291057,
+      "tag": "0017_clumsy_wildside",
+      "breakpoints": true
     }
   ]
 }

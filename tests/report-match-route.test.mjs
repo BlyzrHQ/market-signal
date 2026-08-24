@@ -25,6 +25,7 @@ function dependencies(overrides = {}) {
     }),
     loadMatchPage: async () => page,
     authorize: async () => null,
+    allowLegacyPublic: () => true,
     ...overrides,
   };
 }
@@ -106,4 +107,15 @@ test("expired legacy match pages are not readable", async () => {
     dependencies({ loadAccess: async () => ({ runId: "run-1", publicId, workspaceId: "", expiresAt: "2026-08-24T11:59:59.000Z" }) }),
   );
   assert.equal(response.status, 404);
+});
+
+test("hosted deployments require an explicit share token for legacy match facts", async () => {
+  let reads = 0;
+  const response = await publicReportMatches(
+    new Request(`https://signal.example/api/reports/${publicId}/matches`),
+    { params: { publicId } },
+    dependencies({ allowLegacyPublic: () => false, loadMatchPage: async () => { reads += 1; return page; } }),
+  );
+  assert.equal(response.status, 404);
+  assert.equal(reads, 0);
 });
