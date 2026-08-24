@@ -16,6 +16,7 @@ import { buildExperienceBenchmark } from "../../lib/experience-benchmark.ts";
 import { hasObservedAddToCartControl } from "../../lib/experience-signals.ts";
 import { buildAIProductComparison, type AIProductMatchingOptions } from "../../lib/ai-product-matching.ts";
 import { isSallaCatalogRecoveryEligible, recoverSallaStorefrontCatalog, type SallaStorefrontRecovery } from "../../lib/salla-mcp-catalog-recovery.ts";
+import { isShopifyUcpCatalogRecoveryEligible, recoverShopifyUcpCatalog, type ShopifyUcpCatalogRecovery } from "../../lib/shopify-ucp-catalog-recovery.ts";
 import { redirectedMarketRetryUrl } from "../../lib/market-localization.ts";
 import { workerOnlyResponse } from "../../lib/process-role.ts";
 import { MARKET_SIGNAL_USER_AGENT } from "../../lib/crawler-identity.ts";
@@ -1093,6 +1094,100 @@ async function sallaRecoveryDomainCrawl(previous: DomainCrawl, maxProducts: numb
   };
 }
 
+export async function shopifyRecoveryDomainCrawl(
+  previous: DomainCrawl,
+  maxProducts: number,
+  recoverCatalog: typeof recoverShopifyUcpCatalog = recoverShopifyUcpCatalog,
+): Promise<DomainCrawl | null> {
+  let recovery: ShopifyUcpCatalogRecovery | null = null;
+  try { recovery = await recoverCatalog(previous.domain, { maxProducts }); } catch { return null; }
+  if (!recovery) return null;
+  const language = recovery.products.some((product) => /\p{Script=Arabic}/u.test(`${product.name} ${product.description}`)) ? "ar" : "en";
+  const pricePatterns = recovery.products.flatMap((product) => product.priceSignals.map((price) => price.raw)).slice(0, 12);
+  const regionInference = combineRegionSignals(inferRegionEvidence({
+    domain: previous.domain,
+    language,
+    text: recovery.products.slice(0, 20).map((product) => `${product.name} ${product.description}`).join(" "),
+    priceSignals: pricePatterns,
+    sourceUrl: recovery.sourceUrl,
+  }).signals);
+  const claims: Claim[] = [
+    makeClaim(previous.domain, "shopify-ucp-catalog", `${previous.domain} exposes an official public Shopify storefront catalog.`, recovery.sourceUrl, recovery.observedAt),
+    ...recovery.products.map((product) => ({
+      id: product.claimIds[0],
+      claimType: "Observed" as const,
+      text: `${previous.domain} exposes product “${product.name}” with a positive public price through its official Shopify storefront catalog.`,
+      sourceUrl: product.sourceUrl,
+      observedAt: product.observedAt,
+      confidence: "High" as const,
+    })),
+  ];
+  const productPaths = recovery.products.flatMap((product) => { try { return [new URL(product.sourceUrl).pathname]; } catch { return []; } });
+  const page: CrawlPage = {
+    ok: true,
+    live: true,
+    domain: previous.domain,
+    url: recovery.storeUrl,
+    path: new URL(recovery.storeUrl).pathname,
+    sourceUrl: recovery.sourceUrl,
+    fetchedAt: recovery.observedAt,
+    title: recovery.title,
+    description: recovery.description,
+    language,
+    region: displayRegion(regionInference),
+    regionCountryCode: regionInference.countryCode,
+    regionConfidence: regionInference.confidence,
+    regionSignals: regionInference.signals,
+    headings: [recovery.title],
+    prices: pricePatterns,
+    socialLinks: [],
+    internalLinks: unique(productPaths, 20),
+    wordCount: recovery.products.slice(0, 20).reduce((total, product) => total + `${product.name} ${product.description}`.trim().split(/\s+/).filter(Boolean).length, 0),
+    truncated: recovery.truncated,
+    contentHash: await hash(JSON.stringify({ products: recovery.products.map((product) => [product.id, product.name, product.sourceUrl, product.priceSignals, product.imageUrl]) })),
+    claims,
+    products: recovery.products,
+    productGaps: [],
+    thirdPartyProductCount: 0,
+    responseTimeMs: 0,
+    responseBytes: 0,
+    imageCount: recovery.products.filter((product) => product.imageUrl).length,
+    imagesWithAlt: 0,
+    responsiveImageCount: 0,
+    hasViewport: false,
+    hasDocumentLanguage: false,
+    productLinkCount: recovery.products.length,
+    hasProductPath: true,
+    hasAddToCart: false,
+    hasCartLink: false,
+    hasCheckoutLink: false,
+    trustSignals: [],
+  };
+  return {
+    domain: previous.domain,
+    role: previous.role,
+    homepage: page,
+    pages: [page],
+    products: recovery.products,
+    candidates: [],
+    gaps: [...previous.gaps, {
+      url: recovery.sourceUrl,
+      reason: `Homepage HTML was unavailable from this runtime; recovered ${recovery.products.length} positively priced products from the store's official public Shopify UCP catalog.`,
+      observedAt: recovery.observedAt,
+    }],
+    coverage: {
+      pagesRequested: previous.coverage.pagesRequested + recovery.requests,
+      pagesFetched: 1,
+      maxPages: previous.coverage.maxPages,
+      robotsChecked: previous.coverage.robotsChecked,
+      attempts: previous.coverage.attempts,
+    },
+    productCoverage: { scannedPages: 1, catalogProductsDiscovered: recovery.products.length, thirdPartyReferenced: 0, sitemapTruncated: recovery.truncated },
+    fetchedAt: recovery.observedAt,
+    benchmarkEligible: false,
+  };
+}
+
 export async function enrichPrimaryProductPrices(result: DomainCrawl, localDependencies?: EnrichmentDependencies) {
   const targets = selectPrimaryProductPriceTargets(result.products, result.domain, MAX_PRIMARY_PRODUCT_PRICE_PAGES);
   if (!targets.length) return { ...result, primaryPriceEnrichment: { pagesRequested: 0, pagesFetched: 0, maxPages: MAX_PRIMARY_PRODUCT_PRICE_PAGES } };
@@ -1198,6 +1293,13 @@ export async function POST(request: Request) {
     let primary = submittedResults.find((result) => result.domain === primaryDomain);
     if (isSallaCatalogRecoveryEligible(primary)) {
       const recovered = primary ? await sallaRecoveryDomainCrawl(primary, MAX_PRIMARY_CATALOG_PRODUCTS) : null;
+      if (recovered) {
+        submittedResults = submittedResults.map((result) => result.domain === primaryDomain ? recovered : result);
+        primary = recovered;
+      }
+    }
+    if (isShopifyUcpCatalogRecoveryEligible(primary)) {
+      const recovered = primary ? await shopifyRecoveryDomainCrawl(primary, MAX_PRIMARY_CATALOG_PRODUCTS) : null;
       if (recovered) {
         submittedResults = submittedResults.map((result) => result.domain === primaryDomain ? recovered : result);
         primary = recovered;
