@@ -101,7 +101,8 @@ function checkpointProduct(value: unknown, referenceTimeMs: number): ProductReco
   const sourceUrl = canonicalProductUrl(String(item.sourceUrl || ""), domain);
   const id = typeof item.id === "string" ? item.id.replace(/\s+/g, " ").trim().slice(0, 300) : "";
   const name = typeof item.name === "string" ? item.name.replace(/\s+/g, " ").trim().slice(0, 160) : "";
-  if (!domain || !sourceUrl || !id || !name || item.jsonLdType !== "Product") return null;
+  const jsonLdType = item.jsonLdType === "Product" || item.jsonLdType === "PageSignal" ? item.jsonLdType : null;
+  if (!domain || !sourceUrl || !id || !name || !jsonLdType) return null;
   const priceSignals = Array.isArray(item.priceSignals) ? item.priceSignals.slice(0, 8).flatMap((signal) => {
     if (!signal || typeof signal !== "object" || Array.isArray(signal)) return [];
     const raw = typeof signal.raw === "string" ? signal.raw.replace(/\s+/g, " ").trim().slice(0, 120) : "";
@@ -118,7 +119,7 @@ function checkpointProduct(value: unknown, referenceTimeMs: number): ProductReco
     normalizedName: typeof item.normalizedName === "string" ? item.normalizedName.slice(0, 200) : name.toLowerCase().normalize("NFKC"),
     description: typeof item.description === "string" ? item.description.replace(/\s+/g, " ").trim().slice(0, 400) : "",
     category: typeof item.category === "string" ? item.category.replace(/\s+/g, " ").trim().slice(0, 120) : "",
-    jsonLdType: "Product",
+    jsonLdType,
     priceSignals,
     attributes: Array.isArray(item.attributes) ? item.attributes.slice(0, 12).map((entry) => String(entry).replace(/\s+/g, " ").trim().slice(0, 120)).filter(Boolean) : [],
     ownership,
