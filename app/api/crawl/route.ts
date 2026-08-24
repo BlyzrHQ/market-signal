@@ -11,7 +11,7 @@ import { forgetRememberedCompetitors, loadRememberedCompetitors, mergeRemembered
 import { discoverDomainAlternatives, extractStaticClientRedirect, parkingProvider } from "../../lib/domain-recovery.ts";
 import { boundedExtractionDocument, compactCatalogSnapshots, createRequestLimiter, preferredEndpointFailure, settleWithConcurrency, unavailableAfterBoundedAttempts, unavailablePrimaryMessaging, type PublicEndpointFailure } from "../../lib/crawl-runtime.ts";
 import { fetchPublicText } from "../../lib/public-fetch.ts";
-import { claimablePagePricePatterns, enrichProductTargets, selectPrimaryProductPriceTargets, type EnrichmentDependencies } from "../../lib/storefront-product-enrichment.ts";
+import { claimablePagePricePatterns, enrichProductTargets, MAX_ENRICHMENT_TARGETS, selectPrimaryProductPriceTargets, type EnrichmentDependencies } from "../../lib/storefront-product-enrichment.ts";
 import { buildExperienceBenchmark } from "../../lib/experience-benchmark.ts";
 import { hasObservedAddToCartControl } from "../../lib/experience-signals.ts";
 import { buildAIProductComparison, type AIProductMatchingOptions } from "../../lib/ai-product-matching.ts";
@@ -129,6 +129,30 @@ const USER_AGENT = MARKET_SIGNAL_USER_AGENT;
 const PRIORITY_PATHS = ["/pricing", "/plans", "/products", "/features", "/compare", "/integrations", "/about", "/customers", "/blog"];
 const PRODUCT_ROUTE_PATH = /\/(?:products?|shop|store|collections?|catalog|pricing|plans?)(?:\/|$)|\/(?:-\/)?p\d+(?:\/|$)/i;
 const SOCIAL_HOSTS = ["facebook.com", "instagram.com", "linkedin.com", "tiktok.com", "youtube.com", "x.com", "twitter.com"];
+
+export function primaryProductPricePageBudget(directProductSearch: boolean) {
+  return directProductSearch ? MAX_ENRICHMENT_TARGETS : MAX_PRIMARY_PRODUCT_PRICE_PAGES;
+}
+
+export function crawlResponseMetadata(
+  directProductSearch: boolean,
+  overrides: Partial<{
+    maxPagesPerDiscoveredCompetitor: number;
+    maxMatchedProductEnrichmentPages: number;
+    competitorCrawlConcurrency: number;
+  }> = {},
+) {
+  return {
+    maxPagesPerDomain: MAX_HTML_PAGES,
+    maxPagesPerDiscoveredCompetitor: overrides.maxPagesPerDiscoveredCompetitor ?? MAX_DISCOVERED_HTML_PAGES,
+    maxPrimaryProductPricePages: primaryProductPricePageBudget(directProductSearch),
+    maxMatchedProductEnrichmentPages: overrides.maxMatchedProductEnrichmentPages ?? MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES,
+    competitorCrawlConcurrency: overrides.competitorCrawlConcurrency ?? COMPETITOR_CRAWL_CONCURRENCY,
+    htmlExtractionBytes: MAX_HTML_EXTRACTION_BYTES,
+    robotsAware: true,
+    generatedAt: new Date().toISOString(),
+  };
+}
 
 function firstPartyRegionSource(page: CrawlPage): FirstPartyRegionSource {
   return page.regionSignals.some((signal) => signal.countryCode === page.regionCountryCode && signal.claimType === "Observed")
@@ -1188,10 +1212,11 @@ export async function shopifyRecoveryDomainCrawl(
   };
 }
 
-export async function enrichPrimaryProductPrices(result: DomainCrawl, localDependencies?: EnrichmentDependencies) {
-  const targets = selectPrimaryProductPriceTargets(result.products, result.domain, MAX_PRIMARY_PRODUCT_PRICE_PAGES);
-  if (!targets.length) return { ...result, primaryPriceEnrichment: { pagesRequested: 0, pagesFetched: 0, maxPages: MAX_PRIMARY_PRODUCT_PRICE_PAGES } };
-  const enrichment = await enrichProductTargets(targets, MAX_PRIMARY_PRODUCT_PRICE_PAGES, localDependencies);
+export async function enrichPrimaryProductPrices(result: DomainCrawl, localDependencies?: EnrichmentDependencies, maxPages = MAX_PRIMARY_PRODUCT_PRICE_PAGES) {
+  const pageBudget = Math.max(0, Math.min(MAX_ENRICHMENT_TARGETS, Math.floor(maxPages)));
+  const targets = selectPrimaryProductPriceTargets(result.products, result.domain, pageBudget);
+  if (!targets.length) return { ...result, primaryPriceEnrichment: { pagesRequested: 0, pagesFetched: 0, maxPages: pageBudget } };
+  const enrichment = await enrichProductTargets(targets, pageBudget, localDependencies);
   const observedAt = new Date().toISOString();
   return {
     ...result,
@@ -1203,7 +1228,7 @@ export async function enrichPrimaryProductPrices(result: DomainCrawl, localDepen
     primaryPriceEnrichment: {
       pagesRequested: enrichment.coverage.pagesRequested,
       pagesFetched: enrichment.coverage.pagesFetched,
-      maxPages: MAX_PRIMARY_PRODUCT_PRICE_PAGES,
+      maxPages: pageBudget,
     },
   };
 }
@@ -1212,7 +1237,7 @@ export function investigationGapSourceUrl(candidate: DomainCrawl) {
   return candidate.homepage?.sourceUrl || (candidate.discovery?.observedAdmission ? candidate.discovery.sourceUrl : "");
 }
 
-function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?: DiscoveryResult, investigated: Array<DomainCrawl | null> = [], productComparison?: ProductComparison): { version: "1"; generatedAt: string; blocks: ReportBlock[] } {
+export function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?: DiscoveryResult, investigated: Array<DomainCrawl | null> = [], productComparison?: ProductComparison): { version: "1"; generatedAt: string; blocks: ReportBlock[] } {
   const discovered = results.filter((result) => result.role === "discovered-competitor" && result.homepage && result.discovery);
   const productMatched = discovered.filter((result) => result.discovery?.hasProductOverlap).length;
   const productLed = discovery?.businessType === "ecommerce";
@@ -1234,7 +1259,7 @@ function buildDocument(results: DomainCrawl[], primaryDomain: string, discovery?
       attempts: result.coverage.attempts || 1,
       primaryPriceEnrichmentPagesRequested: result.primaryPriceEnrichment?.pagesRequested || 0,
       primaryPriceEnrichmentPagesFetched: result.primaryPriceEnrichment?.pagesFetched || 0,
-      primaryPriceEnrichmentMaxPagesPerReport: MAX_PRIMARY_PRODUCT_PRICE_PAGES,
+      primaryPriceEnrichmentMaxPagesPerReport: result.primaryPriceEnrichment?.maxPages ?? MAX_PRIMARY_PRODUCT_PRICE_PAGES,
       catalogReconciliationPagesRequested: result.catalogReconciliation?.pagesRequested || 0,
       catalogReconciliationPagesFetched: result.catalogReconciliation?.pagesFetched || 0,
       catalogReconciliationEligibleProducts: result.catalogReconciliation?.eligibleProducts || 0,
@@ -1364,7 +1389,7 @@ export async function POST(request: Request) {
         primaryDomain,
       }, { status: 422 });
     }
-    primary = await enrichPrimaryProductPrices(primary);
+    primary = await enrichPrimaryProductPrices(primary, undefined, primaryProductPricePageBudget(directProductSearch));
     primary = { ...primary, products: boundedPrimaryCatalogProducts(primary.products, catalogProductLimit) };
     submittedResults = submittedResults.map((result) => result.domain === primaryDomain ? primary! : result);
     const publicationMarketCountryCode = /^[A-Z]{2}$/.test(String(primary.homepage.regionCountryCode || "").toUpperCase())
@@ -1412,7 +1437,7 @@ export async function POST(request: Request) {
         discovery,
         matchHints: [],
         document,
-        crawl: { maxPagesPerDomain: MAX_HTML_PAGES, maxPagesPerDiscoveredCompetitor: 0, maxPrimaryProductPricePages: MAX_PRIMARY_PRODUCT_PRICE_PAGES, maxMatchedProductEnrichmentPages: 0, competitorCrawlConcurrency: 0, htmlExtractionBytes: MAX_HTML_EXTRACTION_BYTES, robotsAware: true, generatedAt: new Date().toISOString() },
+        crawl: crawlResponseMetadata(directProductSearch, { maxPagesPerDiscoveredCompetitor: 0, maxMatchedProductEnrichmentPages: 0, competitorCrawlConcurrency: 0 }),
       });
     }
     let discovery: DiscoveryResult;
@@ -1529,7 +1554,7 @@ export async function POST(request: Request) {
     const publishedResults = publishedResultsForPairs.map((result) => result.discovery
       ? { ...result, verifiedExactProductPairs: undefined, discovery: publicDiscoveryCandidate(result.discovery) }
       : { ...result, verifiedExactProductPairs: undefined });
-    return Response.json({ ok: true, live: true, primaryDomain, results: publishedResults, discovery: publishedDiscovery, ...(discovery.productSearchLedger ? { discoverySearchLedger: discovery.productSearchLedger } : {}), matchHints, document, crawl: { maxPagesPerDomain: MAX_HTML_PAGES, maxPagesPerDiscoveredCompetitor: MAX_DISCOVERED_HTML_PAGES, maxPrimaryProductPricePages: MAX_PRIMARY_PRODUCT_PRICE_PAGES, maxMatchedProductEnrichmentPages: MAX_MATCHED_PRODUCT_ENRICHMENT_PAGES, competitorCrawlConcurrency: COMPETITOR_CRAWL_CONCURRENCY, htmlExtractionBytes: MAX_HTML_EXTRACTION_BYTES, robotsAware: true, generatedAt: new Date().toISOString() } });
+    return Response.json({ ok: true, live: true, primaryDomain, results: publishedResults, discovery: publishedDiscovery, ...(discovery.productSearchLedger ? { discoverySearchLedger: discovery.productSearchLedger } : {}), matchHints, document, crawl: crawlResponseMetadata(directProductSearch) });
   } catch {
     return Response.json({ ok: false, live: false, error: "Unable to crawl the submitted domains." }, { status: 400 });
   }
