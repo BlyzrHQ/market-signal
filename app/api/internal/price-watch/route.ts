@@ -1,9 +1,11 @@
 import { openBillingDatabase } from "../../../lib/billing-store.ts";
 import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../../lib/internal-auth.ts";
 import { flushPriceWatchEmailOutbox } from "../../../lib/price-watch-email.ts";
-import { runPriceWatchBatch } from "../../../lib/price-watch-runner.ts";
+import { PRICE_WATCH_BATCH_LIMIT, runPriceWatchBatch } from "../../../lib/price-watch-runner.ts";
 
 const MAX_BODY_BYTES = 1_024;
+export const PRICE_WATCH_DRAIN_BUDGET_MS = 240_000;
+export const PRICE_WATCH_DRAIN_MAX_PASSES = 32;
 
 async function boundedJson(request: Request) {
   const declared = Number(request.headers.get("content-length") || 0);
@@ -31,6 +33,7 @@ type PriceWatchInternalServices = {
   openDatabase: typeof openBillingDatabase;
   runBatch: typeof runPriceWatchBatch;
   flushEmail: typeof flushPriceWatchEmailOutbox;
+  nowMs?: () => number;
 };
 
 export function createPriceWatchHandler(expectedToken?: string, services: PriceWatchInternalServices = { openDatabase: openBillingDatabase, runBatch: runPriceWatchBatch, flushEmail: flushPriceWatchEmailOutbox }) {
@@ -43,7 +46,22 @@ export function createPriceWatchHandler(expectedToken?: string, services: PriceW
     let database;
     try {
       database = await services.openDatabase();
-      const checks = await services.runBatch(database);
+      const nowMs = services.nowMs || Date.now;
+      const startedAt = nowMs();
+      const checks = { claimed: 0, baseline: 0, unchanged: 0, changed: 0, failed: 0, passes: 0, saturated: false };
+      let lastBatchClaimed = 0;
+      do {
+        const batch = await services.runBatch(database);
+        lastBatchClaimed = Number(batch.claimed || 0);
+        checks.claimed += lastBatchClaimed;
+        checks.baseline += Number(batch.baseline || 0);
+        checks.unchanged += Number(batch.unchanged || 0);
+        checks.changed += Number(batch.changed || 0);
+        checks.failed += Number(batch.failed || 0);
+        checks.passes += 1;
+        if (lastBatchClaimed < PRICE_WATCH_BATCH_LIMIT) break;
+      } while (checks.passes < PRICE_WATCH_DRAIN_MAX_PASSES && nowMs() - startedAt < PRICE_WATCH_DRAIN_BUDGET_MS);
+      checks.saturated = lastBatchClaimed >= PRICE_WATCH_BATCH_LIMIT;
       const email = await services.flushEmail(database);
       return Response.json({ ok: true, checks, email }, { headers: { "Cache-Control": "no-store" } });
     } catch {

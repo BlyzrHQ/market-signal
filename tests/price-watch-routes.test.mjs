@@ -137,6 +137,9 @@ test("watcher list, history, mutations, deletion, and notifications stay inside 
     const outsider = async () => accountFor("workspace-other", "user-other", "other@example.com");
     const deniedHistory = await getPriceWatchHistory(new Request(`https://signal.example/api/price-watch/${watcherId}`), { params: { watcherId } }, services(item.openDatabase, outsider));
     assert.equal(deniedHistory.status, 404);
+    const invalidHistory = await getPriceWatchHistory(new Request(`https://signal.example/api/price-watch/${watcherId}?limit=abc`), { params: { watcherId } }, services(item.openDatabase));
+    assert.equal(invalidHistory.status, 400);
+    assert.equal((await invalidHistory.json()).errorCode, "invalid-limit");
     const deniedPatch = await patchPriceWatcher(
       new Request(`https://signal.example/api/price-watch/${watcherId}`, { method: "PATCH", headers: { origin: "https://signal.example", "content-type": "application/json" }, body: JSON.stringify({ cadence: "daily" }) }),
       { params: { watcherId } },

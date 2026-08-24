@@ -8,7 +8,7 @@ import {
   openPriceWatchFixture,
 } from "./helpers/price-watch-fixture.mjs";
 
-function seedEmail(database, { index, createdAt, batchAfter, recipientUserId = PRICE_WATCH_USER_ID }) {
+function seedEmail(database, { index, createdAt, batchAfter, recipientUserId = PRICE_WATCH_USER_ID, workspaceId = PRICE_WATCH_WORKSPACE_ID }) {
   const watcherId = `email-watcher-${index}`;
   const eventId = `email-event-${index}`;
   const outboxId = `email-outbox-${index}`;
@@ -17,11 +17,11 @@ function seedEmail(database, { index, createdAt, batchAfter, recipientUserId = P
     product_name, variant_key, variant_json, audit_target, creator_user_id, email_owner_user_id,
     cadence, state, next_check_at, created_at, updated_at
   ) VALUES (?, ?, ?, 1, 'rival.example', 'rival.example', ?, 'default', '{}', ?, ?, ?, 'daily', 'active', ?, ?, ?)`)
-    .run(watcherId, PRICE_WATCH_WORKSPACE_ID, `https://rival.example/products/${index}`, `Product ${index}`, `audit-email-${index}`, PRICE_WATCH_USER_ID, recipientUserId, createdAt, createdAt, createdAt);
+    .run(watcherId, workspaceId, `https://rival.example/products/${index}`, `Product ${index}`, `audit-email-${index}`, PRICE_WATCH_USER_ID, recipientUserId, createdAt, createdAt, createdAt);
   database.prepare(`INSERT INTO price_watch_events (id, watcher_id, event_type, detail_json, idempotency_key, observed_at) VALUES (?, ?, 'price-decreased', ?, ?, ?)`)
     .run(eventId, watcherId, JSON.stringify({ previous: { amountMicros: 12_000_000 }, current: { amountMicros: 10_000_000 } }), `email-event-${index}`, createdAt);
   database.prepare(`INSERT INTO price_watch_email_outbox (id, workspace_id, watcher_id, recipient_user_id, event_id, status, batch_after, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`)
-    .run(outboxId, PRICE_WATCH_WORKSPACE_ID, watcherId, recipientUserId, eventId, batchAfter, createdAt, createdAt);
+    .run(outboxId, workspaceId, watcherId, recipientUserId, eventId, batchAfter, createdAt, createdAt);
   return { watcherId, eventId, outboxId };
 }
 
@@ -94,6 +94,32 @@ test("email ownership falls back to the current workspace owner when the creator
     assert.equal(result.delivered, 1);
     assert.equal(deliveries[0].to, "replacement@example.com");
     assert.equal(database.prepare(`SELECT email_owner_user_id FROM price_watchers WHERE id = ?`).get(seeded.watcherId).email_owner_user_id, "replacement-owner");
+  } finally { database.close(); }
+});
+
+test("recipient-less rows are deferred so they cannot starve another workspace", async () => {
+  const database = openPriceWatchFixture();
+  try {
+    const orphanWorkspace = "workspace-without-owner";
+    database.prepare(`INSERT INTO workspaces(id) VALUES (?)`).run(orphanWorkspace);
+    for (let index = 1; index <= 200; index += 1) {
+      seedEmail(database, {
+        index: `orphan-${index}`,
+        workspaceId: orphanWorkspace,
+        createdAt: `2026-08-24T11:${String(Math.floor((index - 1) / 60)).padStart(2, "0")}:${String((index - 1) % 60).padStart(2, "0")}.000Z`,
+        batchAfter: "2026-08-24T12:00:00.000Z",
+      });
+    }
+    seedEmail(database, { index: "deliverable", createdAt: "2026-08-24T12:01:00.000Z", batchAfter: "2026-08-24T12:15:00.000Z" });
+    const deliveries = [];
+    const provider = { async send(input) { deliveries.push(input); } };
+    const first = await flushPriceWatchEmailOutbox(database, { provider, now: new Date("2026-08-24T12:15:00.000Z"), limit: 200 });
+    assert.deepEqual(first, { configured: true, delivered: 0, pending: 201 });
+    assert.equal(database.prepare(`SELECT COUNT(*) AS count FROM price_watch_email_outbox WHERE last_error_code = 'recipient-unavailable' AND batch_after = '2026-08-25T12:15:00.000Z'`).get().count, 200);
+    const second = await flushPriceWatchEmailOutbox(database, { provider, now: new Date("2026-08-24T12:20:00.000Z"), limit: 200 });
+    assert.equal(second.delivered, 1);
+    assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0].to, "owner@example.com");
   } finally { database.close(); }
 });
 

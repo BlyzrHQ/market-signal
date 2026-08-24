@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { createPriceWatchHandler } from "../app/api/internal/price-watch/route.ts";
+import { createPriceWatchHandler, PRICE_WATCH_DRAIN_BUDGET_MS, PRICE_WATCH_DRAIN_MAX_PASSES } from "../app/api/internal/price-watch/route.ts";
 import { runPriceWatchSchedule } from "../src/trigger/price-watch-core.ts";
 import { createPriceWatchHttpPort } from "../src/trigger/price-watch-http.ts";
 import { createWorkerApiManifest, PRICE_WATCH_CAPABILITY } from "../src/shared/worker-api-contract.ts";
@@ -105,10 +105,66 @@ test("the internal endpoint authenticates, bounds input, runs checks before emai
   assert.equal(accepted.headers.get("cache-control"), "no-store");
   assert.deepEqual(await accepted.json(), {
     ok: true,
-    checks: { claimed: 2, baseline: 1, unchanged: 1, changed: 0, failed: 0 },
+    checks: { claimed: 2, baseline: 1, unchanged: 1, changed: 0, failed: 0, passes: 1, saturated: false },
     email: { configured: true, delivered: 1, pending: 0 },
   });
   assert.deepEqual(order, ["open", "checks", "email", "close"]);
+});
+
+test("one scheduled invocation drains consecutive bounded batches and reports saturation", async () => {
+  const database = { close() {} };
+  let calls = 0;
+  const batches = [
+    { claimed: 8, baseline: 8, unchanged: 0, changed: 0, failed: 0 },
+    { claimed: 8, baseline: 0, unchanged: 7, changed: 1, failed: 0 },
+    { claimed: 3, baseline: 0, unchanged: 1, changed: 0, failed: 2 },
+  ];
+  const handler = createPriceWatchHandler(callbackToken, {
+    openDatabase: async () => database,
+    runBatch: async () => batches[calls++],
+    flushEmail: async () => ({ configured: true, delivered: 0, pending: 0 }),
+    nowMs: () => 0,
+  });
+  const response = await handler(new Request("https://signal.example/api/internal/price-watch", {
+    method: "POST",
+    headers: { authorization: `Bearer ${callbackToken}`, "content-type": "application/json" },
+    body: JSON.stringify({ action: "run-due" }),
+  }));
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).checks, {
+    claimed: 19,
+    baseline: 8,
+    unchanged: 8,
+    changed: 1,
+    failed: 2,
+    passes: 3,
+    saturated: false,
+  });
+  assert.equal(calls, 3);
+
+  let clock = 0;
+  const saturated = createPriceWatchHandler(callbackToken, {
+    openDatabase: async () => database,
+    runBatch: async () => { clock = PRICE_WATCH_DRAIN_BUDGET_MS; return { claimed: 8, baseline: 0, unchanged: 8, changed: 0, failed: 0 }; },
+    flushEmail: async () => ({ configured: true, delivered: 0, pending: 0 }),
+    nowMs: () => clock,
+  });
+  const saturatedResponse = await saturated(new Request("https://signal.example/api/internal/price-watch", {
+    method: "POST",
+    headers: { authorization: `Bearer ${callbackToken}`, "content-type": "application/json" },
+    body: JSON.stringify({ action: "run-due" }),
+  }));
+  const saturatedChecks = (await saturatedResponse.json()).checks;
+  assert.equal(saturatedChecks.passes, 1);
+  assert.equal(saturatedChecks.saturated, true);
+  assert.equal(PRICE_WATCH_DRAIN_MAX_PASSES, 32);
+
+  const logs = [];
+  await runPriceWatchSchedule({
+    preflight: async () => true,
+    runDue: async () => ({ ok: true, checks: saturatedChecks }),
+  }, (message, metadata) => logs.push({ message, metadata }));
+  assert.equal(logs.some((entry) => /backlog remains/.test(entry.message) && entry.metadata.saturated === true), true);
 });
 
 test("the production price-watch path has no AI, discovery, or paid-search import", () => {

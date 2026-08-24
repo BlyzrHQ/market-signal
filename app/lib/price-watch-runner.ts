@@ -99,7 +99,7 @@ export async function inspectExactPriceWatchTarget(
     ok: false,
     snapshot: null,
     observedUrl: "",
-    code: snapshot ? "identity-mismatch" : cleanInspectionCode(gap.code || "missing-price"),
+    code: cleanInspectionCode(gap.code || "missing-price"),
     transient: transientCoverageGap(gap),
   };
 }

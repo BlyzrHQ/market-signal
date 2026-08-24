@@ -270,6 +270,25 @@ test("an in-flight result cannot reactivate a disabled watcher and completion ho
   } finally { database.close(); }
 });
 
+test("an expired attempted lease preserves a customer-disabled watcher state", () => {
+  const database = priceWatchDatabase();
+  try {
+    addReport(database, [{ id: "1".repeat(64), productId: "rival-1", url: "https://rival.example/products/tea", name: "Tea", amount: 12.5 }]);
+    const activation = activatePriceWatchers(database, workspaceId, userId, { publicReportId, matchId: "1".repeat(64), cadence: "daily" }, now);
+    const watcherId = activation.watcherIds[0];
+    const claim = claimDuePriceWatchers(database, "unknown-disable-race", 1, now)[0];
+    assert.equal(beginPriceWatchAttempt(database, claim, now), true);
+    database.prepare(`UPDATE price_watchers SET failure_streak = 2 WHERE id = ?`).run(watcherId);
+    mutatePriceWatcher(database, workspaceId, userId, watcherId, { action: "disable" }, new Date("2026-08-24T12:00:01.000Z"));
+    assert.deepEqual(reapExpiredPriceWatchLeases(database, new Date("2026-08-24T12:11:00.000Z")), { released: 0, committedUnknown: 1 });
+    const watcher = listPriceWatchers(database, workspaceId, new Date("2026-08-24T12:11:00.000Z")).watchers[0];
+    assert.equal(watcher.state, "disabled");
+    assert.equal(watcher.pauseReason, "customer-disabled");
+    assert.equal(watcher.failureStreak, 3);
+    assert.equal(database.prepare(`SELECT COUNT(*) AS count FROM workspace_notifications`).get().count, 0);
+  } finally { database.close(); }
+});
+
 test("a new Stripe billing period resumes only credit-paused work and duplicate reconciliation does not reset usage", () => {
   const database = priceWatchDatabase();
   try {
@@ -374,10 +393,15 @@ test("explicit discount context changes alert once and permanent deletion purges
     assert.equal(alerts.unread, 1);
     assert.equal(markWorkspaceNotificationsRead(database, workspaceId, userId, [alerts.items[0].id], changedAt), 1);
     assert.equal(listWorkspaceNotifications(database, workspaceId, userId).unread, 0);
+    const usageBeforeDelete = listPriceWatchers(database, workspaceId, changedAt).usage;
+    assert.equal(usageBeforeDelete.used, 2);
     assert.equal(deletePriceWatcher(database, workspaceId, userId, watcherId, changedAt), true);
     for (const table of ["price_watchers", "price_watch_credit_reservations", "price_watch_observations", "price_watch_events", "workspace_notifications", "workspace_notification_reads", "price_watch_email_outbox", "price_watcher_report_links"]) {
       assert.equal(database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count, 0, table);
     }
+    const usageAfterDelete = listPriceWatchers(database, workspaceId, changedAt).usage;
+    assert.equal(usageAfterDelete.used, usageBeforeDelete.used);
+    assert.equal(database.prepare(`SELECT purged_used FROM price_watch_entitlements WHERE workspace_id = ?`).get(workspaceId).purged_used, 2);
     assert.ok(database.prepare(`SELECT COUNT(*) AS count FROM price_watch_audit_log`).get().count > 0);
     assert.throws(() => database.prepare(`UPDATE price_watch_audit_log SET action = 'tampered'`).run(), /immutable/);
     assert.throws(() => database.prepare(`DELETE FROM price_watch_audit_log`).run(), /immutable/);

@@ -1,7 +1,7 @@
 export type PriceWatchScheduleResult = {
   ok: true;
   skipped?: "capability-unavailable";
-  checks?: Record<string, number>;
+  checks?: Record<string, number | boolean>;
   email?: { configured: boolean; delivered: number; pending: number };
 };
 
@@ -19,5 +19,12 @@ export async function runPriceWatchSchedule(port: PriceWatchSchedulePort, log: (
   }
   const result = await port.runDue();
   log("market signal price watch complete", result);
+  if (result.checks?.saturated === true) {
+    log("market signal price watch backlog remains", {
+      saturated: true,
+      passes: Number(result.checks.passes || 0),
+      claimed: Number(result.checks.claimed || 0),
+    });
+  }
   return result;
 }

@@ -75,11 +75,13 @@ CREATE TABLE IF NOT EXISTS `price_watch_entitlements` (
 	`period_end` text NOT NULL,
 	`plan_tier` text NOT NULL,
 	`allocation` integer NOT NULL,
+	`purged_used` integer DEFAULT 0 NOT NULL,
 	`created_at` text NOT NULL,
 	`updated_at` text NOT NULL,
 	PRIMARY KEY(`workspace_id`, `period_start`, `period_end`),
 	FOREIGN KEY (`workspace_id`) REFERENCES `workspaces`(`id`) ON UPDATE no action ON DELETE cascade,
-	CONSTRAINT "price_watch_entitlements_allocation_check" CHECK("price_watch_entitlements"."allocation" >= 0)
+	CONSTRAINT "price_watch_entitlements_allocation_check" CHECK("price_watch_entitlements"."allocation" >= 0),
+	CONSTRAINT "price_watch_entitlements_purged_used_check" CHECK("price_watch_entitlements"."purged_used" >= 0)
 );
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS `price_watch_entitlements_period_idx` ON `price_watch_entitlements` (`period_start`,`period_end`);--> statement-breakpoint

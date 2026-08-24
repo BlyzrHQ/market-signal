@@ -914,6 +914,14 @@
           "notNull": true,
           "autoincrement": false
         },
+        "purged_used": {
+          "name": "purged_used",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
         "created_at": {
           "name": "created_at",
           "type": "text",
@@ -969,6 +977,10 @@
         "price_watch_entitlements_allocation_check": {
           "name": "price_watch_entitlements_allocation_check",
           "value": "\"price_watch_entitlements\".\"allocation\" >= 0"
+        },
+        "price_watch_entitlements_purged_used_check": {
+          "name": "price_watch_entitlements_purged_used_check",
+          "value": "\"price_watch_entitlements\".\"purged_used\" >= 0"
         }
       }
     },

@@ -117,12 +117,14 @@ export const priceWatchEntitlements = sqliteTable("price_watch_entitlements", {
   periodEnd: text("period_end").notNull(),
   planTier: text("plan_tier").notNull(),
   allocation: integer("allocation").notNull(),
+  purgedUsed: integer("purged_used").notNull().default(0),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, (table) => [
   primaryKey({ columns: [table.workspaceId, table.periodStart, table.periodEnd] }),
   index("price_watch_entitlements_period_idx").on(table.periodStart, table.periodEnd),
   check("price_watch_entitlements_allocation_check", sql`${table.allocation} >= 0`),
+  check("price_watch_entitlements_purged_used_check", sql`${table.purgedUsed} >= 0`),
 ]);
 
 export const priceWatchers = sqliteTable("price_watchers", {

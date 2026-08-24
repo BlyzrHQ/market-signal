@@ -142,6 +142,7 @@ export function ensurePriceWatchSchema(database: Database.Database): void {
       period_end text NOT NULL,
       plan_tier text NOT NULL,
       allocation integer NOT NULL CHECK(allocation >= 0),
+      purged_used integer NOT NULL DEFAULT 0 CHECK(purged_used >= 0),
       created_at text NOT NULL,
       updated_at text NOT NULL,
       PRIMARY KEY(workspace_id, period_start, period_end)
@@ -349,11 +350,13 @@ function usageForPeriod(database: Database.Database, workspaceId: string, entitl
   if (!entitlement) return { planTier: "", periodStart: "", periodEnd: "", allocation: 0, used: 0, remaining: 0, projectedDaily: 0, projectedMonthly: 0 };
   const usedRow = database.prepare(`SELECT COUNT(*) AS count FROM price_watch_credit_reservations WHERE workspace_id = ? AND period_start = ? AND period_end = ? AND status IN ('reserved','attempting','committed')`)
     .get(workspaceId, entitlement.periodStart, entitlement.periodEnd) as { count?: number } | undefined;
+  const entitlementRow = database.prepare(`SELECT purged_used FROM price_watch_entitlements WHERE workspace_id = ? AND period_start = ? AND period_end = ? LIMIT 1`)
+    .get(workspaceId, entitlement.periodStart, entitlement.periodEnd) as { purged_used?: number } | undefined;
   const projectionRows = database.prepare(`SELECT cadence, COUNT(*) AS count FROM price_watchers WHERE workspace_id = ? AND state IN ('active','baseline_pending') GROUP BY cadence`).all(workspaceId) as Array<{ cadence: string; count: number }>;
   const hourly = Number(projectionRows.find((row) => row.cadence === "hourly")?.count || 0);
   const daily = Number(projectionRows.find((row) => row.cadence === "daily")?.count || 0);
   const projectedDaily = hourly * 24 + daily;
-  const used = Number(usedRow?.count || 0);
+  const used = Number(usedRow?.count || 0) + Number(entitlementRow?.purged_used || 0);
   return {
     planTier: entitlement.plan.id,
     periodStart: entitlement.periodStart,
@@ -645,6 +648,16 @@ export function deletePriceWatcher(database: Database.Database, workspaceId: str
     const row = database.prepare(`SELECT audit_target FROM price_watchers WHERE id = ? AND workspace_id = ? LIMIT 1`).get(watcherId, workspaceId) as { audit_target?: string } | undefined;
     if (!row) throw new PriceWatchStoreError("watcher-not-found", "Price watcher not found.", 404);
     const nowIso = now.toISOString();
+    // Watcher deletion purges source-linked rows, but checks that crossed the
+    // durable external-attempt boundary must remain charged. Roll those debits
+    // into their immutable period entitlement before cascading the details.
+    const debits = database.prepare(`SELECT period_start, period_end, COUNT(*) AS count FROM price_watch_credit_reservations WHERE watcher_id = ? AND status IN ('attempting','committed') GROUP BY period_start, period_end`)
+      .all(watcherId) as Array<{ period_start: string; period_end: string; count: number }>;
+    for (const debit of debits) {
+      const preserved = database.prepare(`UPDATE price_watch_entitlements SET purged_used = purged_used + ?, updated_at = ? WHERE workspace_id = ? AND period_start = ? AND period_end = ?`)
+        .run(Number(debit.count || 0), nowIso, workspaceId, debit.period_start, debit.period_end);
+      if (preserved.changes !== 1) throw new Error("A consumed price-watch debit could not be preserved before deletion.");
+    }
     const deleted = database.prepare(`DELETE FROM price_watchers WHERE id = ? AND workspace_id = ?`).run(watcherId, workspaceId);
     database.prepare(`INSERT INTO price_watch_audit_log (id, workspace_id, actor_user_id, action, target_tombstone, detail_json, created_at) VALUES (?, ?, ?, 'watcher.delete-permanent', ?, '{}', ?)`)
       .run(randomUUID(), workspaceId, actorUserId, String(row.audit_target || randomUUID()), nowIso);
@@ -760,11 +773,14 @@ function watcherFailureAfterUnknownAttempt(database: Database.Database, row: Rec
   const workspaceId = String(row.workspace_id || "");
   const reservationId = String(row.reservation_id || "");
   const failures = Number(row.failure_streak || 0) + 1;
-  const paused = failures >= 3;
+  const currentState = String(row.watcher_state || "active");
+  const currentlyRunnable = ACTIVE_WATCHER_STATES.has(currentState);
+  const currentPauseReason = String(row.pause_reason || "");
+  const paused = currentlyRunnable && failures >= 3;
   const nowIso = now.toISOString();
   database.prepare(`UPDATE price_watch_credit_reservations SET status = 'committed', claim_owner = '', lease_expires_at = '', updated_at = ? WHERE id = ? AND status = 'attempting'`).run(nowIso, reservationId);
   database.prepare(`UPDATE price_watchers SET state = ?, pause_reason = ?, failure_streak = ?, last_check_at = ?, next_check_at = ?, claim_owner = '', claim_expires_at = '', updated_at = ? WHERE id = ?`)
-    .run(paused ? "paused_failure" : String(row.watcher_state || "active"), paused ? "three-consecutive-failures" : "", failures, nowIso, nextPriceWatchCheck(row.cadence === "hourly" ? "hourly" : "daily", now), nowIso, watcherId);
+    .run(paused ? "paused_failure" : currentState, paused ? "three-consecutive-failures" : (currentlyRunnable ? "" : currentPauseReason), failures, nowIso, nextPriceWatchCheck(row.cadence === "hourly" ? "hourly" : "daily", now), nowIso, watcherId);
   database.prepare(`INSERT OR IGNORE INTO price_watch_events (id, watcher_id, event_type, detail_json, idempotency_key, observed_at) VALUES (?, ?, 'unknown-attempt-outcome', ?, ?, ?)`)
     .run(randomUUID(), watcherId, JSON.stringify({ code: "expired-attempt-lease" }), `reservation:${reservationId}:unknown-outcome`, nowIso);
   if (paused) notification(database, {
@@ -782,7 +798,7 @@ export function reapExpiredPriceWatchLeases(database: Database.Database, now = n
   ensurePriceWatchSchema(database);
   return database.transaction(() => {
     const nowIso = now.toISOString();
-    const rows = database.prepare(`SELECT reservations.id AS reservation_id, reservations.status, reservations.watcher_id, reservations.workspace_id, watchers.state AS watcher_state, watchers.failure_streak, watchers.cadence, watchers.product_name FROM price_watch_credit_reservations reservations JOIN price_watchers watchers ON watchers.id = reservations.watcher_id WHERE reservations.status IN ('reserved','attempting') AND reservations.lease_expires_at <> '' AND reservations.lease_expires_at <= ? ORDER BY reservations.lease_expires_at ASC`).all(nowIso) as Record<string, unknown>[];
+    const rows = database.prepare(`SELECT reservations.id AS reservation_id, reservations.status, reservations.watcher_id, reservations.workspace_id, watchers.state AS watcher_state, watchers.pause_reason, watchers.failure_streak, watchers.cadence, watchers.product_name FROM price_watch_credit_reservations reservations JOIN price_watchers watchers ON watchers.id = reservations.watcher_id WHERE reservations.status IN ('reserved','attempting') AND reservations.lease_expires_at <> '' AND reservations.lease_expires_at <= ? ORDER BY reservations.lease_expires_at ASC`).all(nowIso) as Record<string, unknown>[];
     let released = 0;
     let committedUnknown = 0;
     for (const row of rows) {

@@ -39,7 +39,11 @@ export async function getPriceWatchHistory(request: Request, context: RouteConte
     const account = await accountFor(request, services);
     if (!account) return Response.json({ ok: false, error: "Not found." }, { status: 404, headers: PRIVATE_REPORT_HEADERS });
     const { watcherId } = await context.params;
-    const limit = Number(new URL(request.url).searchParams.get("limit") || 100);
+    const requestedLimit = new URL(request.url).searchParams.get("limit");
+    if (requestedLimit !== null && (!/^\d+$/.test(requestedLimit) || Number(requestedLimit) < 1 || Number(requestedLimit) > 500)) {
+      return Response.json({ ok: false, error: "History limit must be an integer from 1 to 500.", errorCode: "invalid-limit" }, { status: 400, headers: PRIVATE_REPORT_HEADERS });
+    }
+    const limit = requestedLimit === null ? 100 : Number(requestedLimit);
     const database = await services.openDatabase();
     try { return Response.json({ ok: true, history: priceWatchHistory(database, account.workspaceId, watcherId, limit) }, { headers: PRIVATE_REPORT_HEADERS }); }
     finally { database.close(); }
