@@ -216,10 +216,11 @@ test("each call processes bounded new primaries while returning every previously
   assert.equal(enrichments, 2);
 });
 
-test("an invalid durable priced outcome fails closed without repeating paid search", async () => {
+test("an invalid durable priced outcome is repaired from fresh bounded search", async () => {
   const primary = product("shop.test", "primary-a", "Apple Juice 1L", 3.5);
   let searches = 0;
-  await assert.rejects(() => buildDirectProductSearchComparison("shop.test", [{ domain: "shop.test", products: [primary] }], {
+  const saves = [];
+  const result = await buildDirectProductSearchComparison("shop.test", [{ domain: "shop.test", products: [primary] }], {
     resultTarget: 20,
     referenceTimeMs: Date.parse(observedAt),
     search: async () => { searches += 1; return { completed: true, queries: [], candidates: [] }; },
@@ -236,7 +237,15 @@ test("an invalid durable priced outcome fails closed without repeating paid sear
         outcome: { products: [product("seller.test", "empty", "No price", undefined)], pagesRequested: 1, pagesFetched: 1, gaps: [] },
       },
     }),
-    saveSearchCheckpoint: async () => { throw new Error("must not overwrite invalid durable state"); },
-  }), /durable direct product-search checkpoint is invalid/i);
-  assert.equal(searches, 0);
+    saveSearchCheckpoint: async (_key, checkpoint, expectedResultHash) => {
+      saves.push({ checkpoint: structuredClone(checkpoint), expectedResultHash });
+      return { result: checkpoint, resultHash: createHash("sha256").update(JSON.stringify(checkpoint)).digest("hex") };
+    },
+  });
+  assert.equal(searches, 1);
+  assert.equal(saves.length, 2);
+  assert.equal(saves[0].expectedResultHash, undefined);
+  assert.equal(saves[1].expectedResultHash, createHash("sha256").update(JSON.stringify(saves[0].checkpoint)).digest("hex"));
+  assert.equal(result.coverage.assignedPairCount, 0);
+  assert.equal(result.matching?.resultShortfallReason, "bounded-candidate-pool-exhausted");
 });

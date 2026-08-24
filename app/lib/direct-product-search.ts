@@ -295,9 +295,11 @@ export async function buildDirectProductSearchComparison(primaryDomainValue: str
     if (!pricedProduct(primary, referenceTimeMs)) continue;
     const key = { primaryIndex, inputHash: searchInputHash(primaryDomain, primary, marketCountryCode) };
     const loaded = options.loadSearchCheckpoint ? await options.loadSearchCheckpoint(key) : null;
-    if (loaded && !/^[a-f0-9]{64}$/.test(loaded.resultHash)) throw new Error("The durable direct product-search checkpoint has an invalid result hash.");
-    let checkpoint = loaded ? validSearchCheckpoint(loaded.result, primary, referenceTimeMs) : null;
-    if (loaded && !checkpoint) throw new Error("The durable direct product-search checkpoint is invalid.");
+    const loadedResultHash = loaded && /^[a-f0-9]{64}$/.test(loaded.resultHash) ? loaded.resultHash : undefined;
+    // Checkpoint rows are an optimization, not authority over the current
+    // catalog. A structurally stale row must be repaired from fresh search
+    // output instead of permanently poisoning every retry for this product.
+    let checkpoint = loadedResultHash ? validSearchCheckpoint(loaded?.result, primary, referenceTimeMs) : null;
     if (checkpoint?.version === 2) {
       addOutcome(primary, checkpoint);
       continue;
@@ -307,7 +309,7 @@ export async function buildDirectProductSearchComparison(primaryDomainValue: str
       continue;
     }
     newPrimaryProducts += 1;
-    let resultHash = loaded?.resultHash;
+    let resultHash = checkpoint ? loadedResultHash : undefined;
     if (!checkpoint) {
       const result = await search(primaryDomain, primary, marketCountryCode);
       checkpoint = validSearchCheckpoint({

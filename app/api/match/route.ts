@@ -6,7 +6,7 @@ import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../
 import type { ProductRecord } from "../../lib/product-intelligence.ts";
 import { canonicalGtin, parseCanonicalQuantity, type ProductIdentifiers } from "../../lib/product-normalization.ts";
 import { publicHttpUrl } from "../../lib/public-url.ts";
-import { acquireReportMatchLease, loadReportMatchBatchCheckpoints, loadReportProductEntitlement, releaseReportMatchLease, replaceReportMatchBatchCheckpoint, saveReportMatchBatchCheckpoint } from "../../lib/report-store.ts";
+import { acquireReportMatchLease, loadReportMatchBatchCheckpoints, loadReportProductEntitlement, releaseReportMatchLease, replaceReportMatchBatchCheckpoint, saveReportMatchBatchCheckpoint, type ReportMatchBatchCheckpoint } from "../../lib/report-store.ts";
 import { workerOnlyResponse } from "../../lib/process-role.ts";
 
 // One primary catalog plus the complete bounded attempt wave: up to 1,200
@@ -335,22 +335,53 @@ export function createMatchHandler(serviceOverrides: Partial<MatchServices> = {}
             batchIndexEnd: DIRECT_SEARCH_CHECKPOINT_BASE + MAX_DIRECT_SEARCH_CHECKPOINTS - 1,
             latestPerBatch: true,
           }) : [];
-          const loadedCheckpoints = new Map(loadedCheckpointRows.map((checkpoint) => [checkpoint.batchIndex, checkpoint]));
+          const loadedCheckpointsByBatch = new Map<number, ReportMatchBatchCheckpoint>();
+          const loadedCheckpointsByInputHash = new Map<string, ReportMatchBatchCheckpoint>();
+          const rememberCheckpoint = (checkpoint: ReportMatchBatchCheckpoint) => {
+            loadedCheckpointsByBatch.set(checkpoint.batchIndex, checkpoint);
+            const prior = loadedCheckpointsByInputHash.get(checkpoint.inputHash);
+            if (!prior || checkpoint.attemptNumber > prior.attemptNumber
+              || (checkpoint.attemptNumber === prior.attemptNumber && checkpoint.updatedAt > prior.updatedAt)) {
+              loadedCheckpointsByInputHash.set(checkpoint.inputHash, checkpoint);
+            }
+          };
+          for (const checkpoint of loadedCheckpointRows) rememberCheckpoint(checkpoint);
+          const freeCheckpointIndex = (key: DirectProductSearchCheckpointKey) => {
+            const preferred = directSearchCheckpointIndex(key.primaryIndex);
+            if (!loadedCheckpointsByBatch.has(preferred)) return preferred;
+            for (let offset = 0; offset < MAX_DIRECT_SEARCH_CHECKPOINTS; offset += 1) {
+              const candidate = DIRECT_SEARCH_CHECKPOINT_BASE + offset;
+              if (!loadedCheckpointsByBatch.has(candidate)) return candidate;
+            }
+            throw new Error("The bounded direct product-search checkpoint namespace is exhausted.");
+          };
           const checkpointOptions = hasReportAttempt ? {
             loadSearchCheckpoint: async (key: DirectProductSearchCheckpointKey) => {
-              const checkpoint = loadedCheckpoints.get(directSearchCheckpointIndex(key.primaryIndex));
+              const checkpoint = loadedCheckpointsByInputHash.get(key.inputHash);
               if (!checkpoint) return null;
-              if (checkpoint.inputHash !== key.inputHash) throw new Error("The direct product-search checkpoint conflicts with the current catalog identity.");
               return { result: checkpoint.result, resultHash: checkpoint.resultHash };
             },
             saveSearchCheckpoint: async (key: DirectProductSearchCheckpointKey, checkpoint: DirectProductSearchCheckpoint, expectedResultHash?: string): Promise<DirectProductSearchCheckpointRecord> => {
-              const batchIndex = directSearchCheckpointIndex(key.primaryIndex);
-              const saved = expectedResultHash
+              let existing = loadedCheckpointsByInputHash.get(key.inputHash);
+              const batchIndex = existing?.batchIndex ?? freeCheckpointIndex(key);
+              if (expectedResultHash && (!existing || existing.resultHash !== expectedResultHash)) throw new Error("The direct product-search checkpoint replacement has a stale revision.");
+              if (expectedResultHash && existing && existing.attemptNumber !== reportAttempt) {
+                const adopted = await services.saveCheckpoint(publicId, {
+                  attemptNumber: reportAttempt,
+                  batchIndex,
+                  inputHash: key.inputHash,
+                  result: existing.result,
+                  resultHash: existing.resultHash,
+                });
+                existing = adopted.checkpoint;
+                rememberCheckpoint(existing);
+              }
+              const saved = expectedResultHash || existing?.attemptNumber === reportAttempt
                 ? await services.replaceCheckpoint(publicId, {
                   attemptNumber: reportAttempt,
                   batchIndex,
                   inputHash: key.inputHash,
-                  expectedResultHash,
+                  expectedResultHash: expectedResultHash || existing?.resultHash || "",
                   result: checkpoint,
                 })
                 : await services.saveCheckpoint(publicId, {
@@ -359,7 +390,7 @@ export function createMatchHandler(serviceOverrides: Partial<MatchServices> = {}
                   inputHash: key.inputHash,
                   result: checkpoint,
                 });
-              loadedCheckpoints.set(batchIndex, saved.checkpoint);
+              rememberCheckpoint(saved.checkpoint);
               return { result: saved.checkpoint.result, resultHash: saved.checkpoint.resultHash };
             },
           } : {};
@@ -374,7 +405,16 @@ export function createMatchHandler(serviceOverrides: Partial<MatchServices> = {}
           });
           return Response.json({ ok: true, comparison });
         } finally {
-          if (hasReportAttempt) await services.releaseLease(publicId, { attemptNumber: reportAttempt, owner: leaseOwner });
+          if (hasReportAttempt) {
+            try {
+              await services.releaseLease(publicId, { attemptNumber: reportAttempt, owner: leaseOwner });
+            } catch {
+              // The response and its durable checkpoints are already valid.
+              // Lease expiry is the safe cleanup fallback; never replace a
+              // successful comparison response with a cleanup-only failure.
+              console.error("report match lease release failed", { stage: "match-lease-release", diagnosticCode: "match-lease-release-failed" });
+            }
+          }
         }
       }
       const priorCandidatePairKeys = hasReportAttempt ? await (async () => {

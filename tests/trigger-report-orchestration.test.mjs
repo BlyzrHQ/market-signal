@@ -3117,6 +3117,32 @@ test("HTTP transport retries only bounded transient statuses and never leaks its
   assert.equal(isRetryableHttpStatus(400), false);
 });
 
+test("HTTP matching honors Retry-After without consuming its ordinary transient retry", async () => {
+  let calls = 0;
+  const comparison = { primaryDomain: payload.primaryDomain, rows: [] };
+  const port = createReportOrchestrationHttpPort({
+    appOrigin: "https://market.example",
+    callbackToken: "callback_secret_with_enough_entropy_123456",
+    async fetchImpl() {
+      calls += 1;
+      if (calls === 1) return new Response("comparison worker is still committing", { status: 425, headers: { "Retry-After": "0" } });
+      return Response.json({ ok: true, comparison });
+    },
+  });
+  const result = await port.match({
+    publicId: payload.publicId,
+    reportAttempt: 1,
+    taskAttemptNumber: 1,
+    reportObservedAt: "2026-08-23T10:00:00.000Z",
+    primaryDomain: payload.primaryDomain,
+    productLimit: 20,
+    catalogs: [],
+    matchingMode: "direct-product-search",
+  });
+  assert.equal(calls, 2);
+  assert.deepEqual(result.comparison, comparison);
+});
+
 test("HTTP preflight validates the private worker API manifest and treats deterministic incompatibility as permanent", async () => {
   const token = "callback_secret_with_enough_entropy_123456";
   const calls = [];

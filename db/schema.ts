@@ -483,13 +483,14 @@ export const reportMatchBatchCheckpoints = sqliteTable("report_match_batch_check
 ]);
 
 export const reportMatchLeases = sqliteTable("report_match_leases", {
-  runId: text("run_id").notNull(),
+  runId: text("run_id").notNull().references(() => reportRuns.id, { onDelete: "cascade" }),
   attemptNumber: integer("attempt_number").notNull(),
   owner: text("owner").notNull(),
   expiresAt: text("expires_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, (table) => [
   primaryKey({ columns: [table.runId, table.attemptNumber] }),
+  check("report_match_leases_owner_check", sql`length(${table.owner}) = 32 AND ${table.owner} NOT GLOB '*[^0-9a-f]*'`),
   index("report_match_leases_expiry_idx").on(table.expiresAt),
 ]);
 

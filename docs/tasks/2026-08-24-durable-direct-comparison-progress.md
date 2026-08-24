@@ -39,6 +39,16 @@ input/schema hash fail-closed behavior, write-time positive-price validation,
 and publication from durable state. It recommended shipping blocked-storefront
 recovery as a separate stacked change.
 
+The first strict Fable 5 exact-head review found three merge blockers: an
+adopted prior-attempt v1 row could not be upgraded in the current attempt,
+positional catalog drift or a semantically invalid row could poison all later
+retries, and lease cleanup/HTTP 425 handling could discard already committed
+work. The implementation now adopts prior-attempt rows before CAS replacement,
+keys recovery by stable product input identity with collision-free slot
+allocation, repairs invalid semantic rows from fresh bounded search, makes
+lease release best-effort, and honors `Retry-After` within the existing match
+operation deadline. A new exact-head review is required before merge.
+
 ## Acceptance criteria
 
 - A second call does not search or enrich primaries whose priced outcomes were
@@ -59,9 +69,10 @@ approval and are not part of this validation.
 
 ## Validation
 
-- Focused matcher, route, and persistence tests: 56 passed.
-- Full repository test command: 1,170 passed, 0 failed. This includes both
-  TypeScript projects and the production Next.js build.
+- Focused matcher, route, and orchestration regression tests after the review
+  fixes: 154 passed, 0 failed.
+- Full repository test command: 1,175 passed, 0 failed. This includes both
+  TypeScript projects and the production build.
 - Lint: 0 errors. One pre-existing `@next/next/no-img-element` warning remains
   in `app/components/product-design-lab.tsx`.
 - No paid production report or evaluation was launched.
