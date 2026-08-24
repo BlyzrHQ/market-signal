@@ -8,6 +8,20 @@ export type ProductMatchLifecycle = "idle" | "matching" | "retrying" | "complete
 export const MAX_DURABLE_PRICED_ALTERNATIVES_PER_PRIMARY = 20;
 const MAX_DURABLE_EVIDENCE_ROWS_BYTES = 3_500_000;
 
+export function publishedRivalConstraintKeys(product: ProductRecord) {
+  const source = canonicalProductSourceKey(product);
+  const domain = canonicalDomain(product.domain);
+  const market = publicSourceMarketCountryCode(product.sourceUrl) || "";
+  const gtins = [...new Set((product.identifiers?.gtins || []).map(canonicalGtin).filter((gtin): gtin is string => Boolean(gtin)))];
+  return [
+    `physical:${productIdentityKey(product)}`,
+    ...gtins.map((gtin) => `gtin:${domain}|${market}|${gtin}`),
+    ...(source ? [`source:${source}`] : []),
+    `merchant:${domain}|${product.id}`,
+    ...(/^[a-f0-9]{64}$/.test(product.assignmentComponentHash || "") ? [`assignment:${product.assignmentComponentHash}`] : []),
+  ];
+}
+
 function compactEvidenceText(value: unknown, maxLength: number) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 }
@@ -615,19 +629,6 @@ function mergePublishedPairComparisonState(current: ProductComparison, prior: Pr
     || compareCodepoint(left.primary.id, right.primary.id)
     || compareCodepoint(left.primary.sourceUrl, right.primary.sourceUrl));
 
-  const rivalConstraintKeys = (product: ProductRecord) => {
-    const source = canonicalProductSourceKey(product);
-    const domain = canonicalDomain(product.domain);
-    const market = publicSourceMarketCountryCode(product.sourceUrl) || "";
-    const gtins = [...new Set((product.identifiers?.gtins || []).map(canonicalGtin).filter((gtin): gtin is string => Boolean(gtin)))];
-    return [
-      `physical:${productIdentityKey(product)}`,
-      ...gtins.map((gtin) => `gtin:${domain}|${market}|${gtin}`),
-      ...(source ? [`source:${source}`] : []),
-      `merchant:${domain}|${product.id}`,
-      ...(/^[a-f0-9]{64}$/.test(product.assignmentComponentHash || "") ? [`assignment:${product.assignmentComponentHash}`] : []),
-    ];
-  };
   const rankedCandidates = candidateRows.map((row) => row.matches
     .filter((match): match is ProductMatch & { product: ProductRecord } => Boolean(match.product && match.publication?.priceEligible === true))
     .sort((left, right) => exactProductPriority(right) - exactProductPriority(left)
@@ -644,7 +645,7 @@ function mergePublishedPairComparisonState(current: ProductComparison, prior: Pr
   };
   const firstByConstraint = new Map<string, number>();
   allCandidates.forEach((match, index) => {
-    for (const key of rivalConstraintKeys(match.product)) {
+    for (const key of publishedRivalConstraintKeys(match.product)) {
       const first = firstByConstraint.get(key);
       if (first === undefined) firstByConstraint.set(key, index);
       else union(first, index);
@@ -659,7 +660,7 @@ function mergePublishedPairComparisonState(current: ProductComparison, prior: Pr
   allCandidates.forEach((match, index) => {
     const root = findRoot(index);
     const constraints = componentConstraints.get(root) || new Set<string>();
-    rivalConstraintKeys(match.product).forEach((key) => constraints.add(key));
+    publishedRivalConstraintKeys(match.product).forEach((key) => constraints.add(key));
     componentConstraints.set(root, constraints);
   });
   const componentHash = (match: ProductMatch) => {
@@ -815,19 +816,6 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
   candidateRows.sort((left, right) => durablePrimaryIdentity(left.primary).localeCompare(durablePrimaryIdentity(right.primary))
     || left.primary.id.localeCompare(right.primary.id)
     || left.primary.sourceUrl.localeCompare(right.primary.sourceUrl));
-  const rivalConstraintKeys = (product: ProductRecord) => {
-    const source = canonicalProductSourceKey(product);
-    const domain = canonicalDomain(product.domain);
-    const market = publicSourceMarketCountryCode(product.sourceUrl) || "";
-    const gtins = [...new Set((product.identifiers?.gtins || []).map(canonicalGtin).filter((gtin): gtin is string => Boolean(gtin)))];
-    return [
-      `physical:${productIdentityKey(product)}`,
-      ...gtins.map((gtin) => `gtin:${domain}|${market}|${gtin}`),
-      ...(source ? [`source:${source}`] : []),
-      `merchant:${domain}|${product.id}`,
-      ...(/^[a-f0-9]{64}$/.test(product.assignmentComponentHash || "") ? [`assignment:${product.assignmentComponentHash}`] : []),
-    ];
-  };
   const rankedCandidates = candidateRows.map((row) => {
     return row.matches
       .filter((match): match is ProductMatch & { product: ProductRecord } => Boolean(match.product && match.publication?.priceEligible === true))
@@ -845,7 +833,7 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
   };
   const firstByConstraint = new Map<string, number>();
   allCandidates.forEach((match, index) => {
-    for (const key of rivalConstraintKeys(match.product)) {
+    for (const key of publishedRivalConstraintKeys(match.product)) {
       const first = firstByConstraint.get(key);
       if (first === undefined) firstByConstraint.set(key, index);
       else unionCandidateComponents(first, index);
@@ -858,7 +846,7 @@ export function mergePublishedProductComparisonState(current: ProductComparison,
     const root = findRoot(index);
     componentMemberCounts.set(root, (componentMemberCounts.get(root) || 0) + 1);
     const constraints = componentConstraints.get(root) || new Set<string>();
-    rivalConstraintKeys(match.product).forEach((key) => constraints.add(key));
+    publishedRivalConstraintKeys(match.product).forEach((key) => constraints.add(key));
     componentConstraints.set(root, constraints);
     const priorHash = match.product.assignmentComponentHash || "";
     if (/^[a-f0-9]{64}$/.test(priorHash)) {

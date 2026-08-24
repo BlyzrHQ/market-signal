@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 
 import { buildDirectProductSearchComparison } from "../app/lib/direct-product-search.ts";
+import { mergePublishedProductComparisonState } from "../app/lib/product-match-lifecycle.ts";
 
 const observedAt = "2026-08-23T10:00:00.000Z";
 
@@ -79,6 +80,39 @@ test("direct search retains multiple priced URLs and drops every empty-price res
   assert.deepEqual(comparison.rows[0].matches.map((match) => match.product?.sourceUrl), [candidates[0].sourceUrl, candidates[1].sourceUrl]);
   assert.ok(comparison.rows[0].matches.every((match) => match.product?.priceSignals.some((signal) => Number.isFinite(signal.amount) && signal.amount > 0)));
   assert.ok(comparison.rows[0].matches.every((match) => match.assessment === undefined));
+});
+
+test("direct search replaces a repeated global rival with a later distinct priced result", async () => {
+  const primaries = [
+    product("shop.test", "primary-a", "Alpha Beard Oil", 20),
+    product("shop.test", "primary-b", "Beta Beard Oil", 21),
+    product("shop.test", "primary-c", "Gamma Beard Oil", 22),
+  ];
+  const sharedSource = "https://seller.test/products/shared-beard-oil";
+  let searches = 0;
+
+  const comparison = await buildDirectProductSearchComparison("shop.test", [{ domain: "shop.test", products: primaries }], {
+    resultTarget: 2,
+    referenceTimeMs: Date.parse(observedAt),
+    search: async (_domain, primary) => {
+      searches += 1;
+      const sourceUrl = primary.id === "primary-c" ? "https://seller.test/products/gamma-beard-oil" : sharedSource;
+      return { completed: true, queries: [primary.name], candidates: [{ domain: "seller.test", sourceUrl, title: primary.name }] };
+    },
+    enrich: async (targets) => ({
+      products: targets.map((target) => product("seller.test", target.productId, target.expectedName, 24, "GBP", target.sourceUrl)),
+      coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: targets.length, gaps: [] },
+    }),
+  });
+
+  assert.equal(searches, 3);
+  assert.equal(comparison.coverage.assignedPairCount, 2);
+  assert.deepEqual(comparison.rows.map((row) => row.primary.id), ["primary-a", "primary-c"]);
+  assert.equal(new Set(comparison.rows.flatMap((row) => row.matches.map((match) => match.product?.sourceUrl))).size, 2);
+
+  const published = mergePublishedProductComparisonState(comparison, null, 2, Date.parse(observedAt), "pairs").comparison;
+  assert.equal(published.coverage.assignedPairCount, 2);
+  assert.equal(published.matching?.resultShortfall, 0);
 });
 
 test("direct search durably retains priced page-scoped product evidence", async () => {
