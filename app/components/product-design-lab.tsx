@@ -395,7 +395,7 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
             <th role="columnheader">{ar ? "أقرب منافس" : "Closest rival"}</th>
             <th role="columnheader">{ar ? "سعر المنافس" : "Rival price"}</th>
             <th role="columnheader">{ar ? "الفرق" : "Difference"}</th>
-            {watchAvailable && <th role="columnheader">{ar ? "المراقبة" : "Watch"}</th>}
+            {watchAvailable && <th role="columnheader" className="product-table-watch-heading">{ar ? "المراقبة" : "Watch"}</th>}
             <th role="columnheader">{ar ? "الخطوة التالية" : "Next move"}</th>
           </tr></thead>
           <tbody role="rowgroup">{rows.map((row, index) => {
