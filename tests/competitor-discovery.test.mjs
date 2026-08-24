@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { boundedPrimaryCatalogProducts, candidatesFromSearchEvidence, discoverCompetitors, entityCandidatesFromSearchEvidence, mergeCandidates, productSearchAnchors, publicDiscoveryCandidate, publicDiscoverySnapshot, sanitizeCandidate, structuredProductLeadCandidate } from "../app/lib/competitor-discovery.ts";
+import { boundedPrimaryCatalogProducts, candidatesFromSearchEvidence, discoverCompetitors, entityCandidatesFromSearchEvidence, mergeCandidates, productSearchAnchors, publicDiscoveryCandidate, publicDiscoverySnapshot, sanitizeCandidate, searchDirectProductPages, structuredProductLeadCandidate } from "../app/lib/competitor-discovery.ts";
 
 function product(name, sourceUrl) {
   return {
@@ -110,6 +110,54 @@ test("recovers a search-source candidate when the AI structured candidate array 
     assert.equal(result.candidates.length, 1);
     assert.equal(result.candidates[0].domain, "oasismarket.co.uk");
     assert.equal(result.candidates[0].evidenceMethod, "search-source");
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;
+  }
+});
+
+test("hands Wearform exact product pages to enrichment with product-shaped titles", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "test-only";
+  const exactUrl = "https://www.dicksworkclothing.com/nomex-iiia-4.5-oz-flame-resistant-deluxe-coverall.html";
+  const privateUrl = "https://www.workingclassclothes.com/nomexA-iiia-4.5-oz-flame-resistant-deluxe-coverall.html";
+  globalThis.fetch = async () => Response.json({ status: "completed", output: [
+    { type: "web_search_call", status: "completed", action: { query: "NOMEX IIIA 4.5 oz flame resistant deluxe coverall", sources: [{ title: "dicksworkclothing.com", url: exactUrl }] } },
+    { type: "message", content: [{ type: "output_text", text: JSON.stringify({
+      category: "Flame-resistant workwear",
+      region: "US",
+      queries: ["NOMEX IIIA 4.5 oz flame resistant deluxe coverall"],
+      candidates: [{
+        domain: "workingclassclothes.com",
+        companyName: "workingclassclothes.com",
+        reason: "Possible exact product result",
+        searchQuery: "NOMEX IIIA 4.5 oz flame resistant deluxe coverall",
+        websiteUrl: "https://www.workingclassclothes.com/",
+        evidenceUrl: privateUrl,
+        evidenceTitle: "workingclassclothes.com",
+        marketCategory: "Flame-resistant workwear",
+        relationship: "direct",
+        sharedOfferings: [],
+        matchedPrimaryProductName: "",
+        matchedProductUrl: privateUrl,
+      }],
+    }) }] },
+  ] });
+  const wearformProduct = {
+    ...product("Men's Deluxe Nomex IIIA 4.5 oz Flame Resistant Coverall", "https://wearform.com/products/mens-deluxe-nomex-iiia-coverall"),
+    domain: "wearform.com",
+  };
+  try {
+    const result = await searchDirectProductPages("wearform.com", wearformProduct, "US");
+    assert.equal(result.completed, true);
+    assert.deepEqual(result.candidates.map(({ domain, sourceUrl }) => ({ domain, sourceUrl })), [
+      { domain: "workingclassclothes.com", sourceUrl: privateUrl },
+      { domain: "dicksworkclothing.com", sourceUrl: exactUrl },
+    ]);
+    assert.ok(result.candidates.every((candidate) => /nomex.+flame resistant deluxe coverall/i.test(candidate.title)), JSON.stringify(result.candidates));
+    assert.ok(result.candidates.every((candidate) => candidate.title !== candidate.domain));
+    assert.ok(result.candidates.every((candidate) => new URL(candidate.sourceUrl).pathname !== "/"));
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey) process.env.OPENAI_API_KEY = previousKey; else delete process.env.OPENAI_API_KEY;

@@ -997,15 +997,55 @@ export async function searchDirectProductPages(primaryDomainValue: string, prima
   const business = inferBusinessProfile(profile);
   const endpoint = `${(process.env.OPENAI_RESPONSES_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "")}/responses`;
   const result = await runLane(endpoint, apiKey, model, "product", { ...business, offerings: [primary] }, profile, true);
+  const directCandidateUrl = (candidate: DiscoveryCandidate) => [
+    candidate.matchedProductUrl,
+    ...(candidate.matchedProductUrls || []),
+    ...(candidate.inferredProductLeads || []).map((lead) => lead.candidateSourceUrl),
+    ...candidate.evidence.map((entry) => entry.url),
+    candidate.sourceUrl,
+  ].map((value) => cleanSearchUrl(value)).find((value) => {
+    if (!value) return false;
+    try {
+      return new URL(value).protocol === "https:"
+        && canonicalDomain(value) === canonicalDomain(candidate.domain)
+        && isCrawlableProductLead(value)
+        && !isListingRoute(value);
+    } catch {
+      return false;
+    }
+  }) || "";
+  const titleFromProductPath = (sourceUrl: string) => {
+    try {
+      const segment = decodeURIComponent(new URL(sourceUrl).pathname.split("/").filter(Boolean).at(-1) || "")
+        .replace(/\.(?:html?|aspx?)$/i, "")
+        .replace(/[-_]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      const tokens = normalizedTokens(segment);
+      const descriptiveTokens = tokens.filter((token) => /\p{L}/u.test(token) && !/^(?:id|item|p|pid|product|products|sku|variant)$/i.test(token));
+      return tokens.length >= 2 && descriptiveTokens.length ? segment : "";
+    } catch {
+      return "";
+    }
+  };
+  const meaningfulEvidenceTitle = (candidate: DiscoveryCandidate, sourceUrl: string) => {
+    const domain = canonicalDomain(candidate.domain);
+    const title = candidate.evidence.find((entry) => cleanSearchUrl(entry.url) === sourceUrl)?.title.replace(/\s+/g, " ").trim() || "";
+    const domainLabel = title.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/+$/, "");
+    return title && domainLabel !== domain && domainLabel !== `www.${domain}` ? title : "";
+  };
+  const seenUrls = new Set<string>();
   return {
     completed: result.completed,
     queries: result.queries,
     candidates: result.candidates.flatMap((candidate) => {
-      const sourceUrl = cleanSearchUrl(candidate.matchedProductUrl || candidate.sourceUrl);
-      if (!sourceUrl || new URL(sourceUrl).protocol !== "https:") return [];
-      const title = candidate.evidence.find((entry) => cleanSearchUrl(entry.url) === sourceUrl)?.title
+      const sourceUrl = directCandidateUrl(candidate);
+      if (!sourceUrl || seenUrls.has(sourceUrl)) return [];
+      seenUrls.add(sourceUrl);
+      const title = titleFromProductPath(sourceUrl)
+        || meaningfulEvidenceTitle(candidate, sourceUrl)
         || candidate.matchedPrimaryProductName
-        || new URL(sourceUrl).pathname.split("/").filter(Boolean).at(-1)?.replace(/[-_]+/g, " ")
+        || primary.name
         || candidate.domain;
       return [{ domain: canonicalDomain(candidate.domain), sourceUrl, title: title.replace(/\s+/g, " ").trim().slice(0, 240) }];
     }),
