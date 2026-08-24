@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { canonicalDomain } from "./domain.ts";
 import { searchDirectProductPages, type DirectProductPageSearchResult } from "./competitor-discovery.ts";
 import { hasComparablePublicPrice, type ProductComparison, type ProductEnrichmentTarget, type ProductMatch, type ProductRecord } from "./product-intelligence.ts";
+import { publishedRivalConstraintKeys } from "./product-match-lifecycle.ts";
 import { publicHttpUrl } from "./public-url.ts";
 import { enrichProductTargets, type ProductEnrichmentCoverage } from "./storefront-product-enrichment.ts";
 
@@ -260,6 +261,7 @@ export async function buildDirectProductSearchComparison(primaryDomainValue: str
   const processedPrimaryIds: string[] = [];
   const gaps: string[] = [];
   const seenPairs = new Set<string>();
+  const seenRivalConstraints = new Set<string>();
   let candidatePages = 0;
   let pagesRequested = 0;
   let pagesFetched = 0;
@@ -278,7 +280,10 @@ export async function buildDirectProductSearchComparison(primaryDomainValue: str
       if (seenPairs.size >= resultTarget) break;
       const pairKey = `${primary.id}\n${canonicalProductUrl(rival.sourceUrl, rival.domain)}`;
       if (seenPairs.has(pairKey)) continue;
+      const rivalConstraints = publishedRivalConstraintKeys(rival);
+      if (rivalConstraints.some((constraint) => seenRivalConstraints.has(constraint))) continue;
       seenPairs.add(pairKey);
+      rivalConstraints.forEach((constraint) => seenRivalConstraints.add(constraint));
       matches.push({
         domain: rival.domain,
         product: rival,
