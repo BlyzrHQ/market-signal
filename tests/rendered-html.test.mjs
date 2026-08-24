@@ -32,7 +32,7 @@ test("server-renders the Market Signal product shell", async () => {
 });
 
 test("real-data route and product metadata are present", async () => {
-  const [route, crawl, enrichment, storefrontEnrichment, report, page, savedReport, productLab, pricePosition, priceClaims, layout, styles, packageJson, domainUtils, adIntelligence] = await Promise.all([
+  const [route, crawl, enrichment, storefrontEnrichment, report, page, savedReport, productLab, shareControl, sharedPage, pricePosition, priceClaims, layout, styles, packageJson, domainUtils, adIntelligence] = await Promise.all([
     readFile(new URL("../app/api/analyze/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/crawl/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/enrich-products/route.ts", import.meta.url), "utf8"),
@@ -41,6 +41,8 @@ test("real-data route and product metadata are present", async () => {
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/reports/[publicId]/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/product-design-lab.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/report-share-control.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/shared/[token]/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/price-position.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/price-claims.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
@@ -110,7 +112,7 @@ test("real-data route and product metadata are present", async () => {
   assert.match(page, /"\/how-it-works"/);
   assert.doesNotMatch(page, /Watch how they show up|: "Ads"|advertising signals|إشارات الإعلانات/);
   assert.match(page, /dir=\{ar \? "rtl" : "ltr"\}/);
-  assert.match(savedReport, /<ProductDesignLab key=\{publicId\} comparison=\{comparison\} battles=\{battles\}/);
+  assert.match(savedReport, /<ProductDesignLab key=\{resourceId\} comparison=\{comparison\} battles=\{battles\}/);
   assert.match(productLab, /<PricePosition comparisonValue=\{row\.decision\.priceComparison\}/);
   assert.match(pricePosition, /resolvePriceClaim\(\{ comparisonValue, primaryRaw, rivalRaw, primaryQuantity, rivalQuantity \}\)/);
   assert.match(pricePosition, /formatPriceClaim\(claim, locale\)/);
@@ -141,9 +143,12 @@ test("real-data route and product metadata are present", async () => {
   assert.match(productLab, /url\.searchParams\.set\("layout", next\)/);
   assert.match(productLab, /window\.addEventListener\("popstate", sync\)/);
   assert.doesNotMatch(productLab, /navigator\.share/);
-  assert.match(productLab, /copyWorkspaceReportLink/);
-  assert.match(productLab, /Copy workspace link/);
-  assert.match(productLab, /navigator\.clipboard\?\.writeText/);
+  assert.doesNotMatch(productLab, /copyWorkspaceReportLink|Copy workspace link|product-share-status/);
+  assert.match(shareControl, /Share report/);
+  assert.match(shareControl, /Copy public link/);
+  assert.match(shareControl, /Make private/);
+  assert.match(shareControl, /navigator\.clipboard\?\.writeText/);
+  assert.match(sharedPage, /<StoredReportClient params=\{params\} mode="shared"/);
   assert.match(productLab, /new Blob\(\[csv\], \{ type: "text\/csv;charset=utf-8" \}\)/);
   assert.match(productLab, /your_price_amount/);
   assert.match(productLab, /rival_currency/);
@@ -164,7 +169,7 @@ test("real-data route and product metadata are present", async () => {
   assert.match(styles, /@media \(max-width: 900px\)[\s\S]*\.product-table-row \{ display: grid/);
   assert.match(styles, /@media \(min-width: 901px\) and \(max-width: 1023px\)[\s\S]*\.product-table-row \{ scroll-margin-top: 200px/);
   assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.product-table-row \{ scroll-margin-top: 238px/);
-  assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.product-layout-toolbar \{ top: 120px/);
+  assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.product-layout-toolbar \{ top: 154px/);
   assert.match(styles, /@media \(max-width: 520px\)[\s\S]*grid-template-areas: "your-product" "your-price" "rival-product" "rival-price" "difference" "action"/);
   assert.match(styles, /@media print \{[\s\S]*\.product-row-details > summary \{ display: none; \}[\s\S]*\.product-row-details > div \{ display: grid !important; \}/);
   assert.match(styles, /\.matchup-products \{[^}]*grid-template-columns: minmax\(0,1fr\) 34px minmax\(0,1fr\)/);

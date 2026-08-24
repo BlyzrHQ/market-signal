@@ -19,6 +19,8 @@ type ProductDesignLabProps = {
   battles: ProductBattle[];
   primaryProducts?: { authoritative: boolean; totalCount: number; products: Array<Record<string, unknown>>; truncated: boolean };
   publicId: string;
+  matchesEndpoint: string;
+  workspaceMode: boolean;
   authoritativeMatchTotal?: number;
   onAuthoritativeSummary?: (summary: { totalCount: number; domainCounts: Record<string, number> }) => void;
   primaryDomain: string;
@@ -182,10 +184,8 @@ type WatchCadence = "hourly" | "daily";
 type ReportWatcher = { id: string; cadence: WatchCadence; state: string; links: Array<{ publicReportId: string; matchId: string }> };
 type WatchUsage = { allocation: number; used: number; remaining: number };
 
-export function ProductDesignLab({ comparison, battles, primaryProducts, publicId, authoritativeMatchTotal, onAuthoritativeSummary, primaryDomain, ar }: ProductDesignLabProps) {
+export function ProductDesignLab({ comparison, battles, primaryProducts, publicId, matchesEndpoint, workspaceMode, authoritativeMatchTotal, onAuthoritativeSummary, primaryDomain, ar }: ProductDesignLabProps) {
   const [layout, setLayout] = useState<ProductLayout>("table");
-  const [shareStatus, setShareStatus] = useState("");
-  const [shareFallback, setShareFallback] = useState("");
   const [authoritativeBattles, setAuthoritativeBattles] = useState<ProductBattle[] | null>(null);
   const [matchTotal, setMatchTotal] = useState(authoritativeMatchTotal || battles.length);
   const [directPriceTotal, setDirectPriceTotal] = useState<number | null>(null);
@@ -221,12 +221,13 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
   }, []);
 
   useEffect(() => {
+    if (!workspaceMode) return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       void refreshWatchers(controller.signal).catch(() => { if (!controller.signal.aborted) setWatchAvailable(false); });
     }, 0);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [refreshWatchers, publicId]);
+  }, [refreshWatchers, publicId, workspaceMode]);
 
   const watcherForMatch = (matchId: string) => watchers.find((watcher) => watcher.links.some((link) => link.publicReportId === publicId && link.matchId === matchId));
   const selectedCadence = (matchId: string, watcher?: ReportWatcher) => watchCadences[matchId] || watcher?.cadence || "daily";
@@ -284,7 +285,7 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
   const fetchMatchPage = async (cursor?: string) => {
     const query = new URLSearchParams({ limit: "100" });
     if (cursor) query.set("cursor", cursor);
-    const response = await fetch(`/api/reports/${publicId}/matches?${query}`, { headers: { accept: "application/json" } });
+    const response = await fetch(`${matchesEndpoint}?${query}`, { cache: "no-store", headers: { accept: "application/json" } });
     const body = await readJsonResponse<MatchPagePayload>(response, "Saved report matches");
     if (!response.ok || !body.ok || !body.page?.authoritative) throw Object.assign(new Error(body.error || "The complete saved matches are unavailable."), { fallback: body.errorCode === "facts-unavailable" || response.status === 409 });
     if (activeReportId.current !== publicId) throw new DOMException("Report changed", "AbortError");
@@ -304,7 +305,7 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
     return () => { current = false; if (activeReportId.current === publicId) activeReportId.current = ""; };
   // The public report id identifies an immutable completed fact manifest.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [publicId, onAuthoritativeSummary]);
+  }, [matchesEndpoint, publicId, onAuthoritativeSummary]);
 
   useEffect(() => {
     const sync = () => {
@@ -317,23 +318,13 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
 
   const selectLayout = (next: ProductLayout) => {
     const url = new URL(window.location.href); url.searchParams.set("view", "products"); url.searchParams.set("layout", next); url.hash = "";
-    window.history.pushState({}, "", url); setLayout(next); setShareStatus(""); setShareFallback("");
+    window.history.pushState({}, "", url); setLayout(next);
   };
   const onLayoutKey = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     const next = event.key === (ar ? "ArrowLeft" : "ArrowRight") ? (index + 1) % LAYOUTS.length : event.key === (ar ? "ArrowRight" : "ArrowLeft") ? (index - 1 + LAYOUTS.length) % LAYOUTS.length : event.key === "Home" ? 0 : event.key === "End" ? LAYOUTS.length - 1 : -1;
     if (next < 0) return; event.preventDefault(); layoutTabs.current[next]?.focus(); selectLayout(LAYOUTS[next]);
   };
-  const reportUrl = () => { const url = new URL(window.location.href); url.searchParams.set("view", "products"); url.searchParams.set("layout", layout); url.hash = ""; return url.toString(); };
   const rowAnchor = (row: ProductRow, index: number) => rows.findIndex((candidate) => candidate.domain === row.domain) === index ? `rival-${slug(row.domain)}` : `rival-${slug(row.domain)}-${slug(row.battle.key)}`;
-  const copyText = async (value: string) => {
-    try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(value); return true; } } catch { /* Use the selection fallback. */ }
-    const input = document.createElement("textarea"); input.value = value; input.setAttribute("readonly", ""); input.style.position = "fixed"; input.style.opacity = "0"; document.body.appendChild(input); input.select();
-    try { return document.execCommand("copy"); } catch { return false; } finally { input.remove(); }
-  };
-  const copyWorkspaceReportLink = async () => {
-    const url = reportUrl(); setShareFallback("");
-    if (await copyText(url)) setShareStatus(ar ? "تم نسخ رابط مساحة العمل" : "Workspace link copied"); else { setShareStatus(ar ? "انسخ رابط مساحة العمل أدناه" : "Copy the workspace link below"); setShareFallback(url); }
-  };
   const loadMoreMatches = async () => {
     if (!nextCursor || matchLoadState === "more" || matchLoadState === "exporting") return;
     setMatchLoadState("more"); setMatchLoadMessage("");
@@ -392,11 +383,9 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
     </section>}
     <div className="product-layout-toolbar">
       <div className="product-layout-tabs" role="tablist" aria-label={ar ? "طرق عرض مقارنة المنتجات" : "Product comparison layouts"}>{LAYOUTS.map((item, index) => <button id={`product-layout-tab-${item}`} key={item} ref={(node) => { layoutTabs.current[index] = node; }} type="button" role="tab" aria-selected={layout === item} aria-controls={`product-layout-${item}`} tabIndex={layout === item ? 0 : -1} onClick={() => selectLayout(item)} onKeyDown={(event) => onLayoutKey(event, index)}><span>{String(index + 1).padStart(2, "0")}</span>{LAYOUT_LABELS[item][ar ? "ar" : "en"]}</button>)}</div>
-      <div className="product-lab-actions"><button type="button" onClick={exportCsv} disabled={matchLoadState === "loading" || matchLoadState === "more" || matchLoadState === "exporting"}>{matchLoadState === "exporting" ? (ar ? "جارٍ تجهيز كل النتائج…" : "Preparing all results…") : (ar ? "تصدير CSV" : "Export CSV")}</button><button type="button" onClick={copyWorkspaceReportLink}>{ar ? "نسخ رابط مساحة العمل" : "Copy workspace link"}</button></div>
+      <div className="product-lab-actions"><button type="button" onClick={exportCsv} disabled={matchLoadState === "loading" || matchLoadState === "more" || matchLoadState === "exporting"}>{matchLoadState === "exporting" ? (ar ? "جارٍ تجهيز كل النتائج…" : "Preparing all results…") : (ar ? "تصدير CSV" : "Export CSV")}</button></div>
     </div>
     {authoritativeBattles && nextCursor && <div className="product-load-more"><button type="button" onClick={loadMoreMatches} disabled={matchLoadState === "more" || matchLoadState === "exporting"}>{matchLoadState === "more" ? (ar ? "جارٍ التحميل…" : "Loading…") : (ar ? `تحميل المزيد (${matchTotal - rows.length} متبقية)` : `Load more (${matchTotal - rows.length} remaining)`)}</button></div>}
-    {(shareStatus || shareFallback) && <div className="product-share-status" role="status" aria-live="polite"><span>{shareStatus}</span>{shareFallback && <input value={shareFallback} readOnly onFocus={(event) => event.currentTarget.select()} aria-label={ar ? "رابط التقرير" : "Report link"} />}</div>}
-
     {layout === "table" && <section id="product-layout-table" role="tabpanel" aria-labelledby="product-layout-tab-table" className="product-layout-panel product-table-layout">
       <div className="product-compact-table-shell">
         <table className="product-compact-table" role="table">

@@ -338,6 +338,38 @@ export const reportDocuments = sqliteTable("report_documents", {
   updatedAt: text("updated_at").notNull(),
 });
 
+export const reportShareLinks = sqliteTable("report_share_links", {
+  runId: text("run_id").primaryKey().references(() => reportRuns.id, { onDelete: "cascade" }),
+  token: text("token").notNull(),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
+  rotation: integer("rotation").notNull().default(1),
+  createdByUserId: text("created_by_user_id").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+  revokedAt: text("revoked_at").notNull().default(""),
+}, (table) => [
+  uniqueIndex("report_share_links_token_uidx").on(table.token),
+  index("report_share_links_active_idx").on(table.active, table.updatedAt),
+  check("report_share_links_token_check", sql`length(${table.token}) = 64 AND ${table.token} NOT GLOB '*[^0-9a-f]*'`),
+  check("report_share_links_active_check", sql`${table.active} IN (0, 1)`),
+  check("report_share_links_rotation_check", sql`${table.rotation} >= 1`),
+]);
+
+export const reportShareAudits = sqliteTable("report_share_audits", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => reportRuns.id, { onDelete: "cascade" }),
+  workspaceId: text("workspace_id").notNull(),
+  actorUserId: text("actor_user_id").notNull(),
+  action: text("action").notNull(),
+  rotation: integer("rotation").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (table) => [
+  index("report_share_audits_run_idx").on(table.runId, table.createdAt),
+  index("report_share_audits_workspace_idx").on(table.workspaceId, table.createdAt),
+  check("report_share_audits_action_check", sql`${table.action} IN ('share', 'unshare')`),
+  check("report_share_audits_rotation_check", sql`${table.rotation} >= 1`),
+]);
+
 export const reportCompanies = sqliteTable("report_companies", {
   runId: text("run_id").notNull(),
   domain: text("domain").notNull(),

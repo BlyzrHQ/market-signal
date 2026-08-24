@@ -37,13 +37,13 @@ test("reopened loading routes poll persisted events and redirect only with a doc
 });
 
 test("completed report route reconstructs the evidence renderer from D1", () => {
-  assert.match(report, /fetch\(`\/api\/reports\/\$\{publicId\}`/);
-  assert.match(report, /readJsonResponse<StoredPayload>\(response, "Saved report"\)/);
-  assert.match(report, /jsonResponseErrorMessage\(cause, "Saved report"\)/);
+  assert.match(report, /const endpoint = mode === "shared" \? `\/api\/shared-reports\/\$\{id\}` : `\/api\/reports\/\$\{id\}`/);
+  assert.match(report, /readJsonResponse<StoredPayload>\(response, mode === "shared" \? "Shared report" : "Saved report"\)/);
+  assert.match(report, /jsonResponseErrorMessage\(cause, mode === "shared" \? "Shared report" : "Saved report"\)/);
   assert.doesNotMatch(report, /response\.json\(\)/);
   assert.match(report, /<ReportWorkspace/);
   assert.match(report, /documentSchemaVersion !== 1/);
-  assert.match(report, /window\.location\.replace\(`\/reports\/\$\{publicId\}\/loading`\)/);
+  assert.match(report, /window\.location\.replace\(`\/reports\/\$\{id\}\/loading`\)/);
   assert.doesNotMatch(report, /from "\.\.\/\.\.\/page"/);
 });
 
@@ -92,14 +92,27 @@ test("saved reports use a persistent dashboard shell without the old report hero
 test("paid report history is privately fetched and stays out of public report payloads", () => {
   assert.match(report, /fetch\("\/api\/account\/reports", \{ cache: "no-store", credentials: "same-origin"/);
   assert.match(report, /if \(!history\?\.eligible\) return null/);
-  assert.match(report, /<PaidReportHistory currentPublicId=\{publicId\} ar=\{ar\} \/>/);
+  assert.match(report, /mode === "workspace" && privatePublicId && <PaidReportHistory currentPublicId=\{privatePublicId\} ar=\{ar\} \/>/);
   assert.match(report, /aria-current=\{current \? "page" : undefined\}/);
   assert.doesNotMatch(report, /localStorage|sessionStorage/);
   assert.match(css, /\.dashboard-brand,\.dashboard-report-identity,\.dashboard-report-history \{ display: none; \}/);
 });
 
+test("report-level sharing is explicit while shared rendering omits private workspace modules", () => {
+  assert.match(report, /<ReportShareControl publicId=\{privatePublicId\} ar=\{ar\} \/>/);
+  assert.match(report, /mode === "workspace" && <PriceWatchWorkspaceLink ar=\{ar\} \/>/);
+  assert.match(report, /Shared · read only/);
+  assert.match(report, /matchesEndpoint=\{matchesEndpoint\} workspaceMode=\{mode === "workspace"\}/);
+  assert.match(productLab, /if \(!workspaceMode\) return;/);
+  assert.match(productLab, /fetch\(`\$\{matchesEndpoint\}\?\$\{query\}`/);
+  assert.doesNotMatch(productLab, /Copy workspace link|copyWorkspaceReportLink/);
+  assert.match(css, /\.report-route-header \{[^}]*display: grid;[^}]*grid-template-columns: minmax\(150px,1fr\) auto auto/);
+  assert.match(css, /@media \(max-width: 1180px\) \{[\s\S]*\.report-route-header \{ min-height: 108px;[^}]*grid-template-columns: minmax\(0,1fr\) auto/);
+  assert.match(css, /@media \(max-width: 1023px\) \{[\s\S]*\.workspace-tabs \{ position: sticky;[^}]*top: 108px/);
+});
+
 test("saved product views preserve truth boundaries and source links", () => {
-  assert.match(report, /<ProductDesignLab key=\{publicId\} comparison=\{comparison\} battles=\{battles\}/);
+  assert.match(report, /<ProductDesignLab key=\{resourceId\} comparison=\{comparison\} battles=\{battles\}/);
   assert.match(report, /object\(candidate\.publication\)\.priceEligible === true/);
   assert.match(report, /legacyUngatedMatchCount/);
   assert.match(report, /countLegacyUngatedProductMatches\(comparison\)/);
@@ -110,9 +123,9 @@ test("saved product views preserve truth boundaries and source links", () => {
   assert.match(report, /publishedComparisonCompetitors\(blocks, comparison\)/);
   assert.match(report, /currentMatchSummary\?\.domainCounts\?\.\[domain\] \?\? \(numeric\(competitor\.comparisonCount\) \|\| rivalBattles\.length\)/);
   assert.match(report, /broad discovery does not count as a competitor/);
-  assert.match(report, /\/matches\?limit=1/);
-  assert.match(report, /authoritativeMatchSummary\?\.publicId === publicId/);
-  assert.match(report, /<ProductDesignLab key=\{publicId\}/);
+  assert.match(report, /fetch\(`\$\{matchesEndpoint\}\?limit=1`/);
+  assert.match(report, /authoritativeMatchSummary\?\.publicId === resourceId/);
+  assert.match(report, /<ProductDesignLab key=\{resourceId\}/);
   assert.match(productLab, /activeReportId\.current !== publicId/);
   assert.match(productLab, /className="product-compact-table"/);
   assert.match(productLab, /<table className="product-compact-table" role="table">/);

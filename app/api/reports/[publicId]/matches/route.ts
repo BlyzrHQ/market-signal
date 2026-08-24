@@ -1,6 +1,7 @@
 import { accountContext, type AccountContext } from "../../../../lib/account-auth.ts";
 import { authorizeStoredReport, PRIVATE_REPORT_HEADERS, reportResponseHeaders } from "../../../../lib/report-access.ts";
 import { loadStoredReportAccess, loadStoredReportMatchPage } from "../../../../lib/report-store.ts";
+import { hostedBillingEnabled } from "../../../../lib/billing-plans.ts";
 
 type RouteContext = { params: Promise<{ publicId: string }> | { publicId: string } };
 type ReportMatchesDependencies = {
@@ -8,6 +9,7 @@ type ReportMatchesDependencies = {
   loadAccess: typeof loadStoredReportAccess;
   loadMatchPage: typeof loadStoredReportMatchPage;
   authorize: (request: Request) => Promise<AccountContext | null>;
+  allowLegacyPublic: () => boolean;
 };
 
 export function reportMatchesDependencies(): ReportMatchesDependencies {
@@ -16,6 +18,7 @@ export function reportMatchesDependencies(): ReportMatchesDependencies {
     loadAccess: loadStoredReportAccess,
     loadMatchPage: loadStoredReportMatchPage,
     authorize: accountContext,
+    allowLegacyPublic: () => !hostedBillingEnabled(process.env),
   };
 }
 
@@ -25,6 +28,7 @@ export async function publicReportMatches(request: Request, context: RouteContex
     const authorization = await authorizeStoredReport(request, await services.loadAccess(publicId), {
       authorize: services.authorize,
       now: services.now(),
+      allowLegacyPublic: services.allowLegacyPublic(),
     });
     if (!authorization) return Response.json({ ok: false, error: "Report not found.", errorCode: "not-found" }, { status: 404, headers: PRIVATE_REPORT_HEADERS });
     const url = new URL(request.url);

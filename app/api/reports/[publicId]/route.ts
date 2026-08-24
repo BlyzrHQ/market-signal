@@ -3,6 +3,7 @@ import { authorizeStoredReport, PRIVATE_REPORT_HEADERS, reportResponseHeaders } 
 import { getStoredReport, loadStoredReportAccess, type StoredReportAccess } from "../../../lib/report-store.ts";
 import { recoverLegacyReport } from "../../../lib/legacy-report-recovery.ts";
 import { settleTerminalReportReservation } from "../../../lib/report-terminal-billing.ts";
+import { hostedBillingEnabled } from "../../../lib/billing-plans.ts";
 
 type RouteContext = { params: Promise<{ publicId: string }> | { publicId: string } };
 
@@ -24,6 +25,7 @@ type ReportRouteDependencies = {
   recover: typeof recoverLegacyReport;
   authorize: (request: Request) => Promise<AccountContext | null>;
   settle: typeof settleTerminalReportReservation;
+  allowLegacyPublic: () => boolean;
 };
 
 export function reportRouteDependencies(): ReportRouteDependencies {
@@ -34,6 +36,7 @@ export function reportRouteDependencies(): ReportRouteDependencies {
     recover: recoverLegacyReport,
     authorize: accountContext,
     settle: settleTerminalReportReservation,
+    allowLegacyPublic: () => !hostedBillingEnabled(process.env),
   };
 }
 
@@ -56,7 +59,7 @@ export async function getReportResponse(request: Request, context: RouteContext,
       report = await services.recover(id, { requestUrl: request.url });
       access = report ? accessFromReport(report) : null;
     }
-    const authorization = await authorizeStoredReport(request, access, { authorize: services.authorize, now });
+    const authorization = await authorizeStoredReport(request, access, { authorize: services.authorize, now, allowLegacyPublic: services.allowLegacyPublic() });
     if (!authorization) return Response.json({ ok: false, error: "Report not found." }, { status: 404, headers: PRIVATE_REPORT_HEADERS });
     report ||= await services.loadReport(id, now);
     if (!report) return Response.json({ ok: false, error: "Report not found." }, { status: 404, headers: PRIVATE_REPORT_HEADERS });
