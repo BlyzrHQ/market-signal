@@ -81,6 +81,42 @@ test("direct search retains multiple priced URLs and drops every empty-price res
   assert.ok(comparison.rows[0].matches.every((match) => match.assessment === undefined));
 });
 
+test("direct search durably retains priced page-scoped product evidence", async () => {
+  const primary = product("shop.test", "primary-a", "Seven Spices 500g", 11.12);
+  const candidate = { domain: "seller.test", sourceUrl: "https://seller.test/products/seven-spices", title: "Seven Spices 500g" };
+  const pageSignal = {
+    ...product("seller.test", "seller-a", candidate.title, 9.99, "GBP", candidate.sourceUrl),
+    jsonLdType: "PageSignal",
+    extraction: "page-signal",
+    confidence: "Medium",
+  };
+  const durable = durableCheckpointCallbacks();
+  let enrichments = 0;
+  const options = {
+    resultTarget: 20,
+    referenceTimeMs: Date.parse(observedAt),
+    search: async () => ({ completed: true, queries: [candidate.title], candidates: [candidate] }),
+    enrich: async () => {
+      enrichments += 1;
+      return {
+        products: [pageSignal],
+        coverage: { pagesRequested: 1, pagesFetched: 1, maxPages: 1, gaps: [] },
+      };
+    },
+    ...durable,
+  };
+
+  const first = await buildDirectProductSearchComparison("shop.test", [{ domain: "shop.test", products: [primary] }], options);
+  const replay = await buildDirectProductSearchComparison("shop.test", [{ domain: "shop.test", products: [primary] }], options);
+
+  assert.equal(enrichments, 1);
+  assert.equal(first.coverage.assignedPairCount, 1);
+  assert.equal(replay.coverage.assignedPairCount, 1);
+  assert.equal(first.rows[0].matches[0].product.jsonLdType, "PageSignal");
+  assert.equal(durable.records.get(0).result.version, 2);
+  assert.equal(durable.records.get(0).result.outcome.products[0].jsonLdType, "PageSignal");
+});
+
 test("direct search never spends a search on a primary product with no displayable price", async () => {
   let searches = 0;
   const comparison = await buildDirectProductSearchComparison("shop.test", [{
