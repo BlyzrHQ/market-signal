@@ -129,6 +129,17 @@ export function isRetryableHttpStatus(status: number) {
   return status === 408 || status === 425 || status === 429 || status >= 500;
 }
 
+const MAX_LEASE_WAIT_RETRIES = 1_000;
+const MAX_RETRY_AFTER_MS = 30_000;
+
+function retryAfterMs(value: string | null, nowMs = Date.now()) {
+  const retryAfter = (value || "").trim();
+  if (/^\d+(?:\.\d+)?$/.test(retryAfter)) return Math.min(MAX_RETRY_AFTER_MS, Math.max(0, Math.ceil(Number(retryAfter) * 1_000)));
+  const retryAt = Date.parse(retryAfter);
+  if (Number.isFinite(retryAt)) return Math.min(MAX_RETRY_AFTER_MS, Math.max(0, retryAt - nowMs));
+  return 1_000;
+}
+
 async function readBoundedText(response: Response, maxBytes = MAX_ACCEPTED_ERROR_BODY_BYTES) {
   const declared = Number(response.headers.get("content-length") || 0);
   if (declared > maxBytes) return null;
@@ -245,11 +256,15 @@ async function acceptedCrawlFailureError(response: Response, expectedPrimaryDoma
 async function requestJson(fetchImpl: FetchLike, url: string, token: string, operation: string, timeoutMs: number, body?: unknown, acceptError?: (response: Response) => Promise<unknown | undefined>, maxAttempts = 2) {
   if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 2) throw new Error("The orchestration HTTP attempt bound is invalid.");
   const deadline = Date.now() + timeoutMs;
-  for (let requestAttempt = 1; requestAttempt <= maxAttempts; requestAttempt += 1) {
+  let transientFailures = 0;
+  let leaseWaitRetries = 0;
+  while (true) {
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) throw new OrchestrationHttpError(operation, 0, true);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), remainingMs);
+    let leaseDelayMs: number | null = null;
+    let retryTransient = false;
     try {
       const response = await fetchImpl(url, {
         method: body === undefined ? "GET" : "POST",
@@ -269,15 +284,34 @@ async function requestJson(fetchImpl: FetchLike, url: string, token: string, ope
       const accepted = acceptError ? await acceptError(response) : undefined;
       if (accepted !== undefined) return accepted;
       const retryable = isRetryableHttpStatus(response.status);
-      if (!retryable || requestAttempt === maxAttempts) throw new OrchestrationHttpError(operation, response.status, retryable);
+      if (response.status === 425) {
+        void response.body?.cancel().catch(() => { /* response cleanup is best effort */ });
+        leaseWaitRetries += 1;
+        if (leaseWaitRetries > MAX_LEASE_WAIT_RETRIES) throw new OrchestrationHttpError(operation, response.status, true);
+        leaseDelayMs = retryAfterMs(response.headers.get("retry-after"));
+      } else {
+        void response.body?.cancel().catch(() => { /* response cleanup is best effort */ });
+        transientFailures += 1;
+        if (!retryable || transientFailures >= maxAttempts) throw new OrchestrationHttpError(operation, response.status, retryable);
+        retryTransient = true;
+      }
     } catch (error) {
       if (error instanceof OrchestrationHttpError) throw error;
-      if (requestAttempt === maxAttempts) throw new OrchestrationHttpError(operation, 0, true);
+      transientFailures += 1;
+      if (transientFailures >= maxAttempts) throw new OrchestrationHttpError(operation, 0, true);
+      retryTransient = true;
     } finally {
       clearTimeout(timeout);
     }
+    if (leaseDelayMs !== null) {
+      const leaseRemainingMs = deadline - Date.now();
+      const boundedDelayMs = Math.max(1, leaseDelayMs);
+      if (boundedDelayMs >= leaseRemainingMs) throw new OrchestrationHttpError(operation, 425, true);
+      await new Promise((resolve) => setTimeout(resolve, boundedDelayMs));
+      continue;
+    }
+    if (retryTransient) continue;
   }
-  throw new OrchestrationHttpError(operation, 0, true);
 }
 
 function requiredObject<T>(value: unknown, operation: string): T {

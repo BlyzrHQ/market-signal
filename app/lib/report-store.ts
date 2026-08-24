@@ -255,6 +255,16 @@ export type ReportMatchBatchCheckpointInput = {
   resultHash?: string;
 };
 
+export type ReportMatchBatchCheckpointReplaceInput = ReportMatchBatchCheckpointInput & {
+  expectedResultHash: string;
+};
+
+export type ReportMatchLeaseInput = {
+  attemptNumber: number;
+  owner: string;
+  ttlMs: number;
+};
+
 export type ReportCreateDiagnostic =
   | "invalid-domain"
   | "storage-unavailable"
@@ -319,6 +329,8 @@ const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS report_fact_manifests (run_id text PRIMARY KEY NOT NULL, manifest_id text NOT NULL, attempt_number integer NOT NULL, manifest_hash text NOT NULL, company_count integer NOT NULL, product_count integer NOT NULL, match_count integer NOT NULL, ad_count integer NOT NULL, status text NOT NULL, lock_owner text NOT NULL, locked_at text NOT NULL, completed_at text NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS report_match_batch_checkpoints (run_id text NOT NULL, attempt_number integer NOT NULL, batch_index integer NOT NULL, input_hash text NOT NULL, result_json text NOT NULL, result_hash text NOT NULL, created_at text NOT NULL, updated_at text NOT NULL, PRIMARY KEY (run_id, attempt_number, batch_index))`,
   `CREATE INDEX IF NOT EXISTS report_match_batch_checkpoints_run_attempt_idx ON report_match_batch_checkpoints (run_id, attempt_number, batch_index)`,
+  `CREATE TABLE IF NOT EXISTS report_match_leases (run_id text NOT NULL REFERENCES report_runs(id) ON DELETE CASCADE, attempt_number integer NOT NULL, owner text NOT NULL CHECK(length(owner) = 32 AND owner NOT GLOB '*[^0-9a-f]*'), expires_at text NOT NULL, updated_at text NOT NULL, PRIMARY KEY (run_id, attempt_number))`,
+  `CREATE INDEX IF NOT EXISTS report_match_leases_expiry_idx ON report_match_leases (expires_at)`,
   `CREATE TABLE IF NOT EXISTS report_evaluations (id text PRIMARY KEY NOT NULL, run_id text NOT NULL, evaluation_type text NOT NULL, input_hash text NOT NULL, fact_manifest_hash text DEFAULT '' NOT NULL, evaluator_version text NOT NULL, rubric_version text NOT NULL, status text NOT NULL, rating_basis text NOT NULL, overall_score integer, user_value_score integer, evidence_integrity_score integer, evidence_yield_score integer, presentation_score integer, deterministic_score integer, grade text, deterministic_json text DEFAULT '{}' NOT NULL, agent_json text DEFAULT '{}' NOT NULL, findings_json text DEFAULT '[]' NOT NULL, proposals_json text DEFAULT '[]' NOT NULL, model text DEFAULT '' NOT NULL, prompt_version text DEFAULT '' NOT NULL, pricing_version text DEFAULT '' NOT NULL, cost_microusd integer, input_tokens integer, cached_input_tokens integer, cache_write_input_tokens integer, output_tokens integer, usage_status text DEFAULT 'not_called' NOT NULL, reserved_cost_microusd integer DEFAULT 0 NOT NULL, error_code text DEFAULT '' NOT NULL, dispatch_attempts integer DEFAULT 0 NOT NULL, deterministic_at text DEFAULT '' NOT NULL, dispatch_started_at text DEFAULT '' NOT NULL, dispatch_token text DEFAULT '' NOT NULL, dispatch_failed_at text DEFAULT '' NOT NULL, watchdog_expired_at text DEFAULT '' NOT NULL, reservation_id text DEFAULT '' NOT NULL, reservation_owner text DEFAULT '' NOT NULL, reserved_at text DEFAULT '' NOT NULL, client_request_id text DEFAULT '' NOT NULL, provider_response_id text DEFAULT '' NOT NULL, provider_request_id text DEFAULT '' NOT NULL, created_at text NOT NULL, started_at text DEFAULT '' NOT NULL, completed_at text DEFAULT '' NOT NULL)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS report_evaluations_identity_uidx ON report_evaluations (run_id, input_hash, evaluator_version, evaluation_type)`,
   `CREATE INDEX IF NOT EXISTS report_evaluations_run_completed_idx ON report_evaluations (run_id, completed_at)`,
@@ -1097,6 +1109,68 @@ export async function saveReportMatchBatchCheckpoint(publicReportId: string, inp
   if (!existing) throw new Error("Report match batch checkpoint attempt is stale or terminal.");
   if (String(existing.input_hash) !== input.inputHash || String(existing.result_hash) !== resultHash || String(existing.result_json) !== resultJson) throw new Error("Report match batch checkpoint replay conflicts with persisted content.");
   return { checkpoint: rowMatchBatchCheckpoint(existing), replayed };
+}
+
+export async function replaceReportMatchBatchCheckpoint(publicReportId: string, input: ReportMatchBatchCheckpointReplaceInput, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error(STORAGE_UNAVAILABLE_MESSAGE);
+  if (!PUBLIC_ID_PATTERN.test(publicReportId)) throw new Error("Invalid report id.");
+  validateMatchBatchCheckpointIdentity(input.attemptNumber, input.batchIndex, input.inputHash);
+  if (!/^[a-f0-9]{64}$/.test(input.expectedResultHash)) throw new Error("Invalid expected report match checkpoint revision.");
+  if (!Number.isFinite(now.getTime())) throw new Error("A valid report match batch checkpoint timestamp is required.");
+  const resultJson = boundedCheckpointResult(input.result);
+  const resultHash = await sha256Text(resultJson);
+  if (input.resultHash !== undefined && input.resultHash !== resultHash) throw new Error("Report match batch checkpoint result hash does not match its content.");
+  await ensureSchema(database);
+  const run = await findRun(database, publicReportId);
+  if (!run) throw new Error("Report not found.");
+  if (input.attemptNumber !== run.attemptCount) throw new Error("Report match batch checkpoint attempt is stale.");
+  if (TERMINAL_REPORT_STATUSES.has(run.status)) throw new Error("A terminal report cannot replace report match batch checkpoints.");
+  const select = () => database.prepare(`SELECT attempt_number, batch_index, input_hash, result_json, result_hash, created_at, updated_at FROM report_match_batch_checkpoints WHERE run_id = ? AND attempt_number = ? AND batch_index = ? LIMIT 1`).bind(run.id, input.attemptNumber, input.batchIndex).all<Record<string, unknown>>();
+  let existing = (await select()).results?.[0];
+  if (!existing) throw new Error("The report match checkpoint to replace was not found.");
+  if (String(existing.input_hash) !== input.inputHash) throw new Error("The report match checkpoint input identity conflicts with persisted content.");
+  if (String(existing.result_hash) === resultHash && String(existing.result_json) === resultJson) return { checkpoint: rowMatchBatchCheckpoint(existing), replayed: true };
+  if (String(existing.result_hash) !== input.expectedResultHash) throw new Error("The report match checkpoint replacement has a stale revision.");
+  await database.prepare(`UPDATE report_match_batch_checkpoints SET result_json = ?, result_hash = ?, updated_at = ? WHERE run_id = ? AND attempt_number = ? AND batch_index = ? AND input_hash = ? AND result_hash = ?`).bind(resultJson, resultHash, now.toISOString(), run.id, input.attemptNumber, input.batchIndex, input.inputHash, input.expectedResultHash).run();
+  existing = (await select()).results?.[0];
+  if (!existing || String(existing.input_hash) !== input.inputHash || String(existing.result_hash) !== resultHash || String(existing.result_json) !== resultJson) throw new Error("The report match checkpoint replacement lost its compare-and-swap race.");
+  return { checkpoint: rowMatchBatchCheckpoint(existing), replayed: false };
+}
+
+function validateReportMatchLeaseInput(input: { attemptNumber: number; owner: string; ttlMs?: number }) {
+  if (!Number.isInteger(input.attemptNumber) || input.attemptNumber < 1) throw new Error("Invalid report match lease attempt.");
+  if (!/^[a-f0-9]{32}$/.test(input.owner)) throw new Error("Invalid report match lease owner.");
+  if (input.ttlMs !== undefined && (!Number.isInteger(input.ttlMs) || input.ttlMs < 1_000 || input.ttlMs > 15 * 60 * 1_000)) throw new Error("Invalid report match lease duration.");
+}
+
+export async function acquireReportMatchLease(publicReportId: string, input: ReportMatchLeaseInput, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error(STORAGE_UNAVAILABLE_MESSAGE);
+  if (!PUBLIC_ID_PATTERN.test(publicReportId)) throw new Error("Invalid report id.");
+  validateReportMatchLeaseInput(input);
+  if (!Number.isFinite(now.getTime())) throw new Error("A valid report match lease timestamp is required.");
+  await ensureSchema(database);
+  const run = await findRun(database, publicReportId);
+  if (!run) throw new Error("Report not found.");
+  if (input.attemptNumber !== run.attemptCount) throw new Error("Report match lease attempt is stale.");
+  if (TERMINAL_REPORT_STATUSES.has(run.status)) throw new Error("A terminal report cannot acquire a report match lease.");
+  const observedAt = now.toISOString();
+  const expiresAt = new Date(now.getTime() + input.ttlMs).toISOString();
+  await database.prepare(`INSERT INTO report_match_leases (run_id, attempt_number, owner, expires_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_id, attempt_number) DO UPDATE SET owner = excluded.owner, expires_at = excluded.expires_at, updated_at = excluded.updated_at WHERE report_match_leases.owner = excluded.owner OR report_match_leases.expires_at <= ?`).bind(run.id, input.attemptNumber, input.owner, expiresAt, observedAt, observedAt).run();
+  const row = (await database.prepare(`SELECT owner, expires_at, updated_at FROM report_match_leases WHERE run_id = ? AND attempt_number = ? LIMIT 1`).bind(run.id, input.attemptNumber).all<Record<string, unknown>>()).results?.[0];
+  return { acquired: String(row?.owner || "") === input.owner, expiresAt: String(row?.expires_at || "") };
+}
+
+export async function releaseReportMatchLease(publicReportId: string, input: { attemptNumber: number; owner: string }, databaseOverride?: D1DatabaseLike | null) {
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error(STORAGE_UNAVAILABLE_MESSAGE);
+  if (!PUBLIC_ID_PATTERN.test(publicReportId)) throw new Error("Invalid report id.");
+  validateReportMatchLeaseInput(input);
+  await ensureSchema(database);
+  const run = await findRun(database, publicReportId);
+  if (!run) return;
+  await database.prepare(`DELETE FROM report_match_leases WHERE run_id = ? AND attempt_number = ? AND owner = ?`).bind(run.id, input.attemptNumber, input.owner).run();
 }
 
 export async function createReportRun(input: { primaryDomain: string; locale?: string; entitlement?: ProductEntitlement; workspaceId?: string; billingReservationId?: string }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {

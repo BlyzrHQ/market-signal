@@ -23,14 +23,18 @@ test("the direct route bypasses the AI matcher and reuses its paid-search checkp
   const token = "direct-route-token-that-is-long-enough";
   let legacyCalls = 0;
   let directCalls = 0;
+  let acquired = 0;
+  let released = 0;
   const saved = [];
+  const lead = { version: 1, primaryProductId: "primary", primarySourceUrl: "https://shop.test/products/primary", completed: true, queries: [], candidates: [] };
+  const priced = { ...lead, version: 2, outcome: { products: [], pagesRequested: 0, pagesFetched: 0, gaps: [] } };
   const handler = createMatchHandler({
     async build() { legacyCalls += 1; throw new Error("legacy matcher must not run"); },
     async buildDirect(_domain, _catalogs, options) {
       directCalls += 1;
       const key = { primaryIndex: 7, inputHash: "a".repeat(64) };
-      assert.deepEqual(await options.loadSearchCheckpoint(key), { version: 1, primaryProductId: "primary", primarySourceUrl: "https://shop.test/products/primary", completed: true, queries: [], candidates: [] });
-      await options.saveSearchCheckpoint(key, { version: 1, primaryProductId: "primary", primarySourceUrl: "https://shop.test/products/primary", completed: true, queries: [], candidates: [] });
+      assert.deepEqual(await options.loadSearchCheckpoint(key), { result: lead, resultHash: "b".repeat(64) });
+      assert.deepEqual(await options.saveSearchCheckpoint(key, priced, "b".repeat(64)), { result: priced, resultHash: "c".repeat(64) });
       return {
         primaryDomain: "shop.test", comparisonDomains: [], rows: [], unmatched: [],
         coverage: { primaryProductsAvailable: 1, primaryProductsScanned: 1, primaryProductFamiliesCompared: 0, competitorProductsAvailable: 0, competitorProductsScanned: 0, assignedPairCount: 0, verifiedPairCount: 0, rowsReturned: 0, rowLimit: 20, truncated: false },
@@ -38,11 +42,17 @@ test("the direct route bypasses the AI matcher and reuses its paid-search checkp
       };
     },
     async loadCheckpoints(_publicId, input) {
-      assert.equal(input.batchIndex, 4_007);
-      return [{ inputHash: "a".repeat(64), result: { version: 1, primaryProductId: "primary", primarySourceUrl: "https://shop.test/products/primary", completed: true, queries: [], candidates: [] } }];
+      assert.deepEqual({ start: input.batchIndexStart, end: input.batchIndexEnd, latest: input.latestPerBatch }, { start: 4_000, end: 4_999, latest: true });
+      return [{ attemptNumber: 1, batchIndex: 4_007, inputHash: "a".repeat(64), resultHash: "b".repeat(64), result: lead, createdAt: "2026-08-23T10:00:00.000Z", updatedAt: "2026-08-23T10:00:00.000Z" }];
     },
-    async saveCheckpoint(_publicId, input) { saved.push(input); },
+    async saveCheckpoint() { throw new Error("the existing lead must be replaced with CAS"); },
+    async replaceCheckpoint(_publicId, input) {
+      saved.push(input);
+      return { checkpoint: { attemptNumber: 1, batchIndex: input.batchIndex, inputHash: input.inputHash, result: input.result, resultHash: "c".repeat(64), createdAt: "", updatedAt: "" }, replayed: false };
+    },
     async loadEntitlement() { return { plan: "starter", productLimit: 20, reportObservedAt: "2026-08-23T10:00:00.000Z" }; },
+    async acquireLease() { acquired += 1; return { acquired: true, expiresAt: "2026-08-23T10:13:00.000Z" }; },
+    async releaseLease() { released += 1; },
   }, token);
   const response = await handler(new Request("https://signal.test/api/match", {
     method: "POST",
@@ -56,7 +66,174 @@ test("the direct route bypasses the AI matcher and reuses its paid-search checkp
   assert.equal(response.status, 200);
   assert.equal(legacyCalls, 0);
   assert.equal(directCalls, 1);
+  assert.equal(acquired, 1);
+  assert.equal(released, 1);
   assert.equal(saved[0].batchIndex, 4_007);
+  assert.equal(saved[0].expectedResultHash, "b".repeat(64));
+});
+
+test("the direct route adopts a prior-attempt paid checkpoint before replacing it", async () => {
+  const token = "direct-route-token-that-is-long-enough";
+  const lead = { version: 1, primaryProductId: "primary", primarySourceUrl: "https://shop.test/products/primary", completed: true, queries: [], candidates: [] };
+  const priced = { ...lead, version: 2, outcome: { products: [], pagesRequested: 0, pagesFetched: 0, gaps: [] } };
+  const writes = [];
+  const handler = createMatchHandler({
+    async buildDirect(_domain, _catalogs, options) {
+      const key = { primaryIndex: 7, inputHash: "a".repeat(64) };
+      assert.deepEqual(await options.loadSearchCheckpoint(key), { result: lead, resultHash: "b".repeat(64) });
+      assert.deepEqual(await options.saveSearchCheckpoint(key, priced, "b".repeat(64)), { result: priced, resultHash: "c".repeat(64) });
+      return {};
+    },
+    async loadCheckpoints() {
+      return [{ attemptNumber: 1, batchIndex: 4_007, inputHash: "a".repeat(64), resultHash: "b".repeat(64), result: lead, createdAt: "2026-08-23T10:00:00.000Z", updatedAt: "2026-08-23T10:00:00.000Z" }];
+    },
+    async saveCheckpoint(_publicId, input) {
+      writes.push({ operation: "save", ...input });
+      return { checkpoint: { ...input, resultHash: "b".repeat(64), createdAt: "", updatedAt: "" }, replayed: false };
+    },
+    async replaceCheckpoint(_publicId, input) {
+      writes.push({ operation: "replace", ...input });
+      return { checkpoint: { ...input, resultHash: "c".repeat(64), createdAt: "", updatedAt: "" }, replayed: false };
+    },
+    async loadEntitlement() { return { plan: "starter", productLimit: 20, reportObservedAt: "2026-08-23T10:00:00.000Z" }; },
+    async acquireLease() { return { acquired: true, expiresAt: "2026-08-23T10:13:00.000Z" }; },
+    async releaseLease() {},
+  }, token);
+  const response = await handler(new Request("https://signal.test/api/match", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      publicId: "d".repeat(32), reportAttempt: 2, taskAttemptNumber: 1, reportObservedAt: "2026-08-23T10:00:00.000Z",
+      primaryDomain: "shop.test", productLimit: 20, matchingMode: "direct-product-search",
+      catalogs: [{ domain: "shop.test", products: [{ id: "primary", name: "Honey", sourceUrl: "https://shop.test/products/primary" }] }],
+    }),
+  }));
+  assert.equal(response.status, 200);
+  assert.deepEqual(writes.map(({ operation, attemptNumber, batchIndex, result, expectedResultHash }) => ({ operation, attemptNumber, batchIndex, version: result.version, expectedResultHash })), [
+    { operation: "save", attemptNumber: 2, batchIndex: 4_007, version: 1, expectedResultHash: undefined },
+    { operation: "replace", attemptNumber: 2, batchIndex: 4_007, version: 2, expectedResultHash: "b".repeat(64) },
+  ]);
+});
+
+test("catalog drift allocates a free stable checkpoint slot instead of failing on position mismatch", async () => {
+  const token = "direct-route-token-that-is-long-enough";
+  const oldLead = { version: 1, primaryProductId: "old", primarySourceUrl: "https://shop.test/products/old", completed: true, queries: [], candidates: [] };
+  const newLead = { version: 1, primaryProductId: "new", primarySourceUrl: "https://shop.test/products/new", completed: true, queries: [], candidates: [] };
+  const writes = [];
+  const handler = createMatchHandler({
+    async buildDirect(_domain, _catalogs, options) {
+      const key = { primaryIndex: 7, inputHash: "a".repeat(64) };
+      assert.equal(await options.loadSearchCheckpoint(key), null);
+      await options.saveSearchCheckpoint(key, newLead);
+      return {};
+    },
+    async loadCheckpoints() {
+      return [{ attemptNumber: 1, batchIndex: 4_007, inputHash: "f".repeat(64), resultHash: "e".repeat(64), result: oldLead, createdAt: "", updatedAt: "" }];
+    },
+    async saveCheckpoint(_publicId, input) {
+      writes.push(input);
+      return { checkpoint: { ...input, resultHash: "c".repeat(64), createdAt: "", updatedAt: "" }, replayed: false };
+    },
+    async loadEntitlement() { return { plan: "starter", productLimit: 20, reportObservedAt: "2026-08-23T10:00:00.000Z" }; },
+    async acquireLease() { return { acquired: true, expiresAt: "2026-08-23T10:13:00.000Z" }; },
+    async releaseLease() {},
+  }, token);
+  const response = await handler(new Request("https://signal.test/api/match", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      publicId: "d".repeat(32), reportAttempt: 1, taskAttemptNumber: 1, reportObservedAt: "2026-08-23T10:00:00.000Z",
+      primaryDomain: "shop.test", productLimit: 20, matchingMode: "direct-product-search",
+      catalogs: [{ domain: "shop.test", products: [{ id: "new", name: "Honey", sourceUrl: "https://shop.test/products/new" }] }],
+    }),
+  }));
+  assert.equal(response.status, 200);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].batchIndex, 4_000);
+  assert.equal(writes[0].inputHash, "a".repeat(64));
+});
+
+test("a semantically invalid current checkpoint can be repaired with compare-and-swap", async () => {
+  const token = "direct-route-token-that-is-long-enough";
+  const invalid = { version: 2, primaryProductId: "primary", primarySourceUrl: "https://shop.test/products/primary", completed: true, queries: [], candidates: [], outcome: { products: [{ sourceUrl: "https://seller.test/no-price" }], pagesRequested: 1, pagesFetched: 1, gaps: [] } };
+  const repaired = { version: 1, primaryProductId: "primary", primarySourceUrl: "https://shop.test/products/primary", completed: true, queries: [], candidates: [] };
+  const replacements = [];
+  const handler = createMatchHandler({
+    async buildDirect(_domain, _catalogs, options) {
+      const key = { primaryIndex: 0, inputHash: "a".repeat(64) };
+      assert.deepEqual(await options.loadSearchCheckpoint(key), { result: invalid, resultHash: "b".repeat(64) });
+      await options.saveSearchCheckpoint(key, repaired);
+      return {};
+    },
+    async loadCheckpoints() {
+      return [{ attemptNumber: 1, batchIndex: 4_000, inputHash: "a".repeat(64), resultHash: "b".repeat(64), result: invalid, createdAt: "", updatedAt: "" }];
+    },
+    async replaceCheckpoint(_publicId, input) {
+      replacements.push(input);
+      return { checkpoint: { ...input, resultHash: "c".repeat(64), createdAt: "", updatedAt: "" }, replayed: false };
+    },
+    async loadEntitlement() { return { plan: "starter", productLimit: 20, reportObservedAt: "2026-08-23T10:00:00.000Z" }; },
+    async acquireLease() { return { acquired: true, expiresAt: "2026-08-23T10:13:00.000Z" }; },
+    async releaseLease() {},
+  }, token);
+  const response = await handler(new Request("https://signal.test/api/match", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      publicId: "d".repeat(32), reportAttempt: 1, taskAttemptNumber: 1, reportObservedAt: "2026-08-23T10:00:00.000Z",
+      primaryDomain: "shop.test", productLimit: 20, matchingMode: "direct-product-search",
+      catalogs: [{ domain: "shop.test", products: [{ id: "primary", name: "Honey", sourceUrl: "https://shop.test/products/primary" }] }],
+    }),
+  }));
+  assert.equal(response.status, 200);
+  assert.equal(replacements.length, 1);
+  assert.equal(replacements[0].expectedResultHash, "b".repeat(64));
+  assert.equal(replacements[0].result.version, 1);
+});
+
+test("lease release failure cannot replace a successful direct comparison response", async () => {
+  const token = "direct-route-token-that-is-long-enough";
+  const handler = createMatchHandler({
+    async buildDirect() { return { ok: true }; },
+    async loadCheckpoints() { return []; },
+    async loadEntitlement() { return { plan: "starter", productLimit: 20, reportObservedAt: "2026-08-23T10:00:00.000Z" }; },
+    async acquireLease() { return { acquired: true, expiresAt: "2026-08-23T10:13:00.000Z" }; },
+    async releaseLease() { throw new Error("cleanup unavailable"); },
+  }, token);
+  const response = await handler(new Request("https://signal.test/api/match", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      publicId: "d".repeat(32), reportAttempt: 1, taskAttemptNumber: 1, reportObservedAt: "2026-08-23T10:00:00.000Z",
+      primaryDomain: "shop.test", productLimit: 20, matchingMode: "direct-product-search",
+      catalogs: [{ domain: "shop.test", products: [{ id: "primary", name: "Honey", sourceUrl: "https://shop.test/products/primary" }] }],
+    }),
+  }));
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).comparison, { ok: true });
+});
+
+test("an overlapping direct route is rejected before any paid comparison work", async () => {
+  const token = "direct-route-token-that-is-long-enough";
+  let directCalls = 0;
+  const handler = createMatchHandler({
+    async buildDirect() { directCalls += 1; throw new Error("must not start"); },
+    async loadEntitlement() { return { plan: "starter", productLimit: 20, reportObservedAt: "2026-08-23T10:00:00.000Z" }; },
+    async acquireLease() { return { acquired: false, expiresAt: "2026-08-23T10:13:00.000Z" }; },
+  }, token);
+  const response = await handler(new Request("https://signal.test/api/match", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      publicId: "d".repeat(32), reportAttempt: 1, taskAttemptNumber: 1, reportObservedAt: "2026-08-23T10:00:00.000Z",
+      primaryDomain: "shop.test", productLimit: 20, matchingMode: "direct-product-search",
+      catalogs: [{ domain: "shop.test", products: [{ id: "primary", name: "Honey", sourceUrl: "https://shop.test/products/primary" }] }],
+    }),
+  }));
+
+  assert.equal(response.status, 425);
+  assert.equal(response.headers.get("retry-after"), "5");
+  assert.equal(directCalls, 0);
 });
 
 test("AI matching input keeps a broad but bounded first-party catalog", () => {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { appendReportEvent, compactReportDocument, createReportRun, createReportRunResult, getStoredReport, loadReportMatchBatchCheckpoints, markReportDispatched, MAX_REPORT_DOCUMENT_BYTES, MAX_REPORT_MATCH_BATCH_RESULT_BYTES, recoverInterruptedReport, reportStorageDiagnosticCode, ReportStorageError, saveReportDocument, saveReportMatchBatchCheckpoint } from "../app/lib/report-store.ts";
+import { acquireReportMatchLease, appendReportEvent, compactReportDocument, createReportRun, createReportRunResult, getStoredReport, loadReportMatchBatchCheckpoints, markReportDispatched, MAX_REPORT_DOCUMENT_BYTES, MAX_REPORT_MATCH_BATCH_RESULT_BYTES, recoverInterruptedReport, releaseReportMatchLease, replaceReportMatchBatchCheckpoint, reportStorageDiagnosticCode, ReportStorageError, saveReportDocument, saveReportMatchBatchCheckpoint } from "../app/lib/report-store.ts";
 import { directSearchCheckpointIndex } from "../app/api/match/route.ts";
 import { MAX_REPORT_ATTEMPTS, MAX_REPORT_MATCH_CHECKPOINTS_PER_ATTEMPT } from "../src/shared/report-orchestration-contract.ts";
 import { encodedJsonBytes, REPORT_CALLBACK_ENVELOPE_BYTES } from "../src/shared/report-document-compaction.ts";
@@ -88,6 +88,10 @@ class CheckpointStatement {
       const [runId, attemptNumber, batchIndex] = this.values;
       return { results: this.database.checkpoints.filter((row) => row.run_id === runId && row.attempt_number === attemptNumber && (batchIndex === undefined || row.batch_index === batchIndex)).sort((left, right) => left.batch_index - right.batch_index) };
     }
+    if (this.query.includes("FROM report_match_leases")) {
+      const [runId, attemptNumber] = this.values;
+      return { results: this.database.leases.filter((row) => row.run_id === runId && row.attempt_number === attemptNumber).slice(0, 1) };
+    }
     return { results: [] };
   }
   async run() {
@@ -97,6 +101,18 @@ class CheckpointStatement {
       const run = this.database.runs.find((row) => row.id === v[8] && row.attempt_count === v[9] && !["complete", "limited", "failed", "interrupted"].includes(row.status));
       const existing = this.database.checkpoints.find((row) => row.run_id === v[0] && row.attempt_number === v[1] && row.batch_index === v[2]);
       if (run && !existing) this.database.checkpoints.push({ run_id: v[0], attempt_number: v[1], batch_index: v[2], input_hash: v[3], result_json: v[4], result_hash: v[5], created_at: v[6], updated_at: v[7] });
+    } else if (this.query.startsWith("UPDATE report_match_batch_checkpoints")) {
+      const v = this.values;
+      const existing = this.database.checkpoints.find((row) => row.run_id === v[3] && row.attempt_number === v[4] && row.batch_index === v[5] && row.input_hash === v[6] && row.result_hash === v[7]);
+      if (existing) Object.assign(existing, { result_json: v[0], result_hash: v[1], updated_at: v[2] });
+    } else if (this.query.startsWith("INSERT INTO report_match_leases")) {
+      const v = this.values;
+      const existing = this.database.leases.find((row) => row.run_id === v[0] && row.attempt_number === v[1]);
+      if (!existing) this.database.leases.push({ run_id: v[0], attempt_number: v[1], owner: v[2], expires_at: v[3], updated_at: v[4] });
+      else if (existing.owner === v[2] || existing.expires_at <= v[5]) Object.assign(existing, { owner: v[2], expires_at: v[3], updated_at: v[4] });
+    } else if (this.query.startsWith("DELETE FROM report_match_leases")) {
+      const [runId, attemptNumber, owner] = this.values;
+      this.database.leases = this.database.leases.filter((row) => row.run_id !== runId || row.attempt_number !== attemptNumber || row.owner !== owner);
     }
     return {};
   }
@@ -107,6 +123,7 @@ class CheckpointDatabase {
     this.publicId = "a".repeat(32);
     this.runs = [{ id: "run-checkpoint", public_id: this.publicId, primary_domain: "example.com", locale: "en", status, current_phase: "matching", attempt_count: attemptCount, created_at: "2026-08-07T00:00:00.000Z", updated_at: "2026-08-07T00:00:00.000Z", heartbeat_at: "2026-08-07T00:00:00.000Z", expires_at: "2026-11-07T00:00:00.000Z", error_code: "", error_message: "" }];
     this.checkpoints = [];
+    this.leases = [];
     this.queries = [];
   }
   prepare(query) { return new CheckpointStatement(this, query); }
@@ -128,6 +145,44 @@ test("match batch checkpoints persist bounded canonical results and replay idemp
   assert.deepEqual(loaded[0].result, { matches: [{ id: "p-1", score: 0.9 }], usage: { input: 34, output: 12 } });
   database.checkpoints[0].result_json = JSON.stringify({ matches: [{ id: "tampered" }] });
   await assert.rejects(() => loadReportMatchBatchCheckpoints(database.publicId, { attemptNumber: 1, batchIndex: 0 }, database), /integrity validation/);
+});
+
+test("direct comparison outcomes replace paid-lead checkpoints only with the expected revision", async () => {
+  const database = new CheckpointDatabase();
+  const inputHash = "6".repeat(64);
+  const saved = await saveReportMatchBatchCheckpoint(database.publicId, { attemptNumber: 1, batchIndex: 4_000, inputHash, result: { version: 1, candidates: ["lead"] } }, new Date("2026-08-07T00:01:00.000Z"), database);
+  const replaced = await replaceReportMatchBatchCheckpoint(database.publicId, {
+    attemptNumber: 1,
+    batchIndex: 4_000,
+    inputHash,
+    expectedResultHash: saved.checkpoint.resultHash,
+    result: { version: 2, candidates: ["lead"], outcome: { products: ["priced"] } },
+  }, new Date("2026-08-07T00:02:00.000Z"), database);
+
+  assert.equal(replaced.replayed, false);
+  assert.equal(replaced.checkpoint.result.version, 2);
+  await assert.rejects(() => replaceReportMatchBatchCheckpoint(database.publicId, {
+    attemptNumber: 1,
+    batchIndex: 4_000,
+    inputHash,
+    expectedResultHash: saved.checkpoint.resultHash,
+    result: { version: 2, outcome: { products: ["stale"] } },
+  }, new Date("2026-08-07T00:03:00.000Z"), database), /stale revision/i);
+  assert.deepEqual((await loadReportMatchBatchCheckpoints(database.publicId, { attemptNumber: 1, batchIndex: 4_000 }, database))[0].result.outcome.products, ["priced"]);
+});
+
+test("direct matcher lease is single-writer, expires, and releases only for its owner", async () => {
+  const database = new CheckpointDatabase();
+  const firstOwner = "a".repeat(32);
+  const secondOwner = "b".repeat(32);
+  const start = new Date("2026-08-07T00:00:00.000Z");
+  assert.equal((await acquireReportMatchLease(database.publicId, { attemptNumber: 1, owner: firstOwner, ttlMs: 60_000 }, start, database)).acquired, true);
+  assert.equal((await acquireReportMatchLease(database.publicId, { attemptNumber: 1, owner: secondOwner, ttlMs: 60_000 }, new Date("2026-08-07T00:00:30.000Z"), database)).acquired, false);
+  await releaseReportMatchLease(database.publicId, { attemptNumber: 1, owner: secondOwner }, database);
+  assert.equal(database.leases[0].owner, firstOwner);
+  assert.equal((await acquireReportMatchLease(database.publicId, { attemptNumber: 1, owner: secondOwner, ttlMs: 60_000 }, new Date("2026-08-07T00:01:01.000Z"), database)).acquired, true);
+  await releaseReportMatchLease(database.publicId, { attemptNumber: 1, owner: secondOwner }, database);
+  assert.equal(database.leases.length, 0);
 });
 
 test("the real checkpoint store accepts the complete direct-search namespace", async () => {
