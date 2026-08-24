@@ -1,11 +1,12 @@
 import { buildAIProductComparison, candidatePairKeysFromPlan, MAX_JUDGE_CANDIDATE_PAIRS, PRODUCT_CANDIDATE_PLAN_BATCH_INDEX, type JudgeBatchCheckpoint, type JudgeBatchCheckpointKey, type PinnedProductPair, type ProductCandidatePlan, type ProductCandidatePlanKey } from "../../lib/ai-product-matching.ts";
-import { buildDirectProductSearchComparison, type DirectProductSearchCheckpoint, type DirectProductSearchCheckpointKey } from "../../lib/direct-product-search.ts";
+import { randomBytes } from "node:crypto";
+import { buildDirectProductSearchComparison, type DirectProductSearchCheckpoint, type DirectProductSearchCheckpointKey, type DirectProductSearchCheckpointRecord } from "../../lib/direct-product-search.ts";
 import { canonicalDomain, normalizeDomain } from "../../lib/domain.ts";
 import { hasValidInternalAuthorization, unauthorizedInternalResponse } from "../../lib/internal-auth.ts";
 import type { ProductRecord } from "../../lib/product-intelligence.ts";
 import { canonicalGtin, parseCanonicalQuantity, type ProductIdentifiers } from "../../lib/product-normalization.ts";
 import { publicHttpUrl } from "../../lib/public-url.ts";
-import { loadReportMatchBatchCheckpoints, loadReportProductEntitlement, saveReportMatchBatchCheckpoint } from "../../lib/report-store.ts";
+import { acquireReportMatchLease, loadReportMatchBatchCheckpoints, loadReportProductEntitlement, releaseReportMatchLease, replaceReportMatchBatchCheckpoint, saveReportMatchBatchCheckpoint } from "../../lib/report-store.ts";
 import { workerOnlyResponse } from "../../lib/process-role.ts";
 
 // One primary catalog plus the complete bounded attempt wave: up to 1,200
@@ -25,6 +26,9 @@ const JUDGE_CHECKPOINT_BASE = 1_400;
 const PLAN_CHECKPOINT_BASE = 3_900;
 const DIRECT_SEARCH_CHECKPOINT_BASE = 4_000;
 const MAX_DIRECT_SEARCH_CHECKPOINTS = 1_000;
+const DIRECT_MATCH_MAX_NEW_PRIMARIES = 100;
+const DIRECT_MATCH_WORK_BUDGET_MS = 8 * 60 * 1_000;
+const DIRECT_MATCH_LEASE_TTL_MS = 13 * 60 * 1_000;
 
 export function directSearchCheckpointIndex(primaryIndex: number) {
   if (!Number.isInteger(primaryIndex) || primaryIndex < 0 || primaryIndex >= MAX_DIRECT_SEARCH_CHECKPOINTS) throw new Error("The direct product-search checkpoint index exceeds its bounded primary catalog.");
@@ -273,7 +277,10 @@ type MatchServices = {
   buildDirect: typeof buildDirectProductSearchComparison;
   loadCheckpoints: typeof loadReportMatchBatchCheckpoints;
   saveCheckpoint: typeof saveReportMatchBatchCheckpoint;
+  replaceCheckpoint: typeof replaceReportMatchBatchCheckpoint;
   loadEntitlement: typeof loadReportProductEntitlement;
+  acquireLease: typeof acquireReportMatchLease;
+  releaseLease: typeof releaseReportMatchLease;
 };
 
 const liveServices: MatchServices = {
@@ -281,7 +288,10 @@ const liveServices: MatchServices = {
   buildDirect: buildDirectProductSearchComparison,
   loadCheckpoints: loadReportMatchBatchCheckpoints,
   saveCheckpoint: saveReportMatchBatchCheckpoint,
+  replaceCheckpoint: replaceReportMatchBatchCheckpoint,
   loadEntitlement: loadReportProductEntitlement,
+  acquireLease: acquireReportMatchLease,
+  releaseLease: releaseReportMatchLease,
 };
 
 export function createMatchHandler(serviceOverrides: Partial<MatchServices> = {}, expectedToken?: string) {
@@ -313,29 +323,59 @@ export function createMatchHandler(serviceOverrides: Partial<MatchServices> = {}
       const primaryCatalogSize = catalogs.find((catalog) => catalog.domain === primaryDomain)?.products.length || 0;
       const maxPrimaryProducts = Math.min(productBackfillPoolSize(resultTarget), primaryCatalogSize);
       if (directProductSearch) {
-        const checkpointOptions = hasReportAttempt ? {
-          loadSearchCheckpoint: async (key: DirectProductSearchCheckpointKey) => {
-            const checkpoints = await services.loadCheckpoints(publicId, { attemptNumber: reportAttempt, batchIndex: directSearchCheckpointIndex(key.primaryIndex) });
-            const checkpoint = checkpoints[0];
-            return checkpoint?.inputHash === key.inputHash ? checkpoint.result : null;
-          },
-          saveSearchCheckpoint: async (key: DirectProductSearchCheckpointKey, checkpoint: DirectProductSearchCheckpoint) => {
-            await services.saveCheckpoint(publicId, {
-              attemptNumber: reportAttempt,
-              batchIndex: directSearchCheckpointIndex(key.primaryIndex),
-              inputHash: key.inputHash,
-              result: checkpoint,
-            });
-          },
-        } : {};
-        const comparison = await services.buildDirect(primaryDomain, catalogs, {
-          resultTarget,
-          maxPrimaryProducts,
-          referenceTimeMs: Date.now(),
-          marketCountryCode,
-          ...checkpointOptions,
-        });
-        return Response.json({ ok: true, comparison });
+        const leaseOwner = hasReportAttempt ? randomBytes(16).toString("hex") : "";
+        if (hasReportAttempt) {
+          const lease = await services.acquireLease(publicId, { attemptNumber: reportAttempt, owner: leaseOwner, ttlMs: DIRECT_MATCH_LEASE_TTL_MS });
+          if (!lease.acquired) return Response.json({ ok: false, error: "Another product comparison request is still committing durable progress." }, { status: 425, headers: { "Retry-After": "5" } });
+        }
+        try {
+          const loadedCheckpointRows = hasReportAttempt ? await services.loadCheckpoints(publicId, {
+            attemptNumber: reportAttempt,
+            batchIndexStart: DIRECT_SEARCH_CHECKPOINT_BASE,
+            batchIndexEnd: DIRECT_SEARCH_CHECKPOINT_BASE + MAX_DIRECT_SEARCH_CHECKPOINTS - 1,
+            latestPerBatch: true,
+          }) : [];
+          const loadedCheckpoints = new Map(loadedCheckpointRows.map((checkpoint) => [checkpoint.batchIndex, checkpoint]));
+          const checkpointOptions = hasReportAttempt ? {
+            loadSearchCheckpoint: async (key: DirectProductSearchCheckpointKey) => {
+              const checkpoint = loadedCheckpoints.get(directSearchCheckpointIndex(key.primaryIndex));
+              if (!checkpoint) return null;
+              if (checkpoint.inputHash !== key.inputHash) throw new Error("The direct product-search checkpoint conflicts with the current catalog identity.");
+              return { result: checkpoint.result, resultHash: checkpoint.resultHash };
+            },
+            saveSearchCheckpoint: async (key: DirectProductSearchCheckpointKey, checkpoint: DirectProductSearchCheckpoint, expectedResultHash?: string): Promise<DirectProductSearchCheckpointRecord> => {
+              const batchIndex = directSearchCheckpointIndex(key.primaryIndex);
+              const saved = expectedResultHash
+                ? await services.replaceCheckpoint(publicId, {
+                  attemptNumber: reportAttempt,
+                  batchIndex,
+                  inputHash: key.inputHash,
+                  expectedResultHash,
+                  result: checkpoint,
+                })
+                : await services.saveCheckpoint(publicId, {
+                  attemptNumber: reportAttempt,
+                  batchIndex,
+                  inputHash: key.inputHash,
+                  result: checkpoint,
+                });
+              loadedCheckpoints.set(batchIndex, saved.checkpoint);
+              return { result: saved.checkpoint.result, resultHash: saved.checkpoint.resultHash };
+            },
+          } : {};
+          const comparison = await services.buildDirect(primaryDomain, catalogs, {
+            resultTarget,
+            maxPrimaryProducts,
+            maxNewPrimaryProducts: DIRECT_MATCH_MAX_NEW_PRIMARIES,
+            maxWorkMs: DIRECT_MATCH_WORK_BUDGET_MS,
+            referenceTimeMs: Date.parse(reportObservedAt) || Date.now(),
+            marketCountryCode,
+            ...checkpointOptions,
+          });
+          return Response.json({ ok: true, comparison });
+        } finally {
+          if (hasReportAttempt) await services.releaseLease(publicId, { attemptNumber: reportAttempt, owner: leaseOwner });
+        }
       }
       const priorCandidatePairKeys = hasReportAttempt ? await (async () => {
         const currentPlanIndex = persistedCheckpointIndex(taskAttemptNumber, PRODUCT_CANDIDATE_PLAN_BATCH_INDEX);
