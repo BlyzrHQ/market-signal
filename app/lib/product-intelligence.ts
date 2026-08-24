@@ -1554,7 +1554,9 @@ function slugAnchoredIdentityAlignment(product: ProductRecord, candidate: Produc
   let slugName = "";
   try {
     const segments = new URL(product.sourceUrl).pathname.split("/").filter(Boolean);
-    slugName = decodeURIComponent(segments.at(-1) || "").replace(/[-_]+/g, " ");
+    slugName = decodeURIComponent(segments.at(-1) || "")
+      .replace(/\.(?:html?|aspx?)$/i, "")
+      .replace(/[-_]+/g, " ");
   } catch { return null; }
   if (!slugName) return null;
   const slugRecord = { ...product, name: slugName, normalizedName: bilingualNormalize(slugName), description: "", attributes: [] };

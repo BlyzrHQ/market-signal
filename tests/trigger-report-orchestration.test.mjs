@@ -519,6 +519,7 @@ test("the current contract crawls only the primary catalog and publishes priced 
   assert.equal(result.reportStatus, "complete");
   assert.equal(crawlInput.directProductSearch, true);
   assert.equal(matchInput.matchingMode, "direct-product-search");
+  assert.equal(Object.hasOwn(matchInput, "marketCountryCode"), false);
   assert.equal(Object.hasOwn(matchInput, "pinnedPairs"), false);
   const matchFacts = port.factChunks.filter((chunk) => chunk.kind === "matches").flatMap((chunk) => chunk.items);
   assert.equal(matchFacts.length, 20);

@@ -613,6 +613,83 @@ test("replaces a zero structured placeholder with positive scoped visible eviden
   }
 });
 
+test("accepts one exact X-Cart product analytics price on a root HTML product page", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    const action = JSON.stringify({
+      "ga-type": "addProduct",
+      data: {
+        id: "CNB2 -CAT 1",
+        name: "Bulwark NOMEX® IIIA 4.5 oz Flame Resistant Deluxe Coverall",
+        category: "Flame Resistant Clothing/FR Coveralls",
+        brand: "Bulwark",
+        price: 232.99,
+      },
+    }).replace(/"/g, "&quot;");
+    const settings = JSON.stringify({ currency: "USD" }).replace(/"/g, "&quot;");
+    return new Response(`<html><head><title>Bulwark NOMEX® IIIA 4.5 oz Flame Resistant Deluxe Coverall</title></head><body>
+      <div data-ga-ec-action="${JSON.stringify({ "ga-type": "viewItem", data: { price: 8.95 } }).replace(/"/g, "&quot;")}"></div>
+      <div class="product-details product-info-16539 box-product" data-ga-ec-action="${action}">
+        <span class="price product-price">$232.99</span>
+      </div>
+      <script data-settings="${settings}"></script>
+    </body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const sourceUrl = "https://workingclassclothes.test/nomexA-iiia-4.5-oz-flame-resistant-deluxe-coverall.html";
+    const result = await enrichProductTargets([target({
+      domain: "workingclassclothes.test",
+      productId: "wearform-nomex-coverall",
+      expectedName: "Men's Deluxe Nomex IIIA 4.5 oz Flame Resistant Coverall",
+      sourceUrl,
+      role: "rival",
+      marketCountryCode: "US",
+    })], 1);
+    assert.equal(result.coverage.pagesFetched, 1, JSON.stringify(result));
+    assert.equal(result.coverage.gaps.length, 0);
+    assert.equal(result.products.length, 1, JSON.stringify(result));
+    assert.equal(result.products[0].sourceUrl, sourceUrl);
+    assert.equal(result.products[0].name, "Bulwark NOMEX® IIIA 4.5 oz Flame Resistant Deluxe Coverall");
+    assert.deepEqual(result.products[0].priceSignals, [{ raw: "USD 232.99", currency: "USD", amount: 232.99 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("rejects ambiguous, currency-less, and listing-page product analytics prices", async () => {
+  const originalFetch = globalThis.fetch;
+  const product = (name, price, currency = "") => ({
+    "ga-type": "addProduct",
+    data: { id: name, name, price, ...(currency ? { currency } : {}) },
+  });
+  const pages = new Map([
+    ["/missing-currency.html", { actions: [product("Market Jacket", 120)], settings: [] }],
+    ["/ambiguous-product.html", { actions: [product("Market Jacket", 120), product("Second Jacket", 99)], settings: ["USD"] }],
+    ["/conflicting-currency.html", { actions: [product("Market Jacket", 120, "EUR")], settings: ["USD"] }],
+    ["/unsupported-currency.html", { actions: [product("Market Jacket", 120, "ZZZ")], settings: ["USD"] }],
+    ["/search-results.html", { actions: [product("Market Jacket", 120)], settings: ["USD"] }],
+  ]);
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/robots.txt") return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    const page = pages.get(url.pathname);
+    const actions = (page?.actions || []).map((action) => `<div class="product-details" data-ga-ec-action="${JSON.stringify(action).replace(/"/g, "&quot;")}"><span class="product-price">$${action.data.price}</span></div>`).join("");
+    const settings = (page?.settings || []).map((currency) => `<script data-settings="${JSON.stringify({ currency }).replace(/"/g, "&quot;")}"></script>`).join("");
+    return new Response(`<html><head><title>Market Jacket</title></head><body>${actions}${settings}</body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    for (const path of pages.keys()) {
+      const result = await enrichProductTargets([target({ expectedName: "Market Jacket", sourceUrl: `https://shop.test${path}` })], 1);
+      assert.equal(result.products.length, 0, path);
+      assert.equal(result.coverage.gaps[0]?.code, "identity_mismatch", path);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("uses the matched product currency instead of an unrelated structured product currency", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {

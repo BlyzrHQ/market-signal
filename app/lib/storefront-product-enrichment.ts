@@ -298,6 +298,93 @@ function htmlAttributeValue(tag: string, attributeName: string) {
   return "";
 }
 
+function isSelectedProductDetailPage(value: string) {
+  try {
+    const path = decodeURIComponent(new URL(value).pathname).replace(/\/+$/, "");
+    if (!path || path === "/" || /\/(?:collections?|catalog)(?:\/|$)/i.test(path)) return false;
+    if (/\/(?:products?|shop|store)\//i.test(path)) return true;
+    const segments = path.split("/").filter(Boolean);
+    const tail = segments.at(-1) || "";
+    if (!/\.(?:html?|aspx?)$/i.test(tail)) return false;
+    if (!segments.slice(0, -1).every((segment) => /^[a-z]{2,3}(?:-[a-z]{2})?$/i.test(segment))) return false;
+    const stem = tail.replace(/\.(?:html?|aspx?)$/i, "");
+    return !/^(?:search(?:[-_]?results?)?|results?|listing|list|product[-_]?list|browse|catalog|collections?|categories?|index|all)(?:[-_].*)?$/i.test(stem);
+  } catch {
+    return false;
+  }
+}
+
+function embeddedProductAnalyticsRecord(
+  document: string,
+  sourceUrl: string,
+  domain: string,
+  productId: string,
+  observedAt: string,
+): ProductRecord | null {
+  if (!isSelectedProductDetailPage(sourceUrl)) return null;
+  const tags = htmlTagSpans(document).filter((tag) => !tag.closing);
+  const actions = tags.flatMap((tag) => {
+    const raw = htmlAttributeValue(tag.raw, "data-ga-ec-action");
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(decodeEvidence(raw));
+      if (!parsed || parsed["ga-type"] !== "addProduct" || !parsed.data || typeof parsed.data !== "object") return [];
+      const name = text(parsed.data.name, 300);
+      const reference = text(parsed.data.id, 160);
+      const amount = parsed.data.price;
+      if (!name || !reference || typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) return [];
+      return [{
+        name,
+        reference,
+        amount,
+        category: text(parsed.data.category, 200),
+        brand: text(parsed.data.brand, 160),
+        currency: text(parsed.data.currency, 3).toUpperCase(),
+      }];
+    } catch {
+      return [];
+    }
+  });
+  if (actions.length !== 1) return null;
+  if (actions[0].currency && !isSupportedCurrency(actions[0].currency)) return null;
+
+  const settingsCurrencies = tags.flatMap((tag) => {
+    const raw = htmlAttributeValue(tag.raw, "data-settings");
+    if (!raw) return [];
+    const decoded = decodeEvidence(raw);
+    return [...decoded.matchAll(/"currency"\s*:\s*"([A-Za-z]{3})"/g)]
+      .map((match) => match[1].toUpperCase())
+      .filter(isSupportedCurrency);
+  });
+  const currencies = [...new Set([actions[0].currency, ...settingsCurrencies].filter(isSupportedCurrency))];
+  if (currencies.length !== 1) return null;
+  const currency = currencies[0];
+  const action = actions[0];
+  return {
+    id: productId,
+    domain: canonicalDomain(domain),
+    name: action.name,
+    normalizedName: bilingualNormalize(action.name),
+    description: "",
+    category: action.category || "product",
+    jsonLdType: "Product",
+    priceSignals: [{ raw: `${currency} ${action.amount}`, currency, amount: action.amount }],
+    attributes: [
+      "Price evidence: product-bound analytics",
+      ...(action.brand ? [`Brand: ${action.brand}`] : []),
+      `Product reference: ${action.reference}`,
+    ],
+    ownership: "path-inferred",
+    extraction: "page-signal",
+    confidence: "High",
+    sourceUrl,
+    imageUrl: publicImageFromScope(document, sourceUrl),
+    observedAt,
+    claimIds: [`${productId}-product-analytics-price`],
+    quantity: parseCanonicalQuantity(action.name) || undefined,
+  };
+}
+
 const unitPriceClassTokens = new Set(["unit-price", "unitprice", "price-per-unit", "price-unit", "price-per-measure"]);
 const secondaryPriceClassTokens = new Set(["compare-at", "old-price", "list-price", "regular-price", "price-regular", "member-price", "loyalty-price", "deposit-price", "saving", "savings", "discount"]);
 
@@ -631,12 +718,7 @@ function addScopedProductPageEvidence(document: string, sourceUrl: string, expec
   const evidence = extractScopedProductPageEvidence(document, sourceUrl);
   const directOffer = directProductMetadataOffer(document);
   if (!evidence.priceSignals.length && !evidence.imageUrl && !directOffer) return;
-  let detailProductPage = false;
-  try {
-    const path = new URL(sourceUrl).pathname;
-    detailProductPage = /\/(?:products?|shop|store)\//i.test(path)
-      && !/\/(?:collections?|catalog)(?:\/|$)/i.test(path);
-  } catch { detailProductPage = false; }
+  const detailProductPage = isSelectedProductDetailPage(sourceUrl);
   // Visible summary markup is only page-scoped. On collections it can belong
   // to any sibling card, so only product-bound structured evidence may survive.
   if (!detailProductPage) return;
@@ -692,11 +774,7 @@ function pageExtraction(document: string, sourceUrl: string, domain: string) {
 }
 
 function rejectContradictoryPageCurrencies(document: string, products: ProductRecord[], sourceUrl: string, expected: ProductRecord, pageTitle: string, expectedCountryCode = "") {
-  let detailPage = false;
-  try {
-    const path = new URL(sourceUrl).pathname;
-    detailPage = /\/(?:products?|shop|store)\//i.test(path) && !/\/(?:collections?|catalog)(?:\/|$)/i.test(path);
-  } catch { detailPage = false; }
+  const detailPage = isSelectedProductDetailPage(sourceUrl);
   if (!detailPage) return products;
   const identity = validateProductPageIdentity([expected], products, pageTitle, { allowScopedPageSignal: true });
   if (!identity.accepted || identity.products.length !== 1) return products;
@@ -992,6 +1070,14 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       const extracted = pageExtraction(fetched.text, fetched.url, item.domain);
       const expected = expectedProduct(item);
       if (marketRetryApplied) expected.sourceUrl = fetched.url;
+      const analyticsProduct = embeddedProductAnalyticsRecord(
+        fetched.text,
+        fetched.url,
+        item.domain,
+        item.productId,
+        new Date().toISOString(),
+      );
+      if (analyticsProduct) extracted.result.products.push(analyticsProduct);
       addScopedProductPageEvidence(fetched.text, fetched.url, expected, extracted.result.products, extracted.pageTitle);
       extracted.result.products = rejectContradictoryPageCurrencies(fetched.text, extracted.result.products, fetched.url, expected, extracted.pageTitle, item.marketCountryCode);
       const canonicalCrossLanguageOptions = { allowCanonicalCrossLanguageIdentity: canonicalSelectedPage(item.sourceUrl) === canonicalSelectedPage(fetched.url) };

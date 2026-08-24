@@ -1310,7 +1310,7 @@ export async function orchestrateReport(
     } else {
       try {
         requestCount += 1;
-        const first = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, taskAttemptNumber: attempt.taskAttemptNumber || 1, reportObservedAt: stored.run.createdAt, primaryDomain: crawl.primaryDomain, marketCountryCode, productLimit: payload.productLimit, catalogs, ...(directProductSearch ? { matchingMode: "direct-product-search" as const } : { pinnedPairs: crawl.matchHints }) });
+        const first = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, taskAttemptNumber: attempt.taskAttemptNumber || 1, reportObservedAt: stored.run.createdAt, primaryDomain: crawl.primaryDomain, ...(marketCountryCode ? { marketCountryCode } : {}), productLimit: payload.productLimit, catalogs, ...(directProductSearch ? { matchingMode: "direct-product-search" as const } : { pinnedPairs: crawl.matchHints }) });
         attempts.push({ ...first.comparison, ...(marketCountryCode ? { marketCountryCode } : {}) });
       } catch {
         transportFailed = true;
@@ -1328,7 +1328,7 @@ export async function orchestrateReport(
               : "Resuming only incomplete product judge batches from durable checkpoints.",
           ));
           requestCount += 1;
-          const retry = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, taskAttemptNumber: attempt.taskAttemptNumber || 1, reportObservedAt: stored.run.createdAt, primaryDomain: crawl.primaryDomain, marketCountryCode, productLimit: payload.productLimit, catalogs, ...(directProductSearch ? { matchingMode: "direct-product-search" as const } : { pinnedPairs: crawl.matchHints }) });
+          const retry = await port.match({ publicId: payload.publicId, reportAttempt: attempt.attemptNumber, taskAttemptNumber: attempt.taskAttemptNumber || 1, reportObservedAt: stored.run.createdAt, primaryDomain: crawl.primaryDomain, ...(marketCountryCode ? { marketCountryCode } : {}), productLimit: payload.productLimit, catalogs, ...(directProductSearch ? { matchingMode: "direct-product-search" as const } : { pinnedPairs: crawl.matchHints }) });
           attempts.push({ ...retry.comparison, ...(marketCountryCode ? { marketCountryCode } : {}) });
         } catch { /* the bounded second application attempt remains a visible gap */ }
       }

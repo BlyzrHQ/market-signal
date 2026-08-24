@@ -52,6 +52,34 @@ test("uses an observed page locale and GBP evidence for a UK dot-com store", () 
   assert.equal(result.confidence, "High");
 });
 
+test("infers Kuwait from the attributable signals observed on Noor Organic Food", () => {
+  const result = inferRegion({
+    domain: "noororganicfood.com",
+    language: "ar",
+    text: "التوصيل داخل الكويت خلال 4 ساعات +96569333051",
+    priceSignals: ["3.850 KWD"],
+    sourceUrl: "https://noororganicfood.com/",
+  });
+  assert.equal(result.countryCode, "KW");
+  assert.equal(result.country, "Kuwait");
+  assert.equal(result.confidence, "Medium");
+  assert.ok(result.signals.some((signal) => signal.kind === "currency" && signal.countryCode === "KW"));
+  assert.ok(result.signals.some((signal) => signal.kind === "phone" && signal.countryCode === "KW"));
+  assert.ok(result.signals.some((signal) => signal.kind === "explicit-market" && signal.countryCode === "KW"));
+});
+
+test("supports exact Kuwait locale and strict market parsing without broad country guesses", () => {
+  const result = inferRegion({
+    domain: "seller.example",
+    language: "ar-KW",
+    text: "Organic food delivery",
+    sourceUrl: "https://seller.example/",
+  });
+  assert.equal(result.countryCode, "KW");
+  assert.equal(strictRegionCode("Kuwait (inferred)"), "KW");
+  assert.equal(strictRegionCode("KW"), "KW");
+});
+
 test("zero filtering removes the brief claim without changing currency-region evidence", () => {
   const observedPrices = ["USD 0"];
   const result = inferRegion({
