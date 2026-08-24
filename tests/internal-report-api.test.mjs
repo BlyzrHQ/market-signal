@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { createInternalReportHandlers } from "../app/api/internal/reports/[publicId]/route.ts";
 
-const token = "checkpoint-test-token";
+const token = "checkpoint-test-token-that-is-long-enough";
 const publicId = "b".repeat(32);
 
 function report(status = "running", attemptCount = 2) {

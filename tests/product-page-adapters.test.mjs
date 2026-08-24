@@ -128,6 +128,25 @@ test("parses an identity-gated Shopify product price, image, quantity, and SKU",
   assert.equal(validateProductPageIdentity([expected("Beef Sirloin Steak Halal 500G", sourceUrl)], [result.product], result.product?.name).accepted, true);
 });
 
+test("selects an explicit Shopify URL variant and preserves compare-at context", () => {
+  const result = parseShopifyProduct({
+    payload: {
+      title: "Tea Box",
+      handle: "tea-box",
+      variants: [
+        { id: 11, title: "Small", price: 1000, compare_at_price: 1200, sku: "TEA-S" },
+        { id: 22, title: "Large", price: 1800, compare_at_price: 1800, sku: "TEA-L" },
+      ],
+    },
+    requestedKey: "tea-box",
+    sourceUrl: "https://shop.test/products/tea-box?variant=11",
+    domain: "shop.test",
+    observedAt: "2026-07-20T10:00:00.000Z",
+    currency: "GBP",
+  });
+  assert.deepEqual(result.product?.priceSignals, [{ raw: "GBP 10", currency: "GBP", amount: 10, listAmount: 12, listRaw: "GBP 12" }]);
+});
+
 test("does not invent Shopify currency and keeps repurposed or conflicting products rejected", () => {
   const sourceUrl = "https://shop.test/products/nawashif-500g";
   const noCurrency = parseShopifyProduct({
@@ -307,6 +326,21 @@ test("parses a matching WooCommerce Store API product and rejects a different sl
     domain: "mymeatshop.co.uk",
     observedAt: "2026-07-20T10:00:00.000Z",
   }).product, null);
+});
+
+test("preserves explicit WooCommerce regular-price context", () => {
+  const result = parseWooCommerceProduct({
+    payload: [{
+      name: "Sale Tea",
+      slug: "sale-tea",
+      prices: { price: "850", regular_price: "1000", sale_price: "850", currency_code: "GBP", currency_minor_unit: 2 },
+    }],
+    requestedKey: "sale-tea",
+    sourceUrl: "https://shop.test/product/sale-tea/",
+    domain: "shop.test",
+    observedAt: "2026-07-20T10:00:00.000Z",
+  });
+  assert.deepEqual(result.product?.priceSignals, [{ raw: "GBP 8.5", currency: "GBP", amount: 8.5, listAmount: 10, listRaw: "GBP 10" }]);
 });
 
 test("keeps a WooCommerce variable-product price range non-comparable", () => {

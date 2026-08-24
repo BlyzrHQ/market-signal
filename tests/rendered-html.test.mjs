@@ -140,7 +140,9 @@ test("real-data route and product metadata are present", async () => {
   assert.match(productLab, /aria-selected=\{layout === item\}/);
   assert.match(productLab, /url\.searchParams\.set\("layout", next\)/);
   assert.match(productLab, /window\.addEventListener\("popstate", sync\)/);
-  assert.match(productLab, /navigator\.share/);
+  assert.doesNotMatch(productLab, /navigator\.share/);
+  assert.match(productLab, /copyWorkspaceReportLink/);
+  assert.match(productLab, /Copy workspace link/);
   assert.match(productLab, /navigator\.clipboard\?\.writeText/);
   assert.match(productLab, /new Blob\(\[csv\], \{ type: "text\/csv;charset=utf-8" \}\)/);
   assert.match(productLab, /your_price_amount/);

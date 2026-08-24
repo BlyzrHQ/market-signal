@@ -14,12 +14,27 @@ const page = {
   nextCursor: "rival.example~" + "b".repeat(64),
 };
 
+function dependencies(overrides = {}) {
+  return {
+    now: () => new Date("2026-08-24T12:00:00.000Z"),
+    loadAccess: async () => ({
+      runId: "run-1",
+      publicId,
+      workspaceId: "",
+      expiresAt: "2026-09-24T00:00:00.000Z",
+    }),
+    loadMatchPage: async () => page,
+    authorize: async () => null,
+    ...overrides,
+  };
+}
+
 test("public match route returns an immutable authoritative page and forwards pagination", async () => {
   const calls = [];
   const response = await publicReportMatches(
     new Request(`https://signal.example/api/reports/${publicId}/matches?limit=75&cursor=${encodeURIComponent(page.nextCursor)}`),
     { params: Promise.resolve({ publicId }) },
-    async (id, input) => { calls.push({ id, input }); return page; },
+    dependencies({ loadMatchPage: async (id, input) => { calls.push({ id, input }); return page; } }),
   );
   assert.equal(response.status, 200);
   assert.match(response.headers.get("cache-control"), /immutable/);
@@ -33,7 +48,7 @@ test("public match route honors matching ETags without returning a body", async 
   const response = await publicReportMatches(
     new Request(`https://signal.example/api/reports/${publicId}/matches`, { headers: { "if-none-match": etag } }),
     { params: { publicId } },
-    async () => page,
+    dependencies(),
   );
   assert.equal(response.status, 304);
   assert.equal(response.headers.get("etag"), etag);
@@ -50,12 +65,45 @@ test("public match route exposes safe request and fallback states", async () => 
     const response = await publicReportMatches(
       new Request(`https://signal.example/api/reports/${publicId}/matches`),
       { params: { publicId } },
-      async () => { throw new Error(message); },
+      dependencies({ loadMatchPage: async () => { throw new Error(message); } }),
     );
     const body = await response.json();
     assert.equal(response.status, status);
     assert.equal(body.errorCode, errorCode);
-    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.equal(response.headers.get("cache-control"), "private, no-store");
     assert.doesNotMatch(body.error, /database secret leaked/);
   }
+});
+
+test("owned match pages require the owning workspace and are never publicly cached", async () => {
+  let reads = 0;
+  const owned = dependencies({
+    loadAccess: async () => ({ runId: "run-1", publicId, workspaceId: "workspace-1", expiresAt: "2026-09-24T00:00:00.000Z" }),
+    authorize: async () => ({ user: { id: "user-1", name: "Owner", email: "owner@example.com" }, workspaceId: "workspace-1" }),
+    loadMatchPage: async () => { reads += 1; return page; },
+  });
+  const response = await publicReportMatches(new Request(`https://signal.example/api/reports/${publicId}/matches`), { params: { publicId } }, owned);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  assert.equal(response.headers.get("vary"), "Cookie");
+  assert.equal(response.headers.get("etag"), null);
+  assert.equal(reads, 1);
+
+  const denied = await publicReportMatches(
+    new Request(`https://signal.example/api/reports/${publicId}/matches`),
+    { params: { publicId } },
+    { ...owned, authorize: async () => ({ user: { id: "user-2", name: "Other", email: "other@example.com" }, workspaceId: "workspace-2" }) },
+  );
+  assert.equal(denied.status, 404);
+  assert.equal((await denied.json()).errorCode, "not-found");
+  assert.equal(reads, 1);
+});
+
+test("expired legacy match pages are not readable", async () => {
+  const response = await publicReportMatches(
+    new Request(`https://signal.example/api/reports/${publicId}/matches`),
+    { params: { publicId } },
+    dependencies({ loadAccess: async () => ({ runId: "run-1", publicId, workspaceId: "", expiresAt: "2026-08-24T11:59:59.000Z" }) }),
+  );
+  assert.equal(response.status, 404);
 });

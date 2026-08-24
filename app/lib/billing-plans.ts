@@ -6,14 +6,15 @@ export type BillingPlan = {
   monthlyPriceUsd: number;
   reportsPerMonth: number;
   productLimit: number;
+  monitoringCredits: number;
   priceEnvironmentKey: string;
 };
 
 export const BILLING_PLANS: Record<ProductPlan, BillingPlan> = {
-  starter: { id: "starter", name: "Starter", monthlyPriceUsd: 8, reportsPerMonth: 5, productLimit: PRODUCT_PLAN_LIMITS.starter, priceEnvironmentKey: "STRIPE_PRICE_STARTER" },
-  solo: { id: "solo", name: "Solo", monthlyPriceUsd: 29, reportsPerMonth: 10, productLimit: PRODUCT_PLAN_LIMITS.solo, priceEnvironmentKey: "STRIPE_PRICE_SOLO" },
-  growth: { id: "growth", name: "Growth", monthlyPriceUsd: 79, reportsPerMonth: 40, productLimit: PRODUCT_PLAN_LIMITS.growth, priceEnvironmentKey: "STRIPE_PRICE_GROWTH" },
-  agency: { id: "agency", name: "Agency", monthlyPriceUsd: 199, reportsPerMonth: 120, productLimit: PRODUCT_PLAN_LIMITS.agency, priceEnvironmentKey: "STRIPE_PRICE_AGENCY" },
+  starter: { id: "starter", name: "Starter", monthlyPriceUsd: 8, reportsPerMonth: 5, productLimit: PRODUCT_PLAN_LIMITS.starter, monitoringCredits: 1_000, priceEnvironmentKey: "STRIPE_PRICE_STARTER" },
+  solo: { id: "solo", name: "Solo", monthlyPriceUsd: 29, reportsPerMonth: 10, productLimit: PRODUCT_PLAN_LIMITS.solo, monitoringCredits: 5_000, priceEnvironmentKey: "STRIPE_PRICE_SOLO" },
+  growth: { id: "growth", name: "Growth", monthlyPriceUsd: 79, reportsPerMonth: 40, productLimit: PRODUCT_PLAN_LIMITS.growth, monitoringCredits: 25_000, priceEnvironmentKey: "STRIPE_PRICE_GROWTH" },
+  agency: { id: "agency", name: "Agency", monthlyPriceUsd: 199, reportsPerMonth: 120, productLimit: PRODUCT_PLAN_LIMITS.agency, monitoringCredits: 100_000, priceEnvironmentKey: "STRIPE_PRICE_AGENCY" },
 };
 
 export function hostedBillingEnabled(environment: Record<string, string | undefined> = process.env): boolean {

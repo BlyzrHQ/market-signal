@@ -217,6 +217,16 @@ function minorUnitPrice(value: unknown, currency: string, explicitDigits: unknow
   return { raw: `${currency} ${rendered}`, currency, amount };
 }
 
+function withExplicitListPrice(current: ProductPriceSignal | null, list: ProductPriceSignal | null) {
+  if (!current || !list
+    || current.currency !== list.currency
+    || typeof current.amount !== "number"
+    || typeof list.amount !== "number"
+    || !Number.isFinite(list.amount)
+    || list.amount <= current.amount) return current;
+  return { ...current, listAmount: list.amount, listRaw: list.raw };
+}
+
 function positiveMinorUnitInput(value: unknown) {
   const numeric = canonicalMinorUnits(value);
   return numeric !== null && numeric > 0;
@@ -269,6 +279,28 @@ function shopifyVariantQuantity(productTitle: string, variant: JsonRecord) {
   return parseCanonicalQuantity(`${productTitle} ${/^default title$/i.test(variantTitle) ? "" : variantTitle}`) || undefined;
 }
 
+function selectedShopifyVariants(input: {
+  sourceUrl: string;
+  productTitle: string;
+  variants: JsonRecord[];
+  expectedQuantity?: CanonicalProductQuantity;
+}) {
+  let selected = input.variants;
+  try {
+    const url = new URL(input.sourceUrl);
+    const variantId = text(url.searchParams.get("variant") || url.searchParams.get("variant_id"), 120);
+    const sku = text(url.searchParams.get("sku"), 160).toLocaleLowerCase("und");
+    if (variantId) selected = selected.filter((variant) => text(variant.id, 120) === variantId);
+    if (sku) selected = selected.filter((variant) => text(variant.sku, 160).toLocaleLowerCase("und") === sku);
+  } catch {
+    return [];
+  }
+  if (input.expectedQuantity) {
+    selected = selected.filter((variant) => quantitiesEqual(input.expectedQuantity, shopifyVariantQuantity(input.productTitle, variant)));
+  }
+  return selected;
+}
+
 export function parseShopifyProduct(input: {
   payload: unknown;
   requestedKey: string;
@@ -285,13 +317,18 @@ export function parseShopifyProduct(input: {
   if (handle !== input.requestedKey) return { product: null, gap: "The Shopify product endpoint returned a different product handle." };
 
   const variants = Array.isArray(payload.variants) ? payload.variants.map(record).filter((value): value is JsonRecord => Boolean(value)) : [];
-  const quantityMatches = input.expectedQuantity
-    ? variants.filter((variant) => quantitiesEqual(input.expectedQuantity, shopifyVariantQuantity(name, variant)))
-    : [];
-  const selectedVariants = input.expectedQuantity ? quantityMatches : variants;
+  const selectedVariants = selectedShopifyVariants({
+    sourceUrl: input.sourceUrl,
+    productTitle: name,
+    variants,
+    expectedQuantity: input.expectedQuantity,
+  });
   const completeSelectedPricing = selectedVariants.length > 0 && selectedVariants.every((variant) => positiveMinorUnitInput(variant.price));
   const priceSignals = input.currency && completeSelectedPricing
-    ? [...new Map(selectedVariants.map((variant) => minorUnitPrice(variant.price, input.currency, 2)).filter((value): value is ProductPriceSignal => Boolean(value)).map((signal) => [`${signal.currency}|${signal.amount}`, signal])).values()]
+    ? [...new Map(selectedVariants.map((variant) => withExplicitListPrice(
+      minorUnitPrice(variant.price, input.currency, 2),
+      positiveMinorUnitInput(variant.compare_at_price) ? minorUnitPrice(variant.compare_at_price, input.currency, 2) : null,
+    )).filter((value): value is ProductPriceSignal => Boolean(value)).map((signal) => [`${signal.currency}|${signal.amount}|${signal.listAmount || ""}`, signal])).values()]
     : [];
   const selectedVariant = selectedVariants.length === 1 ? selectedVariants[0] : null;
   const featured = selectedVariant ? record(selectedVariant.featured_image) : null;
@@ -336,7 +373,10 @@ export function parseWooCommerceProduct(input: {
   const images = Array.isArray(payload.images) ? payload.images.map(record).filter((value): value is JsonRecord => Boolean(value)) : [];
   const fixedPriceProvided = Boolean(prices) && Object.prototype.hasOwnProperty.call(prices, "price");
   const fixedPricePositive = positiveMinorUnitInput(prices?.price);
-  const price = fixedPricePositive ? minorUnitPrice(prices?.price, currency, prices?.currency_minor_unit) : null;
+  const price = fixedPricePositive ? withExplicitListPrice(
+    minorUnitPrice(prices?.price, currency, prices?.currency_minor_unit),
+    positiveMinorUnitInput(prices?.regular_price) ? minorUnitPrice(prices?.regular_price, currency, prices?.currency_minor_unit) : null,
+  ) : null;
   const priceRange = record(prices?.price_range);
   const rangeValues = [priceRange?.min_amount, priceRange?.max_amount];
   const rangeProvided = Boolean(priceRange) && rangeValues.some((value) => value !== undefined);

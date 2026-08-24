@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { canonicalNodeSqlitePath } from "./node-sqlite-database.ts";
 import { BILLING_PLANS, type BillingPlan } from "./billing-plans.ts";
 import type { ProductPlan } from "./product-entitlements.ts";
+import { ensurePriceWatchSchema, reconcilePriceWatchSubscription } from "./price-watch-store.ts";
 
 const ACTIVE_STATUSES = new Set(["active", "trialing"]);
 // A full Agency report can span multiple 52-minute worker attempts. Keep the
@@ -78,6 +79,7 @@ export function ensureBillingSchema(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS billing_report_reservations_usage_idx
       ON billing_report_reservations(workspace_id, period_start, period_end, status);
   `);
+  ensurePriceWatchSchema(database);
 }
 
 function rowToSubscription(row: Record<string, unknown> | undefined): WorkspaceSubscription | null {
@@ -154,6 +156,7 @@ export function applySubscriptionUpdate(database: Database.Database, update: Sub
       update.currentPeriodStart, update.currentPeriodEnd, update.eventCreated, update.eventId,
       now.toISOString(),
     );
+    reconcilePriceWatchSubscription(database, update.workspaceId, now);
     return "applied" as const;
   }).immediate();
 }

@@ -100,6 +100,7 @@ test("uses the current ins price instead of the crossed-out WooCommerce price", 
     <div class="summary entry-summary"><p class="price"><del><span>&pound;5.25</span></del><ins><span>&pound;4.35</span></ins></p></div>
   `);
   assert.deepEqual(evidence.priceSignals.map((signal) => signal.amount), [4.35]);
+  assert.deepEqual(evidence.priceSignals.map((signal) => ({ listAmount: signal.listAmount, listRaw: signal.listRaw })), [{ listAmount: 5.25, listRaw: "GBP 5.25" }]);
   assert.equal(evidence.basis, "sale");
 });
 
@@ -388,7 +389,7 @@ test("rejects an entire current price container when any member is invalid", () 
   const unquotedCompareAt = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price"><span class=compare-at>$120.00</span><span class=current>$100.00</span></p>');
   assert.deepEqual(unquotedCompareAt.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
   const struckCompareAt = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><div class="product-price"><s class="compare-at">$120.00</s><span class="current">$100.00</span></div>');
-  assert.deepEqual(struckCompareAt.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
+  assert.deepEqual(struckCompareAt.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100, listAmount: 120, listRaw: "USD 120" }]);
   const styledStrike = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price"><span style="text-decoration:line-through">$120.00</span><span>$100.00</span></p>');
   assert.deepEqual(styledStrike.priceSignals, [{ raw: "USD 100", currency: "USD", amount: 100 }]);
   const styledStrikeLine = extractScopedProductPageEvidence('<meta property="product:price:currency" content="USD"><h1>Product</h1><p class="price"><span style="text-decoration-line:line-through">$120.00</span><span>$100.00</span></p>');

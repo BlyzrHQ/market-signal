@@ -18,6 +18,8 @@ export type ProductPriceSignal = {
   currency?: string;
   amount?: number;
   period?: string;
+  listRaw?: string;
+  listAmount?: number;
 };
 
 export type ProductAlias = {
@@ -227,6 +229,7 @@ export type ProductEnrichmentTarget = {
   pairScore: number;
   role: "primary" | "rival";
   marketCountryCode?: string;
+  expectedQuantity?: CanonicalProductQuantity;
   allowCatalogReplacement?: true;
 };
 
