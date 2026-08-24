@@ -136,6 +136,7 @@ test("real-data route and product metadata are present", async () => {
   assert.match(styles, /\.battle-product\.no-image strong \{ grid-column: 1; \}/);
   assert.match(productLab, /const LAYOUTS: ProductLayout\[\] = \["table", "matchups", "opportunities"\]/);
   assert.match(productLab, /className="product-compact-table"/);
+  assert.match(productLab, /className="product-table-watch-heading"/);
   assert.match(productLab, /className="product-layout-panel matchup-layout"/);
   assert.match(productLab, /className="product-layout-panel opportunity-layout"/);
   assert.match(productLab, /role="tablist" aria-label=/);
@@ -166,11 +167,15 @@ test("real-data route and product metadata are present", async () => {
   assert.match(pricePosition, /\{showValues && <div className="price-position-value your-position-value">/);
   assert.match(styles, /\.product-compact-table \{[^}]*min-width: 0;[^}]*table-layout: fixed/);
   assert.doesNotMatch(styles, /\.product-compact-table \{[^}]*min-width: 900px/);
+  assert.match(styles, /\.product-compact-table:has\(\.product-table-watch-heading\) th:nth-child\(6\) \{ width: 12%; \}/);
+  assert.match(styles, /\.product-table-watch-cell \{ min-width: 0; \}/);
   assert.match(styles, /@media \(max-width: 900px\)[\s\S]*\.product-table-row \{ display: grid/);
+  assert.match(styles, /@media \(max-width: 900px\)[\s\S]*\.product-compact-table:has\(\.product-table-watch-heading\) \.product-table-row \{ grid-template-areas: "your-product your-price rival-product rival-price" "difference difference action action" "watch watch watch watch"/);
   assert.match(styles, /@media \(min-width: 901px\) and \(max-width: 1023px\)[\s\S]*\.product-table-row \{ scroll-margin-top: 200px/);
   assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.product-table-row \{ scroll-margin-top: 238px/);
   assert.match(styles, /@media \(max-width: 700px\)[\s\S]*\.product-layout-toolbar \{ top: 154px/);
   assert.match(styles, /@media \(max-width: 520px\)[\s\S]*grid-template-areas: "your-product" "your-price" "rival-product" "rival-price" "difference" "action"/);
+  assert.match(styles, /@media \(max-width: 520px\)[\s\S]*\.product-compact-table:has\(\.product-table-watch-heading\) \.product-table-row \{ grid-template-areas: "your-product" "your-price" "rival-product" "rival-price" "difference" "watch" "action"/);
   assert.match(styles, /@media print \{[\s\S]*\.product-row-details > summary \{ display: none; \}[\s\S]*\.product-row-details > div \{ display: grid !important; \}/);
   assert.match(styles, /\.matchup-products \{[^}]*grid-template-columns: minmax\(0,1fr\) 34px minmax\(0,1fr\)/);
   assert.match(styles, /\.opportunity-lanes \{[^}]*grid-template-columns: repeat\(3,minmax\(0,1fr\)\)/);
