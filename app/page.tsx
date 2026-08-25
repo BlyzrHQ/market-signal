@@ -3,6 +3,7 @@
 
 import { FormEvent, KeyboardEvent, useEffect, useState } from "react";
 import Link from "next/link";
+import { AccountNavigationLink } from "./components/account-navigation-link";
 import { SiteFooter } from "./components/site-footer";
 import { postJson } from "./lib/json-response";
 
@@ -101,7 +102,7 @@ export default function Home() {
   }
 
   return <main className="app-root landing-v2" lang={locale} dir={ar ? "rtl" : "ltr"}>
-    <header className="site-header shell"><a className="brand" href="#top"><span className="brand-mark"><i /><i /><i /></span><span>Market Signal</span></a><nav className="header-nav"><a href="#proof">{ar ? "شاهد المنتج" : "Product proof"}</a><Link href={ar ? "/how-it-works?lang=ar" : "/how-it-works"}>{ar ? "كيف يعمل" : "How it works"}</Link><Link className="header-pricing-link" href={ar ? "/pricing?lang=ar" : "/pricing"}>{ar ? "الأسعار" : "Pricing"}</Link><Link href="/account">{ar ? "الحساب" : "Account"}</Link><a className="github-button" href="https://github.com/BlyzrHQ/market-signal" target="_blank" rel="noreferrer">GitHub ↗</a><button className="language-switch" type="button" onClick={() => setLocale(ar ? "en" : "ar")}>{ar ? "EN" : "ع"}<span>{ar ? " English" : " العربية"}</span></button></nav></header>
+    <header className="site-header shell"><a className="brand" href="#top"><span className="brand-mark"><i /><i /><i /></span><span>Market Signal</span></a><nav className="header-nav"><a href="#proof">{ar ? "شاهد المنتج" : "Product proof"}</a><Link href={ar ? "/how-it-works?lang=ar" : "/how-it-works"}>{ar ? "كيف يعمل" : "How it works"}</Link><Link className="header-pricing-link" href={ar ? "/pricing?lang=ar" : "/pricing"}>{ar ? "الأسعار" : "Pricing"}</Link><AccountNavigationLink ar={ar} /><a className="github-button" href="https://github.com/BlyzrHQ/market-signal" target="_blank" rel="noreferrer">GitHub ↗</a><button className="language-switch" type="button" onClick={() => setLocale(ar ? "en" : "ar")}>{ar ? "EN" : "ع"}<span>{ar ? " English" : " العربية"}</span></button></nav></header>
 
     <section className="hero shell hero-v2" id="top">
       <div className="hero-orbit" aria-hidden="true"><i /><i /><i /><span>282</span></div>
