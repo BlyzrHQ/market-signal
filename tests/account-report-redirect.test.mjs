@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { newestAccountReportPath, safeAccountReturnPath } from "../app/lib/account-report-redirect.ts";
+import { accountNavigationDestination, newestAccountReportPath, safeAccountReturnPath } from "../app/lib/account-report-redirect.ts";
 
 test("account return paths are local and cannot loop back to sign in", () => {
   assert.equal(safeAccountReturnPath("/reports/abc?view=products"), "/reports/abc?view=products");
@@ -30,4 +30,21 @@ test("successful sign in opens the newest valid saved report", () => {
   assert.equal(newestAccountReportPath({ reports: [] }), "");
   assert.equal(newestAccountReportPath({ reports: [{ publicId: "unsafe" }] }), "");
   assert.equal(newestAccountReportPath(null), "");
+});
+
+test("homepage account navigation opens owned reports only for authenticated users", () => {
+  const newest = "c".repeat(32);
+  assert.deepEqual(accountNavigationDestination({ authenticated: true, eligible: true, reports: [{ publicId: newest }] }), {
+    authenticated: true,
+    href: `/reports/${newest}?view=products`,
+  });
+  assert.deepEqual(accountNavigationDestination({ authenticated: true, eligible: true, reports: [] }), {
+    authenticated: true,
+    href: "/account",
+  });
+  assert.deepEqual(accountNavigationDestination({ authenticated: false, reports: [{ publicId: newest }] }), {
+    authenticated: false,
+    href: "/account",
+  });
+  assert.deepEqual(accountNavigationDestination(null), { authenticated: false, href: "/account" });
 });

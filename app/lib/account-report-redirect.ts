@@ -33,3 +33,16 @@ export function newestAccountReportPath(payload: unknown) {
   ));
   return newest ? `/reports/${String(newest.publicId)}?view=products` : "";
 }
+
+export function accountNavigationDestination(payload: unknown) {
+  const authenticated = Boolean(
+    payload
+      && typeof payload === "object"
+      && !Array.isArray(payload)
+      && (payload as { authenticated?: unknown }).authenticated === true,
+  );
+  return {
+    authenticated,
+    href: authenticated ? newestAccountReportPath(payload) || "/account" : "/account",
+  };
+}

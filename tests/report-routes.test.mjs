@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 
 const home = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+const accountNavigation = await readFile(new URL("../app/components/account-navigation-link.tsx", import.meta.url), "utf8");
 const loading = await readFile(new URL("../app/reports/[publicId]/loading/page.tsx", import.meta.url), "utf8");
 const report = await readFile(new URL("../app/reports/[publicId]/page.tsx", import.meta.url), "utf8");
 const productLab = await readFile(new URL("../app/components/product-design-lab.tsx", import.meta.url), "utf8");
@@ -19,6 +20,19 @@ test("submission hands the durable job to its dedicated loading route", () => {
 
 test("the browser no longer owns interruption recovery or report mutation", () => {
   assert.doesNotMatch(home, /interruptedReportRecovery|\/api\/reports\/\$\{publicReportId\}/);
+});
+
+test("the landing header exposes the private reports dashboard when signed in", () => {
+  assert.match(home, /<AccountNavigationLink ar=\{ar\} \/>/);
+  assert.match(accountNavigation, /fetch\("\/api\/account\/reports", \{/);
+  assert.match(accountNavigation, /cache: "no-store"/);
+  assert.match(accountNavigation, /credentials: "same-origin"/);
+  assert.match(accountNavigation, /accountNavigationDestination\(payload\)/);
+  assert.match(accountNavigation, /"My reports"/);
+  assert.match(accountNavigation, /"Open my reports dashboard"/);
+  assert.doesNotMatch(accountNavigation, /localStorage|sessionStorage/);
+  assert.match(css, /\.landing-v2 \.header-nav>a:not\(\.header-pricing-link\):not\(\.header-workspace-link\)\{display:none\}/);
+  assert.match(css, /\.header-nav \.header-pricing-link,\.header-nav \.header-workspace-link,\.header-nav \.github-button \{ display: inline-flex; \}/);
 });
 
 test("reopened loading routes poll persisted events and redirect only with a document", () => {
