@@ -119,8 +119,13 @@ test("report-level sharing is explicit while shared rendering omits private work
   assert.match(report, /Shared · read only/);
   assert.match(report, /mode === "workspace" && <CompetitorPriceWatch/);
   assert.match(competitorWatch, /fetch\("\/api\/price-watch", \{ cache: "no-store", credentials: "same-origin"/);
-  assert.doesNotMatch(productLab, /\/api\/price-watch|workspaceMode/);
+  assert.match(report, /matchesEndpoint=\{matchesEndpoint\} workspaceMode=\{mode === "workspace"\}/);
+  assert.match(productLab, /if \(!workspaceMode\) return/);
+  assert.match(productLab, /fetch\("\/api\/price-watch", \{ cache: "no-store", credentials: "same-origin"/);
+  assert.doesNotMatch(competitorWatch, /matchId|Choose specific products|competitor-watch-products/);
   assert.match(productLab, /fetch\(`\$\{matchesEndpoint\}\?\$\{query\}`/);
+  assert.match(productLab, /refreshVersion !== watcherRefreshVersion\.current/);
+  assert.match(productLab, /clearCadenceOverride\(matchId\)/);
   assert.doesNotMatch(productLab, /Copy workspace link|copyWorkspaceReportLink/);
   assert.match(css, /\.report-route-header \{[^}]*display: grid;[^}]*grid-template-columns: minmax\(150px,1fr\) auto auto/);
   assert.match(css, /@media \(max-width: 1180px\) \{[\s\S]*\.report-route-header \{ min-height: 108px;[^}]*grid-template-columns: minmax\(0,1fr\) auto/);
