@@ -1,7 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { PricePosition } from "./price-position";
 import { formatPriceClaim, formatPriceDifference, resolvePriceClaim, type PriceClaim } from "../lib/price-claims";
 import { jsonResponseErrorMessage, readJsonResponse } from "../lib/json-response";
@@ -20,7 +19,6 @@ type ProductDesignLabProps = {
   primaryProducts?: { authoritative: boolean; totalCount: number; products: Array<Record<string, unknown>>; truncated: boolean };
   publicId: string;
   matchesEndpoint: string;
-  workspaceMode: boolean;
   authoritativeMatchTotal?: number;
   onAuthoritativeSummary?: (summary: { totalCount: number; domainCounts: Record<string, number> }) => void;
   primaryDomain: string;
@@ -180,11 +178,7 @@ function ProductTableDetails({ row, ar }: { row: ProductRow; ar: boolean }) {
 }
 
 type MatchPagePayload = { ok: boolean; error?: string; errorCode?: string; page?: { authoritative: true; manifestHash: string; totalCount: number; directPriceCount: number; domainCounts: Record<string, number>; items: ProductBattle[]; nextCursor: string | null } };
-type WatchCadence = "hourly" | "daily";
-type ReportWatcher = { id: string; cadence: WatchCadence; state: string; links: Array<{ publicReportId: string; matchId: string }> };
-type WatchUsage = { allocation: number; used: number; remaining: number };
-
-export function ProductDesignLab({ comparison, battles, primaryProducts, publicId, matchesEndpoint, workspaceMode, authoritativeMatchTotal, onAuthoritativeSummary, primaryDomain, ar }: ProductDesignLabProps) {
+export function ProductDesignLab({ comparison, battles, primaryProducts, publicId, matchesEndpoint, authoritativeMatchTotal, onAuthoritativeSummary, primaryDomain, ar }: ProductDesignLabProps) {
   const [layout, setLayout] = useState<ProductLayout>("table");
   const [authoritativeBattles, setAuthoritativeBattles] = useState<ProductBattle[] | null>(null);
   const [matchTotal, setMatchTotal] = useState(authoritativeMatchTotal || battles.length);
@@ -192,13 +186,6 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [matchLoadState, setMatchLoadState] = useState<"loading" | "ready" | "fallback" | "more" | "exporting">("loading");
   const [matchLoadMessage, setMatchLoadMessage] = useState("");
-  const [watchers, setWatchers] = useState<ReportWatcher[]>([]);
-  const [watchUsage, setWatchUsage] = useState<WatchUsage | null>(null);
-  const [watchAvailable, setWatchAvailable] = useState(false);
-  const [watchCadences, setWatchCadences] = useState<Record<string, WatchCadence>>({});
-  const [watchBusy, setWatchBusy] = useState("");
-  const [watchMessage, setWatchMessage] = useState("");
-  const [watchDomainCounts, setWatchDomainCounts] = useState<Record<string, number>>({});
   const layoutTabs = useRef<Array<HTMLButtonElement | null>>([]);
   const activeReportId = useRef(publicId);
   const displayedBattles = authoritativeBattles ?? battles;
@@ -211,76 +198,6 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
     .map(([reason, count]) => [reason, numeric(count)] as const)
     .filter(([, count]) => count > 0);
   const suppressionSummary = suppressionReasons.map(([reason, count]) => suppressionReasonLabel(reason, count, ar)).join(ar ? "، " : "; ");
-
-  const refreshWatchers = useCallback(async (signal?: AbortSignal) => {
-    const response = await fetch("/api/price-watch", { cache: "no-store", credentials: "same-origin", headers: { accept: "application/json" }, signal });
-    const body = await response.json().catch(() => ({})) as { ok?: boolean; watchers?: ReportWatcher[]; usage?: WatchUsage };
-    if (signal?.aborted) return;
-    if (!response.ok || !body.ok) { setWatchAvailable(false); return; }
-    setWatchers(Array.isArray(body.watchers) ? body.watchers : []); setWatchUsage(body.usage || null); setWatchAvailable(true);
-  }, []);
-
-  useEffect(() => {
-    if (!workspaceMode) return;
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => {
-      void refreshWatchers(controller.signal).catch(() => { if (!controller.signal.aborted) setWatchAvailable(false); });
-    }, 0);
-    return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [refreshWatchers, publicId, workspaceMode]);
-
-  const watcherForMatch = (matchId: string) => watchers.find((watcher) => watcher.links.some((link) => link.publicReportId === publicId && link.matchId === matchId));
-  const selectedCadence = (matchId: string, watcher?: ReportWatcher) => watchCadences[matchId] || watcher?.cadence || "daily";
-  const isRunningWatcher = (watcher?: ReportWatcher) => watcher?.state === "active" || watcher?.state === "baseline_pending";
-
-  async function watcherRequest(path: string, method: "POST" | "PATCH", body: Record<string, unknown>) {
-    const response = await fetch(path, { method, credentials: "same-origin", headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify(body) });
-    const result = await response.json().catch(() => ({})) as { error?: string };
-    if (!response.ok) throw new Error(result.error || "The price watcher could not be updated.");
-  }
-
-  async function toggleMatchWatch(matchId: string, enable: boolean) {
-    if (!/^[a-f0-9]{64}$/.test(matchId)) return;
-    const watcher = watcherForMatch(matchId);
-    const cadence = selectedCadence(matchId, watcher);
-    setWatchBusy(matchId); setWatchMessage("");
-    try {
-      if (enable && !watcher) await watcherRequest("/api/price-watch", "POST", { publicReportId: publicId, matchId, cadence });
-      else if (enable && watcher) await watcherRequest(`/api/price-watch/${watcher.id}`, "PATCH", { action: "resume", cadence });
-      else if (watcher) await watcherRequest(`/api/price-watch/${watcher.id}`, "PATCH", { action: "disable" });
-      await refreshWatchers();
-    } catch (cause) { setWatchMessage(cause instanceof Error ? cause.message : "The watcher could not be updated."); }
-    finally { setWatchBusy(""); }
-  }
-
-  async function changeMatchCadence(matchId: string, cadence: WatchCadence) {
-    setWatchCadences((current) => ({ ...current, [matchId]: cadence }));
-    const watcher = watcherForMatch(matchId);
-    if (!watcher) return;
-    setWatchBusy(matchId); setWatchMessage("");
-    try { await watcherRequest(`/api/price-watch/${watcher.id}`, "PATCH", { cadence }); await refreshWatchers(); }
-    catch (cause) { setWatchMessage(cause instanceof Error ? cause.message : "The frequency could not be updated."); }
-    finally { setWatchBusy(""); }
-  }
-
-  async function watchRivalSnapshot(domain: string, count: number) {
-    const key = `rival:${domain}`;
-    const cadence = watchCadences[key] || "daily";
-    const checksPerDay = count * (cadence === "hourly" ? 24 : 1);
-    const afterBaseline = Math.max(0, (watchUsage?.remaining || 0) - count);
-    const estimatedDays = checksPerDay > 0 ? Math.floor(afterBaseline / checksPerDay) : 0;
-    const confirmation = ar
-      ? `مراقبة لقطة ثابتة تصل إلى ${count} رابطاً من ${domain}؟\n\nقد تستهلك ${count} رصيداً لإنشاء خطوط الأساس، ثم حوالي ${checksPerDay} رصيداً يومياً. الرصيد المتبقي بعد ذلك يكفي تقريباً ${estimatedDays} يوماً بالمعدل الحالي.`
-      : `Watch a fixed snapshot of up to ${count} saved URLs from ${domain}?\n\nThis may use ${count} credits for baselines, then about ${checksPerDay} credits per day. The remaining balance would last roughly ${estimatedDays} days at that pace.`;
-    if (!window.confirm(confirmation)) return;
-    setWatchBusy(key); setWatchMessage("");
-    try {
-      await watcherRequest("/api/price-watch", "POST", { publicReportId: publicId, rivalDomain: domain, cadence });
-      await refreshWatchers();
-      setWatchMessage(ar ? `تم حفظ لقطة مراقبة ثابتة لـ ${domain}.` : `Saved a fixed watch snapshot for ${domain}.`);
-    } catch (cause) { setWatchMessage(cause instanceof Error ? cause.message : "The rival snapshot could not be watched."); }
-    finally { setWatchBusy(""); }
-  }
 
   const fetchMatchPage = async (cursor?: string) => {
     const query = new URLSearchParams({ limit: "100" });
@@ -297,7 +214,7 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
     let current = true;
     fetchMatchPage().then((page) => {
       if (!current) return;
-      setAuthoritativeBattles(page.items); setMatchTotal(page.totalCount); setDirectPriceTotal(page.directPriceCount); setNextCursor(page.nextCursor); setMatchLoadState("ready"); setWatchDomainCounts(page.domainCounts || {}); onAuthoritativeSummary?.({ totalCount: page.totalCount, domainCounts: page.domainCounts || {} });
+      setAuthoritativeBattles(page.items); setMatchTotal(page.totalCount); setDirectPriceTotal(page.directPriceCount); setNextCursor(page.nextCursor); setMatchLoadState("ready"); onAuthoritativeSummary?.({ totalCount: page.totalCount, domainCounts: page.domainCounts || {} });
     }).catch((cause) => {
       if (!current) return;
       setMatchLoadState("fallback"); setMatchLoadMessage(jsonResponseErrorMessage(cause, "The compact saved comparison remains available."));
@@ -371,16 +288,6 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
     {excludedPriceMatches > 0 && <div className="product-result-coverage limited" role="note"><span>{suppressionSummary
       ? (ar ? `تم الاحتفاظ بأدلة ${excludedPriceMatches} مطابقة أخرى واستبعادها من جدول الأسعار: ${suppressionSummary}.` : `${excludedPriceMatches} additional semantic matches were preserved as evidence and excluded from the price table: ${suppressionSummary}.`)
       : (ar ? `تم الاحتفاظ بأدلة ${excludedPriceMatches} مطابقة أخرى واستبعادها من جدول الأسعار وفق قواعد سلامة النشر.` : `${excludedPriceMatches} additional semantic matches were preserved as evidence and excluded under the publication integrity rules.`)}</span></div>}
-    {watchAvailable && <section className="report-price-watch-panel" aria-label={ar ? "مراقبة أسعار المنافسين" : "Rival price watch"}>
-      <header><div><span>{ar ? "مراقبة اختيارية" : "OPT-IN PRICE WATCH"}</span><h3>{ar ? "راقب الروابط الدقيقة المحفوظة" : "Monitor the exact saved product URLs"}</h3><p>{ar ? "كل فحص لمنتج واحد يستهلك رصيداً واحداً. لا بحث ولا ذكاء اصطناعي." : "One product check uses one credit. Monitoring never runs search or AI."}</p></div><Link href="/price-watch">{ar ? "إدارة المراقبة" : "Manage watchers"}</Link></header>
-      {watchUsage && <div className="report-watch-balance"><strong>{watchUsage.remaining.toLocaleString()}</strong><span>{ar ? "رصيد متبقٍ" : "credits remaining"}</span></div>}
-      <div className="report-watch-rivals">{[...new Set(rows.map((row) => row.domain).filter(Boolean))].map((domain) => {
-        const key = `rival:${domain}`; const cadence = watchCadences[key] || "daily"; const count = watchDomainCounts[domain] || rows.filter((row) => row.domain === domain).length;
-        const checksPerDay = count * (cadence === "hourly" ? 24 : 1);
-        return <article key={domain}><div><strong>{domain}</strong><small>{count} {ar ? "روابط مؤهلة في اللقطة الحالية" : "eligible URLs in this fixed snapshot"} · {checksPerDay.toLocaleString()} {ar ? "فحصاً يومياً" : "checks/day"}</small></div><label><span>{ar ? "التكرار" : "Frequency"}</span><select value={cadence} disabled={watchBusy === key} onChange={(event) => setWatchCadences((current) => ({ ...current, [key]: event.target.value as WatchCadence }))}><option value="daily">{ar ? "يومي" : "Daily"}</option><option value="hourly">{ar ? "كل ساعة" : "Hourly"}</option></select></label><button disabled={watchBusy === key} onClick={() => void watchRivalSnapshot(domain, count)}>{watchBusy === key ? (ar ? "جارٍ الحفظ…" : "Saving…") : (ar ? "راقب الكل" : "Watch all")}</button></article>;
-      })}</div>
-      {watchMessage && <p className="report-watch-message" role="status">{watchMessage}</p>}
-    </section>}
     <div className="product-layout-toolbar">
       <div className="product-layout-tabs" role="tablist" aria-label={ar ? "طرق عرض مقارنة المنتجات" : "Product comparison layouts"}>{LAYOUTS.map((item, index) => <button id={`product-layout-tab-${item}`} key={item} ref={(node) => { layoutTabs.current[index] = node; }} type="button" role="tab" aria-selected={layout === item} aria-controls={`product-layout-${item}`} tabIndex={layout === item ? 0 : -1} onClick={() => selectLayout(item)} onKeyDown={(event) => onLayoutKey(event, index)}><span>{String(index + 1).padStart(2, "0")}</span>{LAYOUT_LABELS[item][ar ? "ar" : "en"]}</button>)}</div>
       <div className="product-lab-actions"><button type="button" onClick={exportCsv} disabled={matchLoadState === "loading" || matchLoadState === "more" || matchLoadState === "exporting"}>{matchLoadState === "exporting" ? (ar ? "جارٍ تجهيز كل النتائج…" : "Preparing all results…") : (ar ? "تصدير CSV" : "Export CSV")}</button></div>
@@ -395,7 +302,6 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
             <th role="columnheader">{ar ? "أقرب منافس" : "Closest rival"}</th>
             <th role="columnheader">{ar ? "سعر المنافس" : "Rival price"}</th>
             <th role="columnheader">{ar ? "الفرق" : "Difference"}</th>
-            {watchAvailable && <th role="columnheader" className="product-table-watch-heading">{ar ? "المراقبة" : "Watch"}</th>}
             <th role="columnheader">{ar ? "الخطوة التالية" : "Next move"}</th>
           </tr></thead>
           <tbody role="rowgroup">{rows.map((row, index) => {
@@ -405,10 +311,6 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
               <td role="cell" className="product-table-product-cell product-table-rival-product"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "أقرب منافس" : "Closest rival"}</span><ProductIdentity role="rival" product={row.battle.rival} price={row.rivalDisplay} source={row.rivalSource} domain={row.domain} ar={ar} compact showPrice={false} /></td>
               <td role="cell" className="product-table-price-cell product-table-rival-price"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "سعر المنافس" : "Rival price"}</span><ProductTablePrice value={row.rivalDisplay} ar={ar} /></td>
               <td role="cell" className="product-table-difference-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "الفرق" : "Difference"}</span><ProductTableDifference claim={row.priceClaim} lane={row.lane} ar={ar} /></td>
-              {watchAvailable && <td role="cell" className="product-table-watch-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "المراقبة" : "Watch"}</span>{(() => {
-                const matchId = row.battle.key; const watcher = watcherForMatch(matchId); const running = isRunningWatcher(watcher); const cadence = selectedCadence(matchId, watcher); const eligible = /^[a-f0-9]{64}$/.test(matchId);
-                return <div className="row-watch-control"><label className="watch-switch"><input type="checkbox" checked={running} disabled={!eligible || watchBusy === matchId} onChange={(event) => void toggleMatchWatch(matchId, event.target.checked)} /><span aria-hidden="true" /><b>{running ? (ar ? "مفعّل" : "On") : (ar ? "متوقف" : "Off")}</b></label><select aria-label={ar ? "تكرار مراقبة السعر" : "Price-watch frequency"} value={cadence} disabled={!eligible || watchBusy === matchId} onChange={(event) => void changeMatchCadence(matchId, event.target.value as WatchCadence)}><option value="daily">{ar ? "يومي" : "Daily"}</option><option value="hourly">{ar ? "كل ساعة" : "Hourly"}</option></select>{watcher && !running && <small>{watcher.state.replace(/_/g, " ")}</small>}{!eligible && <small>{ar ? "حمّل النتائج الكاملة" : "Load saved results"}</small>}</div>;
-              })()}</td>}
               <td role="cell" className="product-table-action-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "الخطوة التالية" : "Next move"}</span><strong className="product-next-move">{row.shortAction}</strong><ProductTableDetails row={row} ar={ar} /></td>
             </tr>;
           })}</tbody>
