@@ -248,7 +248,7 @@ function ReportWorkspace({ blocks, primaryProducts, resourceId, privatePublicId,
 
       {view === "products" && <>
         {legacyUngatedMatchCount > 0 && <aside className="report-coverage-notice" role="status"><div><span>{ar ? "تقرير قديم" : "LEGACY REPORT"}</span><strong>{ar ? "تحتاج مقارنات الأسعار المحفوظة إلى إعادة التحقق" : "Saved price comparisons need revalidation"}</strong></div><p>{ar ? "أُنشئ هذا التقرير قبل بوابة التحقق الحالية للسوق والعملة. أخفينا صفوفه القديمة بدلاً من عرض أسعار قد تكون من سوق مختلف. شغّل تقريراً جديداً للحصول على مقارنات متحققة." : "This report predates the current market-and-currency validation gate. Its older rows are hidden rather than showing prices that may belong to another market. Run a new report for verified comparisons."}</p><Link href="/">{ar ? "شغّل تقريراً جديداً" : "Run a new report"}</Link></aside>}
-        <ProductDesignLab key={resourceId} comparison={comparison} battles={battles} primaryProducts={primaryProducts} publicId={resourceId} matchesEndpoint={matchesEndpoint} authoritativeMatchTotal={productMatchTotal || undefined} onAuthoritativeSummary={receiveAuthoritativeMatchSummary} primaryDomain={primaryDomain} observedAt={observedAt} ar={ar} />
+        <ProductDesignLab key={resourceId} comparison={comparison} battles={battles} primaryProducts={primaryProducts} publicId={resourceId} matchesEndpoint={matchesEndpoint} workspaceMode={mode === "workspace"} authoritativeMatchTotal={productMatchTotal || undefined} onAuthoritativeSummary={receiveAuthoritativeMatchSummary} primaryDomain={primaryDomain} observedAt={observedAt} ar={ar} />
       </>}
 
       {view === "evidence" && <>

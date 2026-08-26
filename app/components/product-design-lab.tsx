@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PricePosition } from "./price-position";
 import { formatPriceClaim, formatPriceDifference, resolvePriceClaim, type PriceClaim } from "../lib/price-claims";
 import { jsonResponseErrorMessage, readJsonResponse } from "../lib/json-response";
@@ -19,6 +19,7 @@ type ProductDesignLabProps = {
   primaryProducts?: { authoritative: boolean; totalCount: number; products: Array<Record<string, unknown>>; truncated: boolean };
   publicId: string;
   matchesEndpoint: string;
+  workspaceMode: boolean;
   authoritativeMatchTotal?: number;
   onAuthoritativeSummary?: (summary: { totalCount: number; domainCounts: Record<string, number> }) => void;
   primaryDomain: string;
@@ -178,7 +179,10 @@ function ProductTableDetails({ row, ar }: { row: ProductRow; ar: boolean }) {
 }
 
 type MatchPagePayload = { ok: boolean; error?: string; errorCode?: string; page?: { authoritative: true; manifestHash: string; totalCount: number; directPriceCount: number; domainCounts: Record<string, number>; items: ProductBattle[]; nextCursor: string | null } };
-export function ProductDesignLab({ comparison, battles, primaryProducts, publicId, matchesEndpoint, authoritativeMatchTotal, onAuthoritativeSummary, primaryDomain, ar }: ProductDesignLabProps) {
+type WatchCadence = "hourly" | "daily";
+type ReportWatcher = { id: string; cadence: WatchCadence; state: string; links: Array<{ publicReportId: string; matchId: string }> };
+
+export function ProductDesignLab({ comparison, battles, primaryProducts, publicId, matchesEndpoint, workspaceMode, authoritativeMatchTotal, onAuthoritativeSummary, primaryDomain, ar }: ProductDesignLabProps) {
   const [layout, setLayout] = useState<ProductLayout>("table");
   const [authoritativeBattles, setAuthoritativeBattles] = useState<ProductBattle[] | null>(null);
   const [matchTotal, setMatchTotal] = useState(authoritativeMatchTotal || battles.length);
@@ -186,6 +190,12 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [matchLoadState, setMatchLoadState] = useState<"loading" | "ready" | "fallback" | "more" | "exporting">("loading");
   const [matchLoadMessage, setMatchLoadMessage] = useState("");
+  const [watchers, setWatchers] = useState<ReportWatcher[]>([]);
+  const [watchAvailable, setWatchAvailable] = useState(false);
+  const [watchCadences, setWatchCadences] = useState<Record<string, WatchCadence>>({});
+  const [watchBusy, setWatchBusy] = useState("");
+  const [watchMessage, setWatchMessage] = useState("");
+  const watcherRefreshVersion = useRef(0);
   const layoutTabs = useRef<Array<HTMLButtonElement | null>>([]);
   const activeReportId = useRef(publicId);
   const displayedBattles = authoritativeBattles ?? battles;
@@ -198,6 +208,78 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
     .map(([reason, count]) => [reason, numeric(count)] as const)
     .filter(([, count]) => count > 0);
   const suppressionSummary = suppressionReasons.map(([reason, count]) => suppressionReasonLabel(reason, count, ar)).join(ar ? "، " : "; ");
+
+  const refreshWatchers = useCallback(async (signal?: AbortSignal) => {
+    const refreshVersion = ++watcherRefreshVersion.current;
+    const response = await fetch("/api/price-watch", { cache: "no-store", credentials: "same-origin", headers: { accept: "application/json" }, signal });
+    const body = await response.json().catch(() => ({})) as { ok?: boolean; watchers?: ReportWatcher[] };
+    if (signal?.aborted || refreshVersion !== watcherRefreshVersion.current) return;
+    if (!response.ok || !body.ok) { setWatchAvailable(false); return; }
+    setWatchers(Array.isArray(body.watchers) ? body.watchers : []);
+    setWatchAvailable(true);
+  }, []);
+
+  useEffect(() => {
+    if (!workspaceMode) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void refreshWatchers(controller.signal).catch(() => { /* The unavailable state is already the safe default. */ });
+    }, 0);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [publicId, refreshWatchers, workspaceMode]);
+
+  const watcherForMatch = (matchId: string) => watchers.find((watcher) => watcher.links.some((link) => link.publicReportId === publicId && link.matchId === matchId));
+  const selectedCadence = (matchId: string, watcher?: ReportWatcher) => watchCadences[matchId] || watcher?.cadence || "daily";
+  const isRunningWatcher = (watcher?: ReportWatcher) => watcher?.state === "active" || watcher?.state === "baseline_pending";
+  const clearCadenceOverride = (matchId: string) => setWatchCadences((current) => {
+    if (!(matchId in current)) return current;
+    const next = { ...current };
+    delete next[matchId];
+    return next;
+  });
+
+  async function watcherRequest(path: string, method: "POST" | "PATCH", body: Record<string, unknown>) {
+    const response = await fetch(path, { method, credentials: "same-origin", headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify(body) });
+    const result = await response.json().catch(() => ({})) as { error?: string };
+    if (!response.ok) throw new Error(result.error || "The price watcher could not be updated.");
+  }
+
+  async function toggleMatchWatch(matchId: string, enable: boolean) {
+    if (!/^[a-f0-9]{64}$/.test(matchId)) return;
+    const watcher = watcherForMatch(matchId);
+    const cadence = selectedCadence(matchId, watcher);
+    setWatchBusy(matchId);
+    setWatchMessage("");
+    try {
+      if (enable && !watcher) await watcherRequest("/api/price-watch", "POST", { publicReportId: publicId, matchId, cadence });
+      else if (enable && watcher) await watcherRequest(`/api/price-watch/${watcher.id}`, "PATCH", { action: "resume", cadence });
+      else if (watcher) await watcherRequest(`/api/price-watch/${watcher.id}`, "PATCH", { action: "disable" });
+      await refreshWatchers();
+      clearCadenceOverride(matchId);
+    } catch (cause) {
+      setWatchMessage(cause instanceof Error ? cause.message : "The watcher could not be updated.");
+    } finally {
+      setWatchBusy("");
+    }
+  }
+
+  async function changeMatchCadence(matchId: string, cadence: WatchCadence) {
+    setWatchCadences((current) => ({ ...current, [matchId]: cadence }));
+    const watcher = watcherForMatch(matchId);
+    if (!watcher) return;
+    setWatchBusy(matchId);
+    setWatchMessage("");
+    try {
+      await watcherRequest(`/api/price-watch/${watcher.id}`, "PATCH", { cadence });
+      await refreshWatchers();
+      clearCadenceOverride(matchId);
+    } catch (cause) {
+      clearCadenceOverride(matchId);
+      setWatchMessage(cause instanceof Error ? cause.message : "The frequency could not be updated.");
+    } finally {
+      setWatchBusy("");
+    }
+  }
 
   const fetchMatchPage = async (cursor?: string) => {
     const query = new URLSearchParams({ limit: "100" });
@@ -294,6 +376,7 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
     </div>
     {authoritativeBattles && nextCursor && <div className="product-load-more"><button type="button" onClick={loadMoreMatches} disabled={matchLoadState === "more" || matchLoadState === "exporting"}>{matchLoadState === "more" ? (ar ? "جارٍ التحميل…" : "Loading…") : (ar ? `تحميل المزيد (${matchTotal - rows.length} متبقية)` : `Load more (${matchTotal - rows.length} remaining)`)}</button></div>}
     {layout === "table" && <section id="product-layout-table" role="tabpanel" aria-labelledby="product-layout-tab-table" className="product-layout-panel product-table-layout">
+      {watchMessage && <p className="report-watch-message product-watch-message" role="status">{watchMessage}</p>}
       <div className="product-compact-table-shell">
         <table className="product-compact-table" role="table">
           <thead role="rowgroup"><tr role="row">
@@ -302,6 +385,7 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
             <th role="columnheader">{ar ? "أقرب منافس" : "Closest rival"}</th>
             <th role="columnheader">{ar ? "سعر المنافس" : "Rival price"}</th>
             <th role="columnheader">{ar ? "الفرق" : "Difference"}</th>
+            {watchAvailable && <th role="columnheader" className="product-table-watch-heading">{ar ? "المراقبة" : "Watch"}</th>}
             <th role="columnheader">{ar ? "الخطوة التالية" : "Next move"}</th>
           </tr></thead>
           <tbody role="rowgroup">{rows.map((row, index) => {
@@ -311,6 +395,18 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
               <td role="cell" className="product-table-product-cell product-table-rival-product"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "أقرب منافس" : "Closest rival"}</span><ProductIdentity role="rival" product={row.battle.rival} price={row.rivalDisplay} source={row.rivalSource} domain={row.domain} ar={ar} compact showPrice={false} /></td>
               <td role="cell" className="product-table-price-cell product-table-rival-price"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "سعر المنافس" : "Rival price"}</span><ProductTablePrice value={row.rivalDisplay} ar={ar} /></td>
               <td role="cell" className="product-table-difference-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "الفرق" : "Difference"}</span><ProductTableDifference claim={row.priceClaim} lane={row.lane} ar={ar} /></td>
+              {watchAvailable && <td role="cell" className="product-table-watch-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "المراقبة" : "Watch"}</span>{(() => {
+                const matchId = row.battle.key;
+                const watcher = watcherForMatch(matchId);
+                const running = isRunningWatcher(watcher);
+                const cadence = selectedCadence(matchId, watcher);
+                const eligible = /^[a-f0-9]{64}$/.test(matchId);
+                const primaryName = display(row.battle.primary.name, ar ? "منتجك" : "Your product");
+                const rivalName = display(row.battle.rival.name, ar ? "منتج المنافس" : "Rival product");
+                const toggleLabel = ar ? `مراقبة سعر ${rivalName} المطابق لـ ${primaryName}` : `Watch the price of ${rivalName}, matched to ${primaryName}`;
+                const cadenceLabel = ar ? `تكرار مراقبة سعر ${rivalName}` : `Price-watch frequency for ${rivalName}`;
+                return <div className="row-watch-control"><label className="watch-switch"><input type="checkbox" aria-label={toggleLabel} checked={running} disabled={!eligible || watchBusy === matchId} onChange={(event) => void toggleMatchWatch(matchId, event.target.checked)} /><span aria-hidden="true" /><b>{running ? (ar ? "مفعّل" : "On") : (ar ? "متوقف" : "Off")}</b></label><select aria-label={cadenceLabel} value={cadence} disabled={!eligible || watchBusy === matchId} onChange={(event) => void changeMatchCadence(matchId, event.target.value as WatchCadence)}><option value="daily">{ar ? "يومي" : "Daily"}</option><option value="hourly">{ar ? "كل ساعة" : "Hourly"}</option></select>{watcher && !running && <small>{watcher.state.replace(/_/g, " ")}</small>}{!eligible && <small>{ar ? "حمّل النتائج الكاملة" : "Load saved results"}</small>}</div>;
+              })()}</td>}
               <td role="cell" className="product-table-action-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "الخطوة التالية" : "Next move"}</span><strong className="product-next-move">{row.shortAction}</strong><ProductTableDetails row={row} ar={ar} /></td>
             </tr>;
           })}</tbody>
