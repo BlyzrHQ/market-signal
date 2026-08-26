@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { KeyboardEvent, MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProductDesignLab } from "../../components/product-design-lab";
+import { CompetitorPriceWatch } from "../../components/competitor-price-watch";
 import { ReportShareControl } from "../../components/report-share-control";
 import { ExperienceBenchmark } from "../../components/experience-benchmark";
 import { reportCoverage, type ReportCoverageEvent } from "../../lib/report-coverage";
@@ -195,6 +196,11 @@ function ReportWorkspace({ blocks, primaryProducts, resourceId, privatePublicId,
   }, [matchesEndpoint, resourceId]);
   const currentMatchSummary = authoritativeMatchSummary?.publicId === resourceId ? authoritativeMatchSummary : null;
   const productMatchTotal = currentMatchSummary?.totalCount ?? battles.length;
+  const watchRivals = useMemo(() => competitors.map((competitor) => {
+    const domain = display(competitor.domain);
+    const compactCount = battles.filter((battle) => display(battle.match.domain || battle.rival.domain) === domain).length;
+    return { domain, count: currentMatchSummary?.domainCounts?.[domain] ?? (numeric(competitor.comparisonCount) || compactCount) };
+  }).filter((rival) => rival.domain), [battles, competitors, currentMatchSummary]);
   const evidence = blocks.filter((block) => block.type === "evidence");
   const gaps = blocks.filter((block) => block.type === "gap");
   const domainAlternatives = list(domainStatus?.alternatives).map(object);
@@ -235,13 +241,14 @@ function ReportWorkspace({ blocks, primaryProducts, resourceId, privatePublicId,
       {view === "competitors" && <>
         <header className="panel-intro compact"><div><span>{ar ? "خريطة المنافسين" : "RIVAL MAP"}</span><h2>{ar ? "من ظهر في مقارنات المنتجات المقبولة؟" : "Who appears in the accepted product comparisons?"}</h2><p>{ar ? "تُشتق هذه القائمة من بائعي مقارنات الأسعار المقبولة فقط؛ ولا يُحتسب الاكتشاف العام كمنافس." : "This list is derived only from sellers in accepted priced comparisons; broad discovery does not count as a competitor."}</p></div></header>
         <div className="panel-metrics"><div><strong>{competitors.length}</strong><span>{ar ? "منافسون متحققون" : "verified competitors"}</span></div><div><strong>{competitors.filter((item) => item.hasProductOverlap).length}</strong><span>{ar ? "بتداخل منتجات" : "with product overlap"}</span></div><div><strong>{competitors.filter((item) => display(item.confidence).toLowerCase() === "high").length}</strong><span>{ar ? "ثقة عالية" : "high confidence"}</span></div></div>
+        {mode === "workspace" && <CompetitorPriceWatch key={`watch-${resourceId}`} publicId={resourceId} matchesEndpoint={matchesEndpoint} rivals={watchRivals} ar={ar} />}
         <div className="competitor-workspace-list">{competitors.map((competitor, index) => { const domain = display(competitor.domain); const rivalBattles = battles.filter((battle) => display(battle.match.domain || battle.rival.domain) === domain); const rivalBattleCount = currentMatchSummary?.domainCounts?.[domain] ?? (numeric(competitor.comparisonCount) || rivalBattles.length); const score = numeric(competitor.verificationScore); return <article id={competitorAnchor(domain)} key={display(competitor.id, domain)}><header><span>{String(index + 1).padStart(2, "0")}</span><div><h3>{display(competitor.companyName || domain, domain)}</h3><p>{domain}</p></div><b>{score > 0 ? `${score}/100` : (ar ? "مقارنة" : "PAIR")}</b></header><p className="rival-reason">{display(competitor.reason || competitor.description, ar ? "أُدرج هذا البائع لأن له مقارنة أسعار مقبولة واحدة على الأقل." : "This seller is included because it has at least one accepted priced comparison.")}</p><div className="rival-facts"><span>{display(competitor.relationship, ar ? "مقارنة منتج مسعّرة" : "priced product comparison")}</span><span>{display(competitor.confidence, ar ? "زوج متحقق" : "Verified pair")}</span><span>{rivalBattleCount} {ar ? "مقارنة مقبولة" : "accepted comparisons"}</span></div><div className="entity-links"><a href={viewHref("products", productAnchor(domain))}>{ar ? `${rivalBattleCount} مقارنة منتجات` : `${rivalBattleCount} product battles`}</a>{safeUrl(competitor.websiteSourceUrl || competitor.discoverySourceUrl) && <a href={safeUrl(competitor.websiteSourceUrl || competitor.discoverySourceUrl)} target="_blank" rel="noreferrer">{ar ? "موقع المنافس ↗" : "Competitor site ↗"}</a>}</div></article>; })}</div>
         {!competitors.length && <div className="truth-state limited"><strong>{ar ? "لم يتم التحقق من منافس" : "No competitor was verified"}</strong><p>{ar ? "هذا نقص في التغطية، وليس دليلاً على عدم وجود منافسين." : "This is a coverage gap, not proof that no competitors exist."}</p></div>}
       </>}
 
       {view === "products" && <>
         {legacyUngatedMatchCount > 0 && <aside className="report-coverage-notice" role="status"><div><span>{ar ? "تقرير قديم" : "LEGACY REPORT"}</span><strong>{ar ? "تحتاج مقارنات الأسعار المحفوظة إلى إعادة التحقق" : "Saved price comparisons need revalidation"}</strong></div><p>{ar ? "أُنشئ هذا التقرير قبل بوابة التحقق الحالية للسوق والعملة. أخفينا صفوفه القديمة بدلاً من عرض أسعار قد تكون من سوق مختلف. شغّل تقريراً جديداً للحصول على مقارنات متحققة." : "This report predates the current market-and-currency validation gate. Its older rows are hidden rather than showing prices that may belong to another market. Run a new report for verified comparisons."}</p><Link href="/">{ar ? "شغّل تقريراً جديداً" : "Run a new report"}</Link></aside>}
-        <ProductDesignLab key={resourceId} comparison={comparison} battles={battles} primaryProducts={primaryProducts} publicId={resourceId} matchesEndpoint={matchesEndpoint} workspaceMode={mode === "workspace"} authoritativeMatchTotal={productMatchTotal || undefined} onAuthoritativeSummary={receiveAuthoritativeMatchSummary} primaryDomain={primaryDomain} observedAt={observedAt} ar={ar} />
+        <ProductDesignLab key={resourceId} comparison={comparison} battles={battles} primaryProducts={primaryProducts} publicId={resourceId} matchesEndpoint={matchesEndpoint} authoritativeMatchTotal={productMatchTotal || undefined} onAuthoritativeSummary={receiveAuthoritativeMatchSummary} primaryDomain={primaryDomain} observedAt={observedAt} ar={ar} />
       </>}
 
       {view === "evidence" && <>

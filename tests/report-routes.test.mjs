@@ -7,6 +7,7 @@ const accountNavigation = await readFile(new URL("../app/components/account-navi
 const loading = await readFile(new URL("../app/reports/[publicId]/loading/page.tsx", import.meta.url), "utf8");
 const report = await readFile(new URL("../app/reports/[publicId]/page.tsx", import.meta.url), "utf8");
 const productLab = await readFile(new URL("../app/components/product-design-lab.tsx", import.meta.url), "utf8");
+const competitorWatch = await readFile(new URL("../app/components/competitor-price-watch.tsx", import.meta.url), "utf8");
 const priceClaims = await readFile(new URL("../app/lib/price-claims.ts", import.meta.url), "utf8");
 const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 
@@ -116,8 +117,9 @@ test("report-level sharing is explicit while shared rendering omits private work
   assert.match(report, /<ReportShareControl publicId=\{privatePublicId\} ar=\{ar\} \/>/);
   assert.match(report, /mode === "workspace" && <PriceWatchWorkspaceLink ar=\{ar\} \/>/);
   assert.match(report, /Shared · read only/);
-  assert.match(report, /matchesEndpoint=\{matchesEndpoint\} workspaceMode=\{mode === "workspace"\}/);
-  assert.match(productLab, /if \(!workspaceMode\) return;/);
+  assert.match(report, /mode === "workspace" && <CompetitorPriceWatch/);
+  assert.match(competitorWatch, /fetch\("\/api\/price-watch", \{ cache: "no-store", credentials: "same-origin"/);
+  assert.doesNotMatch(productLab, /\/api\/price-watch|workspaceMode/);
   assert.match(productLab, /fetch\(`\$\{matchesEndpoint\}\?\$\{query\}`/);
   assert.doesNotMatch(productLab, /Copy workspace link|copyWorkspaceReportLink/);
   assert.match(css, /\.report-route-header \{[^}]*display: grid;[^}]*grid-template-columns: minmax\(150px,1fr\) auto auto/);
