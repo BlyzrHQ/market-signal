@@ -1,6 +1,8 @@
 import Database from "better-sqlite3";
 import { betterAuth } from "better-auth";
 import { createHash, randomUUID } from "node:crypto";
+import { createHostedMcpAuthPlugins, hostedMcpEnabled } from "./mcp-oauth-config.ts";
+import { ensureMcpOAuthSchema } from "./mcp-oauth-schema.ts";
 import { canonicalNodeSqlitePath } from "./node-sqlite-database.ts";
 
 const MINIMUM_SECRET_LENGTH = 32;
@@ -9,6 +11,7 @@ const BUSY_TIMEOUT_MS = 10_000;
 export type AccountAuthConfig = {
   baseURL: string;
   databasePath: string;
+  mcpEnabled?: boolean;
   secret: string;
 };
 
@@ -59,6 +62,7 @@ export function accountAuthConfigFromEnvironment(
   return {
     baseURL: parsedURL.origin,
     databasePath,
+    mcpEnabled: hostedMcpEnabled(environment, parsedURL.origin),
     secret,
   };
 }
@@ -104,12 +108,16 @@ export async function createAccountAuth(config: AccountAuthConfig) {
   database.pragma("journal_mode = WAL");
   ensureAccountSchema(database);
 
+  const plugins = config.mcpEnabled ? createHostedMcpAuthPlugins(config.baseURL) : [];
+  if (config.mcpEnabled) ensureMcpOAuthSchema(database);
+
   return betterAuth({
     appName: "Market Signal",
     baseURL: config.baseURL,
     database,
     secret: config.secret,
     emailAndPassword: { enabled: true },
+    plugins,
     databaseHooks: {
       user: {
         create: {
@@ -362,6 +370,12 @@ async function getAccountAuth(config: AccountAuthConfig) {
     authPromise = null;
     throw error;
   }
+}
+
+export async function configuredAccountAuth() {
+  const config = accountAuthConfigFromEnvironment(process.env);
+  if (!config) return null;
+  return getAccountAuth(config);
 }
 
 export async function accountContext(request: Request): Promise<AccountContext | null> {

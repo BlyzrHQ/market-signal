@@ -79,6 +79,7 @@ test("account auth configuration fails closed", () => {
   assert.deepEqual(accountAuthConfigFromEnvironment(complete), {
     baseURL: "https://signal.blyzr.com",
     databasePath: "C:\\data\\market-signal.sqlite",
+    mcpEnabled: false,
     secret: complete.BETTER_AUTH_SECRET,
   });
   assert.equal(accountAuthConfigFromEnvironment({ ...complete, BETTER_AUTH_SECRET: "short" }), null);
