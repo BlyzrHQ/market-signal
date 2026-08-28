@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import Database from "better-sqlite3";
+import { betterAuth as betterAuthV16 } from "better-auth-v16";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import {
@@ -19,6 +20,53 @@ import { accountUsers } from "../db/schema.ts";
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), "market-signal-auth-"));
   return { directory, databasePath: join(directory, "market-signal.sqlite") };
+}
+
+function createBetterAuthV16Schema(database) {
+  database.exec(`
+    CREATE TABLE "user" (
+      "id" text PRIMARY KEY NOT NULL,
+      "name" text NOT NULL,
+      "email" text NOT NULL UNIQUE,
+      "emailVerified" integer NOT NULL,
+      "image" text,
+      "createdAt" text NOT NULL,
+      "updatedAt" text NOT NULL
+    );
+    CREATE TABLE "session" (
+      "id" text PRIMARY KEY NOT NULL,
+      "expiresAt" text NOT NULL,
+      "token" text NOT NULL UNIQUE,
+      "createdAt" text NOT NULL,
+      "updatedAt" text NOT NULL,
+      "ipAddress" text,
+      "userAgent" text,
+      "userId" text NOT NULL REFERENCES "user"("id") ON DELETE CASCADE
+    );
+    CREATE TABLE "account" (
+      "id" text PRIMARY KEY NOT NULL,
+      "accountId" text NOT NULL,
+      "providerId" text NOT NULL,
+      "userId" text NOT NULL REFERENCES "user"("id") ON DELETE CASCADE,
+      "accessToken" text,
+      "refreshToken" text,
+      "idToken" text,
+      "accessTokenExpiresAt" text,
+      "refreshTokenExpiresAt" text,
+      "scope" text,
+      "password" text,
+      "createdAt" text NOT NULL,
+      "updatedAt" text NOT NULL
+    );
+    CREATE TABLE "verification" (
+      "id" text PRIMARY KEY NOT NULL,
+      "identifier" text NOT NULL,
+      "value" text NOT NULL,
+      "expiresAt" text NOT NULL,
+      "createdAt" text NOT NULL,
+      "updatedAt" text NOT NULL
+    );
+  `);
 }
 
 test("account auth configuration fails closed", () => {
@@ -186,6 +234,81 @@ test("email signup creates a user, password account, session, and personal works
     assert.equal(database.prepare("SELECT count(*) AS total FROM workspace_members WHERE role = 'owner'").get().total, 1);
   } finally {
     auth?.options.database.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Better Auth 1.7 upgrades a populated 1.6 database without invalidating its session", async () => {
+  const { directory, databasePath } = await fixture();
+  const secret = "a-production-shaped-upgrade-secret-with-at-least-32-characters";
+  const baseURL = "https://signal.example.test";
+  let legacyDatabase;
+  let upgradedAuth;
+  try {
+    legacyDatabase = new Database(databasePath);
+    legacyDatabase.pragma("foreign_keys = ON");
+    createBetterAuthV16Schema(legacyDatabase);
+    const legacyAuth = betterAuthV16({
+      appName: "Market Signal",
+      baseURL,
+      database: legacyDatabase,
+      secret,
+      emailAndPassword: { enabled: true },
+    });
+    const signup = await legacyAuth.handler(new Request(`${baseURL}/api/auth/sign-up/email`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: baseURL },
+      body: JSON.stringify({
+        name: "Existing User",
+        email: "existing@example.test",
+        password: "secure-password-123",
+      }),
+    }));
+    assert.equal(signup.status, 200);
+    const cookie = signup.headers.get("set-cookie")?.split(";", 1)[0];
+    assert.ok(cookie);
+    assert.equal(
+      legacyDatabase.prepare("SELECT count(*) AS total FROM account").get().total,
+      1,
+    );
+    assert.equal(
+      legacyDatabase.prepare("SELECT count(*) AS total FROM pragma_table_info('account') WHERE name = 'issuer'").get().total,
+      0,
+    );
+    legacyDatabase.close();
+    legacyDatabase = undefined;
+
+    upgradedAuth = await createAccountAuth({ baseURL, databasePath, secret });
+    const session = await upgradedAuth.handler(new Request(`${baseURL}/api/auth/get-session`, {
+      headers: { cookie },
+    }));
+    assert.equal(session.status, 200);
+    assert.equal((await session.json())?.user?.email, "existing@example.test");
+
+    const database = upgradedAuth.options.database;
+    assert.deepEqual(
+      database.prepare("SELECT providerId, issuer, accountId, userId FROM account").get(),
+      {
+        providerId: "credential",
+        issuer: "local:credential",
+        accountId: database.prepare('SELECT id FROM "user"').get().id,
+        userId: database.prepare('SELECT id FROM "user"').get().id,
+      },
+    );
+    const issuerColumn = database.prepare('PRAGMA table_info("account")').all()
+      .find((column) => column.name === "issuer");
+    assert.equal(issuerColumn?.notnull, 1);
+    assert.equal(
+      database.prepare(`
+        SELECT count(*) AS total
+        FROM pragma_index_list('account')
+        WHERE name = 'account_issuer_accountId_uidx' AND "unique" = 1
+      `).get().total,
+      1,
+    );
+  } finally {
+    legacyDatabase?.close();
+    upgradedAuth?.options.database.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

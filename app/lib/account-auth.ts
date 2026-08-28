@@ -155,6 +155,7 @@ export function ensureAccountSchema(database: Database.Database): void {
       "id" text PRIMARY KEY NOT NULL,
       "accountId" text NOT NULL,
       "providerId" text NOT NULL,
+      "issuer" text NOT NULL,
       "userId" text NOT NULL REFERENCES "user"("id") ON DELETE CASCADE,
       "accessToken" text,
       "refreshToken" text,
@@ -166,7 +167,6 @@ export function ensureAccountSchema(database: Database.Database): void {
       "createdAt" text NOT NULL,
       "updatedAt" text NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS "account_userId_idx" ON "account"("userId");
     CREATE TABLE IF NOT EXISTS "verification" (
       "id" text PRIMARY KEY NOT NULL,
       "identifier" text NOT NULL,
@@ -194,6 +194,111 @@ export function ensureAccountSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS "workspace_members_user_idx" ON "workspace_members"("user_id");
   `);
+
+  ensureAccountIssuerSchema(database);
+}
+
+type AccountColumnInfo = {
+  name: string;
+  notnull: number;
+};
+
+type LegacyAccountProvider = {
+  providerId: string;
+  total: number;
+};
+
+function ensureAccountIssuerSchema(database: Database.Database): void {
+  const migrate = database.transaction(() => {
+    let columns = database.prepare('PRAGMA table_info("account")').all() as AccountColumnInfo[];
+    let issuerColumn = columns.find((column) => column.name === "issuer");
+
+    if (!issuerColumn) {
+      database.exec('ALTER TABLE "account" ADD COLUMN "issuer" text;');
+      columns = database.prepare('PRAGMA table_info("account")').all() as AccountColumnInfo[];
+      issuerColumn = columns.find((column) => column.name === "issuer");
+    }
+
+    const providersMissingIssuer = database.prepare(`
+      SELECT providerId, count(*) AS total
+      FROM "account"
+      WHERE issuer IS NULL OR trim(issuer) = ''
+      GROUP BY providerId
+    `).all() as LegacyAccountProvider[];
+    const unsupportedProviders = providersMissingIssuer.filter(({ providerId }) => providerId !== "credential");
+    if (unsupportedProviders.length > 0) {
+      throw new Error(
+        `Better Auth 1.7 account migration requires an explicit trusted issuer for provider(s): ${unsupportedProviders
+          .map(({ providerId }) => providerId)
+          .join(", ")}.`,
+      );
+    }
+
+    database.prepare(`
+      UPDATE "account"
+      SET issuer = 'local:credential', accountId = userId
+      WHERE (issuer IS NULL OR trim(issuer) = '') AND providerId = 'credential'
+    `).run();
+
+    const incomplete = database.prepare(`
+      SELECT count(*) AS total
+      FROM "account"
+      WHERE issuer IS NULL OR trim(issuer) = '' OR accountId IS NULL OR trim(accountId) = ''
+    `).get() as { total: number };
+    if (incomplete.total > 0) {
+      throw new Error("Better Auth 1.7 account migration left incomplete account identities.");
+    }
+
+    const collision = database.prepare(`
+      SELECT issuer, accountId, count(*) AS total
+      FROM "account"
+      GROUP BY issuer, accountId
+      HAVING count(*) > 1
+      LIMIT 1
+    `).get() as { issuer: string; accountId: string; total: number } | undefined;
+    if (collision) {
+      throw new Error("Better Auth 1.7 account migration found an account identity collision.");
+    }
+
+    if (!issuerColumn || issuerColumn.notnull !== 1) {
+      database.exec(`
+        CREATE TABLE "account_v17_migration" (
+          "id" text PRIMARY KEY NOT NULL,
+          "accountId" text NOT NULL,
+          "providerId" text NOT NULL,
+          "issuer" text NOT NULL,
+          "userId" text NOT NULL REFERENCES "user"("id") ON DELETE CASCADE,
+          "accessToken" text,
+          "refreshToken" text,
+          "idToken" text,
+          "accessTokenExpiresAt" text,
+          "refreshTokenExpiresAt" text,
+          "scope" text,
+          "password" text,
+          "createdAt" text NOT NULL,
+          "updatedAt" text NOT NULL
+        );
+        INSERT INTO "account_v17_migration" (
+          id, accountId, providerId, issuer, userId, accessToken, refreshToken, idToken,
+          accessTokenExpiresAt, refreshTokenExpiresAt, scope, password, createdAt, updatedAt
+        )
+        SELECT
+          id, accountId, providerId, issuer, userId, accessToken, refreshToken, idToken,
+          accessTokenExpiresAt, refreshTokenExpiresAt, scope, password, createdAt, updatedAt
+        FROM "account";
+        DROP TABLE "account";
+        ALTER TABLE "account_v17_migration" RENAME TO "account";
+      `);
+    }
+
+    database.exec(`
+      CREATE INDEX IF NOT EXISTS "account_userId_idx" ON "account"("userId");
+      CREATE UNIQUE INDEX IF NOT EXISTS "account_issuer_accountId_uidx"
+        ON "account"("issuer", "accountId");
+    `);
+  });
+
+  migrate.immediate();
 }
 
 export function ensurePersonalWorkspace(
