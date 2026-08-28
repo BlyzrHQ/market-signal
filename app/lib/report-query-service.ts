@@ -1,17 +1,20 @@
 import {
   getStoredReport,
+  listWorkspaceReportPage,
   listWorkspaceReports,
   loadStoredReportAccess,
   loadStoredReportMatchPage,
   type StoredReportMatchPage,
   type StoredReportSnapshot,
   type WorkspaceReportSummary,
+  type WorkspaceReportPage,
 } from "./report-store.ts";
 import { settleTerminalReportReservation } from "./report-terminal-billing.ts";
 
 export type ReportQueryDependencies = {
   now: () => Date;
   listReports: typeof listWorkspaceReports;
+  listReportPage: typeof listWorkspaceReportPage;
   loadAccess: typeof loadStoredReportAccess;
   loadReport: typeof getStoredReport;
   loadMatchPage: typeof loadStoredReportMatchPage;
@@ -33,6 +36,7 @@ export function reportQueryDependencies(): ReportQueryDependencies {
   return {
     now: () => new Date(),
     listReports: listWorkspaceReports,
+    listReportPage: listWorkspaceReportPage,
     loadAccess: loadStoredReportAccess,
     loadReport: getStoredReport,
     loadMatchPage: loadStoredReportMatchPage,
@@ -67,6 +71,15 @@ export async function listWorkspaceReportSummaries(
 ): Promise<WorkspaceReportSummary[]> {
   if (!workspaceId) return [];
   return services.listReports(workspaceId, { limit: input.limit, now: services.now() });
+}
+
+export async function listWorkspaceReportSummaryPage(
+  workspaceId: string,
+  input: { limit?: number; cursor?: string } = {},
+  services: ReportQueryDependencies = reportQueryDependencies(),
+): Promise<WorkspaceReportPage> {
+  if (!workspaceId) return { items: [], nextCursor: null };
+  return services.listReportPage(workspaceId, { limit: input.limit, cursor: input.cursor, now: services.now() });
 }
 
 export async function getWorkspaceReport(

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { decodeJwt, decodeProtectedHeader } from "jose";
+import { signJWT } from "better-auth/plugins";
 
 import { createAccountAuth } from "../app/lib/account-auth.ts";
 import {
@@ -21,6 +22,10 @@ import {
   listConnectedMcpApps,
   revokeConnectedMcpApp,
 } from "../app/lib/mcp-oauth-store.ts";
+import {
+  McpAccessTokenError,
+  verifyMcpAccessToken,
+} from "../app/lib/mcp-token-verifier.ts";
 
 const BASE_URL = "https://signal.blyzr.com";
 const CALLBACK_URL = "http://127.0.0.1:45891/callback";
@@ -211,6 +216,35 @@ test("authorization code plus S256 issues an audience-bound rotating grant", asy
     assert.equal(typeof claims.sid, "string");
     assert.equal(database.prepare("SELECT count(*) AS total FROM oauthRefreshToken WHERE revoked IS NULL").get().total, 1);
 
+    const authInfo = await verifyMcpAccessToken(database, tokens.access_token);
+    assert.equal(authInfo.clientId, TEST_CLIENT_ID);
+    assert.equal(authInfo.resource.href, MCP_RESOURCE);
+    assert.equal(authInfo.extra.workspaceId.length > 0, true);
+    assert.equal(authInfo.extra.userId, claims.sub);
+    assert.deepEqual(authInfo.scopes, ["offline_access", "reports:read", "price_watch:read"]);
+    await assert.rejects(
+      () => verifyMcpAccessToken(database, tokens.access_token, new Date((claims.exp + 120) * 1_000)),
+      (error) => error instanceof McpAccessTokenError && error.code === "invalid_token",
+    );
+    const jwtPlugin = auth.options.plugins.find((plugin) => plugin.id === "jwt");
+    assert.ok(jwtPlugin?.options);
+    const wrongAudienceToken = await signJWT({ context: await auth.$context }, {
+      options: jwtPlugin.options,
+      header: { typ: "at+jwt" },
+      signingAlgorithm: "EdDSA",
+      payload: { ...claims, aud: "https://wrong-resource.example/mcp" },
+    });
+    await assert.rejects(
+      () => verifyMcpAccessToken(database, wrongAudienceToken),
+      (error) => error instanceof McpAccessTokenError && error.code === "invalid_token",
+    );
+    const [encodedHeader, encodedPayload, encodedSignature] = tokens.access_token.split(".");
+    const tamperedPayload = `${encodedPayload[0] === "a" ? "b" : "a"}${encodedPayload.slice(1)}`;
+    await assert.rejects(
+      () => verifyMcpAccessToken(database, `${encodedHeader}.${tamperedPayload}.${encodedSignature}`),
+      (error) => error instanceof McpAccessTokenError && error.code === "invalid_token",
+    );
+
     const authorized = authorizeMcpClaims(database, claims, ["reports:read"]);
     assert.equal(authorized.ok, true, JSON.stringify({ authorized, claims }));
     assert.equal(authorized.ok && authorized.context.workspaceId.length > 0, true);
@@ -235,6 +269,10 @@ test("connected-app revocation is tenant-bound and rejects the next JWT-backed r
     assert.equal(beforeRevocation.ok, true, JSON.stringify(beforeRevocation));
     assert.equal(revokeConnectedMcpApp(database, claims.sub, app.consentId), true);
     assert.deepEqual(authorizeMcpClaims(database, claims, ["reports:read"]), { ok: false, reason: "missing_consent" });
+    await assert.rejects(
+      () => verifyMcpAccessToken(database, tokens.access_token),
+      (error) => error instanceof McpAccessTokenError && error.code === "invalid_token",
+    );
     assert.equal(database.prepare("SELECT count(*) AS total FROM oauthRefreshToken WHERE revoked IS NULL").get().total, 0);
     assert.equal(database.prepare("SELECT event_type FROM mcp_oauth_connection_events").get().event_type, "revoked_by_user");
   } finally {

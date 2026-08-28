@@ -71,6 +71,11 @@ export type WorkspaceReportSummary = {
   updatedAt: string;
 };
 
+export type WorkspaceReportPage = {
+  items: WorkspaceReportSummary[];
+  nextCursor: string | null;
+};
+
 export type StoredReportAccess = {
   runId: string;
   publicId: string;
@@ -1216,24 +1221,68 @@ export async function createReportRunResult(input: { primaryDomain: string; loca
   }
 }
 
-export async function listWorkspaceReports(workspaceId: string, options: { limit?: number; now?: Date } = {}, databaseOverride?: D1DatabaseLike | null): Promise<WorkspaceReportSummary[]> {
+function encodeWorkspaceReportCursor(report: WorkspaceReportSummary) {
+  return btoa(JSON.stringify({ createdAt: report.createdAt, publicId: report.publicId }))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function decodeWorkspaceReportCursor(value: string | undefined) {
+  if (!value) return null;
+  if (!/^[A-Za-z0-9_-]{1,500}$/.test(value)) throw new Error("Invalid report cursor.");
+  try {
+    const padded = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
+    const parsed = JSON.parse(atob(padded)) as Record<string, unknown>;
+    const createdAt = String(parsed.createdAt || "");
+    const publicId = String(parsed.publicId || "");
+    if (!Number.isFinite(Date.parse(createdAt)) || !PUBLIC_ID_PATTERN.test(publicId)) throw new Error("invalid");
+    return { createdAt: new Date(createdAt).toISOString(), publicId };
+  } catch {
+    throw new Error("Invalid report cursor.");
+  }
+}
+
+export async function listWorkspaceReportPage(
+  workspaceId: string,
+  options: { limit?: number; cursor?: string; now?: Date } = {},
+  databaseOverride?: D1DatabaseLike | null,
+): Promise<WorkspaceReportPage> {
   const normalizedWorkspaceId = cleanText(workspaceId, 200);
-  if (!normalizedWorkspaceId) return [];
+  if (!normalizedWorkspaceId) return { items: [], nextCursor: null };
   const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
   if (!database) throw new Error(STORAGE_UNAVAILABLE_MESSAGE);
-  const limit = Math.min(10, Math.max(1, Math.trunc(options.limit || 5)));
+  const limit = Math.min(50, Math.max(1, Math.trunc(options.limit || 10)));
+  const cursor = decodeWorkspaceReportCursor(options.cursor);
   const now = options.now || new Date();
   await ensureSchema(database);
-  const rows = await database.prepare(`SELECT public_id, primary_domain, status, created_at, updated_at FROM report_runs WHERE workspace_id = ? AND expires_at > ? ORDER BY created_at DESC, public_id DESC LIMIT ?`)
-    .bind(normalizedWorkspaceId, now.toISOString(), limit)
+  const cursorFilter = cursor ? "AND (created_at < ? OR (created_at = ? AND public_id < ?))" : "";
+  const statement = database.prepare(`SELECT public_id, primary_domain, status, created_at, updated_at FROM report_runs WHERE workspace_id = ? AND expires_at > ? ${cursorFilter} ORDER BY created_at DESC, public_id DESC LIMIT ?`);
+  const rows = await statement
+    .bind(
+      normalizedWorkspaceId,
+      now.toISOString(),
+      ...(cursor ? [cursor.createdAt, cursor.createdAt, cursor.publicId] : []),
+      limit + 1,
+    )
     .all<Record<string, unknown>>();
-  return (rows.results || []).map((row) => ({
+  const reports = (rows.results || []).map((row) => ({
     publicId: String(row.public_id || ""),
     primaryDomain: String(row.primary_domain || ""),
     status: STATUSES.has(row.status as ReportRunStatus) ? row.status as ReportRunStatus : "failed",
     createdAt: String(row.created_at || ""),
     updatedAt: String(row.updated_at || ""),
   })).filter((report) => PUBLIC_ID_PATTERN.test(report.publicId) && Boolean(report.primaryDomain));
+  const items = reports.slice(0, limit);
+  return {
+    items,
+    nextCursor: reports.length > limit && items.length > 0 ? encodeWorkspaceReportCursor(items.at(-1)!) : null,
+  };
+}
+
+export async function listWorkspaceReports(workspaceId: string, options: { limit?: number; now?: Date } = {}, databaseOverride?: D1DatabaseLike | null): Promise<WorkspaceReportSummary[]> {
+  const limit = Math.min(10, Math.max(1, Math.trunc(options.limit || 5)));
+  return (await listWorkspaceReportPage(workspaceId, { limit, now: options.now }, databaseOverride)).items;
 }
 
 export async function appendReportEvent(publicReportId: string, input: { attemptNumber?: number; idempotencyKey: string; phase: ReportPhase; status: ReportRunStatus; message: string; metadata?: unknown; errorCode?: string }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
