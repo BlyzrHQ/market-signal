@@ -126,6 +126,13 @@ test("report-level sharing is explicit while shared rendering omits private work
   assert.match(productLab, /fetch\(`\$\{matchesEndpoint\}\?\$\{query\}`/);
   assert.match(productLab, /refreshVersion !== watcherRefreshVersion\.current/);
   assert.match(productLab, /clearCadenceOverride\(matchId\)/);
+  assert.match(productLab, /const itemWatchReady = watchAvailable && authoritativeBattles !== null/);
+  assert.match(productLab, /role="switch"/);
+  assert.match(productLab, /aria-checked=\{checked\}/);
+  assert.match(productLab, /onClick=\{onToggle\}/);
+  assert.doesNotMatch(productLab, /<input type="checkbox"[^>]*watch/);
+  assert.match(css, /\.watch-switch\[aria-checked="true"\] > span/);
+  assert.doesNotMatch(css, /\.watch-switch input[^}]*pointer-events:none/);
   assert.doesNotMatch(productLab, /Copy workspace link|copyWorkspaceReportLink/);
   assert.match(css, /\.report-route-header \{[^}]*display: grid;[^}]*grid-template-columns: minmax\(150px,1fr\) auto auto/);
   assert.match(css, /@media \(max-width: 1180px\) \{[\s\S]*\.report-route-header \{ min-height: 108px;[^}]*grid-template-columns: minmax\(0,1fr\) auto/);

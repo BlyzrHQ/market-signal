@@ -182,6 +182,18 @@ type MatchPagePayload = { ok: boolean; error?: string; errorCode?: string; page?
 type WatchCadence = "hourly" | "daily";
 type ReportWatcher = { id: string; cadence: WatchCadence; state: string; links: Array<{ publicReportId: string; matchId: string }> };
 
+function PriceWatchSwitch({ checked, disabled, busy, label, ar, onToggle }: { checked: boolean; disabled: boolean; busy: boolean; label: string; ar: boolean; onToggle: () => void }) {
+  return <button
+    type="button"
+    className="watch-switch"
+    role="switch"
+    aria-checked={checked}
+    aria-label={label}
+    disabled={disabled}
+    onClick={onToggle}
+  ><span aria-hidden="true" /><b>{busy ? (ar ? "جارٍ الحفظ…" : "Saving…") : checked ? (ar ? "مفعّل" : "On") : (ar ? "متوقف" : "Off")}</b></button>;
+}
+
 export function ProductDesignLab({ comparison, battles, primaryProducts, publicId, matchesEndpoint, workspaceMode, authoritativeMatchTotal, onAuthoritativeSummary, primaryDomain, ar }: ProductDesignLabProps) {
   const [layout, setLayout] = useState<ProductLayout>("table");
   const [authoritativeBattles, setAuthoritativeBattles] = useState<ProductBattle[] | null>(null);
@@ -208,6 +220,7 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
     .map(([reason, count]) => [reason, numeric(count)] as const)
     .filter(([, count]) => count > 0);
   const suppressionSummary = suppressionReasons.map(([reason, count]) => suppressionReasonLabel(reason, count, ar)).join(ar ? "، " : "; ");
+  const itemWatchReady = watchAvailable && authoritativeBattles !== null;
 
   const refreshWatchers = useCallback(async (signal?: AbortSignal) => {
     const refreshVersion = ++watcherRefreshVersion.current;
@@ -385,7 +398,7 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
             <th role="columnheader">{ar ? "أقرب منافس" : "Closest rival"}</th>
             <th role="columnheader">{ar ? "سعر المنافس" : "Rival price"}</th>
             <th role="columnheader">{ar ? "الفرق" : "Difference"}</th>
-            {watchAvailable && <th role="columnheader" className="product-table-watch-heading">{ar ? "المراقبة" : "Watch"}</th>}
+            {itemWatchReady && <th role="columnheader" className="product-table-watch-heading">{ar ? "المراقبة" : "Watch"}</th>}
             <th role="columnheader">{ar ? "الخطوة التالية" : "Next move"}</th>
           </tr></thead>
           <tbody role="rowgroup">{rows.map((row, index) => {
@@ -395,17 +408,18 @@ export function ProductDesignLab({ comparison, battles, primaryProducts, publicI
               <td role="cell" className="product-table-product-cell product-table-rival-product"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "أقرب منافس" : "Closest rival"}</span><ProductIdentity role="rival" product={row.battle.rival} price={row.rivalDisplay} source={row.rivalSource} domain={row.domain} ar={ar} compact showPrice={false} /></td>
               <td role="cell" className="product-table-price-cell product-table-rival-price"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "سعر المنافس" : "Rival price"}</span><ProductTablePrice value={row.rivalDisplay} ar={ar} /></td>
               <td role="cell" className="product-table-difference-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "الفرق" : "Difference"}</span><ProductTableDifference claim={row.priceClaim} lane={row.lane} ar={ar} /></td>
-              {watchAvailable && <td role="cell" className="product-table-watch-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "المراقبة" : "Watch"}</span>{(() => {
+              {itemWatchReady && <td role="cell" className="product-table-watch-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "المراقبة" : "Watch"}</span>{(() => {
                 const matchId = row.battle.key;
                 const watcher = watcherForMatch(matchId);
                 const running = isRunningWatcher(watcher);
                 const cadence = selectedCadence(matchId, watcher);
                 const eligible = /^[a-f0-9]{64}$/.test(matchId);
+                const busy = watchBusy === matchId;
                 const primaryName = display(row.battle.primary.name, ar ? "منتجك" : "Your product");
                 const rivalName = display(row.battle.rival.name, ar ? "منتج المنافس" : "Rival product");
                 const toggleLabel = ar ? `مراقبة سعر ${rivalName} المطابق لـ ${primaryName}` : `Watch the price of ${rivalName}, matched to ${primaryName}`;
                 const cadenceLabel = ar ? `تكرار مراقبة سعر ${rivalName}` : `Price-watch frequency for ${rivalName}`;
-                return <div className="row-watch-control"><label className="watch-switch"><input type="checkbox" aria-label={toggleLabel} checked={running} disabled={!eligible || watchBusy === matchId} onChange={(event) => void toggleMatchWatch(matchId, event.target.checked)} /><span aria-hidden="true" /><b>{running ? (ar ? "مفعّل" : "On") : (ar ? "متوقف" : "Off")}</b></label><select aria-label={cadenceLabel} value={cadence} disabled={!eligible || watchBusy === matchId} onChange={(event) => void changeMatchCadence(matchId, event.target.value as WatchCadence)}><option value="daily">{ar ? "يومي" : "Daily"}</option><option value="hourly">{ar ? "كل ساعة" : "Hourly"}</option></select>{watcher && !running && <small>{watcher.state.replace(/_/g, " ")}</small>}{!eligible && <small>{ar ? "حمّل النتائج الكاملة" : "Load saved results"}</small>}</div>;
+                return <div className="row-watch-control"><PriceWatchSwitch checked={running} disabled={!eligible || busy} busy={busy} label={toggleLabel} ar={ar} onToggle={() => void toggleMatchWatch(matchId, !running)} /><select aria-label={cadenceLabel} value={cadence} disabled={!eligible || busy} onChange={(event) => void changeMatchCadence(matchId, event.target.value as WatchCadence)}><option value="daily">{ar ? "يومي" : "Daily"}</option><option value="hourly">{ar ? "كل ساعة" : "Hourly"}</option></select>{watcher && !running && <small>{watcher.state.replace(/_/g, " ")}</small>}</div>;
               })()}</td>}
               <td role="cell" className="product-table-action-cell"><span className="product-table-mobile-label" aria-hidden="true">{ar ? "الخطوة التالية" : "Next move"}</span><strong className="product-next-move">{row.shortAction}</strong><ProductTableDetails row={row} ar={ar} /></td>
             </tr>;
