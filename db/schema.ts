@@ -28,6 +28,7 @@ export const accountProviders = sqliteTable("account", {
   id: text("id").primaryKey(),
   accountId: text("accountId").notNull(),
   providerId: text("providerId").notNull(),
+  issuer: text("issuer").notNull(),
   userId: text("userId").notNull().references(() => accountUsers.id, { onDelete: "cascade" }),
   accessToken: text("accessToken"),
   refreshToken: text("refreshToken"),
@@ -40,6 +41,7 @@ export const accountProviders = sqliteTable("account", {
   updatedAt: text("updatedAt").notNull(),
 }, (table) => [
   index("account_userId_idx").on(table.userId),
+  uniqueIndex("account_issuer_accountId_uidx").on(table.issuer, table.accountId),
 ]);
 
 export const accountVerifications = sqliteTable("verification", {
