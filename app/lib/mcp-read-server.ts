@@ -20,6 +20,20 @@ import {
 import { PriceWatchStoreError, type PriceWatcher } from "./price-watch-store.ts";
 import { MARKET_SIGNAL_ORIGIN } from "./mcp-oauth-shared.ts";
 import { mcpPrincipalFromAuthInfo, type McpPrincipal } from "./mcp-token-verifier.ts";
+import {
+  confirmMcpReportCreate,
+  confirmMcpPriceWatchActivation,
+  confirmMcpPriceWatchDelete,
+  confirmMcpPriceWatchUpdate,
+  disableMcpPriceWatch,
+  getMcpAccountStatus,
+  McpWriteServiceError,
+  previewMcpReportCreate,
+  previewMcpPriceWatchActivation,
+  previewMcpPriceWatchDelete,
+  previewMcpPriceWatchUpdate,
+} from "./mcp-write-service.ts";
+import { McpCommandStoreError } from "./mcp-command-store.ts";
 
 const REPORT_ID = /^[a-f0-9]{32}$/;
 const TERMINAL_REPORT_STATUSES = new Set(["complete", "limited", "failed", "interrupted"]);
@@ -27,6 +41,34 @@ const TERMINAL_REPORT_STATUSES = new Set(["complete", "limited", "failed", "inte
 const READ_ONLY_ANNOTATIONS = {
   readOnlyHint: true,
   destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+} as const;
+
+const PREVIEW_ANNOTATIONS = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: false,
+} as const;
+
+const REPORT_CONFIRM_ANNOTATIONS = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
+} as const;
+
+const IDEMPOTENT_WRITE_ANNOTATIONS = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+} as const;
+
+const DESTRUCTIVE_CONFIRM_ANNOTATIONS = {
+  readOnlyHint: false,
+  destructiveHint: true,
   idempotentHint: true,
   openWorldHint: false,
 } as const;
@@ -40,6 +82,19 @@ export type McpReadServices = {
   listNotifications: typeof listWorkspacePriceWatchNotifications;
 };
 
+export type McpWriteToolServices = {
+  accountStatus: typeof getMcpAccountStatus;
+  previewReportCreate: typeof previewMcpReportCreate;
+  confirmReportCreate: typeof confirmMcpReportCreate;
+  previewPriceWatchActivation: typeof previewMcpPriceWatchActivation;
+  confirmPriceWatchActivation: typeof confirmMcpPriceWatchActivation;
+  previewPriceWatchUpdate: typeof previewMcpPriceWatchUpdate;
+  confirmPriceWatchUpdate: typeof confirmMcpPriceWatchUpdate;
+  disablePriceWatch: typeof disableMcpPriceWatch;
+  previewPriceWatchDelete: typeof previewMcpPriceWatchDelete;
+  confirmPriceWatchDelete: typeof confirmMcpPriceWatchDelete;
+};
+
 export function mcpReadServices(): McpReadServices {
   return {
     listReports: listWorkspaceReportSummaryPage,
@@ -48,6 +103,21 @@ export function mcpReadServices(): McpReadServices {
     listPriceWatches: listWorkspacePriceWatchers,
     getPriceWatchHistory: getWorkspacePriceWatchHistory,
     listNotifications: listWorkspacePriceWatchNotifications,
+  };
+}
+
+export function mcpWriteToolServices(): McpWriteToolServices {
+  return {
+    accountStatus: getMcpAccountStatus,
+    previewReportCreate: previewMcpReportCreate,
+    confirmReportCreate: confirmMcpReportCreate,
+    previewPriceWatchActivation: previewMcpPriceWatchActivation,
+    confirmPriceWatchActivation: confirmMcpPriceWatchActivation,
+    previewPriceWatchUpdate: previewMcpPriceWatchUpdate,
+    confirmPriceWatchUpdate: confirmMcpPriceWatchUpdate,
+    disablePriceWatch: disableMcpPriceWatch,
+    previewPriceWatchDelete: previewMcpPriceWatchDelete,
+    confirmPriceWatchDelete: confirmMcpPriceWatchDelete,
   };
 }
 
@@ -72,6 +142,19 @@ function failedToolResult(code: string, message: string): CallToolResult {
   };
 }
 
+function outcomeToolResult(value: Record<string, unknown>): CallToolResult {
+  const error = value.ok === false && value.error && typeof value.error === "object"
+    ? value.error as Record<string, unknown>
+    : null;
+  if (!error) return successfulToolResult(value);
+  const structuredContent = jsonRecord(value);
+  return {
+    isError: true,
+    content: [{ type: "text", text: `${String(error.code || "command-failed")}: ${String(error.message || "The command failed.")}` }],
+    structuredContent,
+  };
+}
+
 function safeToolFailure(error: unknown, operation: string): CallToolResult {
   if (error instanceof ReportQueryError) {
     return failedToolResult("not-found", "Report not found.");
@@ -80,6 +163,9 @@ function safeToolFailure(error: unknown, operation: string): CallToolResult {
     if (error.code === "watcher-not-found" || error.code === "report-not-found") {
       return failedToolResult("not-found", "Price watch not found.");
     }
+    return failedToolResult(error.code, error.message);
+  }
+  if (error instanceof McpWriteServiceError || error instanceof McpCommandStoreError) {
     return failedToolResult(error.code, error.message);
   }
   if (error instanceof Error && /^Invalid .*cursor\.$/.test(error.message)) {
@@ -91,6 +177,64 @@ function safeToolFailure(error: unknown, operation: string): CallToolResult {
     errorName: error instanceof Error ? error.name : "unknown",
   });
   return failedToolResult("temporarily-unavailable", "Market Signal data is temporarily unavailable.");
+}
+
+function registerAccountStatusTool(server: McpServer, principal: McpPrincipal, scopes: string[], services: McpWriteToolServices) {
+  server.registerTool(
+    "account_status",
+    {
+      title: "Get Market Signal account status",
+      description: "Get plan and usage status, limited to the report and price-watch scope families granted to this connection.",
+      inputSchema: z.object({}).strict(),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async () => {
+      try {
+        return successfulToolResult(await services.accountStatus(principal, scopes));
+      } catch (error) {
+        return safeToolFailure(error, "account_status");
+      }
+    },
+  );
+}
+
+function registerReportWriteTools(server: McpServer, principal: McpPrincipal, services: McpWriteToolServices) {
+  server.registerTool(
+    "report_create_preview",
+    {
+      title: "Preview a Market Signal report",
+      description: "Validate a domain and show the exact plan and report-quota impact without reserving quota or starting work. Returns a five-minute confirmation token.",
+      inputSchema: z.object({
+        primaryDomain: z.string().min(1).max(2_048),
+        locale: z.enum(["en", "ar"]).default("en"),
+      }).strict(),
+      annotations: PREVIEW_ANNOTATIONS,
+    },
+    async ({ primaryDomain, locale }) => {
+      try {
+        return successfulToolResult(await services.previewReportCreate(principal, { primaryDomain, locale }));
+      } catch (error) {
+        return safeToolFailure(error, "report_create_preview");
+      }
+    },
+  );
+
+  server.registerTool(
+    "report_create_confirm",
+    {
+      title: "Confirm a Market Signal report",
+      description: "Use a report preview confirmation token to reserve quota and dispatch exactly one private report. Retrying the same token safely replays its outcome.",
+      inputSchema: z.object({ confirmationToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).strict(),
+      annotations: REPORT_CONFIRM_ANNOTATIONS,
+    },
+    async ({ confirmationToken }) => {
+      try {
+        return outcomeToolResult(await services.confirmReportCreate(principal, confirmationToken));
+      } catch (error) {
+        return safeToolFailure(error, "report_create_confirm");
+      }
+    },
+  );
 }
 
 function privateReportUrl(publicId: string) {
@@ -239,11 +383,142 @@ function registerPriceWatchTools(server: McpServer, principal: McpPrincipal, ser
   );
 }
 
+function registerPriceWatchWriteTools(server: McpServer, principal: McpPrincipal, services: McpWriteToolServices) {
+  server.registerTool(
+    "price_watch_preview",
+    {
+      title: "Preview price-watch activation",
+      description: "Preview eligible saved comparisons, watcher reuse, cadence, and monitoring-credit impact for one match or one rival snapshot. Does not reserve credits.",
+      inputSchema: z.object({
+        publicReportId: z.string().regex(REPORT_ID),
+        cadence: z.enum(["hourly", "daily"]),
+        matchId: z.string().min(1).max(100).optional(),
+        rivalDomain: z.string().min(1).max(253).optional(),
+      }).strict(),
+      annotations: PREVIEW_ANNOTATIONS,
+    },
+    async (input) => {
+      try {
+        return successfulToolResult(await services.previewPriceWatchActivation(principal, input));
+      } catch (error) {
+        return safeToolFailure(error, "price_watch_preview");
+      }
+    },
+  );
+
+  server.registerTool(
+    "price_watch_confirm",
+    {
+      title: "Confirm price-watch activation",
+      description: "Activate the exact price-watch preview. Retrying the same five-minute token safely replays the recorded outcome.",
+      inputSchema: z.object({ confirmationToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).strict(),
+      annotations: IDEMPOTENT_WRITE_ANNOTATIONS,
+    },
+    async ({ confirmationToken }) => {
+      try {
+        return outcomeToolResult(await services.confirmPriceWatchActivation(principal, confirmationToken));
+      } catch (error) {
+        return safeToolFailure(error, "price_watch_confirm");
+      }
+    },
+  );
+
+  server.registerTool(
+    "price_watch_update_preview",
+    {
+      title: "Preview a price-watch update",
+      description: "Preview a cadence change or resume action, including projected checks and any fresh-baseline credit.",
+      inputSchema: z.object({
+        watcherId: z.string().min(1).max(100),
+        cadence: z.enum(["hourly", "daily"]).optional(),
+        action: z.literal("resume").optional(),
+      }).strict(),
+      annotations: PREVIEW_ANNOTATIONS,
+    },
+    async (input) => {
+      try {
+        return successfulToolResult(await services.previewPriceWatchUpdate(principal, input));
+      } catch (error) {
+        return safeToolFailure(error, "price_watch_update_preview");
+      }
+    },
+  );
+
+  server.registerTool(
+    "price_watch_update_confirm",
+    {
+      title: "Confirm a price-watch update",
+      description: "Apply the exact cadence or resume preview. Retrying the same token safely replays its outcome.",
+      inputSchema: z.object({ confirmationToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).strict(),
+      annotations: IDEMPOTENT_WRITE_ANNOTATIONS,
+    },
+    async ({ confirmationToken }) => {
+      try {
+        return outcomeToolResult(await services.confirmPriceWatchUpdate(principal, confirmationToken));
+      } catch (error) {
+        return safeToolFailure(error, "price_watch_update_confirm");
+      }
+    },
+  );
+
+  server.registerTool(
+    "price_watch_disable",
+    {
+      title: "Disable a price watch",
+      description: "Immediately and idempotently stop one workspace-owned price watch while preserving its saved history.",
+      inputSchema: z.object({ watcherId: z.string().min(1).max(100) }).strict(),
+      annotations: IDEMPOTENT_WRITE_ANNOTATIONS,
+    },
+    async ({ watcherId }) => {
+      try {
+        return successfulToolResult(await services.disablePriceWatch(principal, watcherId));
+      } catch (error) {
+        return safeToolFailure(error, "price_watch_disable");
+      }
+    },
+  );
+
+  server.registerTool(
+    "price_watch_delete_preview",
+    {
+      title: "Preview permanent price-watch deletion",
+      description: "Show the watcher data that permanent deletion will remove and issue a five-minute confirmation token.",
+      inputSchema: z.object({ watcherId: z.string().min(1).max(100) }).strict(),
+      annotations: PREVIEW_ANNOTATIONS,
+    },
+    async ({ watcherId }) => {
+      try {
+        return successfulToolResult(await services.previewPriceWatchDelete(principal, watcherId));
+      } catch (error) {
+        return safeToolFailure(error, "price_watch_delete_preview");
+      }
+    },
+  );
+
+  server.registerTool(
+    "price_watch_delete_confirm",
+    {
+      title: "Confirm permanent price-watch deletion",
+      description: "Permanently delete the exact previewed watcher and its linked history. Consumed monitoring credits remain charged.",
+      inputSchema: z.object({ confirmationToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).strict(),
+      annotations: DESTRUCTIVE_CONFIRM_ANNOTATIONS,
+    },
+    async ({ confirmationToken }) => {
+      try {
+        return outcomeToolResult(await services.confirmPriceWatchDelete(principal, confirmationToken));
+      } catch (error) {
+        return safeToolFailure(error, "price_watch_delete_confirm");
+      }
+    },
+  );
+}
+
 export function createMarketSignalMcpHandler(
   services: McpReadServices = mcpReadServices(),
+  writeServices: McpWriteToolServices = mcpWriteToolServices(),
 ): McpHttpHandler {
   return createMcpHandler(({ authInfo }: { authInfo?: AuthInfo }) => {
-    const server = new McpServer({ name: "market-signal", version: "1.0.0" });
+    const server = new McpServer({ name: "market-signal", version: "1.1.0" });
     // Keep `tools/list` available even when the token currently grants only
     // write scopes whose tools ship in the next stage. Disabled tools are not
     // advertised and cannot be called.
@@ -253,8 +528,13 @@ export function createMarketSignalMcpHandler(
     }, async () => failedToolResult("insufficient-scope", "No callable tool is granted.")).disable();
     const principal = mcpPrincipalFromAuthInfo(authInfo);
     if (!principal || !authInfo) return server;
+    if (authInfo.scopes.some((scope) => ["reports:read", "reports:create", "price_watch:read", "price_watch:write"].includes(scope))) {
+      registerAccountStatusTool(server, principal, authInfo.scopes, writeServices);
+    }
     if (authInfo.scopes.includes("reports:read")) registerReportTools(server, principal, services);
+    if (authInfo.scopes.includes("reports:create")) registerReportWriteTools(server, principal, writeServices);
     if (authInfo.scopes.includes("price_watch:read")) registerPriceWatchTools(server, principal, services);
+    if (authInfo.scopes.includes("price_watch:write")) registerPriceWatchWriteTools(server, principal, writeServices);
     return server;
   }, {
     legacy: "reject",

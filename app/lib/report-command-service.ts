@@ -46,6 +46,7 @@ export type ReportCommandInput = {
   primaryDomain: string;
   locale: "en" | "ar";
   actor?: ReportCommandActor;
+  commandId?: string;
 };
 
 export type ReportCommandDependencies = {
@@ -53,7 +54,7 @@ export type ReportCommandDependencies = {
   dispatch: typeof dispatchReportJob;
   markDispatched: typeof markReportDispatched;
   markDispatchFailed: typeof markReportDispatchFailed;
-  reserve?: (workspaceId: string) => Promise<ReportReservation | null>;
+  reserve?: (workspaceId: string, commandId?: string) => Promise<ReportReservation | null>;
   finishReservation?: (reservationId: string, outcome: "committed" | "released", runId?: string) => Promise<void>;
 };
 
@@ -95,6 +96,7 @@ async function consumeReportCreation(
     entitlement?: { plan: ProductPlan; productLimit: number };
     workspaceId?: string;
     billingReservationId?: string;
+    commandId?: string;
   },
 ): Promise<CreationBoundaryResult> {
   if (typeof create !== "function") return { kind: "boundary-failed", diagnosticCode: "create-not-callable" };
@@ -166,7 +168,7 @@ async function consumeReportCreation(
 
 export function reportCommandDependencies(environment: Record<string, string | undefined> = process.env): ReportCommandDependencies {
   const dependencies: ReportCommandDependencies = {
-    create: async (input: { primaryDomain: string; locale?: "en" | "ar"; entitlement?: { plan: ProductPlan; productLimit: number }; workspaceId?: string; billingReservationId?: string }) => createReportRunResult({
+    create: async (input: { primaryDomain: string; locale?: "en" | "ar"; entitlement?: { plan: ProductPlan; productLimit: number }; workspaceId?: string; billingReservationId?: string; commandId?: string }) => createReportRunResult({
       ...input,
       entitlement: input.entitlement || resolveProductEntitlement(input.primaryDomain, {
         defaultPlan: environment.MARKET_SIGNAL_DEFAULT_PLAN || await runtimeEnvironmentValue("MARKET_SIGNAL_DEFAULT_PLAN"),
@@ -180,9 +182,9 @@ export function reportCommandDependencies(environment: Record<string, string | u
   if (!hostedBillingEnabled(environment)) return dependencies;
   return {
     ...dependencies,
-    reserve: async (workspaceId) => {
+    reserve: async (workspaceId, commandId = "") => {
       const database = await openBillingDatabase();
-      try { return reserveReport(database, workspaceId); } finally { database.close(); }
+      try { return reserveReport(database, workspaceId, new Date(), commandId); } finally { database.close(); }
     },
     finishReservation: async (reservationId, outcome, runId = "") => {
       const database = await openBillingDatabase();
@@ -202,7 +204,7 @@ export async function createReportCommand(input: ReportCommandInput, services: R
   let publicId = "";
   try {
     if (input.actor) {
-      reservation = services.reserve ? await services.reserve(input.actor.workspaceId) : null;
+      reservation = services.reserve ? await services.reserve(input.actor.workspaceId, input.commandId) : null;
       if (!reservation) {
         return { ok: false, status: 402, error: "An active paid plan is required to create a report.", errorCode: "subscription-required", stage: "reservation" };
       }
@@ -226,6 +228,7 @@ export async function createReportCommand(input: ReportCommandInput, services: R
         workspaceId: input.actor.workspaceId,
         billingReservationId: reservation.id,
         entitlement: { plan: reservation.plan.id, productLimit: reservation.plan.productLimit },
+        ...(input.commandId ? { commandId: input.commandId } : {}),
       } : {}),
     });
     if (creation.kind !== "accepted") {

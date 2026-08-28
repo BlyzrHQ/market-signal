@@ -65,8 +65,24 @@ function readServices(overrides = {}) {
   };
 }
 
+function writeServices(overrides = {}) {
+  return {
+    accountStatus: async (_principal, scopes) => ({ ok: true, scopes }),
+    previewReportCreate: async (_principal, input) => ({ ok: true, confirmationToken: "x".repeat(43), expiresAt: "2026-08-28T12:05:00.000Z", impact: { primaryDomain: input.primaryDomain, reports: 1 } }),
+    confirmReportCreate: async () => ({ ok: true, status: "queued", report: { publicReportId: PUBLIC_ID } }),
+    previewPriceWatchActivation: async () => ({ ok: true, confirmationToken: "w".repeat(43), impact: { uniqueTargets: 1 } }),
+    confirmPriceWatchActivation: async () => ({ ok: true, watcherIds: ["watch-1"] }),
+    previewPriceWatchUpdate: async () => ({ ok: true, confirmationToken: "u".repeat(43), impact: { watcherId: "watch-1" } }),
+    confirmPriceWatchUpdate: async () => ({ ok: true, watcher: { id: "watch-1" } }),
+    disablePriceWatch: async () => ({ ok: true, watcher: { id: "watch-1", state: "disabled" } }),
+    previewPriceWatchDelete: async () => ({ ok: true, confirmationToken: "d".repeat(43), impact: { watcherId: "watch-1" } }),
+    confirmPriceWatchDelete: async () => ({ ok: true, watcherId: "watch-1", deleted: true }),
+    ...overrides,
+  };
+}
+
 function routeServices(scopes, overrides = {}) {
-  const handler = createMarketSignalMcpHandler(readServices(overrides.readServices));
+  const handler = createMarketSignalMcpHandler(readServices(overrides.readServices), writeServices(overrides.writeServices));
   return {
     enabled: () => true,
     openDatabase: async () => ({ close() {} }),
@@ -110,19 +126,93 @@ test("MCP tool discovery exposes only tools granted by the verified token", asyn
   const reports = routeServices(["reports:read"]);
   const reportList = await protocolJson(protocolRequest("tools/list"), reports);
   assert.equal(reportList.response.status, 200);
-  assert.deepEqual(reportList.body.result.tools.map((tool) => tool.name), ["reports_list", "report_get", "report_matches_list"]);
+  assert.deepEqual(reportList.body.result.tools.map((tool) => tool.name), ["account_status", "reports_list", "report_get", "report_matches_list"]);
   assert.equal(reportList.response.headers.get("cache-control"), "private, no-store, max-age=0");
   await reports.handler.close();
 
   const watches = routeServices(["price_watch:read"]);
   const watchList = await protocolJson(protocolRequest("tools/list"), watches);
-  assert.deepEqual(watchList.body.result.tools.map((tool) => tool.name), ["price_watch_list", "price_watch_history", "notifications_list"]);
+  assert.deepEqual(watchList.body.result.tools.map((tool) => tool.name), ["account_status", "price_watch_list", "price_watch_history", "notifications_list"]);
   await watches.handler.close();
 
   const writesOnly = routeServices(["reports:create", "price_watch:write"]);
   const empty = await protocolJson(protocolRequest("tools/list"), writesOnly);
-  assert.deepEqual(empty.body.result.tools, []);
+  assert.deepEqual(empty.body.result.tools.map((tool) => tool.name), [
+    "account_status", "report_create_preview", "report_create_confirm",
+    "price_watch_preview", "price_watch_confirm", "price_watch_update_preview",
+    "price_watch_update_confirm", "price_watch_disable", "price_watch_delete_preview",
+    "price_watch_delete_confirm",
+  ]);
   await writesOnly.handler.close();
+});
+
+test("account and report-write tools receive the verified principal and use token-only confirmation", async () => {
+  const calls = [];
+  const services = routeServices(["reports:create"], {
+    writeServices: {
+      ...writeServices(),
+      accountStatus: async (principal, scopes) => {
+        calls.push({ operation: "status", principal, scopes });
+        return { ok: true, reports: { remaining: 5 } };
+      },
+      previewReportCreate: async (principal, input) => {
+        calls.push({ operation: "preview", principal, input });
+        return { ok: true, confirmationToken: "p".repeat(43), expiresAt: "2026-08-28T12:05:00.000Z", impact: { reports: 1 } };
+      },
+      confirmReportCreate: async (principal, token) => {
+        calls.push({ operation: "confirm", principal, token });
+        return { ok: true, report: { publicReportId: PUBLIC_ID } };
+      },
+    },
+  });
+  const status = await protocolJson(protocolRequest("tools/call", { name: "account_status", arguments: {} }), services);
+  assert.equal(status.body.result.structuredContent.reports.remaining, 5);
+  const preview = await protocolJson(protocolRequest("tools/call", { name: "report_create_preview", arguments: { primaryDomain: "shop.example", locale: "en" } }), services);
+  const token = preview.body.result.structuredContent.confirmationToken;
+  const confirmed = await protocolJson(protocolRequest("tools/call", { name: "report_create_confirm", arguments: { confirmationToken: token } }), services);
+  assert.equal(confirmed.body.result.structuredContent.report.publicReportId, PUBLIC_ID);
+  assert.deepEqual(calls.map((call) => call.operation), ["status", "preview", "confirm"]);
+  assert.equal(calls[0].principal.clientId, "https://client.example/mcp.json");
+  assert.equal(calls[2].token, "p".repeat(43));
+  assert.equal("input" in calls[2], false);
+  await services.handler.close();
+});
+
+test("price-watch write protocol exposes preview-confirm controls and marks deletion destructive", async () => {
+  const calls = [];
+  const services = routeServices(["price_watch:write"], {
+    writeServices: {
+      ...writeServices(),
+      previewPriceWatchActivation: async (principal, input) => {
+        calls.push(["preview", principal.workspaceId, input.matchId]);
+        return { ok: true, confirmationToken: "w".repeat(43), impact: { uniqueTargets: 1 } };
+      },
+      confirmPriceWatchActivation: async (_principal, token) => {
+        calls.push(["confirm", token]);
+        return { ok: true, watcherIds: ["watch-1"] };
+      },
+      disablePriceWatch: async (_principal, watcherId) => {
+        calls.push(["disable", watcherId]);
+        return { ok: true, watcher: { id: watcherId, state: "disabled" } };
+      },
+    },
+  });
+  const listed = await protocolJson(protocolRequest("tools/list"), services);
+  const deletion = listed.body.result.tools.find((tool) => tool.name === "price_watch_delete_confirm");
+  assert.equal(deletion.annotations.destructiveHint, true);
+  assert.equal(deletion.annotations.idempotentHint, true);
+
+  const preview = await protocolJson(protocolRequest("tools/call", {
+    name: "price_watch_preview",
+    arguments: { publicReportId: PUBLIC_ID, matchId: "1".repeat(64), cadence: "daily" },
+  }), services);
+  await protocolJson(protocolRequest("tools/call", {
+    name: "price_watch_confirm",
+    arguments: { confirmationToken: preview.body.result.structuredContent.confirmationToken },
+  }), services);
+  await protocolJson(protocolRequest("tools/call", { name: "price_watch_disable", arguments: { watcherId: "watch-1" } }), services);
+  assert.deepEqual(calls.map((item) => item[0]), ["preview", "confirm", "disable"]);
+  await services.handler.close();
 });
 
 test("report tools use the verified workspace and return credential-free private links", async () => {
