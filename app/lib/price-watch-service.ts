@@ -2,6 +2,7 @@ import { openBillingDatabase } from "./billing-store.ts";
 import {
   activatePriceWatchers,
   deletePriceWatcher,
+  listWorkspaceNotifications,
   listPriceWatchers,
   mutatePriceWatcher,
   priceWatchHistory,
@@ -60,6 +61,15 @@ export async function getWorkspacePriceWatchHistory(
   services: PriceWatchServiceDependencies = priceWatchServiceDependencies(),
 ) {
   return withDatabase(services, (database) => priceWatchHistory(database, workspaceId, watcherId, limit));
+}
+
+export async function listWorkspacePriceWatchNotifications(
+  actor: PriceWatchActor,
+  limit = 50,
+  services: PriceWatchServiceDependencies = priceWatchServiceDependencies(),
+) {
+  return withDatabase(services, (database) =>
+    listWorkspaceNotifications(database, actor.workspaceId, actor.userId, limit));
 }
 
 export async function updateWorkspacePriceWatcher(
