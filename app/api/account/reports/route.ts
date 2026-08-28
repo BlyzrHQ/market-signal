@@ -1,7 +1,8 @@
 import { accountContext, type AccountContext } from "../../../lib/account-auth.ts";
 import { hostedBillingEnabled } from "../../../lib/billing-plans.ts";
 import { activeWorkspacePlan, openBillingDatabase } from "../../../lib/billing-store.ts";
-import { listWorkspaceReports, type WorkspaceReportSummary } from "../../../lib/report-store.ts";
+import { listWorkspaceReportSummaries } from "../../../lib/report-query-service.ts";
+import type { WorkspaceReportSummary } from "../../../lib/report-store.ts";
 
 type AccountReportsDependencies = {
   enabled: () => boolean;
@@ -22,7 +23,7 @@ export function accountReportsDependencies(): AccountReportsDependencies {
         return Boolean(activeWorkspacePlan(database, workspaceId));
       } finally { database.close(); }
     },
-    listReports: (workspaceId) => listWorkspaceReports(workspaceId, { limit: 5 }),
+    listReports: (workspaceId) => listWorkspaceReportSummaries(workspaceId, { limit: 5 }),
   };
 }
 

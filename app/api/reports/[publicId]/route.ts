@@ -1,6 +1,7 @@
 import { accountContext, type AccountContext } from "../../../lib/account-auth.ts";
 import { authorizeStoredReport, PRIVATE_REPORT_HEADERS, reportResponseHeaders } from "../../../lib/report-access.ts";
 import { getStoredReport, loadStoredReportAccess, type StoredReportAccess } from "../../../lib/report-store.ts";
+import { customerReportPayload } from "../../../lib/report-query-service.ts";
 import { recoverLegacyReport } from "../../../lib/legacy-report-recovery.ts";
 import { settleTerminalReportReservation } from "../../../lib/report-terminal-billing.ts";
 import { hostedBillingEnabled } from "../../../lib/billing-plans.ts";
@@ -11,12 +12,7 @@ async function publicId(context: RouteContext) {
   return (await context.params).publicId;
 }
 
-export function publicReportPayload<T extends { run: Record<string, unknown> }>(report: T) {
-  const run = { ...report.run };
-  delete run.workspaceId;
-  delete run.billingReservationId;
-  return { ...report, run };
-}
+export const publicReportPayload = customerReportPayload;
 
 type ReportRouteDependencies = {
   now: () => Date;

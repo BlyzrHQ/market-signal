@@ -1,28 +1,28 @@
 import { accountContext, type AccountContext } from "../../lib/account-auth.ts";
 import { hostedBillingEnabled } from "../../lib/billing-plans.ts";
-import { openBillingDatabase } from "../../lib/billing-store.ts";
 import { PRIVATE_REPORT_HEADERS } from "../../lib/report-access.ts";
 import { mutationRequestIsSameOrigin, readBoundedJsonObject } from "../../lib/request-json.ts";
 import {
-  activatePriceWatchers,
-  listPriceWatchers,
   PriceWatchStoreError,
   type PriceWatchActivationInput,
 } from "../../lib/price-watch-store.ts";
+import {
+  activateWorkspacePriceWatchers,
+  listWorkspacePriceWatchers,
+  priceWatchServiceDependencies,
+  type PriceWatchServiceDependencies,
+} from "../../lib/price-watch-service.ts";
 
-type PriceWatchRouteDependencies = {
+type PriceWatchRouteDependencies = PriceWatchServiceDependencies & {
   enabled: () => boolean;
   authorize: (request: Request) => Promise<AccountContext | null>;
-  openDatabase: typeof openBillingDatabase;
-  now: () => Date;
 };
 
 export function priceWatchRouteDependencies(): PriceWatchRouteDependencies {
   return {
+    ...priceWatchServiceDependencies(),
     enabled: () => hostedBillingEnabled(process.env),
     authorize: accountContext,
-    openDatabase: openBillingDatabase,
-    now: () => new Date(),
   };
 }
 
@@ -39,10 +39,7 @@ export async function getPriceWatch(request: Request, services: PriceWatchRouteD
     if (!services.enabled()) return Response.json({ ok: false, error: "Not found." }, { status: 404, headers: PRIVATE_REPORT_HEADERS });
     const account = await services.authorize(request);
     if (!account) return Response.json({ ok: false, error: "Authentication required." }, { status: 401, headers: PRIVATE_REPORT_HEADERS });
-    const database = await services.openDatabase();
-    try {
-      return Response.json({ ok: true, ...listPriceWatchers(database, account.workspaceId, services.now()) }, { headers: PRIVATE_REPORT_HEADERS });
-    } finally { database.close(); }
+    return Response.json({ ok: true, ...await listWorkspacePriceWatchers(account.workspaceId, services) }, { headers: PRIVATE_REPORT_HEADERS });
   } catch (error) { return routeError(error); }
 }
 
@@ -54,11 +51,8 @@ export async function createPriceWatch(request: Request, services: PriceWatchRou
     if (!account) return Response.json({ ok: false, error: "Authentication required." }, { status: 401, headers: PRIVATE_REPORT_HEADERS });
     let body: PriceWatchActivationInput;
     try { body = await readBoundedJsonObject(request, 4_096) as unknown as PriceWatchActivationInput; } catch { return Response.json({ ok: false, error: "Invalid or oversized JSON body.", errorCode: "invalid-json" }, { status: 400, headers: PRIVATE_REPORT_HEADERS }); }
-    const database = await services.openDatabase();
-    try {
-      const result = activatePriceWatchers(database, account.workspaceId, account.user.id, body, services.now());
-      return Response.json({ ok: true, ...result }, { status: 201, headers: PRIVATE_REPORT_HEADERS });
-    } finally { database.close(); }
+    const result = await activateWorkspacePriceWatchers({ workspaceId: account.workspaceId, userId: account.user.id }, body, services);
+    return Response.json({ ok: true, ...result }, { status: 201, headers: PRIVATE_REPORT_HEADERS });
   } catch (error) { return routeError(error); }
 }
 

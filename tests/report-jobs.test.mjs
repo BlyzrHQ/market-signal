@@ -435,10 +435,14 @@ test("the browser only creates and observes a durable job; public report URLs ar
   assert.doesNotMatch(publicRoute, /export const (?:POST|PATCH)|export async function (?:POST|PATCH)/);
   assert.match(internalRoute, /hasValidInternalAuthorization/);
   assert.match(internalRoute, /replayed: true/);
-  const createRoute = await readFile(new URL("../app/api/reports/route.ts", import.meta.url), "utf8");
+  const [createRoute, createService] = await Promise.all([
+    readFile(new URL("../app/api/reports/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/report-command-service.ts", import.meta.url), "utf8"),
+  ]);
   assert.match(createRoute, /accountContext/);
-  assert.match(createRoute, /reserveReport/);
-  assert.match(createRoute, /createReportRunResult\(\{/);
+  assert.match(createRoute, /createReportCommand/);
   assert.match(createRoute, /MARKET_SIGNAL_HOSTED_BILLING|hostedBillingEnabled/);
-  assert.match(createRoute, /MARKET_SIGNAL_PLAN_REGISTRY_JSON|resolveProductEntitlement/);
+  assert.match(createService, /reserveReport/);
+  assert.match(createService, /createReportRunResult\(\{/);
+  assert.match(createService, /MARKET_SIGNAL_PLAN_REGISTRY_JSON|resolveProductEntitlement/);
 });
