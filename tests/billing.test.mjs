@@ -114,6 +114,7 @@ test("hosted billing is explicit and unbilled deployments retain report creation
   const hosted = reportCreationDependencies({ MARKET_SIGNAL_HOSTED_BILLING: "true" });
   assert.equal(typeof hosted.authorize, "function");
   assert.equal(typeof hosted.reserve, "function");
+  assert.equal(typeof hosted.finishReservation, "function");
 });
 
 test("checkout rejects unauthenticated, invalid, unconfigured, and duplicate subscriptions", async () => {
