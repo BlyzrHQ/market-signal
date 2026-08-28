@@ -5,8 +5,12 @@ import {
   listWorkspaceNotifications,
   listPriceWatchers,
   mutatePriceWatcher,
+  previewPriceWatchActivation,
+  previewPriceWatchDelete,
+  previewPriceWatchMutation,
   priceWatchHistory,
   type PriceWatchActivationInput,
+  type PriceWatchCommandOptions,
   type PriceWatchMutation,
 } from "./price-watch-store.ts";
 
@@ -50,8 +54,17 @@ export async function activateWorkspacePriceWatchers(
   actor: PriceWatchActor,
   input: PriceWatchActivationInput,
   services: PriceWatchServiceDependencies = priceWatchServiceDependencies(),
+  command?: PriceWatchCommandOptions,
 ) {
-  return withDatabase(services, (database) => activatePriceWatchers(database, actor.workspaceId, actor.userId, input, services.now()));
+  return withDatabase(services, (database) => activatePriceWatchers(database, actor.workspaceId, actor.userId, input, services.now(), command));
+}
+
+export async function previewWorkspacePriceWatchActivation(
+  workspaceId: string,
+  input: PriceWatchActivationInput,
+  services: PriceWatchServiceDependencies = priceWatchServiceDependencies(),
+) {
+  return withDatabase(services, (database) => previewPriceWatchActivation(database, workspaceId, input, services.now()));
 }
 
 export async function getWorkspacePriceWatchHistory(
@@ -77,8 +90,18 @@ export async function updateWorkspacePriceWatcher(
   watcherId: string,
   input: PriceWatchMutation,
   services: PriceWatchServiceDependencies = priceWatchServiceDependencies(),
+  command?: PriceWatchCommandOptions,
 ) {
-  return withDatabase(services, (database) => mutatePriceWatcher(database, actor.workspaceId, actor.userId, watcherId, input, services.now()));
+  return withDatabase(services, (database) => mutatePriceWatcher(database, actor.workspaceId, actor.userId, watcherId, input, services.now(), command));
+}
+
+export async function previewWorkspacePriceWatchMutation(
+  workspaceId: string,
+  watcherId: string,
+  input: PriceWatchMutation,
+  services: PriceWatchServiceDependencies = priceWatchServiceDependencies(),
+) {
+  return withDatabase(services, (database) => previewPriceWatchMutation(database, workspaceId, watcherId, input, services.now()));
 }
 
 export async function disableWorkspacePriceWatcher(
@@ -93,6 +116,15 @@ export async function deleteWorkspacePriceWatcher(
   actor: PriceWatchActor,
   watcherId: string,
   services: PriceWatchServiceDependencies = priceWatchServiceDependencies(),
+  command?: PriceWatchCommandOptions,
 ) {
-  return withDatabase(services, (database) => deletePriceWatcher(database, actor.workspaceId, actor.userId, watcherId, services.now()));
+  return withDatabase(services, (database) => deletePriceWatcher(database, actor.workspaceId, actor.userId, watcherId, services.now(), command));
+}
+
+export async function previewWorkspacePriceWatchDelete(
+  workspaceId: string,
+  watcherId: string,
+  services: PriceWatchServiceDependencies = priceWatchServiceDependencies(),
+) {
+  return withDatabase(services, (database) => previewPriceWatchDelete(database, workspaceId, watcherId));
 }

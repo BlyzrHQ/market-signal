@@ -1,7 +1,12 @@
 import Database from "better-sqlite3";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { BILLING_PLANS, type BillingPlan } from "./billing-plans.ts";
 import { canonicalDomain } from "./domain.ts";
+import {
+  ensureMcpCommandSchema,
+  getMcpCommandReceipt,
+  recordMcpCommandReceipt,
+} from "./mcp-command-store.ts";
 import {
   canonicalPriceWatchUrl,
   canonicalPriceWatchVariant,
@@ -64,6 +69,27 @@ export type PriceWatchActivationResult = {
   reused: number;
   baselineCreditsReserved: number;
   usage: PriceWatchUsage;
+  replayed?: boolean;
+};
+
+export type PriceWatchActivationPreview = {
+  publicReportId: string;
+  selection: { kind: "match"; matchId: string } | { kind: "rival-snapshot"; rivalDomain: string };
+  cadence: PriceWatchCadence;
+  eligibleComparisons: number;
+  uniqueTargets: number;
+  newWatchers: number;
+  reusedWatchers: number;
+  baselineCreditsRequired: number;
+  usageBefore: PriceWatchUsage;
+  usageAfter: PriceWatchUsage;
+  impactFingerprint: string;
+};
+
+export type PriceWatchCommandOptions = {
+  commandId: string;
+  operation: string;
+  expectedImpactFingerprint?: string;
 };
 
 export type PriceWatchClaim = {
@@ -497,6 +523,100 @@ function eligibleTargets(database: Database.Database, workspaceId: string, input
   return targets;
 }
 
+function cadenceChecksPerDay(cadence: PriceWatchCadence) {
+  return cadence === "hourly" ? 24 : 1;
+}
+
+function activationResolution(
+  database: Database.Database,
+  workspaceId: string,
+  input: PriceWatchActivationInput,
+  now: Date,
+  reconcile: boolean,
+) {
+  const cadence = validCadence(input.cadence);
+  const targets = eligibleTargets(database, workspaceId, input, now);
+  const entitlement = reconcile
+    ? reconcilePriceWatchSubscription(database, workspaceId, now)
+    : currentSubscriptionEntitlement(database, workspaceId, now);
+  if (!entitlement) throw new PriceWatchStoreError("subscription-required", "An active subscription is required for price monitoring.", 402);
+  const grouped = new Map<string, { target: EligibleTarget; links: EligibleTarget[] }>();
+  for (const target of targets) {
+    const key = `${target.canonicalUrl}\n${target.variantKey}`;
+    const existing = grouped.get(key);
+    if (existing) existing.links.push(target);
+    else grouped.set(key, { target, links: [target] });
+  }
+  const resolved = [...grouped.values()].map((group) => {
+    const existing = database.prepare(`SELECT * FROM price_watchers WHERE workspace_id = ? AND canonical_url = ? AND variant_key = ? LIMIT 1`)
+      .get(workspaceId, group.target.canonicalUrl, group.target.variantKey) as Record<string, unknown> | undefined;
+    return { ...group, existing };
+  });
+  const baselineCredits = resolved.filter(({ existing }) => !existing || !ACTIVE_WATCHER_STATES.has(String(existing.state || ""))).length;
+  const before = usageForPeriod(database, workspaceId, entitlement);
+  let projectedDaily = before.projectedDaily;
+  for (const item of resolved) {
+    if (item.existing && ACTIVE_WATCHER_STATES.has(String(item.existing.state || ""))) {
+      projectedDaily -= cadenceChecksPerDay(item.existing.cadence === "hourly" ? "hourly" : "daily");
+    }
+    projectedDaily += cadenceChecksPerDay(cadence);
+  }
+  const fingerprintInput = {
+    publicReportId: cleanText(input.publicReportId, 80),
+    cadence,
+    selection: input.matchId ? { matchId: cleanText(input.matchId, 100) } : { rivalDomain: canonicalDomain(input.rivalDomain || "") },
+    period: [entitlement.periodStart, entitlement.periodEnd],
+    usage: [before.used, before.remaining],
+    targets: resolved.map((item) => ({
+      key: `${item.target.canonicalUrl}\n${item.target.variantKey}`,
+      existing: item.existing ? {
+        id: String(item.existing.id || ""),
+        state: String(item.existing.state || ""),
+        cadence: String(item.existing.cadence || ""),
+        updatedAt: String(item.existing.updated_at || ""),
+      } : null,
+      links: item.links.map((link) => link.matchId).sort(),
+    })).sort((left, right) => left.key.localeCompare(right.key)),
+  };
+  const impactFingerprint = createHash("sha256").update(JSON.stringify(fingerprintInput)).digest("hex");
+  const after: PriceWatchUsage = {
+    ...before,
+    used: before.used + baselineCredits,
+    remaining: Math.max(0, before.remaining - baselineCredits),
+    projectedDaily,
+    projectedMonthly: projectedDaily * 30,
+  };
+  return { cadence, targets, entitlement, resolved, baselineCredits, before, after, impactFingerprint };
+}
+
+export function previewPriceWatchActivation(
+  database: Database.Database,
+  workspaceId: string,
+  input: PriceWatchActivationInput,
+  now = new Date(),
+): PriceWatchActivationPreview {
+  ensurePriceWatchSchema(database);
+  const resolution = activationResolution(database, workspaceId, input, now, false);
+  if (resolution.before.used + resolution.baselineCredits > resolution.entitlement.allocation) {
+    throw new PriceWatchStoreError("insufficient-credits", `This activation needs ${resolution.baselineCredits} monitoring credits, but only ${resolution.before.remaining} remain.`, 402);
+  }
+  return {
+    publicReportId: cleanText(input.publicReportId, 80),
+    selection: input.matchId
+      ? { kind: "match", matchId: cleanText(input.matchId, 100) }
+      : { kind: "rival-snapshot", rivalDomain: canonicalDomain(input.rivalDomain || "") },
+    cadence: resolution.cadence,
+    eligibleComparisons: resolution.targets.length,
+    uniqueTargets: resolution.resolved.length,
+    newWatchers: resolution.resolved.filter((item) => !item.existing).length,
+    reusedWatchers: resolution.resolved.filter((item) => Boolean(item.existing)).length,
+    baselineCreditsRequired: resolution.baselineCredits,
+    usageBefore: resolution.before,
+    usageAfter: resolution.after,
+    impactFingerprint: resolution.impactFingerprint,
+  };
+}
+
 function reserveBaseline(database: Database.Database, input: { workspaceId: string; watcherId: string; entitlement: ActiveEntitlement; nowIso: string }) {
   const id = randomUUID();
   database.prepare(`INSERT INTO price_watch_credit_reservations (id, workspace_id, watcher_id, period_start, period_end, due_slot, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'reserved', ?, ?)`)
@@ -510,29 +630,18 @@ export function activatePriceWatchers(
   actorUserId: string,
   input: PriceWatchActivationInput,
   now = new Date(),
+  command?: PriceWatchCommandOptions,
 ): PriceWatchActivationResult {
   ensurePriceWatchSchema(database);
-  const cadence = validCadence(input.cadence);
+  if (command) ensureMcpCommandSchema(database);
   return database.transaction(() => {
-    const targets = eligibleTargets(database, workspaceId, input, now);
-    // Resolve ownership before billing so a non-member cannot infer whether an
-    // otherwise valid report or workspace has an active subscription.
-    const entitlement = reconcilePriceWatchSubscription(database, workspaceId, now);
-    if (!entitlement) throw new PriceWatchStoreError("subscription-required", "An active subscription is required for price monitoring.", 402);
-    const grouped = new Map<string, { target: EligibleTarget; links: EligibleTarget[] }>();
-    for (const target of targets) {
-      const key = `${target.canonicalUrl}\n${target.variantKey}`;
-      const existing = grouped.get(key);
-      if (existing) existing.links.push(target);
-      else grouped.set(key, { target, links: [target] });
+    const receipt = command ? getMcpCommandReceipt(database, workspaceId, command.operation, command.commandId) : null;
+    if (receipt) return { ...receipt, replayed: true } as PriceWatchActivationResult;
+    const resolution = activationResolution(database, workspaceId, input, now, true);
+    if (command?.expectedImpactFingerprint && command.expectedImpactFingerprint !== resolution.impactFingerprint) {
+      throw new PriceWatchStoreError("impact-changed", "Price-watch eligibility, credits, or target state changed. Preview the action again.", 409);
     }
-    const resolved = [...grouped.values()].map((group) => {
-      const existing = database.prepare(`SELECT * FROM price_watchers WHERE workspace_id = ? AND canonical_url = ? AND variant_key = ? LIMIT 1`)
-        .get(workspaceId, group.target.canonicalUrl, group.target.variantKey) as Record<string, unknown> | undefined;
-      return { ...group, existing };
-    });
-    const baselineCredits = resolved.filter(({ existing }) => !existing || !ACTIVE_WATCHER_STATES.has(String(existing.state || ""))).length;
-    const before = usageForPeriod(database, workspaceId, entitlement);
+    const { cadence, entitlement, resolved, baselineCredits, before } = resolution;
     if (before.used + baselineCredits > entitlement.allocation) {
       throw new PriceWatchStoreError("insufficient-credits", `This activation needs ${baselineCredits} monitoring credits, but only ${before.remaining} remain.`, 402);
     }
@@ -578,13 +687,15 @@ export function activatePriceWatchers(
     }
     database.prepare(`INSERT INTO price_watch_audit_log (id, workspace_id, actor_user_id, action, target_tombstone, detail_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
       .run(randomUUID(), workspaceId, actorUserId, input.matchId ? "watcher.activate-one" : "watcher.activate-rival-snapshot", randomUUID(), JSON.stringify({ count: watcherIds.length, cadence }), nowIso);
-    return {
+    const result: PriceWatchActivationResult = {
       watcherIds,
       created,
       reused,
       baselineCreditsReserved: baselineCredits,
       usage: usageForPeriod(database, workspaceId, entitlement),
     };
+    if (command) recordMcpCommandReceipt(database, workspaceId, command.operation, command.commandId, result, now);
+    return result;
   }).immediate();
 }
 
@@ -593,6 +704,73 @@ export type PriceWatchMutation = {
   action?: "disable" | "resume";
 };
 
+export type PriceWatchMutationPreview = {
+  watcherId: string;
+  productName: string;
+  rivalDomain: string;
+  current: { state: PriceWatchState; cadence: PriceWatchCadence };
+  requested: { action: "disable" | "resume" | "cadence"; cadence: PriceWatchCadence };
+  baselineCreditsRequired: number;
+  usageBefore: PriceWatchUsage;
+  usageAfter: PriceWatchUsage;
+  impactFingerprint: string;
+};
+
+export function previewPriceWatchMutation(
+  database: Database.Database,
+  workspaceId: string,
+  watcherId: string,
+  input: PriceWatchMutation,
+  now = new Date(),
+): PriceWatchMutationPreview {
+  ensurePriceWatchSchema(database);
+  const row = database.prepare(`SELECT * FROM price_watchers WHERE id = ? AND workspace_id = ? LIMIT 1`).get(watcherId, workspaceId) as Record<string, unknown> | undefined;
+  if (!row) throw new PriceWatchStoreError("watcher-not-found", "Price watcher not found.", 404);
+  const cadence = input.cadence === undefined ? (row.cadence === "hourly" ? "hourly" : "daily") : validCadence(input.cadence);
+  if (input.action !== undefined && input.action !== "disable" && input.action !== "resume") throw new PriceWatchStoreError("invalid-action", "Invalid watcher action.", 400);
+  if (input.action === undefined && input.cadence === undefined) throw new PriceWatchStoreError("empty-mutation", "No watcher change was supplied.", 400);
+  const entitlement = currentSubscriptionEntitlement(database, workspaceId, now);
+  if (input.action === "resume" && !entitlement) throw new PriceWatchStoreError("subscription-required", "An active subscription is required to resume monitoring.", 402);
+  const before = usageForPeriod(database, workspaceId, entitlement);
+  const currentState = String(row.state || "disabled") as PriceWatchState;
+  const currentlyActive = ACTIVE_WATCHER_STATES.has(currentState);
+  const willBeActive = input.action === "disable" ? false : input.action === "resume" ? true : currentlyActive;
+  const baselineCreditsRequired = input.action === "resume" && !currentlyActive
+    && !(currentState === "paused_credits" && Number(row.baseline_amount_micros) > 0) ? 1 : 0;
+  if (baselineCreditsRequired > before.remaining) throw new PriceWatchStoreError("insufficient-credits", "A fresh baseline needs one monitoring credit, but none remain.", 402);
+  let projectedDaily = before.projectedDaily;
+  if (currentlyActive) projectedDaily -= cadenceChecksPerDay(row.cadence === "hourly" ? "hourly" : "daily");
+  if (willBeActive) projectedDaily += cadenceChecksPerDay(cadence);
+  const after: PriceWatchUsage = {
+    ...before,
+    used: before.used + baselineCreditsRequired,
+    remaining: Math.max(0, before.remaining - baselineCreditsRequired),
+    projectedDaily,
+    projectedMonthly: projectedDaily * 30,
+  };
+  const fingerprintInput = {
+    watcherId,
+    updatedAt: String(row.updated_at || ""),
+    currentState,
+    currentCadence: String(row.cadence || ""),
+    baselineAmountMicros: Number(row.baseline_amount_micros) || null,
+    requestedAction: input.action || "cadence",
+    requestedCadence: cadence,
+    usage: [before.used, before.remaining],
+  };
+  return {
+    watcherId,
+    productName: String(row.product_name || ""),
+    rivalDomain: String(row.rival_domain || ""),
+    current: { state: currentState, cadence: row.cadence === "hourly" ? "hourly" : "daily" },
+    requested: { action: input.action || "cadence", cadence },
+    baselineCreditsRequired,
+    usageBefore: before,
+    usageAfter: after,
+    impactFingerprint: createHash("sha256").update(JSON.stringify(fingerprintInput)).digest("hex"),
+  };
+}
+
 export function mutatePriceWatcher(
   database: Database.Database,
   workspaceId: string,
@@ -600,9 +778,17 @@ export function mutatePriceWatcher(
   watcherId: string,
   input: PriceWatchMutation,
   now = new Date(),
+  command?: PriceWatchCommandOptions,
 ): { watcher: PriceWatcher; usage: PriceWatchUsage } {
   ensurePriceWatchSchema(database);
+  if (command) ensureMcpCommandSchema(database);
   return database.transaction(() => {
+    const receipt = command ? getMcpCommandReceipt(database, workspaceId, command.operation, command.commandId) : null;
+    if (receipt) return receipt as { watcher: PriceWatcher; usage: PriceWatchUsage };
+    const preview = previewPriceWatchMutation(database, workspaceId, watcherId, input, now);
+    if (command?.expectedImpactFingerprint && command.expectedImpactFingerprint !== preview.impactFingerprint) {
+      throw new PriceWatchStoreError("impact-changed", "Price-watch state or credit impact changed. Preview the action again.", 409);
+    }
     const row = database.prepare(`SELECT * FROM price_watchers WHERE id = ? AND workspace_id = ? LIMIT 1`).get(watcherId, workspaceId) as Record<string, unknown> | undefined;
     if (!row) throw new PriceWatchStoreError("watcher-not-found", "Price watcher not found.", 404);
     const cadence = input.cadence === undefined ? (row.cadence === "hourly" ? "hourly" : "daily") : validCadence(input.cadence);
@@ -638,13 +824,58 @@ export function mutatePriceWatcher(
     database.prepare(`INSERT INTO price_watch_audit_log (id, workspace_id, actor_user_id, action, target_tombstone, detail_json, created_at) VALUES (?, ?, ?, ?, ?, '{}', ?)`)
       .run(randomUUID(), workspaceId, actorUserId, input.action ? `watcher.${input.action}` : "watcher.cadence", String(row.audit_target || randomUUID()), nowIso);
     const updated = database.prepare(`SELECT * FROM price_watchers WHERE id = ? AND workspace_id = ? LIMIT 1`).get(watcherId, workspaceId) as Record<string, unknown>;
-    return { watcher: rowWatcher(updated), usage: usageForPeriod(database, workspaceId, entitlement || reconcilePriceWatchSubscription(database, workspaceId, now)) };
+    const result = { watcher: rowWatcher(updated), usage: usageForPeriod(database, workspaceId, entitlement || reconcilePriceWatchSubscription(database, workspaceId, now)) };
+    if (command) recordMcpCommandReceipt(database, workspaceId, command.operation, command.commandId, result, now);
+    return result;
   }).immediate();
 }
 
-export function deletePriceWatcher(database: Database.Database, workspaceId: string, actorUserId: string, watcherId: string, now = new Date()): boolean {
+export type PriceWatchDeletePreview = {
+  watcherId: string;
+  productName: string;
+  rivalDomain: string;
+  state: PriceWatchState;
+  removes: { observations: number; reportLinks: number; notifications: number; pendingEmailDeliveries: number };
+  consumedCreditsRemainCharged: true;
+  impactFingerprint: string;
+};
+
+export function previewPriceWatchDelete(database: Database.Database, workspaceId: string, watcherId: string): PriceWatchDeletePreview {
   ensurePriceWatchSchema(database);
+  const row = database.prepare(`SELECT * FROM price_watchers WHERE id = ? AND workspace_id = ? LIMIT 1`).get(watcherId, workspaceId) as Record<string, unknown> | undefined;
+  if (!row) throw new PriceWatchStoreError("watcher-not-found", "Price watcher not found.", 404);
+  const observations = database.prepare(`SELECT COUNT(*) AS count FROM price_watch_observations WHERE watcher_id = ?`).get(watcherId) as { count?: number };
+  const links = database.prepare(`SELECT COUNT(*) AS count FROM price_watcher_report_links WHERE watcher_id = ?`).get(watcherId) as { count?: number };
+  const notifications = database.prepare(`SELECT COUNT(*) AS count FROM workspace_notifications WHERE workspace_id = ? AND watcher_id = ?`).get(workspaceId, watcherId) as { count?: number };
+  const deliveries = database.prepare(`SELECT COUNT(*) AS count FROM price_watch_email_outbox WHERE workspace_id = ? AND watcher_id = ? AND status != 'delivered'`).get(workspaceId, watcherId) as { count?: number };
+  const removes = {
+    observations: Number(observations.count || 0),
+    reportLinks: Number(links.count || 0),
+    notifications: Number(notifications.count || 0),
+    pendingEmailDeliveries: Number(deliveries.count || 0),
+  };
+  const fingerprintInput = { watcherId, state: row.state, updatedAt: row.updated_at, removes };
+  return {
+    watcherId,
+    productName: String(row.product_name || ""),
+    rivalDomain: String(row.rival_domain || ""),
+    state: String(row.state || "disabled") as PriceWatchState,
+    removes,
+    consumedCreditsRemainCharged: true,
+    impactFingerprint: createHash("sha256").update(JSON.stringify(fingerprintInput)).digest("hex"),
+  };
+}
+
+export function deletePriceWatcher(database: Database.Database, workspaceId: string, actorUserId: string, watcherId: string, now = new Date(), command?: PriceWatchCommandOptions): boolean {
+  ensurePriceWatchSchema(database);
+  if (command) ensureMcpCommandSchema(database);
   return database.transaction(() => {
+    const receipt = command ? getMcpCommandReceipt(database, workspaceId, command.operation, command.commandId) : null;
+    if (receipt) return receipt.deleted === true;
+    const preview = previewPriceWatchDelete(database, workspaceId, watcherId);
+    if (command?.expectedImpactFingerprint && command.expectedImpactFingerprint !== preview.impactFingerprint) {
+      throw new PriceWatchStoreError("impact-changed", "Price-watch deletion impact changed. Preview the action again.", 409);
+    }
     const row = database.prepare(`SELECT audit_target FROM price_watchers WHERE id = ? AND workspace_id = ? LIMIT 1`).get(watcherId, workspaceId) as { audit_target?: string } | undefined;
     if (!row) throw new PriceWatchStoreError("watcher-not-found", "Price watcher not found.", 404);
     const nowIso = now.toISOString();
@@ -658,6 +889,7 @@ export function deletePriceWatcher(database: Database.Database, workspaceId: str
         .run(Number(debit.count || 0), nowIso, workspaceId, debit.period_start, debit.period_end);
       if (preserved.changes !== 1) throw new Error("A consumed price-watch debit could not be preserved before deletion.");
     }
+    if (command) recordMcpCommandReceipt(database, workspaceId, command.operation, command.commandId, { deleted: true }, now);
     const deleted = database.prepare(`DELETE FROM price_watchers WHERE id = ? AND workspace_id = ?`).run(watcherId, workspaceId);
     database.prepare(`INSERT INTO price_watch_audit_log (id, workspace_id, actor_user_id, action, target_tombstone, detail_json, created_at) VALUES (?, ?, ?, 'watcher.delete-permanent', ?, '{}', ?)`)
       .run(randomUUID(), workspaceId, actorUserId, String(row.audit_target || randomUUID()), nowIso);

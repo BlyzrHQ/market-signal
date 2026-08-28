@@ -26,6 +26,7 @@ type JwksRow = {
 export type McpPrincipal = {
   workspaceId: string;
   userId: string;
+  clientId: string;
 };
 
 export class McpAccessTokenError extends Error {
@@ -96,8 +97,8 @@ function publicKeySet(database: Database.Database, now: Date): JSONWebKeySet {
 function principal(authInfo: AuthInfo): McpPrincipal | null {
   const workspaceId = authInfo.extra?.workspaceId;
   const userId = authInfo.extra?.userId;
-  return typeof workspaceId === "string" && workspaceId && typeof userId === "string" && userId
-    ? { workspaceId, userId }
+  return typeof workspaceId === "string" && workspaceId && typeof userId === "string" && userId && authInfo.clientId
+    ? { workspaceId, userId, clientId: authInfo.clientId }
     : null;
 }
 

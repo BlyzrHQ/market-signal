@@ -67,6 +67,7 @@ export function ensureBillingSchema(database: Database.Database): void {
     CREATE TABLE IF NOT EXISTS billing_report_reservations (
       id text PRIMARY KEY NOT NULL,
       workspace_id text NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      command_id text NOT NULL DEFAULT '',
       period_start text NOT NULL,
       period_end text NOT NULL,
       status text NOT NULL CHECK(status IN ('reserved','committed','released')),
@@ -79,6 +80,11 @@ export function ensureBillingSchema(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS billing_report_reservations_usage_idx
       ON billing_report_reservations(workspace_id, period_start, period_end, status);
   `);
+  const reservationColumns = database.prepare(`PRAGMA table_info(billing_report_reservations)`).all() as Array<{ name?: string }>;
+  if (!reservationColumns.some((column) => column.name === "command_id")) {
+    database.exec(`ALTER TABLE billing_report_reservations ADD COLUMN command_id text NOT NULL DEFAULT ''`);
+  }
+  database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS billing_report_reservations_command_uidx ON billing_report_reservations(command_id) WHERE command_id != ''`);
   ensurePriceWatchSchema(database);
 }
 
@@ -169,7 +175,8 @@ export function recordWebhookEvent(database: Database.Database, eventId: string,
 
 export type ReportReservation = { id: string; plan: BillingPlan; used: number; limit: number };
 
-export function reserveReport(database: Database.Database, workspaceId: string, now = new Date()): ReportReservation | null {
+export function reserveReport(database: Database.Database, workspaceId: string, now = new Date(), commandId = ""): ReportReservation | null {
+  if (commandId && !/^[A-Za-z0-9:_-]{1,120}$/.test(commandId)) throw new Error("Invalid report command id.");
   return database.transaction(() => {
     const subscription = getWorkspaceSubscription(database, workspaceId);
     const plan = activeWorkspacePlan(database, workspaceId, now);
@@ -178,13 +185,21 @@ export function reserveReport(database: Database.Database, workspaceId: string, 
     const staleBefore = new Date(now.getTime() - RESERVATION_TTL_MS).toISOString();
     database.prepare(`UPDATE billing_report_reservations SET status = 'released', updated_at = ? WHERE workspace_id = ? AND status = 'reserved' AND created_at < ?`)
       .run(nowIso, workspaceId, staleBefore);
+    const existing = commandId ? database.prepare(`SELECT id, workspace_id, period_start, period_end, status FROM billing_report_reservations WHERE command_id = ? LIMIT 1`)
+      .get(commandId) as { id: string; workspace_id: string; period_start: string; period_end: string; status: string } | undefined : undefined;
     const usage = database.prepare(`SELECT COUNT(*) AS count FROM billing_report_reservations WHERE workspace_id = ? AND period_start = ? AND period_end = ? AND status IN ('reserved','committed')`)
       .get(workspaceId, subscription.currentPeriodStart, subscription.currentPeriodEnd) as { count: number };
     const used = Number(usage.count || 0);
+    if (existing) {
+      if (existing.workspace_id !== workspaceId || existing.period_start !== subscription.currentPeriodStart || existing.period_end !== subscription.currentPeriodEnd || !["reserved", "committed"].includes(existing.status)) {
+        throw new Error("The report command reservation is no longer reusable.");
+      }
+      return { id: existing.id, plan, used, limit: plan.reportsPerMonth };
+    }
     if (used >= plan.reportsPerMonth) return { id: "", plan, used, limit: plan.reportsPerMonth };
     const id = randomUUID();
-    database.prepare(`INSERT INTO billing_report_reservations (id, workspace_id, period_start, period_end, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'reserved', ?, ?)`)
-      .run(id, workspaceId, subscription.currentPeriodStart, subscription.currentPeriodEnd, nowIso, nowIso);
+    database.prepare(`INSERT INTO billing_report_reservations (id, workspace_id, command_id, period_start, period_end, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'reserved', ?, ?)`)
+      .run(id, workspaceId, commandId, subscription.currentPeriodStart, subscription.currentPeriodEnd, nowIso, nowIso);
     return { id, plan, used: used + 1, limit: plan.reportsPerMonth };
   }).immediate();
 }
@@ -193,18 +208,33 @@ export function finishReportReservation(database: Database.Database, reservation
   if (outcome === "committed") {
     const result = database.prepare(`UPDATE billing_report_reservations SET status = 'committed', run_id = ?, updated_at = ? WHERE id = ? AND status = 'reserved'`)
       .run(runId, now.toISOString(), reservationId);
-    return result.changes === 1;
+    if (result.changes === 1) return true;
+    const existing = database.prepare(`SELECT status, run_id FROM billing_report_reservations WHERE id = ? LIMIT 1`).get(reservationId) as { status?: string; run_id?: string } | undefined;
+    return existing?.status === "committed" && existing.run_id === runId;
   }
   const result = database.prepare(`UPDATE billing_report_reservations SET status = 'released', run_id = '', updated_at = ? WHERE id = ? AND status = 'reserved'`)
     .run(now.toISOString(), reservationId);
-  return result.changes === 1;
+  if (result.changes === 1) return true;
+  const existing = database.prepare(`SELECT status FROM billing_report_reservations WHERE id = ? LIMIT 1`).get(reservationId) as { status?: string } | undefined;
+  return existing?.status === "released";
 }
 
-export function workspaceUsage(database: Database.Database, workspaceId: string): { used: number; limit: number } {
+export function hasReportCommandReservation(database: Database.Database, workspaceId: string, commandId: string): boolean {
+  if (!commandId) return false;
+  const row = database.prepare(`SELECT 1 AS found FROM billing_report_reservations WHERE workspace_id = ? AND command_id = ? AND status IN ('reserved','committed') LIMIT 1`)
+    .get(workspaceId, commandId) as { found?: number } | undefined;
+  return row?.found === 1;
+}
+
+export function workspaceUsage(database: Database.Database, workspaceId: string, excludingCommandId = ""): { used: number; limit: number } {
   const subscription = getWorkspaceSubscription(database, workspaceId);
   const plan = subscription?.planTier ? BILLING_PLANS[subscription.planTier] : null;
   if (!subscription || !plan) return { used: 0, limit: 0 };
   const row = database.prepare(`SELECT COUNT(*) AS count FROM billing_report_reservations WHERE workspace_id = ? AND period_start = ? AND period_end = ? AND status IN ('reserved','committed')`)
     .get(workspaceId, subscription.currentPeriodStart, subscription.currentPeriodEnd) as { count: number };
-  return { used: Number(row.count || 0), limit: plan.reportsPerMonth };
+  const ownReservation = excludingCommandId
+    ? database.prepare(`SELECT COUNT(*) AS count FROM billing_report_reservations WHERE workspace_id = ? AND command_id = ? AND period_start = ? AND period_end = ? AND status IN ('reserved','committed')`)
+      .get(workspaceId, excludingCommandId, subscription.currentPeriodStart, subscription.currentPeriodEnd) as { count: number }
+    : { count: 0 };
+  return { used: Math.max(0, Number(row.count || 0) - Number(ownReservation.count || 0)), limit: plan.reportsPerMonth };
 }
