@@ -288,3 +288,27 @@ test("consent and account UI disclose spend effects and unverified client identi
   assert.match(task, /standards conformance harness uses an explicitly pre-registered public test client/i);
   assert.match(task, /@better-auth\/mcp@1\.7\.2/);
 });
+
+test("the Vinext production bundle retains exact OAuth discovery rewrites and handlers", async () => {
+  const [builtServer, nextConfig, task] = await Promise.all([
+    readFile(new URL("../dist/server/index.js", import.meta.url), "utf8"),
+    readFile(new URL("../next.config.ts", import.meta.url), "utf8"),
+    readFile(new URL("../docs/tasks/2026-08-28-mcp-well-known-vinext.md", import.meta.url), "utf8"),
+  ]);
+
+  for (const route of [
+    "/api/mcp/oauth-protected-resource",
+    "/api/mcp/oauth-protected-resource/mcp",
+    "/api/mcp/oauth-authorization-server",
+  ]) {
+    assert.match(builtServer, new RegExp(route.replaceAll("/", "\\/")));
+  }
+  for (const publicPath of [
+    "/.well-known/oauth-protected-resource",
+    "/.well-known/oauth-protected-resource/mcp",
+    "/.well-known/oauth-authorization-server",
+  ]) {
+    assert.match(nextConfig, new RegExp(publicPath.replaceAll("/", "\\/")));
+  }
+  assert.match(task, /Vinext 0\.0\.50 ignored\s+the dot-prefixed/i);
+});
