@@ -48,7 +48,7 @@ Ship the authenticated, stateless Market Signal MCP endpoint and its first owner
 
 - Verified Claude Fable 5 reviewed exact head `ccfdbade25cab9b92b9f256f525981b5e4da69b0` and returned `PASS` with no blocker, high, or medium findings.
 - Three non-blocking hardening notes were incorporated: raw-row pagination continuation, cheap request validation before database-backed authorization, and safe operation/error-class diagnostics without logging messages or customer data.
-- Final exact-head re-review is required after the hardening commit.
+- Verified Claude Fable 5 re-reviewed exact hardening head `4ab96cd1ecff2edf37acd15792189874eb1f9786` and returned `PASS` with no blocker, high, medium, or low findings; its focused validation passed 64/64 tests, typecheck, and the VPS build assertions.
 
 ## References
 
