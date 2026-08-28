@@ -44,6 +44,12 @@ Ship the authenticated, stateless Market Signal MCP endpoint and its first owner
 - Built-server smoke: `GET /mcp` returns `405` with `Allow: POST`; unauthenticated `POST /mcp` returns `401` with OAuth protected-resource metadata and no-store headers.
 - No report creation, price check, quota consumption, or paid API call was performed during validation.
 
+## Review
+
+- Verified Claude Fable 5 reviewed exact head `ccfdbade25cab9b92b9f256f525981b5e4da69b0` and returned `PASS` with no blocker, high, or medium findings.
+- Three non-blocking hardening notes were incorporated: raw-row pagination continuation, cheap request validation before database-backed authorization, and safe operation/error-class diagnostics without logging messages or customer data.
+- Final exact-head re-review is required after the hardening commit.
+
 ## References
 
 - Parent PRD: `docs/tasks/2026-08-28-hosted-mcp-reports-price-watch-prd.md`

@@ -93,6 +93,14 @@ function contentTypeIsJson(request: Request) {
   return (request.headers.get("content-type") || "").split(";", 1)[0].trim().toLowerCase() === "application/json";
 }
 
+function declaredBodyIsWithinLimit(request: Request) {
+  const rawLength = request.headers.get("content-length");
+  if (rawLength === null) return true;
+  if (!/^\d+$/.test(rawLength)) return false;
+  const length = Number(rawLength);
+  return Number.isSafeInteger(length) && length <= MAX_MCP_REQUEST_BYTES;
+}
+
 export async function postMarketSignalMcp(
   request: Request,
   services: McpRouteDependencies = mcpRouteDependencies(),
@@ -104,6 +112,13 @@ export async function postMarketSignalMcp(
 
   const token = bearerToken(request);
   if (!token) return authenticationFailure();
+
+  if (!contentTypeIsJson(request)) {
+    return Response.json({ error: "invalid_request", error_description: "MCP requests require application/json." }, { status: 415, headers: PRIVATE_MCP_HEADERS });
+  }
+  if (!declaredBodyIsWithinLimit(request)) {
+    return Response.json({ error: "invalid_request", error_description: "The MCP JSON request is invalid or too large." }, { status: 400, headers: PRIVATE_MCP_HEADERS });
+  }
 
   let authInfo: AuthInfo;
   let database: Awaited<ReturnType<typeof openMcpOAuthDatabase>> | null = null;
@@ -120,10 +135,6 @@ export async function postMarketSignalMcp(
     ));
   } finally {
     database?.close();
-  }
-
-  if (!contentTypeIsJson(request)) {
-    return Response.json({ error: "invalid_request", error_description: "MCP requests require application/json." }, { status: 415, headers: PRIVATE_MCP_HEADERS });
   }
 
   let parsedBody: Record<string, unknown>;

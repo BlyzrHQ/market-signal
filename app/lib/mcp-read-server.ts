@@ -72,7 +72,7 @@ function failedToolResult(code: string, message: string): CallToolResult {
   };
 }
 
-function safeToolFailure(error: unknown): CallToolResult {
+function safeToolFailure(error: unknown, operation: string): CallToolResult {
   if (error instanceof ReportQueryError) {
     return failedToolResult("not-found", "Report not found.");
   }
@@ -85,7 +85,11 @@ function safeToolFailure(error: unknown): CallToolResult {
   if (error instanceof Error && /^Invalid .*cursor\.$/.test(error.message)) {
     return failedToolResult("invalid-argument", error.message);
   }
-  console.error("Market Signal MCP read tool failed.", { errorCode: "mcp-read-tool-failed" });
+  console.error("Market Signal MCP read tool failed.", {
+    errorCode: "mcp-read-tool-failed",
+    operation,
+    errorName: error instanceof Error ? error.name : "unknown",
+  });
   return failedToolResult("temporarily-unavailable", "Market Signal data is temporarily unavailable.");
 }
 
@@ -120,7 +124,7 @@ function registerReportTools(server: McpServer, principal: McpPrincipal, service
           nextCursor: page.nextCursor,
         });
       } catch (error) {
-        return safeToolFailure(error);
+        return safeToolFailure(error, "reports_list");
       }
     },
   );
@@ -144,7 +148,7 @@ function registerReportTools(server: McpServer, principal: McpPrincipal, service
           pollAfterSeconds: terminal ? null : 10,
         });
       } catch (error) {
-        return safeToolFailure(error);
+        return safeToolFailure(error, "report_get");
       }
     },
   );
@@ -166,7 +170,7 @@ function registerReportTools(server: McpServer, principal: McpPrincipal, service
         const page = await services.listReportMatches(principal.workspaceId, publicReportId, { cursor, limit });
         return successfulToolResult({ ok: true, publicReportId, ...page });
       } catch (error) {
-        return safeToolFailure(error);
+        return safeToolFailure(error, "report_matches_list");
       }
     },
   );
@@ -190,7 +194,7 @@ function registerPriceWatchTools(server: McpServer, principal: McpPrincipal, ser
           watchers: result.watchers.map(customerWatcher),
         });
       } catch (error) {
-        return safeToolFailure(error);
+        return safeToolFailure(error, "price_watch_list");
       }
     },
   );
@@ -211,7 +215,7 @@ function registerPriceWatchTools(server: McpServer, principal: McpPrincipal, ser
         const history = await services.getPriceWatchHistory(principal.workspaceId, watcherId, limit);
         return successfulToolResult({ ok: true, watcherId, history });
       } catch (error) {
-        return safeToolFailure(error);
+        return safeToolFailure(error, "price_watch_history");
       }
     },
   );
@@ -229,7 +233,7 @@ function registerPriceWatchTools(server: McpServer, principal: McpPrincipal, ser
         const notifications = await services.listNotifications(principal, limit);
         return successfulToolResult({ ok: true, ...notifications });
       } catch (error) {
-        return safeToolFailure(error);
+        return safeToolFailure(error, "notifications_list");
       }
     },
   );

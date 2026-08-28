@@ -188,7 +188,13 @@ test("cross-workspace report identifiers collapse to a safe not-found tool resul
 });
 
 test("MCP route rejects cookie-only, invalid host/origin, non-JSON, oversized, and legacy requests", async () => {
-  const services = routeServices(["reports:read"]);
+  let databaseOpenCount = 0;
+  const services = routeServices(["reports:read"], {
+    openDatabase: async () => {
+      databaseOpenCount += 1;
+      return { close() {} };
+    },
+  });
   const cookieOnly = protocolRequest("tools/list", {}, { authorization: "", cookie: "better-auth.session_token=secret" });
   const missingBearer = await postMarketSignalMcp(cookieOnly, services);
   assert.equal(missingBearer.status, 401);
@@ -199,6 +205,7 @@ test("MCP route rejects cookie-only, invalid host/origin, non-JSON, oversized, a
   assert.equal((await postMarketSignalMcp(protocolRequest("tools/list", {}, { origin: "https://attacker.example" }), services)).status, 403);
   assert.equal((await postMarketSignalMcp(protocolRequest("tools/list", {}, { "content-type": "text/plain" }), services)).status, 415);
   assert.equal((await postMarketSignalMcp(protocolRequest("tools/list", {}, { "content-length": String(300_000) }), services)).status, 400);
+  assert.equal(databaseOpenCount, 0, "cheap request validation must run before database-backed token verification");
 
   const legacy = new Request(BASE_URL, {
     method: "POST",
@@ -208,6 +215,7 @@ test("MCP route rejects cookie-only, invalid host/origin, non-JSON, oversized, a
   const legacyResponse = await postMarketSignalMcp(legacy, services);
   assert.equal(legacyResponse.status, 400);
   assert.match(await legacyResponse.text(), /Unsupported protocol version/);
+  assert.equal(databaseOpenCount, 1);
   await services.handler.close();
 });
 

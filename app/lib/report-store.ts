@@ -1266,7 +1266,9 @@ export async function listWorkspaceReportPage(
       limit + 1,
     )
     .all<Record<string, unknown>>();
-  const reports = (rows.results || []).map((row) => ({
+  const rawRows = rows.results || [];
+  const hasMore = rawRows.length > limit;
+  const reports = rawRows.map((row) => ({
     publicId: String(row.public_id || ""),
     primaryDomain: String(row.primary_domain || ""),
     status: STATUSES.has(row.status as ReportRunStatus) ? row.status as ReportRunStatus : "failed",
@@ -1276,7 +1278,7 @@ export async function listWorkspaceReportPage(
   const items = reports.slice(0, limit);
   return {
     items,
-    nextCursor: reports.length > limit && items.length > 0 ? encodeWorkspaceReportCursor(items.at(-1)!) : null,
+    nextCursor: hasMore && items.length > 0 ? encodeWorkspaceReportCursor(items.at(-1)!) : null,
   };
 }
 
