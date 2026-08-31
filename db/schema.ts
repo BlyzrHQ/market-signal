@@ -233,6 +233,41 @@ export const workspaceMembers = sqliteTable("workspace_members", {
   index("workspace_members_user_idx").on(table.userId),
 ]);
 
+export const shopifyInstallations = sqliteTable("shopify_installations", {
+  shopDomain: text("shop_domain").primaryKey(),
+  workspaceId: text("workspace_id").notNull().unique().references(() => workspaces.id, { onDelete: "cascade" }),
+  shopGid: text("shop_gid").notNull().default(""),
+  offlineTokenCiphertext: text("offline_token_ciphertext").notNull().default(""),
+  refreshTokenCiphertext: text("refresh_token_ciphertext").notNull().default(""),
+  offlineTokenExpiresAt: text("offline_token_expires_at").notNull().default(""),
+  refreshTokenExpiresAt: text("refresh_token_expires_at").notNull().default(""),
+  tokenKeyVersion: text("token_key_version").notNull().default(""),
+  grantedScopesJson: text("granted_scopes_json").notNull().default("[]"),
+  installState: text("install_state").notNull(),
+  redactionState: text("redaction_state").notNull(),
+  primaryStorefrontUrl: text("primary_storefront_url").notNull().default(""),
+  storefrontState: text("storefront_state").notNull().default("not_checked"),
+  installedAt: text("installed_at").notNull(),
+  reinstalledAt: text("reinstalled_at").notNull().default(""),
+  uninstalledAt: text("uninstalled_at").notNull().default(""),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  index("shopify_installations_state_idx").on(table.installState, table.updatedAt),
+  check("shopify_installations_state_check", sql`${table.installState} IN ('active', 'scope_blocked', 'uninstalled')`),
+  check("shopify_installations_redaction_check", sql`${table.redactionState} IN ('active', 'pending')`),
+]);
+
+export const shopifyWebhookDeliveries = sqliteTable("shopify_webhook_deliveries", {
+  deliveryId: text("delivery_id").primaryKey(),
+  shopDomain: text("shop_domain").notNull(),
+  topic: text("topic").notNull(),
+  payloadHash: text("payload_hash").notNull(),
+  resultCode: text("result_code").notNull(),
+  processedAt: text("processed_at").notNull(),
+}, (table) => [
+  index("shopify_webhook_deliveries_processed_idx").on(table.processedAt),
+]);
+
 export const workspaceSubscriptions = sqliteTable("workspace_subscriptions", {
   workspaceId: text("workspace_id").primaryKey().references(() => workspaces.id, { onDelete: "cascade" }),
   stripeCustomerId: text("stripe_customer_id").notNull().unique(),

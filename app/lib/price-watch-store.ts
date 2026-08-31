@@ -327,6 +327,37 @@ export function ensurePriceWatchSchema(database: Database.Database): void {
   }
 }
 
+export function disableWorkspacePriceWatchers(
+  database: Database.Database,
+  workspaceId: string,
+  reason: string,
+  now = new Date(),
+): { disabled: number; releasedReservations: number } {
+  const cleanWorkspaceId = cleanText(workspaceId, 200);
+  const cleanReason = cleanText(reason, 120);
+  if (!cleanWorkspaceId || !cleanReason) return { disabled: 0, releasedReservations: 0 };
+  const tables = database.prepare(`
+    SELECT name FROM sqlite_master
+    WHERE type = 'table' AND name IN ('price_watchers', 'price_watch_credit_reservations')
+  `).all() as Array<{ name?: string }>;
+  const names = new Set(tables.map((row) => row.name));
+  if (!names.has("price_watchers")) return { disabled: 0, releasedReservations: 0 };
+  const nowIso = now.toISOString();
+  const releasedReservations = names.has("price_watch_credit_reservations")
+    ? database.prepare(`
+        UPDATE price_watch_credit_reservations
+        SET status = 'released', claim_owner = '', lease_expires_at = '', updated_at = ?
+        WHERE workspace_id = ? AND status = 'reserved'
+      `).run(nowIso, cleanWorkspaceId).changes
+    : 0;
+  const disabled = database.prepare(`
+    UPDATE price_watchers
+    SET state = 'disabled', pause_reason = ?, claim_owner = '', claim_expires_at = '', next_check_at = '', updated_at = ?
+    WHERE workspace_id = ? AND state != 'disabled'
+  `).run(cleanReason, nowIso, cleanWorkspaceId).changes;
+  return { disabled, releasedReservations };
+}
+
 type ActiveEntitlement = {
   plan: BillingPlan;
   periodStart: string;
