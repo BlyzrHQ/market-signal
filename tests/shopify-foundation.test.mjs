@@ -50,6 +50,7 @@ const NOW_SECONDS = Math.floor(NOW.getTime() / 1_000);
 const CLIENT_ID = "market-signal-shopify-client";
 const CLIENT_SECRET = "shopify-test-secret-that-is-longer-than-thirty-two-characters";
 const ACTIVE_KEY = Buffer.alloc(32, 7);
+const TEST_DATABASE_PATH = join(tmpdir(), "market-signal-shopify.sqlite");
 
 function environment(databasePath = join(tmpdir(), "market-signal-shopify.sqlite")) {
   return {
@@ -141,7 +142,7 @@ function webhookRequest({
 }
 
 test("Shopify configuration is explicit, versioned, and fail closed", () => {
-  const valid = environment("C:\\data\\market-signal.sqlite");
+  const valid = environment(TEST_DATABASE_PATH);
   const parsed = shopifyConfigFromEnvironment(valid);
   assert.equal(parsed.clientId, CLIENT_ID);
   assert.equal(parsed.encryptionKeys.get("v1").byteLength, 32);
@@ -524,7 +525,7 @@ test("Shopify webhook verification authenticates the untouched raw body before p
 test("the embedded shell is dynamically framed only by Shopify and contains no merchant data", async () => {
   const response = shopifyAppHomeResponse(
     new Request("https://signal.blyzr.com/shopify?shop=North-Star.MyShopify.com"),
-    environment("C:\\data\\market-signal.sqlite"),
+    environment(TEST_DATABASE_PATH),
   );
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-security-policy"), /frame-ancestors https:\/\/admin\.shopify\.com https:\/\/north-star\.myshopify\.com/);
@@ -538,7 +539,7 @@ test("the embedded shell is dynamically framed only by Shopify and contains no m
 
   const invalid = shopifyAppHomeResponse(
     new Request("https://signal.blyzr.com/shopify?shop=example.com"),
-    environment("C:\\data\\market-signal.sqlite"),
+    environment(TEST_DATABASE_PATH),
   );
   assert.equal(invalid.status, 400);
 });
@@ -561,7 +562,7 @@ test("bootstrap asks App Bridge for one fresh retry when token exchange reports 
     method: "POST",
     headers: { authorization: "Bearer a-valid-looking-id-token" },
   }), {
-    config: () => config("C:\\data\\market-signal.sqlite"),
+    config: () => config(TEST_DATABASE_PATH),
     verifyIdToken: async () => ({
       expiresAt: NOW_SECONDS + 60,
       issuedAt: NOW_SECONDS,
