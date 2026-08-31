@@ -45,11 +45,17 @@ const sensitiveEnvironment = [
   "STRIPE_PRICE_SOLO",
   "STRIPE_PRICE_GROWTH",
   "STRIPE_PRICE_AGENCY",
+  "SHOPIFY_CLIENT_ID",
+  "SHOPIFY_CLIENT_SECRET",
+  "SHOPIFY_API_VERSION",
+  "SHOPIFY_TOKEN_ENCRYPTION_ACTIVE_KEY_VERSION",
+  "SHOPIFY_TOKEN_ENCRYPTION_KEYS_JSON",
   "MARKET_SIGNAL_SQLITE_PATH",
 ];
 const environment = {
   ...process.env,
   MARKET_SIGNAL_HOSTED_BILLING: "false",
+  MARKET_SIGNAL_SHOPIFY_APP: "false",
   MARKET_SIGNAL_DEPLOY_TARGET: "",
 };
 for (const name of sensitiveEnvironment) environment[name] = "";
@@ -89,6 +95,13 @@ try {
   const authBody = await auth.json();
   if (authBody?.code !== "account_auth_not_configured") {
     throw new Error("Unconfigured account auth did not fail closed with its documented diagnostic.");
+  }
+
+  const shopify = await fetch(`${origin}/shopify?shop=example.myshopify.com`);
+  assertStatus(shopify, 503, "/shopify");
+  const shopifyBody = await shopify.json();
+  if (shopifyBody?.code !== "shopify_not_configured") {
+    throw new Error("The dormant Shopify surface did not fail closed with its documented diagnostic.");
   }
 
   console.log(`Open-source startup smoke passed at ${origin} with no private credentials.`);

@@ -85,6 +85,25 @@ export function ensureBillingSchema(database: Database.Database): void {
     database.exec(`ALTER TABLE billing_report_reservations ADD COLUMN command_id text NOT NULL DEFAULT ''`);
   }
   database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS billing_report_reservations_command_uidx ON billing_report_reservations(command_id) WHERE command_id != ''`);
+  const workspaceColumns = database.prepare(`PRAGMA table_info(workspaces)`).all() as Array<{ name?: string }>;
+  if (workspaceColumns.some((column) => column.name === "kind")) {
+    database.exec(`
+      CREATE TRIGGER IF NOT EXISTS workspace_subscriptions_reject_shopify_insert
+        BEFORE INSERT ON workspace_subscriptions
+        WHEN EXISTS (SELECT 1 FROM workspaces WHERE id = NEW.workspace_id AND kind = 'shopify')
+        BEGIN SELECT RAISE(ABORT, 'Shopify workspaces cannot use Stripe subscriptions'); END;
+      CREATE TRIGGER IF NOT EXISTS workspace_subscriptions_reject_shopify_update
+        BEFORE UPDATE OF workspace_id ON workspace_subscriptions
+        WHEN EXISTS (SELECT 1 FROM workspaces WHERE id = NEW.workspace_id AND kind = 'shopify')
+        BEGIN SELECT RAISE(ABORT, 'Shopify workspaces cannot use Stripe subscriptions'); END;
+      CREATE TRIGGER IF NOT EXISTS workspaces_reject_shopify_kind_with_stripe
+        BEFORE UPDATE OF kind ON workspaces
+        WHEN NEW.kind = 'shopify' AND EXISTS (
+          SELECT 1 FROM workspace_subscriptions WHERE workspace_id = NEW.id
+        )
+        BEGIN SELECT RAISE(ABORT, 'Stripe subscription workspaces cannot become Shopify workspaces'); END;
+    `);
+  }
   ensurePriceWatchSchema(database);
 }
 

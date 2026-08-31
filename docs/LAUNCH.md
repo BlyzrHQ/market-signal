@@ -72,6 +72,8 @@ Keep all values out of Git.
 - Stripe restricted key, signed webhook secret, and plan price IDs when hosted
   billing is enabled
 - owner and monitor tokens for the restricted evaluation-feedback queue
+- Shopify app credentials, a versioned 32-byte token-encryption key ring, and
+  `MARKET_SIGNAL_SHOPIFY_APP=true` only after development-store acceptance
 
 ### Trigger.dev
 
