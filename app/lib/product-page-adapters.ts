@@ -105,6 +105,16 @@ export function storefrontAdapterRequest(sourceUrl: string): StorefrontAdapterRe
   return null;
 }
 
+export function shopifyCartRequest(sourceUrl: string) {
+  const adapter = storefrontAdapterRequest(sourceUrl);
+  if (adapter?.kind !== "shopify") return null;
+  const endpoint = new URL(sourceUrl);
+  endpoint.pathname = "/cart.js";
+  endpoint.search = "";
+  endpoint.hash = "";
+  return endpoint.toString();
+}
+
 function metaContents(document: string, key: string) {
   const attributeValue = (tag: string, name: string) => {
     const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -122,6 +132,13 @@ function metaContents(document: string, key: string) {
 function isoCurrency(value: unknown) {
   const candidate = text(value, 10).toUpperCase();
   return /^[A-Z]{3}$/.test(candidate) ? candidate : "";
+}
+
+export function confirmedShopifyCartCurrency(payload: unknown) {
+  const cart = record(payload);
+  if (!cart || !Array.isArray(cart.items)) return "";
+  const currency = isoCurrency(cart.currency);
+  return currency && isSupportedCurrency(currency) ? currency : "";
 }
 
 function directProductCurrencies(document: string) {

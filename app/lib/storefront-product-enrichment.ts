@@ -2,7 +2,7 @@ import { canonicalDomain } from "./domain.ts";
 import { bilingualNormalize, bilingualTokens, parseCanonicalQuantity, quantitiesConflict } from "./product-normalization.ts";
 import { CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX, catalogReplacementAuditAttribute, directProductMetadataOffer, directProductScopedMetadataOffer, extractProductsFromHtml, isSupportedCurrency, publicSourceMarketContext, publicSourceMarketEvidence, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductPriceSignal, type ProductRecord } from "./product-intelligence.ts";
 import { redirectedMarketRetryUrl } from "./market-localization.ts";
-import { confirmedProductCurrency, confirmedShopifyRuntimeMarket, hasConflictingDirectProductCurrency, parseShopifyProduct, parseWooCommerceProduct, storefrontAdapterRequest } from "./product-page-adapters.ts";
+import { confirmedProductCurrency, confirmedShopifyCartCurrency, confirmedShopifyRuntimeMarket, hasConflictingDirectProductCurrency, parseShopifyProduct, parseWooCommerceProduct, shopifyCartRequest, storefrontAdapterRequest } from "./product-page-adapters.ts";
 import { fetchPublicText } from "./public-fetch.ts";
 import { sharedRobotsPolicyResolver } from "./robots-policy.ts";
 import { stripInactiveHtmlMarkup } from "./active-html-markup.ts";
@@ -12,6 +12,8 @@ const MAX_DOCUMENT_BYTES = 1_500_000;
 export const MAX_ENRICHMENT_TARGETS = 64;
 const MAX_PER_DOMAIN_CONCURRENCY = 2;
 const REQUEST_TIMEOUT_MS = 8_000;
+const MAX_FETCH_ATTEMPTS = 2;
+const DEFAULT_RETRY_DELAY_MS = 250;
 const USER_AGENT = MARKET_SIGNAL_USER_AGENT;
 
 export type EnrichmentGap = {
@@ -56,19 +58,37 @@ class ProductFetchFailure extends Error {
   }
 }
 
-async function fetchSameDomain(url: string, domain: string, accept: string, fetchImpl?: typeof fetch) {
-  const result = await fetchPublicText(url, accept, {
-    expectedDomain: domain,
-    timeoutMs: REQUEST_TIMEOUT_MS,
-    maxDocumentBytes: MAX_DOCUMENT_BYTES,
-    userAgent: USER_AGENT,
-    readErrorBody: false,
-    ...(fetchImpl ? { fetchImpl } : {}),
-  });
-  if (result.redirectDomain || /redirected off the submitted domain/i.test(result.error || "")) throw new ProductFetchFailure("redirected off the product domain", "redirect");
-  if (result.failureKind === "network" || result.failureKind === "timeout") throw new ProductFetchFailure(result.error || "network request failed", "network");
-  if (result.status === 0) throw new ProductFetchFailure(result.error || "response body could not be read", "network");
-  return result;
+async function fetchSameDomain(
+  url: string,
+  domain: string,
+  accept: string,
+  fetchImpl?: typeof fetch,
+  waitForRetry?: (domain: string, milliseconds: number) => Promise<void>,
+) {
+  let retries = 0;
+  for (let attempt = 0; attempt < MAX_FETCH_ATTEMPTS; attempt += 1) {
+    const result = await fetchPublicText(url, accept, {
+      expectedDomain: domain,
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      maxDocumentBytes: MAX_DOCUMENT_BYTES,
+      userAgent: USER_AGENT,
+      readErrorBody: false,
+      ...(fetchImpl ? { fetchImpl } : {}),
+    });
+    if (result.redirectDomain || /redirected off the submitted domain/i.test(result.error || "")) throw new ProductFetchFailure("redirected off the product domain", "redirect");
+    if (result.failureKind === "network" || result.failureKind === "timeout") throw new ProductFetchFailure(result.error || "network request failed", "network");
+    if (result.status === 0) throw new ProductFetchFailure(result.error || "response body could not be read", "network");
+    const retryable = [429, 502, 503, 504].includes(result.status);
+    if (!retryable || attempt === MAX_FETCH_ATTEMPTS - 1) {
+      return { ...result, retryExhausted: retryable && retries > 0 ? true as const : undefined };
+    }
+    retries += 1;
+    const retryAfterMs = "retryAfterMs" in result && typeof result.retryAfterMs === "number"
+      ? result.retryAfterMs
+      : DEFAULT_RETRY_DELAY_MS;
+    await (waitForRetry || (async (_domain, milliseconds) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds))))(domain, retryAfterMs);
+  }
+  throw new ProductFetchFailure("request retry state was invalid", "network");
 }
 
 function decode(value: string) {
@@ -989,11 +1009,20 @@ function safeProductUrl(product: ProductRecord, domain: string) {
 export function selectPrimaryProductPriceTargets(products: ProductRecord[], domain: string, maxPages = 6): ProductEnrichmentTarget[] {
   const limit = Math.max(0, Math.min(MAX_ENRICHMENT_TARGETS, Math.floor(maxPages)));
   const seen = new Set<string>();
-  return products
+  const candidates = products
     .filter((product) => product.jsonLdType === "Product" && !comparablePrice(product))
     .map((product) => ({ product, sourceUrl: safeProductUrl(product, domain) }))
     .filter((entry) => Boolean(entry.sourceUrl) && !seen.has(entry.sourceUrl) && Boolean(seen.add(entry.sourceUrl)))
-    .sort((left, right) => Number(Boolean(right.product.quantity || parseCanonicalQuantity(right.product.name))) - Number(Boolean(left.product.quantity || parseCanonicalQuantity(left.product.name))) || left.product.name.localeCompare(right.product.name))
+    .sort((left, right) => Number(Boolean(right.product.quantity || parseCanonicalQuantity(right.product.name))) - Number(Boolean(left.product.quantity || parseCanonicalQuantity(left.product.name))) || left.product.name.localeCompare(right.product.name));
+  const seenFamilies = new Set<string>();
+  const distinctFamilies: typeof candidates = [];
+  const repeatedFamilies: typeof candidates = [];
+  for (const entry of candidates) {
+    const family = entry.product.normalizedName || bilingualNormalize(entry.product.name);
+    (seenFamilies.has(family) ? repeatedFamilies : distinctFamilies).push(entry);
+    seenFamilies.add(family);
+  }
+  return [...distinctFamilies, ...repeatedFamilies]
     .slice(0, limit)
     .map(({ product, sourceUrl }) => ({
       domain: canonicalDomain(domain),
@@ -1022,6 +1051,7 @@ export function claimablePagePricePatterns(values: string[]) {
 export type EnrichmentDependencies = {
   fetchImpl?: typeof fetch;
   robotsResolver?: Pick<typeof sharedRobotsPolicyResolver, "resolve">;
+  sleep?: (milliseconds: number) => Promise<void>;
 };
 
 export async function enrichProductTargets(targets: ProductEnrichmentTarget[], maxPages = 24, dependencies: EnrichmentDependencies = {}) {
@@ -1029,11 +1059,69 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
   const selected = targets.slice(0, boundedMax);
   const fetchImpl = dependencies.fetchImpl;
   const robotsResolver = dependencies.robotsResolver || sharedRobotsPolicyResolver;
+  const sleep = dependencies.sleep || ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+  const retryQueues = new Map<string, Promise<void>>();
+  const waitForRetry = async (domain: string, milliseconds: number) => {
+    const previous = retryQueues.get(domain) || Promise.resolve();
+    const current = previous.catch(() => undefined).then(() => sleep(milliseconds));
+    retryQueues.set(domain, current);
+    try { await current; } finally { if (retryQueues.get(domain) === current) retryQueues.delete(domain); }
+  };
   const robotsByDomain = new Map<string, Awaited<ReturnType<typeof sharedRobotsPolicyResolver.resolve>>>();
   await Promise.all([...new Set(selected.map((item) => item.domain))].map(async (domain) => {
     const preferred = selected.find((item) => item.domain === domain)?.sourceUrl || domain;
     robotsByDomain.set(domain, await robotsResolver.resolve(domain, preferred));
   }));
+
+  const shopifyCurrencyByEndpoint = new Map<string, Promise<string>>();
+  const shopifyCurrencyFor = async (sourceUrl: string, domain: string, robots: { allows: (path: string) => boolean }) => {
+    if (hasUrlMarketSelector(sourceUrl) || hasRegionalOrLanguagePathSelector(sourceUrl)) return "";
+    const endpoint = shopifyCartRequest(sourceUrl);
+    if (!endpoint) return "";
+    const endpointUrl = new URL(endpoint);
+    if (!robots.allows(`${endpointUrl.pathname}${endpointUrl.search}`)) return "";
+    const existing = shopifyCurrencyByEndpoint.get(endpoint);
+    if (existing) return existing;
+    const pending = (async () => {
+      const response = await fetchSameDomain(endpoint, domain, "application/json", fetchImpl, waitForRetry);
+      if (!response.ok || !/json|javascript/i.test(response.contentType)) return "";
+      try { return confirmedShopifyCartCurrency(JSON.parse(response.text)); } catch { return ""; }
+    })();
+    shopifyCurrencyByEndpoint.set(endpoint, pending);
+    return pending;
+  };
+
+  const structuredRecovery = async (item: ProductEnrichmentTarget, robots: { allows: (path: string) => boolean }) => {
+    const adapter = storefrontAdapterRequest(item.sourceUrl);
+    if (!adapter) return { product: null as ProductRecord | null, reason: "" };
+    const adapterLabel = adapter.kind === "shopify" ? "Shopify product" : "WooCommerce Store API";
+    const adapterUrl = new URL(adapter.endpointUrl);
+    if (!robots.allows(`${adapterUrl.pathname}${adapterUrl.search}`)) return { product: null, reason: `robots.txt disallows the ${adapterLabel} endpoint.` };
+    const response = await fetchSameDomain(adapter.endpointUrl, item.domain, "application/json", fetchImpl, waitForRetry);
+    if (!response.ok || !/json|javascript/i.test(response.contentType)) return { product: null, reason: `${adapterLabel} endpoint returned HTTP ${response.status} or non-JSON content.` };
+    let payload: unknown;
+    try { payload = JSON.parse(response.text); } catch { return { product: null, reason: `${adapterLabel} endpoint returned invalid JSON.` }; }
+    const observedAt = new Date().toISOString();
+    const expected = expectedProduct(item);
+    const currencylessShopify = adapter.kind === "shopify"
+      ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: item.sourceUrl, domain: item.domain, observedAt, currency: "", expectedQuantity: expected.quantity })
+      : null;
+    const currency = currencylessShopify
+      && !item.marketCountryCode
+      && /no same-page currency/i.test(currencylessShopify.gap)
+      ? await shopifyCurrencyFor(item.sourceUrl, item.domain, robots)
+      : "";
+    const result = adapter.kind === "shopify"
+      ? currency
+        ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: item.sourceUrl, domain: item.domain, observedAt, currency, expectedQuantity: expected.quantity })
+        : currencylessShopify!
+      : parseWooCommerceProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: item.sourceUrl, domain: item.domain, observedAt });
+    const candidate = result.product ? withPositivePrices(result.product) : null;
+    if (!candidate || !hasConfirmedPrice([candidate])) return { product: null, reason: result.gap || `${adapterLabel} did not expose a comparable positive price.` };
+    const identity = validateProductPageIdentity([expected], [candidate], candidate.name, { allowScopedPageSignal: true });
+    if (!identity.accepted) return { product: null, reason: identity.reason };
+    return { product: { ...identity.products[0], id: item.productId }, reason: "" };
+  };
 
   const enrichOne = async (item: ProductEnrichmentTarget) => {
     const gap = (reason: string, code?: EnrichmentGap["code"], httpStatus?: number, failureKind?: EnrichmentGap["failureKind"]): EnrichmentGap => ({ url: item.sourceUrl, productId: item.productId, role: item.role, reason, ...(code ? { code } : {}), ...(httpStatus !== undefined ? { httpStatus } : {}), ...(failureKind ? { failureKind } : {}) });
@@ -1044,13 +1132,20 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
       const robots = robotsResult?.policy;
       if (!robots) return { product: null, gap: gap("robots.txt was unreachable, so selected-product enrichment was skipped.", "robots_unreachable", undefined, "robots") };
       if (!robots.allows(new URL(item.sourceUrl).pathname)) return { product: null, gap: gap("robots.txt disallows this selected product page.", "robots_disallowed", undefined, "robots") };
-      let fetched = await fetchSameDomain(item.sourceUrl, item.domain, "text/html,application/xhtml+xml", fetchImpl);
-      if (!fetched.ok) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed", fetched.status, "http") };
-      if (!/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) return { product: null, gap: gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content.`, "fetch_failed", fetched.status, "content") };
+      let fetched = await fetchSameDomain(item.sourceUrl, item.domain, "text/html,application/xhtml+xml", fetchImpl, waitForRetry);
+      if (!fetched.ok || !/text\/html|application\/xhtml\+xml/i.test(fetched.contentType)) {
+        const recovery = await structuredRecovery(item, robots);
+        if (recovery.product) return { product: recovery.product, gap: null };
+        const contentFailure = fetched.ok ? "content" : "http";
+        const retryNote = fetched.retryExhausted ? " after one bounded retry" : "";
+        const recoveryNote = recovery.reason ? ` ${recovery.reason}` : "";
+        const unresolved = gap(`Selected product page returned HTTP ${fetched.status} or non-HTML content${retryNote}.${recoveryNote}`, "fetch_failed", fetched.status, contentFailure);
+        return { product: null, gap: fetched.retryExhausted ? { ...unresolved, retryExhausted: true as const } : unresolved };
+      }
       const marketRetryUrl = redirectedMarketRetryUrl(item.sourceUrl, fetched.url, item.marketCountryCode || "", translatedMarketLanguage(item.expectedName, fetched.url));
       let marketRetryApplied = false;
       if (marketRetryUrl && robots.allows(new URL(marketRetryUrl).pathname)) {
-        const marketFetched = await fetchSameDomain(marketRetryUrl, item.domain, "text/html,application/xhtml+xml", fetchImpl);
+        const marketFetched = await fetchSameDomain(marketRetryUrl, item.domain, "text/html,application/xhtml+xml", fetchImpl, waitForRetry);
         if (marketFetched.ok && /text\/html|application\/xhtml\+xml/i.test(marketFetched.contentType)) {
           fetched = marketFetched;
           marketRetryApplied = true;
@@ -1100,7 +1195,7 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
           if (!robots.allows(`${adapterUrl.pathname}${adapterUrl.search}`)) {
             adapterGap = `robots.txt disallows the ${adapterLabel} endpoint.`;
           } else {
-            const adapterResponse = await fetchSameDomain(adapter.endpointUrl, item.domain, "application/json", fetchImpl);
+            const adapterResponse = await fetchSameDomain(adapter.endpointUrl, item.domain, "application/json", fetchImpl, waitForRetry);
             if (!adapterResponse.ok) {
               adapterGap = `${adapterLabel} endpoint returned HTTP ${adapterResponse.status} or non-JSON content.`;
               adapterGapHttpStatus = adapterResponse.status;
@@ -1115,9 +1210,26 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
               // Shopify's legacy .js payload has no currency field. A page
               // currency cannot qualify its amount when the selected market is
               // carried only by URL query state that the endpoint may ignore.
-              const directPageCurrency = selectedMarket ? "" : confirmedAdapterCurrency(fetched.text, rawMatchedProduct, item.marketCountryCode);
+              let directPageCurrency = selectedMarket ? "" : confirmedAdapterCurrency(fetched.text, rawMatchedProduct, item.marketCountryCode);
+              const currencylessShopify = adapter.kind === "shopify" && !directPageCurrency
+                ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: "", expectedQuantity: expected.quantity })
+                : null;
+              const expectedCountry = /^[A-Za-z]{2}$/.test(item.marketCountryCode || "") ? item.marketCountryCode!.toUpperCase() : "";
+              const runtimeMarket = confirmedShopifyRuntimeMarket(fetched.text);
+              const cartCurrencyEligible = adapter.kind === "shopify"
+                && !selectedMarket
+                && !directPageCurrency
+                && !hasConflictingDirectProductCurrency(fetched.text)
+                && pagePriceConflicts.length === 0
+                && (rawMatchedProduct?.priceSignals.length || 0) === 0
+                && !rawMatchedProduct?.attributes.some((attribute) => attribute.startsWith("Price evidence conflict:"))
+                && (!expectedCountry || runtimeMarket?.countryCode === expectedCountry)
+                && /no same-page currency/i.test(currencylessShopify?.gap || "");
+              if (cartCurrencyEligible) directPageCurrency = await shopifyCurrencyFor(fetched.url, item.domain, robots);
               const adapterResult = adapter.kind === "shopify"
-                ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: directPageCurrency, expectedQuantity: expected.quantity })
+                ? directPageCurrency
+                  ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: directPageCurrency, expectedQuantity: expected.quantity })
+                  : currencylessShopify!
                 : parseWooCommerceProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt: new Date().toISOString() });
               const adapterCurrencies = new Set((adapterResult.product?.priceSignals || []).map((signal) => signal.currency?.toUpperCase()).filter(Boolean));
               const adapterCurrencyConflict = directPageCurrency && [...adapterCurrencies].some((currency) => currency !== directPageCurrency.toUpperCase())
