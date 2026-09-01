@@ -42,6 +42,8 @@ test("builds reproducible experience metrics without claiming unknown values are
   ]);
 
   const primary = result.domains[0];
+  assert.equal(result.crawlProfileVersion, "experience-public-crawl-v1");
+  assert.equal(primary.assessmentStatus, "measured");
   assert.equal(primary.response.observed.medianMs, 840);
   assert.equal(primary.response.score, null);
   assert.equal(primary.images.observed.productImageCoverage, 100);
@@ -55,6 +57,7 @@ test("builds reproducible experience metrics without claiming unknown values are
   assert.match(primary.images.formula, /not subjective visual quality/i);
 
   const limited = result.domains[1];
+  assert.equal(limited.assessmentStatus, "not-assessed");
   assert.equal(limited.response.score, null);
   assert.equal(limited.images.score, null);
   assert.equal(limited.information.score, null);
@@ -144,6 +147,7 @@ test("crawl document and report route persist and render the benchmark truth bou
   const component = await readFile(new URL("../app/components/experience-benchmark.tsx", import.meta.url), "utf8");
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   assert.match(crawl, /type: "experience-benchmark"/);
+  assert.ok(crawl.indexOf("if (benchmarkOnly)") < crawl.indexOf("await discoverCompetitors"), "benchmark-only crawls must return before competitor search");
   assert.match(crawl, /responseTimeMs/);
   assert.match(crawl, /hasAddToCart/);
   assert.match(report, /en: "Benchmark"/);
@@ -152,6 +156,8 @@ test("crawl document and report route persist and render the benchmark truth bou
   assert.match(component, /Unknown/);
   assert.match(component, /points behind market median/);
   assert.match(component, /Your score was not measured/);
+  assert.match(component, /Not assessed/);
+  assert.match(component, /accepted product comparisons/);
   assert.doesNotMatch(component, /function ScoreBar/);
   assert.match(css, /\.benchmark-scorecard-row/);
   assert.match(css, /inset-inline-start/);

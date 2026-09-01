@@ -17,7 +17,8 @@ import {
   type ProductEnrichmentTarget,
   type ProductRecord,
 } from "../../app/lib/product-intelligence.ts";
-import { canonicalDomain } from "../../app/lib/domain.ts";
+import { canonicalDomain, normalizeDomain } from "../../app/lib/domain.ts";
+import { buildExperienceBenchmark } from "../../app/lib/experience-benchmark.ts";
 import {
   applyProductActionPlans,
   collectProductActionInputs,
@@ -67,6 +68,9 @@ export const MAX_ORCHESTRATION_TASK_ATTEMPTS = 10;
 export const MATCH_JUDGE_CHECKPOINT_BATCH_INDEX_BASE = 1_400;
 export const MAX_MATCH_JUDGE_CHECKPOINTS_PER_TASK_ATTEMPT = 250;
 export const ACTION_PLAN_CHECKPOINT_BATCH_INDEX = 3_910;
+export const RIVAL_BENCHMARK_CHECKPOINT_BATCH_INDEX = 3_900;
+export const MAX_RIVAL_BENCHMARK_DOMAINS = 5;
+export const RIVAL_BENCHMARK_CONCURRENCY = 2;
 
 export function productEvidenceReferenceTimeMs(catalogs: Array<{ products: ProductRecord[] }>, reportCreatedAt: string, wallClockMs = Date.now()) {
   const fallback = Date.parse(reportCreatedAt);
@@ -689,6 +693,143 @@ type ParkedDomainOutcome = { ok: false; code: "parked-domain"; primaryDomain: st
 type UnavailableDomainOutcome = { ok: false; code: "unavailable-domain"; primaryDomain: string; error: string; document: JsonDocument };
 type CrawlOutcome = CrawlSuccess | ParkedDomainOutcome | UnavailableDomainOutcome;
 
+const BENCHMARK_METRICS = ["response", "images", "information", "productAccess", "purchasePath", "trust", "mobileAccessibility"] as const;
+const RIVAL_BENCHMARK_METHOD = "accepted-published-comparison-count";
+const RIVAL_BENCHMARK_VERSION = 1;
+const RIVAL_BENCHMARK_CRAWL_PROFILE = "experience-public-crawl-v1";
+const RIVAL_BENCHMARK_METHODOLOGY = "experience-v1";
+
+type ExperienceBenchmarkBlock = JsonBlock & {
+  methodologyVersion: string;
+  crawlProfileVersion: string;
+  limitations: string;
+  domains: Array<Record<string, unknown>>;
+};
+
+function publicCanonicalDomain(value: unknown) {
+  try {
+    return normalizeDomain(String(value || "")).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+function samePublicDomain(left: string, right: string) {
+  return left === right || left.endsWith(`.${right}`) || right.endsWith(`.${left}`);
+}
+
+export function selectRivalBenchmarkDomains(comparison: ProductComparison | null, primaryDomain: string, limit = MAX_RIVAL_BENCHMARK_DOMAINS) {
+  if (!comparison || !Number.isInteger(limit) || limit < 1) return [];
+  const primary = publicCanonicalDomain(primaryDomain);
+  const counted = new Map<string, { count: number; first: number }>();
+  let position = 0;
+  for (const row of comparison.rows) for (const match of row.matches) {
+    position += 1;
+    const product = match.product;
+    if (!product || match.publication?.priceEligible !== true) continue;
+    const declared = publicCanonicalDomain(product.domain || match.domain);
+    const source = publicCanonicalDomain(product.sourceUrl);
+    if (!declared || !source || !samePublicDomain(declared, source) || samePublicDomain(declared, primary)) continue;
+    const prior = counted.get(declared);
+    counted.set(declared, { count: (prior?.count || 0) + 1, first: prior?.first ?? position });
+  }
+  return [...counted.entries()]
+    .sort(([leftDomain, left], [rightDomain, right]) => right.count - left.count || left.first - right.first || leftDomain.localeCompare(rightDomain))
+    .slice(0, Math.min(limit, MAX_RIVAL_BENCHMARK_DOMAINS))
+    .map(([domain]) => domain);
+}
+
+function validBenchmarkSource(value: unknown, domain: string) {
+  if (typeof value !== "string" || value.length > 1_000) return false;
+  const sourceDomain = publicCanonicalDomain(value);
+  return Boolean(sourceDomain && samePublicDomain(sourceDomain, domain));
+}
+
+function validBenchmarkMetric(value: unknown, domain: string) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const metric = value as Record<string, unknown>;
+  const score = metric.score;
+  if (score !== null && (typeof score !== "number" || !Number.isFinite(score) || score < 0 || score > 100)) return false;
+  if (!Number.isInteger(metric.sampleSize) || Number(metric.sampleSize) < 0) return false;
+  if (!metric.observed || typeof metric.observed !== "object" || Array.isArray(metric.observed)) return false;
+  if (typeof metric.formula !== "string" || !metric.formula.trim() || metric.formula.length > 1_000) return false;
+  if (!Array.isArray(metric.sourceUrls) || metric.sourceUrls.length > 12 || !metric.sourceUrls.every((url) => validBenchmarkSource(url, domain))) return false;
+  return true;
+}
+
+function validBenchmarkDomain(value: unknown, expectedDomain: string, expectedStatus?: "measured" | "not-assessed") {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  if (publicCanonicalDomain(item.domain) !== expectedDomain || typeof item.observedAt !== "string" || !Number.isFinite(Date.parse(item.observedAt))) return null;
+  const assessmentStatus = item.assessmentStatus === "not-assessed" ? "not-assessed" : item.assessmentStatus === "measured" ? "measured" : null;
+  if (!assessmentStatus || (expectedStatus && assessmentStatus !== expectedStatus)) return null;
+  if (typeof item.assessmentReason !== "string" || item.assessmentReason.length > 280) return null;
+  if (!BENCHMARK_METRICS.every((key) => validBenchmarkMetric(item[key], expectedDomain))) return null;
+  if (assessmentStatus === "not-assessed" && BENCHMARK_METRICS.some((key) => (item[key] as Record<string, unknown>).score !== null)) return null;
+  return { ...item, domain: expectedDomain, role: "discovered-competitor", assessmentStatus, assessmentReason: checkpointText(item.assessmentReason, 280) };
+}
+
+function experienceBenchmarkBlock(document: JsonDocument) {
+  const block = document.blocks.find((candidate) => candidate.type === "experience-benchmark");
+  if (!block || block.methodologyVersion !== RIVAL_BENCHMARK_METHODOLOGY || block.crawlProfileVersion !== RIVAL_BENCHMARK_CRAWL_PROFILE || !Array.isArray(block.domains)) return null;
+  return block as ExperienceBenchmarkBlock;
+}
+
+function unavailableBenchmarkDomain(domain: string, reason: string, observedAt: string) {
+  return buildExperienceBenchmark([{
+    domain,
+    role: "discovered-competitor",
+    fetchedAt: observedAt,
+    pages: [],
+    products: [],
+    catalogProductsDiscovered: 0,
+    assessmentStatus: "not-assessed",
+    assessmentReason: checkpointText(reason, 280),
+  }]).domains[0] as unknown as Record<string, unknown>;
+}
+
+function rivalBenchmarkInputHash(publicId: string, primaryDomain: string, domains: string[]) {
+  return createHash("sha256").update(JSON.stringify({
+    version: RIVAL_BENCHMARK_VERSION,
+    publicId,
+    primaryDomain,
+    methodologyVersion: RIVAL_BENCHMARK_METHODOLOGY,
+    crawlProfileVersion: RIVAL_BENCHMARK_CRAWL_PROFILE,
+    selectionMethod: RIVAL_BENCHMARK_METHOD,
+    domains,
+  })).digest("hex");
+}
+
+function validRivalBenchmarkCheckpoint(value: unknown, expectedDomains: string[]) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const checkpoint = value as { version?: unknown; methodologyVersion?: unknown; crawlProfileVersion?: unknown; selectionMethod?: unknown; domains?: unknown };
+  if (checkpoint.version !== RIVAL_BENCHMARK_VERSION || checkpoint.methodologyVersion !== RIVAL_BENCHMARK_METHODOLOGY || checkpoint.crawlProfileVersion !== RIVAL_BENCHMARK_CRAWL_PROFILE || checkpoint.selectionMethod !== RIVAL_BENCHMARK_METHOD || !Array.isArray(checkpoint.domains) || checkpoint.domains.length !== expectedDomains.length) return null;
+  const checkpointDomains = checkpoint.domains as unknown[];
+  const validated = expectedDomains.map((domain) => validBenchmarkDomain(checkpointDomains.find((candidate) => publicCanonicalDomain((candidate as Record<string, unknown>)?.domain) === domain), domain));
+  if (validated.some((domain) => !domain)) return null;
+  return { ...checkpoint, domains: validated as Array<Record<string, unknown>> };
+}
+
+function mergeRivalBenchmark(document: JsonDocument, checkpoint: ReturnType<typeof validRivalBenchmarkCheckpoint>) {
+  if (!checkpoint) return document;
+  const primary = experienceBenchmarkBlock(document);
+  if (!primary) return document;
+  const rivalDomains = new Set(checkpoint.domains.map((domain) => String(domain.domain)));
+  const domains = [
+    ...primary.domains.filter((domain) => !rivalDomains.has(String(domain.domain || ""))),
+    ...checkpoint.domains,
+  ];
+  const limitations = `${primary.limitations.replace(/\s+/g, " ").trim()} Rival rows are selected from accepted product comparisons and assessed after matching; each row shows its own observation time and sample size.`.trim();
+  const replacement: ExperienceBenchmarkBlock = {
+    ...primary,
+    limitations,
+    domains,
+    rivalSelectionMethod: RIVAL_BENCHMARK_METHOD,
+    rivalDomainLimit: MAX_RIVAL_BENCHMARK_DOMAINS,
+  };
+  return { ...document, blocks: document.blocks.map((block) => block === primary ? replacement : block) };
+}
+
 const MAX_CRAWL_CHECKPOINT_UNCOMPRESSED_BYTES = 16 * 1_024 * 1_024;
 const MAX_CRAWL_CHECKPOINT_RECOVERY_CANDIDATES = 2;
 
@@ -855,11 +996,14 @@ function validCrawlCheckpoint(value: unknown, payload: ReportOrchestrationPayloa
 
 export type ReportAttemptContext = { attemptNumber: number; taskAttemptNumber?: number; isFinalAttempt: boolean };
 
+type CrawlPortInput = { primary: string; domains: string[]; productLimit: number; comparisonPairsNeeded: number; catalogProductLimit: number; discoverySearchOffset: number; discoveryPriorCoverageComplete: boolean; discoveryExpectedAnchorSetHash: string; discoverySearchLedger?: unknown; directProductSearch?: boolean; benchmarkOnly?: boolean };
+
 export interface ReportOrchestrationPort {
   preflight(): Promise<void>;
   loadReport(publicId: string): Promise<StoredReport | null>;
   appendEvent(publicId: string, event: ReportEvent & { attemptNumber?: number }): Promise<void>;
-  crawl(input: { primary: string; domains: string[]; productLimit: number; comparisonPairsNeeded: number; catalogProductLimit: number; discoverySearchOffset: number; discoveryPriorCoverageComplete: boolean; discoveryExpectedAnchorSetHash: string; discoverySearchLedger?: unknown; directProductSearch?: boolean }): Promise<CrawlOutcome>;
+  crawl(input: CrawlPortInput): Promise<CrawlOutcome>;
+  benchmark(input: CrawlPortInput & { benchmarkOnly: true }): Promise<CrawlOutcome>;
   brief(input: { primary: string; domains: string[] }): Promise<unknown>;
   match(input: { publicId: string; reportAttempt: number; taskAttemptNumber: number; reportObservedAt: string; primaryDomain: string; marketCountryCode?: string; productLimit: number; catalogs: Array<{ domain: string; products: ProductRecord[] }>; pinnedPairs?: PinnedProductPair[]; matchingMode?: "direct-product-search" }): Promise<{ ok: true; comparison: ProductComparison }>;
   enrich(input: { targets: unknown[] }): Promise<{ ok: true; products: ProductRecord[]; coverage: NonNullable<ProductComparison["enrichment"]> }>;
@@ -869,6 +1013,94 @@ export interface ReportOrchestrationPort {
   persistFactChunk(publicId: string, input: ReportFactChunkInput): Promise<void>;
   finalizeFactManifest(publicId: string, input: ReportFactManifestInput): Promise<void>;
   saveDocument(publicId: string, input: { attemptNumber?: number; status: "complete" | "limited"; observedAt: string; expectedFactManifestHash: string; document: unknown }): Promise<void>;
+}
+
+async function collectRivalBenchmark(
+  payload: ReportOrchestrationPayload,
+  attempt: ReportAttemptContext,
+  document: JsonDocument,
+  comparison: ProductComparison | null,
+  port: ReportOrchestrationPort,
+  observedAt: string,
+) {
+  if (!experienceBenchmarkBlock(document)) return document;
+  const domains = selectRivalBenchmarkDomains(comparison, payload.primaryDomain);
+  if (!domains.length) return document;
+  const taskAttemptNumber = attempt.taskAttemptNumber || 1;
+  const checkpointIndex = RIVAL_BENCHMARK_CHECKPOINT_BATCH_INDEX + taskAttemptNumber - 1;
+  if (checkpointIndex >= ACTION_PLAN_CHECKPOINT_BATCH_INDEX) throw new PermanentOrchestrationError("Unsupported rival-benchmark task attempt.");
+  const inputHash = rivalBenchmarkInputHash(payload.publicId, payload.primaryDomain, domains);
+  const checkpoints = await port.loadCheckpoint(payload.publicId, {
+    attemptNumber: attempt.attemptNumber,
+    batchIndexStart: RIVAL_BENCHMARK_CHECKPOINT_BATCH_INDEX,
+    batchIndexEnd: ACTION_PLAN_CHECKPOINT_BATCH_INDEX - 1,
+    latestPerBatch: true,
+    limit: MAX_ORCHESTRATION_TASK_ATTEMPTS,
+  });
+  const currentSlot = checkpoints.find((checkpoint) => checkpoint.attemptNumber === attempt.attemptNumber && checkpoint.batchIndex === checkpointIndex);
+  if (currentSlot && currentSlot.inputHash !== inputHash) throw new CrawlCheckpointConflictError("The current task attempt contains a conflicting rival-benchmark checkpoint.");
+  const saved = currentSlot || checkpoints.find((checkpoint) => checkpoint.inputHash === inputHash);
+  if (saved) {
+    const checkpoint = validRivalBenchmarkCheckpoint(saved.result, domains);
+    if (!checkpoint) throw new CrawlCheckpointConflictError("The durable rival-benchmark checkpoint is invalid.");
+    await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "rival-benchmark-resumed"), "competitors", "Reusing the durable competitor experience scores; rival sites were not crawled again.", { domains: domains.length }));
+    return mergeRivalBenchmark(document, checkpoint);
+  }
+
+  await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "rival-benchmark-started"), "competitors", "Assessing the public shopping experience of the rivals found in accepted product comparisons.", { domains: domains.length }));
+  const benchmarkDomains: Array<Record<string, unknown>> = [];
+  for (let start = 0; start < domains.length; start += RIVAL_BENCHMARK_CONCURRENCY) {
+    const wave = domains.slice(start, start + RIVAL_BENCHMARK_CONCURRENCY);
+    const settled = await Promise.allSettled(wave.map(async (domain) => {
+      const outcome = await port.benchmark({
+        primary: domain,
+        domains: [domain],
+        productLimit: 20,
+        comparisonPairsNeeded: 0,
+        catalogProductLimit: MAX_PRIMARY_CATALOG_PRODUCTS,
+        discoverySearchOffset: 0,
+        discoveryPriorCoverageComplete: true,
+        discoveryExpectedAnchorSetHash: "",
+        benchmarkOnly: true,
+      });
+      if (outcome.ok !== true) {
+        const reason = outcome.code === "parked-domain"
+          ? "The rival domain appeared parked during the bounded public assessment."
+          : "The rival domain did not return a usable public response during the bounded assessment.";
+        return unavailableBenchmarkDomain(domain, reason, observedAt);
+      }
+      if (outcome.primaryDomain !== domain) return unavailableBenchmarkDomain(domain, "The rival assessment returned evidence for a different domain.", observedAt);
+      const block = experienceBenchmarkBlock(outcome.document);
+      const rawDomain = block?.domains.find((item) => publicCanonicalDomain(item.domain) === domain);
+      return validBenchmarkDomain(rawDomain, domain, "measured")
+        || unavailableBenchmarkDomain(domain, "The rival crawl returned no reproducible benchmark evidence.", observedAt);
+    }));
+    settled.forEach((result, index) => {
+      benchmarkDomains.push(result.status === "fulfilled"
+        ? result.value
+        : unavailableBenchmarkDomain(wave[index], "The bounded rival assessment could not be completed.", observedAt));
+    });
+  }
+
+  const checkpointValue = {
+    version: RIVAL_BENCHMARK_VERSION,
+    methodologyVersion: RIVAL_BENCHMARK_METHODOLOGY,
+    crawlProfileVersion: RIVAL_BENCHMARK_CRAWL_PROFILE,
+    selectionMethod: RIVAL_BENCHMARK_METHOD,
+    domains: benchmarkDomains,
+  };
+  const validated = validRivalBenchmarkCheckpoint(checkpointValue, domains);
+  if (!validated) throw new CrawlCheckpointConflictError("The competitor experience scores could not be validated before persistence.");
+  try {
+    await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointIndex, inputHash, result: checkpointValue });
+  } catch (saveError) {
+    const [committed] = await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointIndex, limit: 1 });
+    const confirmed = committed?.inputHash === inputHash ? validRivalBenchmarkCheckpoint(committed.result, domains) : null;
+    if (!confirmed || JSON.stringify(stableCheckpointValue(committed!.result)) !== JSON.stringify(stableCheckpointValue(checkpointValue))) throw new CrawlCheckpointConflictError("The competitor experience checkpoint save could not be confirmed.", { cause: saveError });
+  }
+  const measured = validated.domains.filter((domain) => domain.assessmentStatus === "measured").length;
+  await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "rival-benchmark-complete"), "competitors", "Competitor experience scoring finished with explicit coverage for every selected rival.", { domains: domains.length, measured, notAssessed: domains.length - measured }));
+  return mergeRivalBenchmark(document, validated);
 }
 
 function publishedResultContext(payload: ReportOrchestrationPayload, stored: StoredReport, crawl: CrawlSuccess) {
@@ -1766,6 +1998,7 @@ export async function orchestrateReport(
   })();
 
   await matchWork;
+  if (directProductSearch) document = await collectRivalBenchmark(payload, attempt, document, comparison, port, now().toISOString());
   const finishedAt = now().toISOString();
   const reportStatus = limitedPhases.length ? "limited" : "complete";
   let persistedCounts: Record<"companies" | "products" | "matches" | "ads", number> | null = null;

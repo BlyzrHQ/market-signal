@@ -16,11 +16,13 @@ import {
   CRAWL_RESULT_CHECKPOINT_BATCH_INDEX,
   PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX,
   ACTION_PLAN_CHECKPOINT_BATCH_INDEX,
+  RIVAL_BENCHMARK_CHECKPOINT_BATCH_INDEX,
   MAX_OPERATION_TIMEOUT_MS,
   comparisonWithinPrimaryCatalog,
   orchestrateReport,
   pricedResultEnrichmentBudget,
   productEvidenceReferenceTimeMs,
+  selectRivalBenchmarkDomains,
   validEnrichmentCheckpoint,
   validPublishedResultCheckpoint,
 } from "../src/trigger/report-orchestration-core.ts";
@@ -42,6 +44,7 @@ import { babanujScaleDocument } from "./fixtures/babanuj-report-document.mjs";
 import { createWorkerApiManifest } from "../src/shared/worker-api-contract.ts";
 import { AI_ACTION_PLANNER_LIMITS, deterministicProductActionResult } from "../app/lib/ai-action-planner.ts";
 import { judgeBatchKey } from "../app/lib/ai-product-matching.ts";
+import { buildExperienceBenchmark } from "../app/lib/experience-benchmark.ts";
 
 const payload = {
   contractVersion: "4",
@@ -150,6 +153,44 @@ function product(domain = "shop.example", id = "p1") {
     imageUrl: "",
     observedAt: "2026-07-20T10:00:00.000Z",
     claimIds: ["claim-p1"],
+  };
+}
+
+function experienceBlock(domain, role = "primary", observedAt = "2026-09-01T08:00:00.000Z") {
+  return {
+    type: "experience-benchmark",
+    id: "experience-benchmark",
+    ...buildExperienceBenchmark([{
+      domain,
+      role,
+      fetchedAt: observedAt,
+      pages: [{
+        sourceUrl: `https://${domain}/`,
+        responseTimeMs: 320,
+        responseBytes: 24_000,
+        imageCount: 4,
+        imagesWithAlt: 4,
+        responsiveImageCount: 4,
+        hasViewport: true,
+        hasDocumentLanguage: true,
+        productLinkCount: 5,
+        hasProductPath: true,
+        hasAddToCart: true,
+        hasCartLink: true,
+        hasCheckoutLink: false,
+        trustSignals: ["shipping", "returns", "contact", "legal"],
+      }],
+      products: [{
+        name: "Honey 500g",
+        description: "Raw honey",
+        category: "Honey",
+        imageUrl: `https://${domain}/honey.jpg`,
+        priceSignals: [{ raw: "GBP 10", currency: "GBP", amount: 10 }],
+        quantity: { amount: 500, unit: "g" },
+        sourceUrl: `https://${domain}/products/honey`,
+      }],
+      catalogProductsDiscovered: 20,
+    }]),
   };
 }
 
@@ -395,6 +436,7 @@ function mockPort(overrides = {}) {
         document: { version: "1", blocks: [] },
       };
     },
+    async benchmark() { throw new Error("Unexpected rival benchmark crawl in this fixture."); },
     async brief() { return { ok: true, summary: "Observed market" }; },
     async match() { return { ok: true, comparison: comparison({ withPair: true }) }; },
     async enrich({ targets }) { return { ok: true, products: [], coverage: { pagesRequested: targets.length, pagesFetched: 0, maxPages: targets.length, gaps: targets.map((target) => ({ url: target.sourceUrl, productId: target.productId, role: target.role, reason: "Test fixture did not fetch this page.", code: "fetch_failed", failureKind: "content" })) } }; },
@@ -526,6 +568,117 @@ test("the current contract crawls only the primary catalog and publishes priced 
   assert.ok(matchFacts.every((fact) => fact.verdict === "search_result"));
   assert.ok(matchFacts.every((fact) => fact.evidence.method === "direct-web-search"));
   assert.ok(matchFacts.every((fact) => fact.evidence.publication?.priceEligible === true));
+});
+
+test("rival scoreboard selection is deterministic, bounded, and tied to published public-domain matches", () => {
+  const source = comparison({ withPair: true, count: 7 });
+  const domains = ["zeta.example", "alpha.example", "beta.example", "gamma.example", "delta.example", "epsilon.example", "sixth.example"];
+  source.rows.forEach((row, index) => {
+    const match = row.matches[0];
+    match.domain = domains[index];
+    match.product = { ...match.product, domain: domains[index], sourceUrl: `https://${domains[index]}/products/${index}` };
+    match.publication = { priceEligible: true };
+  });
+  assert.deepEqual(selectRivalBenchmarkDomains(source, "shop.example"), domains.slice(0, 5));
+  source.rows[0].matches[0].product.sourceUrl = "http://127.0.0.1/internal";
+  assert.equal(selectRivalBenchmarkDomains(source, "shop.example").includes("zeta.example"), false);
+});
+
+test("direct-search reports score the rival domains represented by accepted comparisons", async () => {
+  const base = mockPort();
+  const direct = comparison({ withPair: true });
+  direct.matching = {
+    ...direct.matching,
+    method: "direct-web-search",
+    embeddingModel: "",
+    promptVersion: "direct-product-search-v1",
+    primaryProductsScreened: 20,
+    resultTarget: 20,
+    publishedPairs: 20,
+    publishedPrimaryProducts: 20,
+    resultShortfall: 0,
+    resultShortfallReason: "bounded-candidate-pool-exhausted",
+    judgeCalls: 0,
+    embeddingCalls: 0,
+    processedPrimaryIds: direct.matching.selectedPrimaryIds,
+  };
+  const rivalSequence = [
+    ...Array(9).fill("alpha.example"),
+    ...Array(6).fill("beta.example"),
+    ...Array(5).fill("gamma.example"),
+  ];
+  direct.rows.forEach((row, index) => row.matches.forEach((match) => {
+    const domain = rivalSequence[index];
+    match.domain = domain;
+    match.product = { ...match.product, id: `${domain}-${index}`, domain, sourceUrl: `https://${domain}/products/honey-${index}`, claimIds: [`claim-${domain}-${index}`] };
+    delete match.assessment;
+  }));
+  direct.comparisonDomains = [...new Set(rivalSequence)];
+  const benchmarkInputs = [];
+  const port = mockPort({
+    async crawl(input) {
+      const result = await base.crawl(input);
+      result.document.blocks = [experienceBlock(payload.primaryDomain)];
+      return result;
+    },
+    async match() { return { ok: true, comparison: direct }; },
+    async benchmark(input) {
+      benchmarkInputs.push(structuredClone(input));
+      if (input.primary === "beta.example") return { ok: false, code: "unavailable-domain", primaryDomain: input.primary, error: "HTTP 403", document: { version: "1", blocks: [] } };
+      return {
+        ok: true,
+        primaryDomain: input.primary,
+        results: [{ domain: input.primary, homepage: { sourceUrl: `https://${input.primary}/` }, products: [] }],
+        document: { version: "1", blocks: [experienceBlock(input.primary)] },
+      };
+    },
+  });
+
+  const result = await orchestrateReport({ ...payload, contractVersion: "6" }, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port);
+
+  assert.equal(result.reportStatus, "complete");
+  assert.deepEqual(benchmarkInputs.map((input) => input.primary), ["alpha.example", "beta.example", "gamma.example"]);
+  assert.ok(benchmarkInputs.every((input) => input.benchmarkOnly === true && input.directProductSearch === undefined && input.domains.length === 1));
+  assert.ok(port.checkpoints.has(RIVAL_BENCHMARK_CHECKPOINT_BATCH_INDEX));
+  const benchmark = port.saves[0].document.document.blocks.find((block) => block.type === "experience-benchmark");
+  assert.deepEqual(benchmark.domains.map((domain) => domain.domain), ["shop.example", "alpha.example", "beta.example", "gamma.example"]);
+  assert.equal(benchmark.domains.find((domain) => domain.domain === "alpha.example").assessmentStatus, "measured");
+  const unavailable = benchmark.domains.find((domain) => domain.domain === "beta.example");
+  assert.equal(unavailable.assessmentStatus, "not-assessed");
+  assert.equal(unavailable.images.score, null);
+  assert.match(unavailable.assessmentReason, /did not return a usable public response/i);
+});
+
+test("a task retry reuses the durable rival scoreboard checkpoint", async () => {
+  const base = mockPort();
+  let benchmarkCalls = 0;
+  let factFailures = 0;
+  const port = mockPort({
+    async crawl(input) {
+      const result = await base.crawl(input);
+      result.document.blocks = [experienceBlock(payload.primaryDomain)];
+      return result;
+    },
+    async benchmark(input) {
+      benchmarkCalls += 1;
+      return {
+        ok: true,
+        primaryDomain: input.primary,
+        results: [{ domain: input.primary, homepage: { sourceUrl: `https://${input.primary}/` }, products: [] }],
+        document: { version: "1", blocks: [experienceBlock(input.primary)] },
+      };
+    },
+    async persistFactChunk(_publicId, value) {
+      if (factFailures++ === 0) throw new Error("temporary fact callback failure");
+      port.factChunks.push(value);
+    },
+  });
+
+  await assert.rejects(() => orchestrateReport({ ...payload, contractVersion: "6" }, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /Relational fact persistence/);
+  assert.equal(benchmarkCalls, 1);
+  await orchestrateReport({ ...payload, contractVersion: "6" }, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
+  assert.equal(benchmarkCalls, 1);
+  assert.ok(port.events.some((item) => item.idempotencyKey.endsWith("rival-benchmark-resumed")));
 });
 
 test("a task retry resumes the durable successful crawl without another network crawl", async () => {
@@ -1661,7 +1814,7 @@ test("all operation deadlines keep a two-minute margin below the stale marker", 
   for (const timeout of Object.values(OPERATION_BUDGETS_MS)) assert.ok(timeout <= MAX_OPERATION_TIMEOUT_MS);
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS > OPERATION_BUDGETS_MS.match, "Undici must not preempt the match operation deadline");
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS < MAX_OPERATION_TIMEOUT_MS, "the worker deadline must remain inside the outer edge window");
-  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 12_941_000);
+  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 13_211_000);
   assert.ok(WORST_CASE_CRITICAL_PATH_MS <= 14_580_000, "critical path must preserve a two-minute task-ceiling margin");
 });
 
