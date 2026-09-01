@@ -33,6 +33,8 @@ export type ExperienceDomain = {
   pages: ExperiencePage[];
   products: ExperienceProduct[];
   catalogProductsDiscovered: number;
+  assessmentStatus?: "measured" | "not-assessed";
+  assessmentReason?: string;
 };
 
 export type BenchmarkMetric = {
@@ -47,6 +49,8 @@ export type ExperienceBenchmarkDomain = {
   domain: string;
   role: string;
   observedAt: string;
+  assessmentStatus: "measured" | "not-assessed";
+  assessmentReason: string;
   response: BenchmarkMetric;
   images: BenchmarkMetric;
   information: BenchmarkMetric;
@@ -196,11 +200,14 @@ function mobileAccessibilityMetric(pages: ExperiencePage[]): BenchmarkMetric {
 export function buildExperienceBenchmark(domains: ExperienceDomain[]) {
   return {
     methodologyVersion: "experience-v1",
+    crawlProfileVersion: "experience-public-crawl-v1",
     limitations: "Bounded public crawl measurements are directional. Response time is a crawler-location proxy; purchase steps are inferred only from public controls; image readiness is not a visual-quality judgment.",
     domains: domains.map((domain): ExperienceBenchmarkDomain => ({
       domain: domain.domain,
       role: domain.role,
       observedAt: domain.fetchedAt,
+      assessmentStatus: domain.assessmentStatus || (domain.pages.length || domain.products.length ? "measured" : "not-assessed"),
+      assessmentReason: domain.assessmentReason?.replace(/\s+/g, " ").trim().slice(0, 280) || "",
       response: responseMetric(domain.pages),
       images: imageMetric(domain.pages, domain.products),
       information: informationMetric(domain.pages, domain.products),

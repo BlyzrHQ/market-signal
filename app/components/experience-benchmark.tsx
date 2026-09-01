@@ -9,6 +9,8 @@ type DomainBenchmark = {
   domain: string;
   role: string;
   observedAt: string;
+  assessmentStatus: "measured" | "not-assessed";
+  assessmentReason: string;
   response: Metric;
   images: Metric;
   information: Metric;
@@ -39,10 +41,13 @@ function safeUrl(value: unknown) { const url = typeof value === "string" ? value
 function metric(value: unknown): Metric { const item = object(value); return { score: numberOrNull(item.score), sampleSize: Number(item.sampleSize) || 0, observed: object(item.observed), formula: String(item.formula || ""), sourceUrls: list(item.sourceUrls).map(String).filter(safeUrl) }; }
 function domain(value: unknown): DomainBenchmark {
   const item = object(value); const purchase = metric(item.purchasePath);
-  return { domain: String(item.domain || ""), role: String(item.role || ""), observedAt: String(item.observedAt || ""), response: metric(item.response), images: metric(item.images), information: metric(item.information), productAccess: metric(item.productAccess), purchasePath: { ...purchase, minimumPublicSteps: numberOrNull(object(item.purchasePath).minimumPublicSteps) }, trust: metric(item.trust), mobileAccessibility: metric(item.mobileAccessibility) };
+  const metrics = { response: metric(item.response), images: metric(item.images), information: metric(item.information), productAccess: metric(item.productAccess), purchasePath: { ...purchase, minimumPublicSteps: numberOrNull(object(item.purchasePath).minimumPublicSteps) }, trust: metric(item.trust), mobileAccessibility: metric(item.mobileAccessibility) };
+  const assessmentStatus = item.assessmentStatus === "not-assessed" ? "not-assessed" : "measured";
+  return { domain: String(item.domain || ""), role: String(item.role || ""), observedAt: String(item.observedAt || ""), assessmentStatus, assessmentReason: String(item.assessmentReason || ""), ...metrics };
 }
 function median(values: number[]) { if (!values.length) return null; const sorted = [...values].sort((a, b) => a - b); const mid = Math.floor(sorted.length / 2); return sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2); }
 function score(metricValue: Metric) { return metricValue.score === null ? null : Math.max(0, Math.min(100, metricValue.score)); }
+function assessedDate(value: string, ar: boolean) { const parsed = Date.parse(value); return Number.isFinite(parsed) ? new Intl.DateTimeFormat(ar ? "ar" : "en", { dateStyle: "medium", timeZone: "UTC" }).format(parsed) : ""; }
 
 function markerStyle(value: number): CSSProperties {
   return { insetInlineStart: `${value}%` };
@@ -53,21 +58,25 @@ export function ExperienceBenchmark({ block, primaryDomain, ar }: { block?: Bloc
   const primary = domains.find((item) => item.domain === primaryDomain);
   if (!block || !primary) return <section className="benchmark-unavailable"><span>{ar ? "يلزم تقرير جديد" : "NEW RUN REQUIRED"}</span><h2>{ar ? "هذا التقرير أقدم من قياسات التجربة المقارنة" : "This report predates the experience benchmark"}</h2><p>{ar ? "شغّل تقريراً جديداً لقياس سرعة الاستجابة، جاهزية الصور، معلومات المنتجات، سهولة الوصول ومسار الشراء عبر المنافسين." : "Run a fresh report to measure response speed, image readiness, product information, product access, and the public purchase path across verified rivals."}</p></section>;
 
+  const measuredRivals = domains.filter((item) => item.domain !== primaryDomain && item.assessmentStatus === "measured");
   const market = SCORE_METRICS.map((key) => {
-    const knownScores = domains.map((item) => score(item[key])).filter((value): value is number => value !== null);
-    return { key, median: median(knownScores), leader: knownScores.length ? Math.max(...knownScores) : null };
+    const rivalScores = measuredRivals.map((item) => score(item[key])).filter((value): value is number => value !== null);
+    const primaryScore = score(primary[key]);
+    const knownScores = rivalScores.length ? [primaryScore, ...rivalScores].filter((value): value is number => value !== null) : [];
+    return { key, median: median(knownScores), leader: knownScores.length ? Math.max(...knownScores) : null, rivalCount: rivalScores.length };
   });
   const positionedMarket = orderBenchmarkPositions(market.map((item) => ({ ...item, yours: score(primary[item.key]) })));
   const opportunities = market.map((item) => ({ ...item, yours: score(primary[item.key]), gap: item.median === null || score(primary[item.key]) === null ? null : item.median - (score(primary[item.key]) || 0) })).filter((item) => item.gap !== null && item.gap > 0).sort((a, b) => (b.gap || 0) - (a.gap || 0));
   const advantages = positionedMarket.filter((item) => item.band === "ahead").sort((left, right) => (right.delta || 0) - (left.delta || 0));
-  const wins = market.filter((item) => score(primary[item.key]) !== null && score(primary[item.key]) === item.leader).length;
+  const comparedDimensions = market.filter((item) => item.rivalCount > 0).length;
+  const wins = market.filter((item) => item.rivalCount > 0 && score(primary[item.key]) !== null && score(primary[item.key]) === item.leader).length;
   const primaryResponse = numberOrNull(primary.response.observed.medianMs);
   const responseValues = domains.map((item) => numberOrNull(item.response.observed.medianMs)).filter((value): value is number => value !== null);
   const maxResponse = Math.max(...responseValues, 1);
   const imageCoverage = numberOrNull(primary.images.observed.productImageCoverage);
 
   return <div className="experience-benchmark">
-    <header className="benchmark-intro"><div><span>{ar ? "تحليل التجربة التنافسية" : "COMPETITIVE EXPERIENCE"}</span><h2>{ar ? "أين تتفوق تجربة الشراء لديك، وأين تخسر؟" : "Where does your shopping experience lead—and where does it lose?"}</h2><p>{ar ? "مقارنة مبنية على نفس عملية الزحف العامة لكل شركة. افتح المنهجية لمعرفة حدود كل قياس." : "Every company is compared from the same bounded public crawl. Open the methodology to see what each measurement can—and cannot—prove."}</p></div><div className="benchmark-position"><strong>{wins}/{market.length}</strong><span>{ar ? "مقاييس تتصدرها" : "dimensions led"}</span></div></header>
+    <header className="benchmark-intro"><div><span>{ar ? "تحليل التجربة التنافسية" : "COMPETITIVE EXPERIENCE"}</span><h2>{ar ? "أين تتفوق تجربة الشراء لديك، وأين تخسر؟" : "Where does your shopping experience lead—and where does it lose?"}</h2><p>{ar ? "تُقاس شركتك والمنافسون من مقارنات المنتجات المقبولة بنفس نموذج الأدلة العامة. افتح المنهجية لمعرفة حدود كل قياس." : "Your company and rivals from accepted product comparisons use the same public-evidence scoring model. Open the methodology to see what each measurement can—and cannot—prove."}</p></div><div className="benchmark-position"><strong>{comparedDimensions ? `${wins}/${comparedDimensions}` : "—"}</strong><span>{comparedDimensions ? (ar ? "مقاييس تتصدرها" : "dimensions led") : (ar ? "لم تُقَس نتائج المنافسين" : "rival scores not assessed")}</span></div></header>
 
     <section className="benchmark-kpis" aria-label={ar ? "ملخص المقارنة" : "Benchmark summary"}>
       <article><span>{ar ? "استجابة الزحف" : "CRAWL RESPONSE"}</span><strong>{primaryResponse === null ? "—" : `${primaryResponse} ms`}</strong><small>{ar ? "مؤشر من موقع الزاحف، وليس سرعة مستخدم حقيقية" : "Crawler-location proxy, not real-user speed"}</small></article>
@@ -115,7 +124,7 @@ export function ExperienceBenchmark({ block, primaryDomain, ar }: { block?: Bloc
       <section className="response-comparison"><header><span>{ar ? "استجابة الصفحة" : "PAGE RESPONSE"}</span><h3>{ar ? "زمن استجابة HTML أثناء هذا الزحف" : "HTML response time in this crawl"}</h3><p>{ar ? "الأقل أفضل. يتأثر بموقع الزاحف وحالة الخادم ولا يمثل Core Web Vitals." : "Lower is better. This varies by crawler location and server state; it is not Core Web Vitals."}</p></header><div>{domains.map((item) => { const value = numberOrNull(item.response.observed.medianMs); return <article key={item.domain}><span>{item.domain}</span><i><b style={{ width: value === null ? "0" : `${Math.max(3, (value / maxResponse) * 100)}%` }} /></i><strong>{value === null ? "—" : `${value} ms`}</strong></article>; })}</div></section>
     </div>
 
-    <section className="benchmark-domain-table"><header><span>{ar ? "لوحة السوق" : "MARKET SCOREBOARD"}</span><h3>{ar ? "كل شركة، نفس المقاييس" : "Every company, the same evidence model"}</h3></header><div className="benchmark-table-scroll"><table><thead><tr><th>{ar ? "الشركة" : "Company"}</th>{SCORE_METRICS.map((key) => <th key={key}>{COPY[key][ar ? "ar" : "en"]}</th>)}</tr></thead><tbody>{domains.map((item) => <tr key={item.domain}><th>{item.domain === primaryDomain && <span>{ar ? "أنت" : "YOU"}</span>}{item.domain}</th>{SCORE_METRICS.map((key) => { const value = score(item[key]); return <td key={key}><b className={value === null ? "unknown" : value >= 75 ? "strong" : value >= 50 ? "middle" : "weak"}>{value === null ? "—" : value}</b></td>; })}</tr>)}</tbody></table></div></section>
+    <section className="benchmark-domain-table"><header><span>{ar ? "لوحة السوق" : "MARKET SCOREBOARD"}</span><h3>{ar ? "كل شركة، نفس المقاييس" : "Every company, the same evidence model"}</h3><p>{ar ? "المنافسون هم النطاقات الأكثر ظهوراً في مقارنات المنتجات المقبولة لهذا التقرير." : "Rivals are the domains most represented in this report’s accepted product comparisons."}</p></header><div className="benchmark-table-scroll"><table><thead><tr><th>{ar ? "الشركة" : "Company"}</th>{SCORE_METRICS.map((key) => <th key={key}>{COPY[key][ar ? "ar" : "en"]}</th>)}</tr></thead><tbody>{domains.map((item) => <tr key={item.domain} className={item.assessmentStatus === "not-assessed" ? "not-assessed" : undefined}><th><div className="benchmark-company"><strong>{item.domain === primaryDomain && <span>{ar ? "أنت" : "YOU"}</span>}{item.domain}</strong>{assessedDate(item.observedAt, ar) && <small>{ar ? "تم التقييم" : "Assessed"} {assessedDate(item.observedAt, ar)}</small>}{item.assessmentStatus === "not-assessed" && <em title={item.assessmentReason}>{ar ? "لم يتم التقييم" : "Not assessed"}</em>}</div></th>{SCORE_METRICS.map((key) => { const value = score(item[key]); return <td key={key}><b className={value === null ? "unknown" : value >= 75 ? "strong" : value >= 50 ? "middle" : "weak"}>{value === null ? "—" : value}</b></td>; })}</tr>)}</tbody></table></div></section>
 
     <details className="benchmark-method"><summary>{ar ? "كيف تم حساب هذه المقارنة؟" : "How was this comparison calculated?"}</summary><p>{String(block.limitations || "")}</p>{METRICS.map((key) => <article key={key}><strong>{COPY[key][ar ? "ar" : "en"]}</strong><p>{primary[key].formula}</p><span>{ar ? "حجم عينة شركتك" : "Your sample"}: {primary[key].sampleSize}</span>{primary[key].sourceUrls[0] && <a href={primary[key].sourceUrls[0]} target="_blank" rel="noreferrer">{ar ? "افتح المصدر ↗" : "Open source ↗"}</a>}</article>)}</details>
   </div>;

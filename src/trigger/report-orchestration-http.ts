@@ -1,4 +1,4 @@
-import { MAX_FINAL_ENRICHMENT_BATCHES, MAX_FINAL_ENRICHMENT_BATCH_WAVES, type ReportOrchestrationPort } from "./report-orchestration-core.ts";
+import { MAX_FINAL_ENRICHMENT_BATCHES, MAX_FINAL_ENRICHMENT_BATCH_WAVES, MAX_RIVAL_BENCHMARK_DOMAINS, RIVAL_BENCHMARK_CONCURRENCY, type ReportOrchestrationPort } from "./report-orchestration-core.ts";
 import { parkingProvider } from "../../app/lib/domain-recovery.ts";
 import { MAX_REPORT_ATTEMPTS, MAX_REPORT_MATCH_CHECKPOINTS_PER_ATTEMPT, PermanentOrchestrationError } from "../shared/report-orchestration-contract.ts";
 import { parseWorkerApiManifest, WorkerApiContractError } from "../shared/worker-api-contract.ts";
@@ -68,6 +68,7 @@ export const OPERATION_BUDGETS_MS = {
   report: 10_000,
   factCallback: 2_000,
   crawl: 2_400_000,
+  rivalBenchmark: 90_000,
   brief: 90_000,
   match: 750_000,
   enrich: 120_000,
@@ -91,6 +92,7 @@ export const WORST_CASE_CRITICAL_PATH_MS = (OPERATION_BUDGETS_MS.report * (24 + 
   + (OPERATION_BUDGETS_MS.factCallback * (MAX_REPORT_FACT_CALLBACKS + 1))
   + OPERATION_BUDGETS_MS.preflight
   + OPERATION_BUDGETS_MS.crawl
+  + (OPERATION_BUDGETS_MS.rivalBenchmark * Math.ceil(MAX_RIVAL_BENCHMARK_DOMAINS / RIVAL_BENCHMARK_CONCURRENCY))
   + (OPERATION_BUDGETS_MS.match * 2)
   + (OPERATION_BUDGETS_MS.enrich * MAX_FINAL_ENRICHMENT_BATCH_WAVES)
   + OPERATION_BUDGETS_MS.actions;
@@ -361,6 +363,19 @@ export function createReportOrchestrationHttpPort(configuration: { appOrigin: st
         return undefined;
       }), "Public crawl");
       if (payload.ok !== true && payload.code !== "parked-domain" && payload.code !== "unavailable-domain") throw new OrchestrationHttpError("Public crawl", 422, false);
+      return payload;
+    },
+    async benchmark(input) {
+      const payload = requiredObject<Awaited<ReturnType<ReportOrchestrationPort["benchmark"]>>>(await requestJson(fetchImpl, new URL(PATHS.crawl, appOrigin).toString(), token, "Rival experience crawl", OPERATION_BUDGETS_MS.rivalBenchmark, input, async (response) => {
+        const parked = await acceptedParkedDomainResponse(response.clone(), input.primary);
+        if (parked !== undefined) return parked;
+        const unavailable = await acceptedUnavailableDomainResponse(response.clone(), input.primary);
+        if (unavailable !== undefined) return unavailable;
+        const failure = await acceptedCrawlFailureError(response, input.primary);
+        if (failure) throw failure;
+        return undefined;
+      }), "Rival experience crawl");
+      if (payload.ok !== true && payload.code !== "parked-domain" && payload.code !== "unavailable-domain") throw new OrchestrationHttpError("Rival experience crawl", 422, false);
       return payload;
     },
     async brief(input) {
