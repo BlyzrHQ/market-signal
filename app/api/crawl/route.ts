@@ -660,12 +660,31 @@ function parseSitemapUrls(text: string, domain: string) {
   }), 500);
 }
 
+function sitemapDocumentPriority(value: string) {
+  try {
+    const path = decodeURIComponent(new URL(value).pathname).toLowerCase();
+    if (/products?/.test(path)) return 0;
+    if (/catalog|collections?|categories?/.test(path)) return 1;
+    if (/pages?|blogs?|articles?|metaobjects?/.test(path)) return 3;
+    return 2;
+  } catch {
+    return 4;
+  }
+}
+
+export function prioritizedSitemapDocuments(values: string[], maxDocuments: number) {
+  const limit = Math.max(0, Math.floor(maxDocuments));
+  return [...values]
+    .sort((left, right) => sitemapDocumentPriority(left) - sitemapDocumentPriority(right) || left.localeCompare(right))
+    .slice(0, limit);
+}
+
 async function collectSitemapEvidence(sitemapUrl: string, domain: string, observedAt: string, maxDocuments = MAX_SITEMAP_DOCUMENTS, fetchPage = fetchText) {
   const root = await fetchPage(sitemapUrl, "application/xml,text/xml,text/plain", domain);
   if (!root.ok) return { paths: [] as string[], products: [] as ProductRecord[], truncated: true };
   const rootUrls = parseSitemapUrls(root.text, domain);
-  const eligibleChildSitemaps = rootUrls.filter((value) => /sitemap[^/]*\.xml/i.test(new URL(value).pathname)).sort((left, right) => Number(!/products?/i.test(left)) - Number(!/products?/i.test(right)) || left.localeCompare(right));
-  const childSitemaps = eligibleChildSitemaps.slice(0, maxDocuments);
+  const eligibleChildSitemaps = rootUrls.filter((value) => /sitemap[^/]*\.xml/i.test(new URL(value).pathname));
+  const childSitemaps = prioritizedSitemapDocuments(eligibleChildSitemaps, maxDocuments);
   const documents = childSitemaps.length ? await Promise.all(childSitemaps.map(async (url) => ({ url, result: await fetchPage(url, "application/xml,text/xml,text/plain", domain) }))) : [{ url: sitemapUrl, result: root }];
   const urls = documents.flatMap(({ result }) => result.ok ? parseSitemapUrls(result.text, domain) : []);
   const sitemapFetchFailed = documents.some(({ result }) => !result.ok);

@@ -14,8 +14,8 @@ function resetSharedRobotsPolicyResolverForTests() {
 }
 test.beforeEach(resetSharedRobotsPolicyResolverForTests);
 
-function enrichProductTargets(targets, maxPages) {
-  return enrichProductTargetsImpl(targets, maxPages, { fetchImpl: globalThis.fetch, robotsResolver: testRobotsResolver });
+function enrichProductTargets(targets, maxPages, dependencies = {}) {
+  return enrichProductTargetsImpl(targets, maxPages, { fetchImpl: globalThis.fetch, robotsResolver: testRobotsResolver, ...dependencies });
 }
 
 function product(index, overrides = {}) {
@@ -64,6 +64,19 @@ test("selects every requested same-domain first-party target up to the report ce
   assert.equal(targets.length, 8);
   assert.ok(targets.every((item) => item.domain === "shop.test" && item.role === "primary"));
   assert.equal(targets.some((item) => item.productId === "p-20" || item.productId === "p-21" || item.productId === "p-22"), false);
+});
+
+test("spends the first bounded price wave on distinct product families before duplicate variants", () => {
+  const products = [
+    product(1, { name: "Alpha Backpack", normalizedName: "alpha backpack", sourceUrl: "https://shop.test/products/alpha-black" }),
+    product(2, { name: "Alpha Backpack", normalizedName: "alpha backpack", sourceUrl: "https://shop.test/products/alpha-green" }),
+    product(3, { name: "Zulu Socks", normalizedName: "zulu socks", sourceUrl: "https://shop.test/products/zulu-socks" }),
+  ];
+
+  assert.deepEqual(
+    selectPrimaryProductPriceTargets(products, "shop.test", 2).map((entry) => entry.productId),
+    ["p-1", "p-3"],
+  );
 });
 
 test("public enrichment targets preserve only valid report market country codes", () => {
@@ -195,6 +208,158 @@ test("recovers public Shopify variants while preserving a non-comparable price b
     assert.equal(decision.priceComparison, null);
     assert.match(decision.priceVerdict, /variant or pack-size alignment is unresolved/i);
     assert.deepEqual(calls, ["https://shop.test/robots.txt", "https://shop.test/products/maamoul-pistachio", "https://shop.test/products/maamoul-pistachio.js"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("retries a throttled product page once and respects the bounded Retry-After delay", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  const waits = [];
+  let productAttempts = 0;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    productAttempts += 1;
+    if (productAttempts === 1) return new Response(null, { status: 429, headers: { "retry-after": "60" } });
+    return new Response(`<html><head><title>Maamoul Pistachio</title><script type="application/ld+json">${JSON.stringify({
+      "@context": "https://schema.org", "@type": "Product", name: "Maamoul Pistachio",
+      image: "https://cdn.shop.test/maamoul.jpg",
+      offers: { "@type": "Offer", price: "8.50", priceCurrency: "USD" },
+    })}</script></head><body><h1>Maamoul Pistachio</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target()], 1, { sleep: async (milliseconds) => { waits.push(milliseconds); } });
+    assert.equal(result.products[0].priceSignals[0].amount, 8.5);
+    assert.deepEqual(waits, [2_000]);
+    assert.deepEqual(calls, [
+      "https://shop.test/robots.txt",
+      "https://shop.test/products/maamoul-pistachio",
+      "https://shop.test/products/maamoul-pistachio",
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("recovers exact Shopify product and active currency when product-page HTML is blocked", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith("/products/maamoul-pistachio")) return new Response(null, { status: 403 });
+    if (url.endsWith("/products/maamoul-pistachio.js")) return Response.json({
+      title: "Maamoul Pistachio",
+      handle: "maamoul-pistachio",
+      variants: [{ title: "Default Title", price: 850, available: true }],
+    }, { headers: { "content-type": "text/javascript" } });
+    if (url.endsWith("/cart.js")) return Response.json({ token: "public-cart-token", items: [], currency: "USD" }, { headers: { "content-type": "text/javascript" } });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  try {
+    const result = await enrichProductTargets([target()], 1);
+    assert.equal(result.coverage.pagesFetched, 1);
+    assert.deepEqual(result.products[0].priceSignals, [{ raw: "USD 8.5", currency: "USD", amount: 8.5 }]);
+    assert.deepEqual(calls, [
+      "https://shop.test/robots.txt",
+      "https://shop.test/products/maamoul-pistachio",
+      "https://shop.test/products/maamoul-pistachio.js",
+      "https://shop.test/cart.js",
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("uses same-origin Shopify cart currency when the product page omits currency", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith("/products/maamoul-pistachio.js")) return Response.json({
+      title: "Maamoul Pistachio",
+      handle: "maamoul-pistachio",
+      variants: [{ title: "Default Title", price: 850, available: true }],
+    }, { headers: { "content-type": "text/javascript" } });
+    if (url.endsWith("/cart.js")) return Response.json({ token: "public-cart-token", items: [], currency: "USD" }, { headers: { "content-type": "text/javascript" } });
+    return new Response("<html><head><title>Maamoul Pistachio</title></head><body><h1>Maamoul Pistachio</h1></body></html>", { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target()], 1);
+    assert.equal(result.products[0].priceSignals[0].currency, "USD");
+    assert.equal(result.products[0].priceSignals[0].amount, 8.5);
+    assert.equal(calls.filter((url) => url.endsWith("/cart.js")).length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not use an unscoped Shopify cart currency for a URL-selected market", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.includes(".js")) return Response.json({ title: "Maamoul Pistachio", handle: "maamoul-pistachio", variants: [{ title: "Default Title", price: 850 }] }, { headers: { "content-type": "text/javascript" } });
+    if (url.endsWith("/cart.js")) return Response.json({ token: "public-cart-token", items: [], currency: "USD" }, { headers: { "content-type": "text/javascript" } });
+    return new Response("<html><head><title>Maamoul Pistachio</title></head><body><h1>Maamoul Pistachio</h1></body></html>", { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ sourceUrl: "https://shop.test/products/maamoul-pistachio?country=GB" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+    assert.match(result.coverage.gaps[0].reason, /no same-page currency/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not use the root Shopify cart currency for a locale-prefixed product", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith("/fr/products/maamoul-pistachio.js")) return Response.json({ title: "Maamoul Pistachio", handle: "maamoul-pistachio", variants: [{ title: "Default Title", price: 850 }] }, { headers: { "content-type": "text/javascript" } });
+    if (url.endsWith("/cart.js")) return Response.json({ token: "public-cart-token", items: [], currency: "USD" }, { headers: { "content-type": "text/javascript" } });
+    return new Response("<html><head><title>Maamoul Pistachio</title></head><body><h1>Maamoul Pistachio</h1></body></html>", { headers: { "content-type": "text/html" } });
+  };
+  try {
+    const result = await enrichProductTargets([target({ sourceUrl: "https://shop.test/fr/products/maamoul-pistachio" })], 1);
+    assert.deepEqual(result.products[0].priceSignals, []);
+    assert.match(result.coverage.gaps[0].reason, /no same-page currency/i);
+    assert.equal(calls.some((url) => url.endsWith("/cart.js")), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("blocked HTML recovery refuses unscoped cart currency for a country-scoped target", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { headers: { "content-type": "text/plain" } });
+    if (url.endsWith("/products/maamoul-pistachio")) return new Response(null, { status: 403 });
+    if (url.endsWith("/products/maamoul-pistachio.js")) return Response.json({
+      title: "Maamoul Pistachio",
+      handle: "maamoul-pistachio",
+      variants: [{ title: "Default Title", price: 850, available: true }],
+    }, { headers: { "content-type": "text/javascript" } });
+    if (url.endsWith("/cart.js")) return Response.json({ token: "public-cart-token", items: [], currency: "USD" }, { headers: { "content-type": "text/javascript" } });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  try {
+    const result = await enrichProductTargets([target({ marketCountryCode: "GB", role: "rival" })], 1);
+    assert.equal(result.products.length, 0);
+    assert.match(result.coverage.gaps[0].reason, /no same-page currency/i);
+    assert.equal(calls.some((url) => url.endsWith("/cart.js")), false);
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -4,6 +4,7 @@ import type { LookupFunction } from "node:net";
 
 type FetchLike = typeof fetch;
 const platformFetch = globalThis.fetch;
+const MAX_RETRY_AFTER_MS = 2_000;
 
 export const IPV6_ONLY_ORIGIN_REASON = "The public crawler does not support IPv6-only origins. Add a public IPv4 A record and try again.";
 
@@ -35,6 +36,18 @@ function isCloudflareOriginDnsFailure(response: Response, text: string) {
   if (!/text|html/i.test(contentType)) return false;
   return /\berror\s+code\s*[:#-]?\s*1016\b/i.test(text)
     || (/\berror\s+1016\b/i.test(text) && /\b(?:cloudflare|origin\s+dns\s+error)\b/i.test(text));
+}
+
+export function boundedRetryAfterMs(value: string | null, now = Date.now()) {
+  const raw = String(value || "").trim();
+  if (!raw) return 0;
+  const seconds = /^\d+$/.test(raw) ? Number(raw) : NaN;
+  const requested = Number.isFinite(seconds)
+    ? seconds * 1_000
+    : Math.max(0, Date.parse(raw) - now);
+  return Number.isFinite(requested) && requested > 0
+    ? Math.min(MAX_RETRY_AFTER_MS, Math.ceil(requested))
+    : 0;
 }
 
 async function dnsAnswers(hostname: string, type: 1 | 28, fetchImpl: FetchLike, signal?: AbortSignal) {
@@ -196,6 +209,7 @@ export async function fetchPublicText(url: string, accept: string, options: Publ
     }
     if (!response) throw new Error("request failed");
     if (!response.ok && options.readErrorBody === false) {
+      const retryAfterMs = boundedRetryAfterMs(response.headers.get("retry-after"));
       await response.body?.cancel();
       await closePinnedTransport?.();
       closePinnedTransport = null;
@@ -210,6 +224,7 @@ export async function fetchPublicText(url: string, accept: string, options: Publ
         responseBytes: 0,
         redirectCount,
         failureKind: "" as const,
+        ...(retryAfterMs ? { retryAfterMs } : {}),
       };
     }
     const { text, truncated, responseBytes } = await boundedResponseText(response, options.maxDocumentBytes);
