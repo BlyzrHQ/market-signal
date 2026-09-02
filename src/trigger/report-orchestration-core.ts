@@ -15,6 +15,7 @@ import {
   publicSourceMarketContext,
   type ProductComparison,
   type ProductEnrichmentTarget,
+  type ProductMatch,
   type ProductRecord,
 } from "../../app/lib/product-intelligence.ts";
 import { canonicalDomain, normalizeDomain } from "../../app/lib/domain.ts";
@@ -36,6 +37,14 @@ import {
 import { buildReportFactBundle } from "../shared/report-facts.ts";
 import { compactTerminalReportDocument, encodedJsonBytes, REPORT_MATCH_CHECKPOINT_RESULT_BYTES } from "../shared/report-document-compaction.ts";
 import { validateDiscoverySearchLedger } from "../shared/discovery-search-ledger.ts";
+import {
+  evaluateReportDraftQuality,
+  MAX_REPORT_QUALITY_REPAIR_ROUNDS,
+  parseReportQualityRepairFeedback,
+  sanitizeReportDraftQuality,
+  type ReportQualityRepairFeedback,
+  type ReportQualityVerdict,
+} from "../shared/report-quality-gate.ts";
 import type { ReportFactChunkInput, ReportFactManifestInput } from "../../app/lib/report-store.ts";
 import type { PinnedProductPair } from "../../app/lib/ai-product-matching.ts";
 import { screenedComparisonFromJudgeCheckpoints } from "../../app/lib/ai-product-matching.ts";
@@ -69,8 +78,42 @@ export const MATCH_JUDGE_CHECKPOINT_BATCH_INDEX_BASE = 1_400;
 export const MAX_MATCH_JUDGE_CHECKPOINTS_PER_TASK_ATTEMPT = 250;
 export const ACTION_PLAN_CHECKPOINT_BATCH_INDEX = 3_910;
 export const RIVAL_BENCHMARK_CHECKPOINT_BATCH_INDEX = 3_900;
+export const REPORT_QUALITY_FEEDBACK_CHECKPOINT_BATCH_INDEX_BASE = 3_920;
+export const REPORT_QUALITY_OUTCOME_CHECKPOINT_BATCH_INDEX_BASE = 3_950;
 export const MAX_RIVAL_BENCHMARK_DOMAINS = 5;
 export const RIVAL_BENCHMARK_CONCURRENCY = 2;
+
+export function reportQualityFeedbackCheckpointIndex(taskAttemptNumber: number, repairRound: number) {
+  const index = REPORT_QUALITY_FEEDBACK_CHECKPOINT_BATCH_INDEX_BASE
+    + ((taskAttemptNumber - 1) * MAX_REPORT_QUALITY_REPAIR_ROUNDS)
+    + repairRound - 1;
+  if (!Number.isInteger(taskAttemptNumber)
+    || taskAttemptNumber < 1
+    || taskAttemptNumber > MAX_ORCHESTRATION_TASK_ATTEMPTS
+    || !Number.isInteger(repairRound)
+    || repairRound < 1
+    || repairRound > MAX_REPORT_QUALITY_REPAIR_ROUNDS
+    || index >= REPORT_QUALITY_OUTCOME_CHECKPOINT_BATCH_INDEX_BASE) {
+    throw new PermanentOrchestrationError("Unsupported report-quality feedback checkpoint.");
+  }
+  return index;
+}
+
+export function reportQualityOutcomeCheckpointIndex(taskAttemptNumber: number, repairRound: number) {
+  const index = REPORT_QUALITY_OUTCOME_CHECKPOINT_BATCH_INDEX_BASE
+    + ((taskAttemptNumber - 1) * MAX_REPORT_QUALITY_REPAIR_ROUNDS)
+    + repairRound - 1;
+  if (!Number.isInteger(taskAttemptNumber)
+    || taskAttemptNumber < 1
+    || taskAttemptNumber > MAX_ORCHESTRATION_TASK_ATTEMPTS
+    || !Number.isInteger(repairRound)
+    || repairRound < 1
+    || repairRound > MAX_REPORT_QUALITY_REPAIR_ROUNDS
+    || index >= 3_980) {
+    throw new PermanentOrchestrationError("Unsupported report-quality outcome checkpoint.");
+  }
+  return index;
+}
 
 export function productEvidenceReferenceTimeMs(catalogs: Array<{ products: ProductRecord[] }>, reportCreatedAt: string, wallClockMs = Date.now()) {
   const fallback = Date.parse(reportCreatedAt);
@@ -197,25 +240,37 @@ export function validPublishedResultCheckpoint(value: unknown, resultTarget: num
     const checkpoint = value as { version?: unknown; comparison?: ProductComparison; evidence?: ProductComparison };
     const validVersion = targetKind === "pairs" ? checkpoint.version === 4 : checkpoint.version === 1 || checkpoint.version === 2 || checkpoint.version === 3;
     if (!validVersion || !checkpoint.comparison || !Array.isArray(checkpoint.comparison.rows) || checkpoint.comparison.rows.length > resultTarget) return null;
-    const evidence = checkpoint.version === 2 || checkpoint.version === 3 || checkpoint.version === 4 ? checkpoint.evidence : null;
-    if ((checkpoint.version === 2 || checkpoint.version === 3 || checkpoint.version === 4) && (!evidence || !Array.isArray(evidence.rows) || evidence.rows.length > resultTarget)) return null;
-    if (new Set(checkpoint.comparison.rows.map((row) => row?.primary?.id)).size !== checkpoint.comparison.rows.length) return null;
+    const storedEvidence = checkpoint.version === 2 || checkpoint.version === 3 || checkpoint.version === 4 ? checkpoint.evidence : null;
+    if ((checkpoint.version === 2 || checkpoint.version === 3 || checkpoint.version === 4) && (!storedEvidence || !Array.isArray(storedEvidence.rows) || storedEvidence.rows.length > resultTarget)) return null;
+    const directPairCheckpoint = targetKind === "pairs" && checkpoint.comparison.matching?.method === "direct-web-search";
+    if (directPairCheckpoint && storedEvidence?.matching?.method !== "direct-web-search") return null;
+    // Direct-search publication rules can become stricter between deploys. A
+    // durable checkpoint is still recoverable when the current deterministic
+    // quality gate can remove only the now-invalid edges; it must never revive
+    // or synthesize an edge that was not in the stored result.
+    const storedComparison = directPairCheckpoint
+      ? sanitizeReportDraftQuality({ comparison: checkpoint.comparison, comparisonTarget: resultTarget, primaryDomain: checkpoint.comparison.primaryDomain, referenceTimeMs }).comparison
+      : checkpoint.comparison;
+    const evidence = directPairCheckpoint && storedEvidence
+      ? sanitizeReportDraftQuality({ comparison: storedEvidence, comparisonTarget: resultTarget, primaryDomain: checkpoint.comparison.primaryDomain, referenceTimeMs }).comparison
+      : storedEvidence;
+    if (new Set(storedComparison.rows.map((row) => row?.primary?.id)).size !== storedComparison.rows.length) return null;
     if (evidence && new Set(evidence.rows.map((row) => row?.primary?.id)).size !== evidence.rows.length) return null;
-    if (![...checkpoint.comparison.rows, ...(evidence?.rows || [])].every((row) => allowedPrimaryProductKeys.has(`${row.primary.id}\n${canonicalDomain(row.primary.domain)}`))) return null;
-    if (![...checkpoint.comparison.rows, ...(evidence?.rows || [])].every((row) => {
+    if (![...storedComparison.rows, ...(evidence?.rows || [])].every((row) => allowedPrimaryProductKeys.has(`${row.primary.id}\n${canonicalDomain(row.primary.domain)}`))) return null;
+    if (![...storedComparison.rows, ...(evidence?.rows || [])].every((row) => {
       const key = `${row.primary.id}\n${canonicalDomain(row.primary.domain)}`;
       return allowedPrimaryIdentities.get(key) === row.primary.recoveryIdentityHash;
     })) return null;
     if (evidence && !evidence.rows.every((row) => row.matches.length > 0 && row.matches.every((match) => match.product && match.publication?.priceEligible === true))) return null;
-    if (checkpoint.comparison.matching?.resultShortfallReason === "processing-incomplete") return null;
-    if (checkpoint.comparison.enrichment?.pagesTruncated === true || (checkpoint.comparison.enrichment?.failedBatchCount || 0) > 0) return null;
-    const comparisonForValidation = checkpoint.comparison.matching ? {
-      ...checkpoint.comparison,
+    if (storedComparison.matching?.resultShortfallReason === "processing-incomplete") return null;
+    if (storedComparison.enrichment?.pagesTruncated === true || (storedComparison.enrichment?.failedBatchCount || 0) > 0) return null;
+    const comparisonForValidation = storedComparison.matching ? {
+      ...storedComparison,
       matching: {
-        ...checkpoint.comparison.matching,
-        gaps: checkpoint.comparison.matching.gaps.filter((gap) => !/^Published \d+ of \d+ requested priced product comparisons/i.test(gap)),
+        ...storedComparison.matching,
+        gaps: storedComparison.matching.gaps.filter((gap) => !/^Published \d+ of \d+ requested priced product comparisons/i.test(gap)),
       },
-    } : checkpoint.comparison;
+    } : storedComparison;
     const publishableComparison = publishPricedProductComparison(comparisonForValidation, referenceTimeMs);
     const validated = targetKind === "pairs"
       ? mergePublishedProductComparisonState(publishableComparison, null, resultTarget, referenceTimeMs, "pairs").comparison
@@ -224,13 +279,83 @@ export function validPublishedResultCheckpoint(value: unknown, resultTarget: num
     const revalidatedEvidence = evidence
       ? publishPricedProductComparison(evidence, referenceTimeMs)
       : mergePublishedProductComparisonState(validated, null, resultTarget, referenceTimeMs, targetKind).evidence;
-    if (JSON.stringify(checkpointEdgeIdentities(validated)) !== JSON.stringify(checkpointEdgeIdentities(checkpoint.comparison))) return null;
-    if (evidence && JSON.stringify(checkpointEdgeIdentities(revalidatedEvidence)) !== JSON.stringify(checkpointEdgeIdentities(evidence))) return null;
+    const storedComparisonEdges = checkpointEdgeIdentities(storedComparison);
+    const validatedEdges = checkpointEdgeIdentities(validated);
+    const storedEvidenceEdges = evidence ? checkpointEdgeIdentities(evidence) : [];
+    const revalidatedEvidenceEdges = checkpointEdgeIdentities(revalidatedEvidence);
+    const edgeSubset = (candidate: string[], source: string[]) => {
+      const sourceEdges = new Set(source);
+      return candidate.every((edge) => sourceEdges.has(edge));
+    };
+    if (directPairCheckpoint) {
+      if (!edgeSubset(validatedEdges, storedComparisonEdges) || (evidence && !edgeSubset(revalidatedEvidenceEdges, storedEvidenceEdges))) return null;
+    } else {
+      if (JSON.stringify(validatedEdges) !== JSON.stringify(storedComparisonEdges)) return null;
+      if (evidence && JSON.stringify(revalidatedEvidenceEdges) !== JSON.stringify(storedEvidenceEdges)) return null;
+    }
     if (revalidatedEvidence.rows.some((row) => row.matches.some((match) => match.product && match.publication?.priceEligible !== true))) return null;
     const validatedCount = targetKind === "pairs" ? validated.coverage.assignedPairCount : validated.rows.length;
-    const checkpointCount = targetKind === "pairs" ? checkpoint.comparison.coverage.assignedPairCount : checkpoint.comparison.rows.length;
-    return validatedCount === checkpointCount ? { comparison: validated, evidence: revalidatedEvidence } : null;
+    const publishableCount = targetKind === "pairs" ? publishableComparison.coverage.assignedPairCount : publishableComparison.rows.length;
+    return validatedCount === publishableCount ? { comparison: validated, evidence: revalidatedEvidence } : null;
   } catch { return null; }
+}
+
+type ReportQualityRepairOutcome = {
+  version: 1;
+  round: number;
+  feedbackHash: string;
+  status: "complete" | "incomplete" | "transport-failed";
+  reason: string;
+  published: {
+    version: 4;
+    comparison: ProductComparison;
+    evidence: ProductComparison;
+  } | null;
+};
+
+function normalizedQualityRepairComparison(comparison: ProductComparison, resultTarget: number) {
+  const resultShortfall = Math.max(0, resultTarget - comparison.coverage.assignedPairCount);
+  return {
+    ...comparison,
+    enrichment: undefined,
+    matching: comparison.matching ? {
+      ...comparison.matching,
+      resultTarget,
+      resultShortfall,
+      ...(resultShortfall
+        ? { resultShortfallReason: "bounded-candidate-pool-exhausted" as const }
+        : { resultShortfallReason: undefined }),
+    } : comparison.matching,
+  } satisfies ProductComparison;
+}
+
+export function validReportQualityRepairOutcome(
+  value: unknown,
+  expectedFeedback: ReportQualityRepairFeedback,
+  resultTarget: number,
+  referenceTimeMs: number,
+  allowedPrimaryProductKeys: Set<string>,
+  allowedPrimaryIdentities: Map<string, string>,
+): ReportQualityRepairOutcome | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const item = value as Partial<ReportQualityRepairOutcome>;
+  if (JSON.stringify(Object.keys(item).sort()) !== JSON.stringify(["feedbackHash", "published", "reason", "round", "status", "version"])) return null;
+  if (item.version !== 1 || item.round !== expectedFeedback.round || item.feedbackHash !== expectedFeedback.feedbackHash) return null;
+  if (!(["complete", "incomplete", "transport-failed"] as const).includes(item.status as ReportQualityRepairOutcome["status"])) return null;
+  if (typeof item.reason !== "string" || item.reason.length > 500 || item.reason !== item.reason.replace(/\s+/g, " ").trim()) return null;
+  if (item.status === "transport-failed") return item.published === null ? item as ReportQualityRepairOutcome : null;
+  if (!item.published || typeof item.published !== "object" || Array.isArray(item.published)
+    || JSON.stringify(Object.keys(item.published).sort()) !== JSON.stringify(["comparison", "evidence", "version"])
+    || item.published.version !== 4) return null;
+  const validated = validPublishedResultCheckpoint(item.published, resultTarget, referenceTimeMs, allowedPrimaryProductKeys, allowedPrimaryIdentities, "pairs");
+  return validated ? {
+    version: 1,
+    round: item.round,
+    feedbackHash: item.feedbackHash,
+    status: item.status,
+    reason: item.reason,
+    published: { version: 4, comparison: validated.comparison, evidence: validated.evidence },
+  } : null;
 }
 
 export function pricedResultEnrichmentBudget(resultTarget: number) {
@@ -361,8 +486,139 @@ function matcherStateCheckpointIndex(taskAttemptNumber: number) {
   return index;
 }
 
-function compactMatcherStateCheckpoint(comparison: ProductComparison, marketCountryCode: string, enrichmentPlan: EnrichmentPlanShape) {
+type LegacyMatcherStateCheckpoint = {
+  version: 1;
+  primaryDomain: string;
+  marketCountryCode?: string;
+  comparisonDomains: string[];
+  coverage: ProductComparison["coverage"];
+  matching: NonNullable<ProductComparison["matching"]>;
+  enrichmentPlan: EnrichmentPlanShape;
+};
+
+type DirectMatcherStateCheckpoint = {
+  version: 2;
+  primaryDomain: string;
+  marketCountryCode?: string;
+  comparison: {
+    primaryDomain: string;
+    marketCountryCode?: string;
+    comparisonDomains: string[];
+    rows: Array<{
+      primaryId: string;
+      primaryRecoveryIdentityHash: string;
+      matches: ProductMatch[];
+    }>;
+    coverage: ProductComparison["coverage"];
+    matching: NonNullable<ProductComparison["matching"]>;
+  };
+  enrichmentPlan: DurableEnrichmentPlanV2;
+};
+
+type MatcherStateCheckpoint = LegacyMatcherStateCheckpoint | DirectMatcherStateCheckpoint;
+
+function directMatcherText(value: unknown, limit: number) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, limit);
+}
+
+function compactDirectMatcherProduct(product: ProductRecord): ProductRecord {
+  const identifiers = product.identifiers ? {
+    gtins: [...new Set(product.identifiers.gtins.map((value) => directMatcherText(value, 40)).filter(Boolean))].slice(0, 20),
+    ...(product.identifiers.sku ? { sku: directMatcherText(product.identifiers.sku, 100) } : {}),
+    ...(product.identifiers.mpn ? { mpn: directMatcherText(product.identifiers.mpn, 100) } : {}),
+    ...(product.identifiers.brand ? { brand: directMatcherText(product.identifiers.brand, 100) } : {}),
+  } : undefined;
+  return {
+    id: directMatcherText(product.id, 300),
+    domain: canonicalDomain(product.domain),
+    name: directMatcherText(product.name, 220),
+    normalizedName: directMatcherText(product.normalizedName, 300),
+    description: directMatcherText(product.description, 500),
+    category: directMatcherText(product.category, 160),
+    jsonLdType: product.jsonLdType,
+    priceSignals: product.priceSignals.slice(0, 8).map((signal) => ({
+      raw: directMatcherText(signal.raw, 120),
+      ...(signal.currency ? { currency: directMatcherText(signal.currency, 8).toUpperCase() } : {}),
+      ...(typeof signal.amount === "number" && Number.isFinite(signal.amount) ? { amount: signal.amount } : {}),
+      ...(signal.period ? { period: directMatcherText(signal.period, 40) } : {}),
+      ...(signal.listRaw ? { listRaw: directMatcherText(signal.listRaw, 120) } : {}),
+      ...(typeof signal.listAmount === "number" && Number.isFinite(signal.listAmount) ? { listAmount: signal.listAmount } : {}),
+    })),
+    attributes: product.attributes.slice(0, 12).map((value) => directMatcherText(value, 120)).filter(Boolean),
+    ownership: product.ownership,
+    extraction: product.extraction,
+    confidence: product.confidence,
+    sourceUrl: String(product.sourceUrl || "").slice(0, 2_048),
+    imageUrl: String(product.imageUrl || "").slice(0, 2_048),
+    observedAt: product.observedAt,
+    claimIds: product.claimIds.slice(0, 20).map((value) => directMatcherText(value, 300)).filter(Boolean),
+    ...(identifiers ? { identifiers } : {}),
+    ...(product.quantity ? { quantity: product.quantity } : {}),
+    ...(product.recoveryIdentityHash ? { recoveryIdentityHash: product.recoveryIdentityHash } : {}),
+    ...(product.assignmentComponentHash ? { assignmentComponentHash: product.assignmentComponentHash } : {}),
+  };
+}
+
+function compactDirectMatcherMatch(match: ProductMatch): ProductMatch | null {
+  if (!match.product) return null;
+  return {
+    domain: canonicalDomain(match.domain),
+    product: compactDirectMatcherProduct(match.product),
+    score: match.score,
+    confidence: match.confidence,
+    sharedTerms: match.sharedTerms.slice(0, 20).map((value) => directMatcherText(value, 120)).filter(Boolean),
+    claimIds: match.claimIds.slice(0, 20).map((value) => directMatcherText(value, 300)).filter(Boolean),
+    decision: null,
+    ...(match.publication ? { publication: {
+      priceEligible: match.publication.priceEligible === true,
+      ...(match.publication.reason ? { reason: match.publication.reason } : {}),
+    } } : {}),
+  };
+}
+
+function compactDirectMatcherComparison(comparison: ProductComparison): DirectMatcherStateCheckpoint["comparison"] {
+  const matching = comparison.matching!;
+  return {
+    primaryDomain: canonicalDomain(comparison.primaryDomain),
+    ...(comparison.marketCountryCode ? { marketCountryCode: comparison.marketCountryCode } : {}),
+    comparisonDomains: [...comparison.comparisonDomains],
+    rows: comparison.rows.flatMap((row) => {
+      const matches = row.matches.flatMap((match) => {
+        const compact = compactDirectMatcherMatch(match);
+        return compact ? [compact] : [];
+      });
+      return matches.length ? [{
+        primaryId: row.primary.id,
+        primaryRecoveryIdentityHash: row.primary.recoveryIdentityHash || "",
+        matches,
+      }] : [];
+    }),
+    coverage: { ...comparison.coverage },
+    matching: {
+      ...matching,
+      gaps: matching.gaps.slice(0, 20).map((value) => directMatcherText(value, 500)).filter(Boolean),
+      selectedPrimaryIds: [...(matching.selectedPrimaryIds || [])],
+      assessedPrimaryIds: [...(matching.assessedPrimaryIds || [])],
+      processedPrimaryIds: [...(matching.processedPrimaryIds || matching.assessedPrimaryIds || [])],
+      candidateSlotsByDomain: undefined,
+    },
+  };
+}
+
+function compactMatcherStateCheckpoint(comparison: ProductComparison, marketCountryCode: string, enrichmentPlan: EnrichmentPlanShape): MatcherStateCheckpoint {
   const resolvedMarketCountryCode = marketCountryCode || (/^[A-Z]{2}$/.test(String(comparison.marketCountryCode || "")) ? String(comparison.marketCountryCode) : "");
+  if (comparison.matching?.method === "direct-web-search") {
+    return {
+      version: 2,
+      primaryDomain: canonicalDomain(comparison.primaryDomain),
+      ...(resolvedMarketCountryCode ? { marketCountryCode: resolvedMarketCountryCode } : {}),
+      comparison: compactDirectMatcherComparison({
+        ...comparison,
+        ...(resolvedMarketCountryCode ? { marketCountryCode: resolvedMarketCountryCode } : {}),
+      }),
+      enrichmentPlan: compactEnrichmentPlan(enrichmentPlan),
+    };
+  }
   return {
     version: 1,
     primaryDomain: comparison.primaryDomain,
@@ -374,42 +630,112 @@ function compactMatcherStateCheckpoint(comparison: ProductComparison, marketCoun
   };
 }
 
-function validMatcherStateCheckpoint(value: unknown, primaryDomain: string, marketCountryCode: string, allowedPrimaryIds: Set<string>, judgeEvidence: ProductComparison | null, referenceTimeMs: number): { comparison: ProductComparison; enrichmentPlan: EnrichmentPlanShape } | null {
-  if (!judgeEvidence || !value || typeof value !== "object" || Array.isArray(value) || encodedJsonBytes(value) > REPORT_MATCH_CHECKPOINT_RESULT_BYTES) return null;
-  const candidate = value as ReturnType<typeof compactMatcherStateCheckpoint>;
-  if (candidate.version !== 1 || canonicalDomain(candidate.primaryDomain) !== canonicalDomain(primaryDomain)) return null;
+function exactEnrichmentPlan(savedPlan: EnrichmentPlanShape, expectedPlan: EnrichmentPlanShape) {
+  const targetIdentity = (target: ProductEnrichmentTarget) => `${target.role}\n${canonicalDomain(target.domain)}\n${target.productId}\n${target.sourceUrl}\n${target.expectedName}\n${target.expectedType}`;
+  return savedPlan.targets.length === expectedPlan.targets.length
+    && JSON.stringify(savedPlan.targets.map(targetIdentity).sort()) === JSON.stringify(expectedPlan.targets.map(targetIdentity).sort())
+    && savedPlan.totalEligible === expectedPlan.totalEligible
+    && savedPlan.truncated === expectedPlan.truncated
+    && savedPlan.targets.every((target) => Number.isFinite(target.pairScore));
+}
+
+function validMatcherStateCheckpoint(value: unknown, primaryDomain: string, marketCountryCode: string, primaryProducts: ProductRecord[], resultTarget: number, judgeEvidence: ProductComparison | null, referenceTimeMs: number): { comparison: ProductComparison; enrichmentPlan: EnrichmentPlanShape } | null {
+  if (!value || typeof value !== "object" || Array.isArray(value) || encodedJsonBytes(value) > REPORT_MATCH_CHECKPOINT_RESULT_BYTES) return null;
+  const candidate = value as Partial<MatcherStateCheckpoint>;
+  if ((candidate.version !== 1 && candidate.version !== 2) || canonicalDomain(candidate.primaryDomain) !== canonicalDomain(primaryDomain)) return null;
   const candidateMarketCountryCode = String(candidate.marketCountryCode || "");
   if (marketCountryCode ? candidateMarketCountryCode !== marketCountryCode : candidateMarketCountryCode && !/^[A-Z]{2}$/.test(candidateMarketCountryCode)) return null;
-  if (!Array.isArray(candidate.comparisonDomains) || !candidate.comparisonDomains.length || candidate.comparisonDomains.some((domain) => typeof domain !== "string" || canonicalDomain(domain) !== domain)) return null;
-  if (!candidate.coverage || typeof candidate.coverage !== "object" || !candidate.matching || typeof candidate.matching !== "object") return null;
-  if (candidate.matching.method !== "ai-hybrid" || candidate.matching.available !== true) return null;
-  const identityLists = [candidate.matching.selectedPrimaryIds, candidate.matching.assessedPrimaryIds, candidate.matching.processedPrimaryIds || candidate.matching.assessedPrimaryIds];
+  const allowedPrimaryIds = new Set(primaryProducts.map((product) => product.id));
+  if (candidate.version === 2) {
+    const direct = candidate as DirectMatcherStateCheckpoint;
+    const stored = direct.comparison;
+    if (!stored || typeof stored !== "object" || Array.isArray(stored) || stored.matching?.method !== "direct-web-search" || stored.matching.available !== true) return null;
+    if (canonicalDomain(stored.primaryDomain) !== canonicalDomain(primaryDomain) || String(stored.marketCountryCode || "") !== candidateMarketCountryCode) return null;
+    if (!Array.isArray(stored.rows) || stored.rows.length > Math.min(primaryProducts.length, resultTarget)) return null;
+    const primaryById = new Map(primaryProducts.map((product) => [product.id, product]));
+    const primaryIdentities = primaryCatalogRecoveryIdentities(primaryProducts);
+    const rowIds = new Set<string>();
+    const rivalSources = new Set<string>();
+    let pairCount = 0;
+    const rows: ProductComparison["rows"] = [];
+    for (const row of stored.rows) {
+      if (!row || typeof row !== "object" || Array.isArray(row) || typeof row.primaryId !== "string" || !/^[a-f0-9]{64}$/.test(row.primaryRecoveryIdentityHash) || rowIds.has(row.primaryId)) return null;
+      const primary = primaryById.get(row.primaryId);
+      const primaryKey = primary ? `${primary.id}\n${canonicalDomain(primary.domain)}` : "";
+      if (!primary || primaryIdentities.get(primaryKey) !== row.primaryRecoveryIdentityHash || !Array.isArray(row.matches) || !row.matches.length) return null;
+      rowIds.add(row.primaryId);
+      const matches: ProductMatch[] = [];
+      for (const rawMatch of row.matches) {
+        if (!rawMatch || typeof rawMatch !== "object" || Array.isArray(rawMatch)) return null;
+        const compact = compactDirectMatcherMatch(rawMatch);
+        if (!compact || JSON.stringify(stableCheckpointValue(compact)) !== JSON.stringify(stableCheckpointValue(rawMatch))) return null;
+        const rival = compact.product;
+        if (!rival || canonicalDomain(compact.domain) !== canonicalDomain(rival.domain) || canonicalDomain(rival.domain) === canonicalDomain(primaryDomain)) return null;
+        try {
+          const source = new URL(rival.sourceUrl);
+          if (source.protocol !== "https:" || source.username || source.password || canonicalDomain(source.hostname) !== canonicalDomain(rival.domain)) return null;
+        } catch { return null; }
+        if (rivalSources.has(rival.sourceUrl) || !Number.isFinite(compact.score) || !["Medium", "Low", null].includes(compact.confidence)) return null;
+        rivalSources.add(rival.sourceUrl);
+        matches.push(compact);
+        pairCount += 1;
+        if (pairCount > resultTarget) return null;
+      }
+      rows.push({ primary: { ...primary, recoveryIdentityHash: row.primaryRecoveryIdentityHash }, matches });
+    }
+    if (!Array.isArray(stored.comparisonDomains) || stored.comparisonDomains.some((domain) => typeof domain !== "string" || canonicalDomain(domain) !== domain)) return null;
+    if (!stored.coverage || typeof stored.coverage !== "object" || stored.coverage.assignedPairCount !== pairCount || stored.coverage.verifiedPairCount > pairCount || stored.coverage.rowsReturned !== rows.length || stored.coverage.rowLimit !== resultTarget) return null;
+    const boundedMetric = (metric: unknown, max: number) => typeof metric === "number" && Number.isInteger(metric) && metric >= 0 && metric <= max;
+    if (!boundedMetric(stored.coverage.primaryProductsAvailable, primaryProducts.length)
+      || !boundedMetric(stored.coverage.primaryProductsScanned, primaryProducts.length)
+      || !boundedMetric(stored.coverage.primaryProductFamiliesCompared, primaryProducts.length)
+      || !boundedMetric(stored.coverage.competitorProductsAvailable, 12_000)
+      || !boundedMetric(stored.coverage.competitorProductsScanned, 12_000)) return null;
+    const identityLists = [stored.matching.selectedPrimaryIds, stored.matching.assessedPrimaryIds, stored.matching.processedPrimaryIds];
+    if (identityLists.some((ids) => !Array.isArray(ids) || ids.length > primaryProducts.length || new Set(ids).size !== ids.length || ids.some((id) => typeof id !== "string" || !allowedPrimaryIds.has(id)))) return null;
+    if (stored.matching.resultTarget !== resultTarget || stored.matching.publishedPairs !== pairCount || stored.matching.publishedPrimaryProducts !== rows.length) return null;
+    const comparison: ProductComparison = {
+      primaryDomain: canonicalDomain(primaryDomain),
+      ...(candidateMarketCountryCode ? { marketCountryCode: candidateMarketCountryCode } : {}),
+      comparisonDomains: [...stored.comparisonDomains],
+      rows,
+      unmatched: [],
+      coverage: { ...stored.coverage },
+      matching: { ...stored.matching },
+    };
+    if (JSON.stringify(stableCheckpointValue(compactDirectMatcherComparison(comparison))) !== JSON.stringify(stableCheckpointValue(stored))) return null;
+    const expectedPlan = planFinalProductEnrichmentTargets(comparison, pricedResultEnrichmentBudget(resultTarget), referenceTimeMs);
+    const savedPlan = validEnrichmentPlanCheckpoint(direct.enrichmentPlan, expectedPlan);
+    return savedPlan ? { comparison, enrichmentPlan: savedPlan } : null;
+  }
+  if (!judgeEvidence) return null;
+  const legacy = candidate as LegacyMatcherStateCheckpoint;
+  if (legacy.version !== 1) return null;
+  if (!Array.isArray(legacy.comparisonDomains) || !legacy.comparisonDomains.length || legacy.comparisonDomains.some((domain) => typeof domain !== "string" || canonicalDomain(domain) !== domain)) return null;
+  if (!legacy.coverage || typeof legacy.coverage !== "object" || !legacy.matching || typeof legacy.matching !== "object") return null;
+  if (legacy.matching.method !== "ai-hybrid" || legacy.matching.available !== true) return null;
+  const identityLists = [legacy.matching.selectedPrimaryIds, legacy.matching.assessedPrimaryIds, legacy.matching.processedPrimaryIds || legacy.matching.assessedPrimaryIds];
   if (identityLists.some((ids) => !Array.isArray(ids) || ids.length > allowedPrimaryIds.size || new Set(ids).size !== ids.length || ids.some((id) => typeof id !== "string" || !allowedPrimaryIds.has(id)))) return null;
   const boundedMetric = (value: unknown, max: number) => typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= max;
-  if (!boundedMetric(candidate.coverage.primaryProductsAvailable, allowedPrimaryIds.size)
-    || !boundedMetric(candidate.coverage.primaryProductsScanned, allowedPrimaryIds.size)
-    || !boundedMetric(candidate.coverage.rowsReturned, allowedPrimaryIds.size)) return null;
+  if (!boundedMetric(legacy.coverage.primaryProductsAvailable, allowedPrimaryIds.size)
+    || !boundedMetric(legacy.coverage.primaryProductsScanned, allowedPrimaryIds.size)
+    || !boundedMetric(legacy.coverage.rowsReturned, allowedPrimaryIds.size)) return null;
   const expectedPlan = planFinalProductEnrichmentTargets({
     ...judgeEvidence,
-    comparisonDomains: [...candidate.comparisonDomains],
-    coverage: { ...candidate.coverage, assignedPairCount: judgeEvidence.coverage.assignedPairCount, verifiedPairCount: judgeEvidence.coverage.verifiedPairCount, rowsReturned: judgeEvidence.rows.length },
-    matching: candidate.matching,
+    comparisonDomains: [...legacy.comparisonDomains],
+    coverage: { ...legacy.coverage, assignedPairCount: judgeEvidence.coverage.assignedPairCount, verifiedPairCount: judgeEvidence.coverage.verifiedPairCount, rowsReturned: judgeEvidence.rows.length },
+    matching: legacy.matching,
   }, pricedResultEnrichmentBudget(allowedPrimaryIds.size), referenceTimeMs);
-  const savedPlan = candidate.enrichmentPlan;
+  const savedPlan = legacy.enrichmentPlan;
   if (!savedPlan || !Array.isArray(savedPlan.targets) || !Number.isInteger(savedPlan.totalEligible) || typeof savedPlan.truncated !== "boolean") return null;
-  const targetIdentity = (target: ProductEnrichmentTarget) => `${target.role}\n${canonicalDomain(target.domain)}\n${target.productId}\n${target.sourceUrl}\n${target.expectedName}\n${target.expectedType}`;
-  if (savedPlan.targets.length !== expectedPlan.targets.length
-    || JSON.stringify(savedPlan.targets.map(targetIdentity).sort()) !== JSON.stringify(expectedPlan.targets.map(targetIdentity).sort())
-    || savedPlan.totalEligible !== expectedPlan.totalEligible
-    || savedPlan.truncated !== expectedPlan.truncated
-    || savedPlan.targets.some((target) => !Number.isFinite(target.pairScore))) return null;
+  if (!exactEnrichmentPlan(savedPlan, expectedPlan)) return null;
   return {
     comparison: {
       ...judgeEvidence,
       ...(candidateMarketCountryCode ? { marketCountryCode: candidateMarketCountryCode } : {}),
-      comparisonDomains: [...candidate.comparisonDomains],
-      coverage: { ...candidate.coverage, assignedPairCount: judgeEvidence.coverage.assignedPairCount, verifiedPairCount: judgeEvidence.coverage.verifiedPairCount, rowsReturned: judgeEvidence.rows.length },
-      matching: candidate.matching,
+      comparisonDomains: [...legacy.comparisonDomains],
+      coverage: { ...legacy.coverage, assignedPairCount: judgeEvidence.coverage.assignedPairCount, verifiedPairCount: judgeEvidence.coverage.verifiedPairCount, rowsReturned: judgeEvidence.rows.length },
+      matching: legacy.matching,
     },
     enrichmentPlan: savedPlan,
   };
@@ -1005,7 +1331,7 @@ export interface ReportOrchestrationPort {
   crawl(input: CrawlPortInput): Promise<CrawlOutcome>;
   benchmark(input: CrawlPortInput & { benchmarkOnly: true }): Promise<CrawlOutcome>;
   brief(input: { primary: string; domains: string[] }): Promise<unknown>;
-  match(input: { publicId: string; reportAttempt: number; taskAttemptNumber: number; reportObservedAt: string; primaryDomain: string; marketCountryCode?: string; productLimit: number; catalogs: Array<{ domain: string; products: ProductRecord[] }>; pinnedPairs?: PinnedProductPair[]; matchingMode?: "direct-product-search" }): Promise<{ ok: true; comparison: ProductComparison }>;
+  match(input: { publicId: string; reportAttempt: number; taskAttemptNumber: number; reportObservedAt: string; primaryDomain: string; marketCountryCode?: string; productLimit: number; catalogs: Array<{ domain: string; products: ProductRecord[] }>; pinnedPairs?: PinnedProductPair[]; matchingMode?: "direct-product-search"; repairFeedback?: ReportQualityRepairFeedback }): Promise<{ ok: true; comparison: ProductComparison }>;
   enrich(input: { targets: unknown[] }): Promise<{ ok: true; products: ProductRecord[]; coverage: NonNullable<ProductComparison["enrichment"]> }>;
   loadCheckpoint(publicId: string, input: { attemptNumber: number; batchIndex?: number; batchIndexStart?: number; batchIndexEnd?: number; latestPerBatch?: boolean; limit?: number }): Promise<Array<{ attemptNumber: number; batchIndex: number; inputHash: string; result: unknown }>>;
   saveCheckpoint(publicId: string, input: { attemptNumber: number; batchIndex: number; inputHash: string; result: unknown }): Promise<void>;
@@ -1476,21 +1802,22 @@ export async function orchestrateReport(
     // namespaces concurrently so crash recovery retains accepted edges from
     // every adopted attempt without turning the critical path into a single
     // 2,500-batch sequential scan.
-    const [matcherStateCheckpoints, stateCheckpoints, actionCheckpoints, ...judgeCheckpointPages] = await Promise.all([
+    const [matcherStateCheckpoints, stateCheckpoints, actionCheckpoints, qualityFeedbackCheckpoints, qualityOutcomeCheckpoints, ...judgeCheckpointPages] = await Promise.all([
       port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: MATCHER_STATE_CHECKPOINT_BATCH_INDEX_BASE, batchIndexEnd: CRAWL_RESULT_CHECKPOINT_BATCH_INDEX_BASE - 1, latestPerBatch: true }),
       port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: 270, batchIndexEnd: MATCH_JUDGE_CHECKPOINT_BATCH_INDEX_BASE - 1, latestPerBatch: true }),
       port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: ACTION_PLAN_CHECKPOINT_BATCH_INDEX, batchIndexEnd: ACTION_PLAN_CHECKPOINT_BATCH_INDEX + MAX_ORCHESTRATION_TASK_ATTEMPTS - 1, latestPerBatch: true, limit: MAX_ORCHESTRATION_TASK_ATTEMPTS }),
+      port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: REPORT_QUALITY_FEEDBACK_CHECKPOINT_BATCH_INDEX_BASE, batchIndexEnd: REPORT_QUALITY_FEEDBACK_CHECKPOINT_BATCH_INDEX_BASE + (MAX_ORCHESTRATION_TASK_ATTEMPTS * MAX_REPORT_QUALITY_REPAIR_ROUNDS) - 1, latestPerBatch: true, limit: MAX_ORCHESTRATION_TASK_ATTEMPTS * MAX_REPORT_QUALITY_REPAIR_ROUNDS }),
+      port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: REPORT_QUALITY_OUTCOME_CHECKPOINT_BATCH_INDEX_BASE, batchIndexEnd: REPORT_QUALITY_OUTCOME_CHECKPOINT_BATCH_INDEX_BASE + (MAX_ORCHESTRATION_TASK_ATTEMPTS * MAX_REPORT_QUALITY_REPAIR_ROUNDS) - 1, latestPerBatch: true, limit: MAX_ORCHESTRATION_TASK_ATTEMPTS * MAX_REPORT_QUALITY_REPAIR_ROUNDS }),
       ...judgeCheckpointRanges.map((range) => port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndexStart: range.start, batchIndexEnd: range.end, latestPerBatch: true })),
     ]);
     const adoptedJudgeCheckpoints = judgeCheckpointPages.flat();
-    const loadedCheckpoints = [...matcherStateCheckpoints, ...stateCheckpoints, ...actionCheckpoints, ...adoptedJudgeCheckpoints];
+    const loadedCheckpoints = [...matcherStateCheckpoints, ...stateCheckpoints, ...actionCheckpoints, ...qualityFeedbackCheckpoints, ...qualityOutcomeCheckpoints, ...adoptedJudgeCheckpoints];
     const allDurableCheckpoints = new Map(loadedCheckpoints.map((checkpoint) => [`${checkpoint.attemptNumber}:${checkpoint.batchIndex}`, checkpoint]));
     const durableCheckpoints = new Map<number, (typeof loadedCheckpoints)[number]>();
     for (const checkpoint of loadedCheckpoints) {
       if (!durableCheckpoints.has(checkpoint.batchIndex)) durableCheckpoints.set(checkpoint.batchIndex, checkpoint);
     }
     const allowedPrimaryProductKeys = primaryCatalogProductKeys(primary.products);
-    const allowedPrimaryProductIds = new Set(primary.products.map((product) => product.id));
     const allowedPrimaryRecoveryIdentities = primaryCatalogRecoveryIdentities(primary.products);
     const publishedResultInputHash = createHash("sha256").update(JSON.stringify({
       publicId: payload.publicId,
@@ -1506,14 +1833,17 @@ export async function orchestrateReport(
       marketCountryCode,
     ), primary.products), primary.products);
     let recoveredMatcherState: ReturnType<typeof validMatcherStateCheckpoint> = null;
-    if (durableJudgeEvidence) {
-      for (const saved of [...matcherStateCheckpoints]
-        .filter((checkpoint) => checkpoint.batchIndex < matcherStateCheckpointIndex(taskAttemptNumber) && checkpoint.inputHash === publishedResultInputHash)
-        .sort((left, right) => right.batchIndex - left.batchIndex)) {
-        recoveredMatcherState = validMatcherStateCheckpoint(saved.result, crawl.primaryDomain, marketCountryCode, allowedPrimaryProductIds, durableJudgeEvidence, reportReferenceTimeMs);
-        if (!recoveredMatcherState) throw new Error("The durable matcher-state checkpoint is invalid.");
-        break;
-      }
+    for (const saved of [...matcherStateCheckpoints]
+      .filter((checkpoint) => checkpoint.batchIndex < matcherStateCheckpointIndex(taskAttemptNumber) && checkpoint.inputHash === publishedResultInputHash)
+      .sort((left, right) => right.batchIndex - left.batchIndex)) {
+      // Legacy AI matcher metadata can only be rehydrated from its separate
+      // judge-evidence checkpoints. Preserve the historical behavior of
+      // ignoring that optimization when no durable judge graph exists. Direct
+      // matcher v2 checkpoints are self-contained and always validate here.
+      if ((saved.result as { version?: unknown } | null)?.version === 1 && !durableJudgeEvidence) continue;
+      recoveredMatcherState = validMatcherStateCheckpoint(saved.result, crawl.primaryDomain, marketCountryCode, primary.products, payload.productLimit, durableJudgeEvidence, reportReferenceTimeMs);
+      if (!recoveredMatcherState) throw new Error("The durable matcher-state checkpoint is invalid.");
+      break;
     }
     // A durable matcher state means the paid matcher response and exact
     // enrichment plan were committed before any enrichment request began.
@@ -1585,6 +1915,7 @@ export async function orchestrateReport(
       if (resumeMatcherForEnrichmentRetry && recoveredMatcherState) enrichmentPlan = recoveredMatcherState.enrichmentPlan;
       else if (enrichmentPlan.targets.length) {
         const matcherState = compactMatcherStateCheckpoint(comparison, marketCountryCode, enrichmentPlan);
+        if (encodedJsonBytes(matcherState) > REPORT_MATCH_CHECKPOINT_RESULT_BYTES) throw new Error("The durable matcher state exceeds its persistence budget.");
         const matcherStateIndex = matcherStateCheckpointIndex(taskAttemptNumber);
         try {
           await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: matcherStateIndex, inputHash: publishedResultInputHash, result: matcherState });
@@ -1860,8 +2191,226 @@ export async function orchestrateReport(
       ), primary.products), primary.products);
       screenedComparison = mergeAccumulatedPublishedIntoScreenedComparison(comparison, judgeEvidence);
       screenedComparison = mergeAccumulatedPublishedIntoScreenedComparison(screenedComparison, accumulatedPublished);
-      const publishedState = mergePublishedProductComparisonState(comparison, accumulatedPublished, payload.productLimit, reportReferenceTimeMs, publishedResultTargetKind);
+      let publishedState = mergePublishedProductComparisonState(comparison, accumulatedPublished, payload.productLimit, reportReferenceTimeMs, publishedResultTargetKind);
       comparison = publishedState.comparison;
+
+      // Discovery can intentionally advance across several bounded crawl/task
+      // waves. Do not spend the separate quality-repair budget against an
+      // intermediate draft: the next crawl wave may supply the missing primary
+      // anchors without any repair search. The partial published checkpoint is
+      // still saved below before this state becomes an ordinary task retry.
+      const discoveryCoverageIncomplete = (comparison.matching?.resultShortfall || 0) > 0
+        && crawl.discovery?.productSearchCoverage?.complete !== true;
+
+      if (directProductSearch && comparison.matching?.method === "direct-web-search" && comparison.matching.resultShortfallReason !== "processing-incomplete" && !discoveryCoverageIncomplete) {
+        let qualityRepairRounds = 0;
+        const sanitizeRejectedDraft = async (verdict: ReportQualityVerdict, stage: string) => {
+          if (verdict.status !== "reject") return verdict;
+          const sanitized = sanitizeReportDraftQuality({
+            comparison,
+            comparisonTarget: payload.productLimit,
+            primaryDomain: crawl.primaryDomain,
+            referenceTimeMs: reportReferenceTimeMs,
+          });
+          publishedState = mergePublishedProductComparisonState(sanitized.comparison, null, payload.productLimit, reportReferenceTimeMs, publishedResultTargetKind);
+          comparison = publishedState.comparison;
+          screenedComparison = mergeAccumulatedPublishedIntoScreenedComparison(screenedComparison, publishedState.evidence);
+          await port.appendEvent(payload.publicId, event(progressEventKey(attempt, `quality-filtered-${stage}`), "quality", "The quality gate removed invalid comparison rows and retained the valid paid-report evidence.", {
+            removedComparisons: sanitized.removedComparisonCount,
+            deficiencyCodes: sanitized.reasonCodes,
+          }));
+          return evaluateReportDraftQuality({
+            comparison,
+            comparisonTarget: payload.productLimit,
+            primaryDomain: crawl.primaryDomain,
+            primaryProducts: primary.products,
+            referenceTimeMs: reportReferenceTimeMs,
+            repairRound: verdict.repairRound,
+          });
+        };
+        let qualityVerdict = evaluateReportDraftQuality({
+          comparison,
+          comparisonTarget: payload.productLimit,
+          primaryDomain: crawl.primaryDomain,
+          primaryProducts: primary.products,
+          referenceTimeMs: reportReferenceTimeMs,
+          repairRound: 0,
+        });
+        await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "quality-evaluated-0"), "quality", "The draft report passed through the deterministic comparison-quality gate.", {
+          status: qualityVerdict.status,
+          validComparisons: qualityVerdict.validComparisonCount,
+          target: qualityVerdict.comparisonTarget,
+          missing: qualityVerdict.missingComparisonCount,
+        }));
+        qualityVerdict = await sanitizeRejectedDraft(qualityVerdict, "initial");
+
+        while (qualityVerdict.status === "repair" && qualityVerdict.feedback) {
+          const generatedFeedback = qualityVerdict.feedback;
+          const checkpointIndex = reportQualityFeedbackCheckpointIndex(taskAttemptNumber, generatedFeedback.round);
+          const currentFeedbackSlot = durableCheckpoints.get(checkpointIndex);
+          const existing = currentFeedbackSlot?.attemptNumber === attempt.attemptNumber
+            ? currentFeedbackSlot
+            : qualityFeedbackCheckpoints.find((checkpoint) => checkpoint.attemptNumber === attempt.attemptNumber && checkpoint.batchIndex < checkpointIndex && checkpoint.inputHash === generatedFeedback.feedbackHash);
+          let repairFeedback = generatedFeedback;
+          if (existing?.inputHash === generatedFeedback.feedbackHash) {
+            const restored = parseReportQualityRepairFeedback(existing.result);
+            if (JSON.stringify(stableCheckpointValue(restored)) !== JSON.stringify(stableCheckpointValue(generatedFeedback))) {
+              throw new Error("The durable report-quality feedback differs from the deterministic repair request.");
+            }
+            repairFeedback = restored;
+          } else {
+            if (currentFeedbackSlot?.attemptNumber === attempt.attemptNumber) throw new Error("The current report-quality repair slot contains conflicting feedback.");
+            const checkpoint = { attemptNumber: attempt.attemptNumber, batchIndex: checkpointIndex, inputHash: generatedFeedback.feedbackHash, result: generatedFeedback };
+            try {
+              await port.saveCheckpoint(payload.publicId, checkpoint);
+              durableCheckpoints.set(checkpointIndex, checkpoint);
+              allDurableCheckpoints.set(`${attempt.attemptNumber}:${checkpointIndex}`, checkpoint);
+            } catch (saveError) {
+              const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: checkpointIndex }))[0];
+              const restored = committed?.inputHash === generatedFeedback.feedbackHash
+                ? parseReportQualityRepairFeedback(committed.result)
+                : null;
+              if (!committed || !restored || JSON.stringify(stableCheckpointValue(restored)) !== JSON.stringify(stableCheckpointValue(generatedFeedback))) throw saveError;
+              repairFeedback = restored;
+              durableCheckpoints.set(checkpointIndex, committed);
+              allDurableCheckpoints.set(`${committed.attemptNumber}:${checkpointIndex}`, committed);
+            }
+          }
+
+          qualityRepairRounds = repairFeedback.round;
+          await port.appendEvent(payload.publicId, event(progressEventKey(attempt, `quality-repair-${repairFeedback.round}-started`), "quality", "The quality gate requested another bounded comparison-search pass for named products.", {
+            repairRound: repairFeedback.round,
+            products: repairFeedback.primaryProductIds.length,
+            missingComparisons: qualityVerdict.missingComparisonCount,
+            feedbackHash: repairFeedback.feedbackHash,
+          }));
+          const outcomeCheckpointIndex = reportQualityOutcomeCheckpointIndex(taskAttemptNumber, repairFeedback.round);
+          const currentOutcomeSlot = durableCheckpoints.get(outcomeCheckpointIndex);
+          const savedOutcome = currentOutcomeSlot?.attemptNumber === attempt.attemptNumber
+            ? currentOutcomeSlot
+            : qualityOutcomeCheckpoints.find((checkpoint) => checkpoint.attemptNumber === attempt.attemptNumber && checkpoint.batchIndex < outcomeCheckpointIndex && checkpoint.inputHash === repairFeedback.feedbackHash);
+          let repairOutcome: ReportQualityRepairOutcome;
+          if (savedOutcome?.inputHash === repairFeedback.feedbackHash) {
+            const restored = validReportQualityRepairOutcome(savedOutcome.result, repairFeedback, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys, allowedPrimaryRecoveryIdentities);
+            if (!restored) throw new Error("The durable report-quality repair outcome is invalid.");
+            repairOutcome = restored;
+            await port.appendEvent(payload.publicId, event(progressEventKey(attempt, `quality-repair-${repairFeedback.round}-reused`), "quality", "Reusing the durable outcome for this quality-repair round; paid comparison search was not repeated.", { repairRound: repairFeedback.round, outcome: repairOutcome.status }));
+          } else {
+            if (currentOutcomeSlot?.attemptNumber === attempt.attemptNumber) throw new Error("The durable report-quality outcome conflicts with its repair feedback.");
+            let outcomeToSave: ReportQualityRepairOutcome;
+            try {
+              const response = await port.match({
+                publicId: payload.publicId,
+                reportAttempt: attempt.attemptNumber,
+                taskAttemptNumber,
+                reportObservedAt: stored.run.createdAt,
+                primaryDomain: crawl.primaryDomain,
+                ...(marketCountryCode ? { marketCountryCode } : {}),
+                productLimit: payload.productLimit,
+                catalogs,
+                matchingMode: "direct-product-search",
+                repairFeedback,
+              });
+              const rawRepair = bindComparisonPrimaryRecoveryIdentities({ ...response.comparison, ...(marketCountryCode ? { marketCountryCode } : {}) }, primary.products);
+              const incomplete = rawRepair.matching?.resultShortfallReason === "processing-incomplete";
+              const normalizedRepair = normalizedQualityRepairComparison(rawRepair, payload.productLimit);
+              const publishedRepair = publishPricedProductComparison(normalizedRepair, reportReferenceTimeMs);
+              const sanitizedRepair = sanitizeReportDraftQuality({ comparison: publishedRepair, comparisonTarget: payload.productLimit, primaryDomain: crawl.primaryDomain, referenceTimeMs: reportReferenceTimeMs });
+              const isolatedState = mergePublishedProductComparisonState(sanitizedRepair.comparison, null, payload.productLimit, reportReferenceTimeMs, "pairs");
+              outcomeToSave = {
+                version: 1,
+                round: repairFeedback.round,
+                feedbackHash: repairFeedback.feedbackHash,
+                status: incomplete ? "incomplete" : "complete",
+                reason: incomplete ? "The bounded repair returned partial progress before its work budget ended." : "The bounded repair completed.",
+                published: {
+                  version: 4,
+                  comparison: compactPublishedProductComparisonCheckpoint(isolatedState.comparison),
+                  evidence: compactPublishedProductComparisonCheckpoint(isolatedState.evidence),
+                },
+              };
+            } catch {
+              outcomeToSave = {
+                version: 1,
+                round: repairFeedback.round,
+                feedbackHash: repairFeedback.feedbackHash,
+                status: "transport-failed",
+                reason: "The bounded repair transport did not return a usable response.",
+                published: null,
+              };
+            }
+            if (encodedJsonBytes(outcomeToSave) > REPORT_MATCH_CHECKPOINT_RESULT_BYTES) throw new Error("The report-quality repair outcome exceeds its persistence budget.");
+            const validatedOutcome = validReportQualityRepairOutcome(outcomeToSave, repairFeedback, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys, allowedPrimaryRecoveryIdentities);
+            if (!validatedOutcome) throw new Error("The report-quality repair outcome failed validation before persistence.");
+            try {
+              await port.saveCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: outcomeCheckpointIndex, inputHash: repairFeedback.feedbackHash, result: outcomeToSave });
+              const checkpoint = { attemptNumber: attempt.attemptNumber, batchIndex: outcomeCheckpointIndex, inputHash: repairFeedback.feedbackHash, result: outcomeToSave };
+              durableCheckpoints.set(outcomeCheckpointIndex, checkpoint);
+              allDurableCheckpoints.set(`${attempt.attemptNumber}:${outcomeCheckpointIndex}`, checkpoint);
+              repairOutcome = validatedOutcome;
+            } catch (saveError) {
+              const committed = (await port.loadCheckpoint(payload.publicId, { attemptNumber: attempt.attemptNumber, batchIndex: outcomeCheckpointIndex }))[0];
+              const exactCommitted = committed?.inputHash === repairFeedback.feedbackHash
+                && JSON.stringify(stableCheckpointValue(committed.result)) === JSON.stringify(stableCheckpointValue(outcomeToSave));
+              const restored = exactCommitted
+                ? validReportQualityRepairOutcome(committed.result, repairFeedback, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys, allowedPrimaryRecoveryIdentities)
+                : null;
+              if (!committed || !restored) throw saveError;
+              repairOutcome = restored;
+              durableCheckpoints.set(outcomeCheckpointIndex, committed);
+              allDurableCheckpoints.set(`${committed.attemptNumber}:${outcomeCheckpointIndex}`, committed);
+            }
+          }
+          if (repairOutcome.published) {
+            publishedState = mergePublishedProductComparisonState(repairOutcome.published.evidence, comparison, payload.productLimit, reportReferenceTimeMs, publishedResultTargetKind);
+            comparison = publishedState.comparison;
+            screenedComparison = mergeAccumulatedPublishedIntoScreenedComparison(screenedComparison, publishedState.evidence);
+          }
+          await port.appendEvent(payload.publicId, event(progressEventKey(attempt, `quality-repair-${repairFeedback.round}-${repairOutcome.status}`), "quality", repairOutcome.status === "complete"
+            ? "The bounded comparison repair completed and its valid rows were merged into the draft."
+            : repairOutcome.status === "incomplete"
+              ? "The bounded comparison repair returned partial progress; this round is spent and the gate will decide whether another round is needed."
+              : "The bounded comparison repair transport failed; this round is spent and the gate will decide whether another round is needed.", { repairRound: repairFeedback.round, outcome: repairOutcome.status }));
+          qualityVerdict = evaluateReportDraftQuality({
+            comparison,
+            comparisonTarget: payload.productLimit,
+            primaryDomain: crawl.primaryDomain,
+            primaryProducts: primary.products,
+            referenceTimeMs: reportReferenceTimeMs,
+            repairRound: repairFeedback.round,
+          });
+          await port.appendEvent(payload.publicId, event(progressEventKey(attempt, `quality-evaluated-${repairFeedback.round}`), "quality", "The repaired draft was checked against the same deterministic quality contract.", {
+            status: qualityVerdict.status,
+            repairRound: repairFeedback.round,
+            validComparisons: qualityVerdict.validComparisonCount,
+            target: qualityVerdict.comparisonTarget,
+            missing: qualityVerdict.missingComparisonCount,
+            repairOutcome: repairOutcome.status,
+          }));
+          qualityVerdict = await sanitizeRejectedDraft(qualityVerdict, String(repairFeedback.round));
+        }
+
+        comparison = {
+          ...comparison,
+          matching: comparison.matching ? {
+            ...comparison.matching,
+            qualityGateVersion: qualityVerdict.version,
+            qualityRepairRounds,
+            ...(qualityVerdict.status !== "pass" ? {
+              gaps: [...new Set([...comparison.matching.gaps, `The report quality gate retained ${qualityVerdict.validComparisonCount} of ${qualityVerdict.comparisonTarget} requested comparisons after ${qualityRepairRounds} bounded repair round${qualityRepairRounds === 1 ? "" : "s"}.`])],
+            } : {}),
+          } : comparison.matching,
+        };
+        if (qualityVerdict.status === "pass") {
+          completedPhases.push("quality");
+          await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "quality-complete"), "quality", "The report met the requested comparison count and every hard publication invariant.", { repairs: qualityRepairRounds, comparisons: qualityVerdict.validComparisonCount }));
+        } else {
+          limitedPhases.push("quality");
+          await port.appendEvent(payload.publicId, limitedEvent(progressEventKey(attempt, "quality-limited"), "quality", "The report exhausted its bounded quality-repair loop and retained only valid, priced comparisons.", { repairs: qualityRepairRounds, comparisons: qualityVerdict.validComparisonCount, target: qualityVerdict.comparisonTarget, missing: qualityVerdict.missingComparisonCount }));
+        }
+        publishedState = mergePublishedProductComparisonState(comparison, publishedState.evidence, payload.productLimit, reportReferenceTimeMs, publishedResultTargetKind);
+        comparison = publishedState.comparison;
+      }
       const publishedCheckpointIndex = publishedResultCheckpointIndex(taskAttemptNumber);
       const publishedCheckpoint = {
         version: publishedResultTargetKind === "pairs" ? 4 : 3,
@@ -1898,7 +2447,7 @@ export async function orchestrateReport(
           allDurableCheckpoints.set(`${committed.attemptNumber}:${publishedCheckpointIndex}`, committed);
         }
       }
-      if ((comparison.matching?.resultShortfall || 0) > 0 && crawl.discovery?.productSearchCoverage?.complete !== true) {
+      if (discoveryCoverageIncomplete) {
         const coverage = crawl.discovery?.productSearchCoverage;
         const discoveryGap = coverage?.providerCircuitOpen === true
           ? `Competitor product discovery stopped after ${coverage.paidSearchesStarted || 0} paid searches because every fresh lane failed with the bounded provider category “${coverage.providerFailureCategory || "unknown"}”; automatic retries were stopped to protect usage.`

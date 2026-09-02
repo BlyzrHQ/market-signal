@@ -37,7 +37,7 @@ import {
 import { REPORT_FEEDBACK_CONSUMER, REPORT_FEEDBACK_LEASE_SECONDS } from "../../src/shared/report-feedback-contract.ts";
 
 export type ReportRunStatus = "queued" | "running" | "complete" | "limited" | "failed" | "interrupted";
-export type ReportPhase = "queued" | "crawl" | "competitors" | "brief" | "products" | "matching" | "enrichment" | "actions" | "ads" | "persistence" | "complete" | "failed" | "interrupted";
+export type ReportPhase = "queued" | "crawl" | "competitors" | "brief" | "products" | "matching" | "enrichment" | "quality" | "actions" | "ads" | "persistence" | "complete" | "failed" | "interrupted";
 
 export type D1PreparedStatementLike = DatabasePreparedStatement;
 export type D1DatabaseLike = ApplicationDatabase;
@@ -296,7 +296,7 @@ const STORAGE_UNAVAILABLE_MESSAGE = "Persistent report storage is unavailable.";
 const PUBLIC_ID_PATTERN = /^[a-f0-9]{32}$/;
 const MATCH_ID_PATTERN = /^[a-f0-9]{64}$/;
 const MAX_PUBLIC_MATCH_PAGE_SIZE = 100;
-const PHASES = new Set<ReportPhase>(["queued", "crawl", "competitors", "brief", "products", "matching", "enrichment", "actions", "ads", "persistence", "complete", "failed", "interrupted"]);
+const PHASES = new Set<ReportPhase>(["queued", "crawl", "competitors", "brief", "products", "matching", "enrichment", "quality", "actions", "ads", "persistence", "complete", "failed", "interrupted"]);
 const STATUSES = new Set<ReportRunStatus>(["queued", "running", "complete", "limited", "failed", "interrupted"]);
 const TERMINAL_REPORT_STATUSES = new Set<ReportRunStatus>(["complete", "limited", "failed", "interrupted"]);
 const schemaInitialization = new WeakMap<object, Promise<void>>();

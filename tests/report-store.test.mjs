@@ -228,13 +228,14 @@ test("report runs persist ordered idempotent events and a reloadable document", 
   assert.equal(created.primaryDomain, "noororganicfood.com");
   await appendReportEvent(created.publicId, { idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Collecting public pages.", metadata: { pages: 5 } }, new Date("2026-07-16T00:01:00.000Z"), database);
   await appendReportEvent(created.publicId, { idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Duplicate transport retry.", metadata: { pages: 5 } }, new Date("2026-07-16T00:01:01.000Z"), database);
+  await appendReportEvent(created.publicId, { idempotencyKey: "quality-evaluated", phase: "quality", status: "running", message: "Checking the draft report." }, new Date("2026-07-16T00:01:01.500Z"), database);
   await appendReportEvent(created.publicId, { idempotencyKey: "ads-started", phase: "ads", status: "running", message: "Checking attributable ads." }, new Date("2026-07-16T00:01:02.000Z"), database);
   await appendReportEvent(created.publicId, { idempotencyKey: "actions-started", phase: "actions", status: "running", message: "Drafting evidence-grounded next moves." }, new Date("2026-07-16T00:01:02.500Z"), database);
   await appendReportEvent(created.publicId, { idempotencyKey: "crawl-started", phase: "crawl", status: "running", message: "Late duplicate transport retry." }, new Date("2026-07-16T00:01:03.000Z"), database);
   await saveReportDocument(created.publicId, { blocks: [{ type: "market-profile", id: "profile" }, { type: "presentation-compaction", id: "presentation-compaction", relationalFactsAuthoritative: true, factCounts: { companies: 99, products: 99, matches: 99, ads: 99 } }] }, { status: "complete", expectedFactManifestHash: "" }, new Date("2026-07-16T00:02:00.000Z"), database);
   const reloaded = await getStoredReport(created.publicId, new Date("2026-07-16T00:03:00.000Z"), database);
   assert.equal(reloaded.run.status, "complete");
-  assert.deepEqual(reloaded.events.map((event) => event.idempotencyKey), ["run-created", "crawl-started", "ads-started", "actions-started", "report-saved"]);
+  assert.deepEqual(reloaded.events.map((event) => event.idempotencyKey), ["run-created", "crawl-started", "quality-evaluated", "ads-started", "actions-started", "report-saved"]);
   assert.deepEqual(reloaded.events[1].metadata, { pages: 5 });
   assert.equal(reloaded.document.blocks[0].type, "market-profile");
   assert.equal(reloaded.document.blocks[0].id, "profile");

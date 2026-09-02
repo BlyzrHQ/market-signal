@@ -5,8 +5,8 @@
 Represent the existing Market Signal report workflow as one callable, typed
 function that another authenticated agent can invoke and inspect. Attach a
 separate report evaluator and a bounded coding-improvement cycle without
-changing the current website, report execution behavior, billing, or customer
-data.
+changing the current website, billing, or customer data. The report runtime now
+implements the graph's bounded pre-publication quality-repair edge.
 
 This is not a company-level orchestrator. It is the graph contract for one
 function: `market-signal.report`.
@@ -19,8 +19,11 @@ flowchart LR
   input --> crawl[Crawl primary catalog]
   crawl --> search[Search comparison candidates]
   search --> retrieve[Retrieve source evidence]
-  retrieve --> publish[Publish priced comparisons]
-  publish --> benchmark[Score accepted rivals]
+  retrieve --> draft[Compose priced draft]
+  draft --> quality{Enough valid comparisons?}
+  quality -- no, rounds 1-3 --> feedback[Persist scoped feedback]
+  feedback --> search
+  quality -- yes or bounded exhaustion --> benchmark[Score accepted rivals]
   benchmark --> actions[Generate grounded actions]
   actions --> persist[Persist report and artifacts]
   persist --> output[Return typed output]
@@ -42,8 +45,9 @@ flowchart LR
 ```
 
 Only the dashed edge crosses from the customer report into the independent
-evaluation path. The only back-edge is `revert -> implement`, and its runtime
-contract enforces three distinct attempts plus the cycle budget and deadline.
+evaluation path. There are exactly two declared back-edges: `feedback -> search`
+for at most three report-repair rounds and `revert -> implement` for at most
+three distinct coding candidates plus the cycle budget and deadline.
 
 ## Existing work represented by the graph
 
@@ -51,13 +55,16 @@ contract enforces three distinct attempts plus the cycle budget and deadline.
 2. Crawl the submitted public website and collect attributable product pages.
 3. Search for rival candidates for the collected products.
 4. Retrieve candidate pages and source evidence.
-5. Publish only relevant product comparisons with supported prices.
-6. Derive rivals from the accepted comparisons and score their public shopping
+5. Compose a draft containing only attributable comparisons with supported
+   prices.
+6. Evaluate the draft deterministically; send only named product gaps through
+   up to three feedback-bound searches, then pass or publish a visible limit.
+7. Derive rivals from the accepted comparisons and score their public shopping
    experience with the same evidence model.
-7. Generate evidence-grounded actions.
-8. Persist the full facts and compact owner-private report.
-9. Return a bounded typed output and hash-bound references to larger artifacts.
-10. Evaluate the terminal report without delaying or mutating it.
+8. Generate evidence-grounded actions.
+9. Persist the full facts and compact owner-private report.
+10. Return a bounded typed output and hash-bound references to larger artifacts.
+11. Evaluate the terminal report without delaying or mutating it.
 
 ## Function boundary
 
@@ -72,8 +79,10 @@ content-hashed references.
 Every published comparison represented in the function output must have a
 supported price. A target shortfall is `limited`, not `complete`.
 
-The existing Trigger report runtime remains authoritative. This task does not
-replace its retries, checkpoints, billing, crawler, matcher, or persistence.
+The existing Trigger report runtime remains authoritative. The quality edge is
+implemented inside it with three dedicated feedback checkpoints; it does not
+replace or expand Trigger's ten task attempts, billing, crawler, matcher, or
+persistence ownership.
 
 ## Bounded improvement loop
 
@@ -101,10 +110,11 @@ human/deployment controls.
 
 ## Isolation
 
-- Work lives only on `codex/loop-graph-runtime`.
-- No website route, component, MCP tool, report worker, database schema,
-  deployment manifest, or production setting imports these modules in this
-  slice.
+- The contract-only base lives on `codex/loop-graph-runtime`; the live bounded
+  gate is implemented on `codex/report-quality-loop`.
+- No website route, component, MCP tool, database schema, deployment manifest,
+  or production setting changes in this slice. The existing report worker and
+  direct-search route import the new deterministic gate/feedback contract.
 - No paid production report is launched for this task.
 - Existing real-report evidence may be used read-only to check that the contract
   can represent a real public-domain result.
@@ -123,13 +133,16 @@ not report approval.
    domains, plan/target drift, public report paths, unbound artifacts, unknown
    cost represented as zero, and published comparisons without prices.
 2. The graph lists the current report work, returns before software improvement,
-   and contains exactly one declared improvement back-edge.
+   and contains exactly two declared bounded back-edges: report repair and
+   coding improvement.
 3. A better candidate is kept; a worse candidate restores baseline; attempt
    three terminates; attempt four cannot be represented.
 4. Duplicate candidates cannot make progress, benchmark-version drift stops for
    human review, and failed hard guardrails cannot be overridden by aggregate
    improvement.
-5. Focused tests, type checking, lint, and the existing relevant contract tests
-   pass without importing the new graph into the live website.
-6. Strict review records the website-isolation boundary and reports no blockers
-   before a draft PR is opened.
+5. Focused tests prove a short direct-search draft can reach its target and that
+   three unsuccessful repairs terminate transparently without a fourth call.
+6. Type checking, lint, build, and the existing relevant contract tests pass
+   without importing the graph contract into the live website.
+7. Strict review records the website-isolation boundary and reports no blockers
+   before merge.

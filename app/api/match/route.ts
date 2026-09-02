@@ -8,6 +8,7 @@ import { canonicalGtin, parseCanonicalQuantity, type ProductIdentifiers } from "
 import { publicHttpUrl } from "../../lib/public-url.ts";
 import { acquireReportMatchLease, loadReportMatchBatchCheckpoints, loadReportProductEntitlement, releaseReportMatchLease, replaceReportMatchBatchCheckpoint, saveReportMatchBatchCheckpoint, type ReportMatchBatchCheckpoint } from "../../lib/report-store.ts";
 import { workerOnlyResponse } from "../../lib/process-role.ts";
+import { parseReportQualityRepairFeedback } from "../../../src/shared/report-quality-gate.ts";
 
 // One primary catalog plus the complete bounded attempt wave: up to 1,200
 // product-lane sellers, 12 company-lane sellers, and 500 remembered rivals.
@@ -28,6 +29,7 @@ const DIRECT_SEARCH_CHECKPOINT_BASE = 4_000;
 const MAX_DIRECT_SEARCH_CHECKPOINTS = 1_000;
 const DIRECT_MATCH_MAX_NEW_PRIMARIES = 100;
 const DIRECT_MATCH_WORK_BUDGET_MS = 8 * 60 * 1_000;
+export const DIRECT_REPAIR_WORK_BUDGET_MS = 3 * 60 * 1_000;
 const DIRECT_MATCH_LEASE_TTL_MS = 13 * 60 * 1_000;
 
 export function directSearchCheckpointIndex(primaryIndex: number) {
@@ -299,7 +301,7 @@ export function createMatchHandler(serviceOverrides: Partial<MatchServices> = {}
   return async function matchHandler(request: Request) {
     if (!await hasValidInternalAuthorization(request.headers.get("authorization"), expectedToken)) return unauthorizedInternalResponse();
     try {
-      const body = await boundedJsonBody(request) as { publicId?: unknown; reportAttempt?: unknown; taskAttemptNumber?: unknown; reportObservedAt?: unknown; primaryDomain?: unknown; marketCountryCode?: unknown; productLimit?: unknown; catalogs?: unknown; pinnedPairs?: unknown; matchingMode?: unknown };
+      const body = await boundedJsonBody(request) as { publicId?: unknown; reportAttempt?: unknown; taskAttemptNumber?: unknown; reportObservedAt?: unknown; primaryDomain?: unknown; marketCountryCode?: unknown; productLimit?: unknown; catalogs?: unknown; pinnedPairs?: unknown; matchingMode?: unknown; repairFeedback?: unknown };
       const publicId = text(body.publicId, 32);
       const reportAttempt = Number(body.reportAttempt);
       const taskAttemptNumber = Number(body.taskAttemptNumber);
@@ -308,6 +310,8 @@ export function createMatchHandler(serviceOverrides: Partial<MatchServices> = {}
       const marketCountryCode = text(body.marketCountryCode, 2).toUpperCase();
       const directProductSearch = body.matchingMode === "direct-product-search";
       if (body.matchingMode !== undefined && !directProductSearch) return Response.json({ ok: false, error: "Unsupported product matching mode." }, { status: 400 });
+      if (body.repairFeedback !== undefined && !directProductSearch) return Response.json({ ok: false, error: "Report quality repair feedback is supported only for direct product search." }, { status: 400 });
+      const repairFeedback = body.repairFeedback === undefined ? undefined : parseReportQualityRepairFeedback(body.repairFeedback);
       if (body.pinnedPairs !== undefined && !Array.isArray(body.pinnedPairs)) return Response.json({ ok: false, error: "Pinned product pairs must be an array." }, { status: 400 });
       const catalogs = parseCatalogs(body.catalogs, primaryDomain, body.pinnedPairs);
       const pinnedPairs = parsePinnedPairs(body.pinnedPairs, catalogs, primaryDomain);
@@ -323,6 +327,10 @@ export function createMatchHandler(serviceOverrides: Partial<MatchServices> = {}
       const primaryCatalogSize = catalogs.find((catalog) => catalog.domain === primaryDomain)?.products.length || 0;
       const maxPrimaryProducts = Math.min(productBackfillPoolSize(resultTarget), primaryCatalogSize);
       if (directProductSearch) {
+        if (repairFeedback) {
+          const primaryIds = new Set(catalogs.find((catalog) => catalog.domain === primaryDomain)?.products.map((product) => product.id) || []);
+          if (!repairFeedback.primaryProductIds.every((id) => primaryIds.has(id))) return Response.json({ ok: false, error: "Report quality repair feedback references a product outside the current primary catalog." }, { status: 409 });
+        }
         const leaseOwner = hasReportAttempt ? randomBytes(16).toString("hex") : "";
         if (hasReportAttempt) {
           const lease = await services.acquireLease(publicId, { attemptNumber: reportAttempt, owner: leaseOwner, ttlMs: DIRECT_MATCH_LEASE_TTL_MS });
@@ -397,10 +405,11 @@ export function createMatchHandler(serviceOverrides: Partial<MatchServices> = {}
           const comparison = await services.buildDirect(primaryDomain, catalogs, {
             resultTarget,
             maxPrimaryProducts,
-            maxNewPrimaryProducts: DIRECT_MATCH_MAX_NEW_PRIMARIES,
-            maxWorkMs: DIRECT_MATCH_WORK_BUDGET_MS,
+            maxNewPrimaryProducts: repairFeedback ? Math.min(DIRECT_MATCH_MAX_NEW_PRIMARIES, repairFeedback.primaryProductIds.length) : DIRECT_MATCH_MAX_NEW_PRIMARIES,
+            maxWorkMs: repairFeedback ? DIRECT_REPAIR_WORK_BUDGET_MS : DIRECT_MATCH_WORK_BUDGET_MS,
             referenceTimeMs: Date.parse(reportObservedAt) || Date.now(),
             marketCountryCode,
+            ...(repairFeedback ? { repairFeedback } : {}),
             ...checkpointOptions,
           });
           return Response.json({ ok: true, comparison });

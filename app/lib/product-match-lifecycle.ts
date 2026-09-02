@@ -356,7 +356,7 @@ export function publishPricedProductComparison(comparison: ProductComparison, re
   const validPublicSource = (product: ProductRecord) => {
     try {
       const url = new URL(publicHttpUrl(product.sourceUrl, false));
-      return canonicalDomain(url.hostname) === canonicalDomain(product.domain);
+      return url.protocol === "https:" && canonicalDomain(url.hostname) === canonicalDomain(product.domain);
     } catch { return false; }
   };
   const validObservedAt = (value: string) => {
@@ -386,12 +386,22 @@ export function publishPricedProductComparison(comparison: ProductComparison, re
       if (!match.product) return comparison.matching?.method === "direct-web-search" ? [] : [match];
       const directSearch = comparison.matching?.method === "direct-web-search";
       if (directSearch) {
-        if (!completeObservedPrice(row.primary)) {
+        if (canonicalDomain(row.primary.domain) !== canonicalDomain(comparison.primaryDomain) || !completeObservedPrice(row.primary)) {
           suppress("missing-valid-primary-price");
           return [];
         }
         if (!completeObservedPrice(match.product)) {
           suppress("missing-valid-rival-price");
+          return [];
+        }
+        if (canonicalDomain(match.product.domain) === canonicalDomain(comparison.primaryDomain)) {
+          suppress("self-comparison");
+          return [];
+        }
+        const primaryCurrencies = observedCurrencies(row.primary);
+        const rivalCurrencies = observedCurrencies(match.product);
+        if (primaryCurrencies.size !== 1 || rivalCurrencies.size !== 1 || [...primaryCurrencies][0] !== [...rivalCurrencies][0]) {
+          suppress("incompatible-price-currency");
           return [];
         }
         return [{ ...match, publication: { priceEligible: true } }];

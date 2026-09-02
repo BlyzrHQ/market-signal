@@ -1,4 +1,5 @@
-export const MARKET_SIGNAL_LOOP_GRAPH_VERSION = "1" as const;
+export const MARKET_SIGNAL_LOOP_GRAPH_VERSION = "2" as const;
+export const MARKET_SIGNAL_MAX_REPORT_REPAIR_ROUNDS = 3 as const;
 export const MARKET_SIGNAL_MAX_IMPROVEMENT_ATTEMPTS = 3 as const;
 
 export type MarketSignalLoopNode = {
@@ -19,6 +20,7 @@ export type MarketSignalLoopEdge = {
 export const MARKET_SIGNAL_LOOP_GRAPH = {
   id: "market-signal.callable-loop",
   version: MARKET_SIGNAL_LOOP_GRAPH_VERSION,
+  maximumReportRepairRounds: MARKET_SIGNAL_MAX_REPORT_REPAIR_ROUNDS,
   maximumImprovementAttempts: MARKET_SIGNAL_MAX_IMPROVEMENT_ATTEMPTS,
   nodes: [
     { id: "input.validate", kind: "input", owner: "market-signal", description: "Validate one typed domain-to-report request." },
@@ -26,6 +28,8 @@ export const MARKET_SIGNAL_LOOP_GRAPH = {
     { id: "comparison.search", kind: "work", owner: "market-signal", description: "Search for rival candidates for the collected products." },
     { id: "candidate.retrieve", kind: "work", owner: "market-signal", description: "Read candidate product pages and source evidence." },
     { id: "comparison.publish", kind: "work", owner: "market-signal", description: "Publish only relevant comparisons with supported prices." },
+    { id: "report.quality_evaluate", kind: "evaluation", owner: "evaluator", description: "Check target fill and hard price, source, currency, identity, and count invariants before persistence." },
+    { id: "report.quality_feedback", kind: "state", owner: "evaluator", description: "Persist one hash-bound, product-scoped repair request without changing the Trigger retry counter." },
     { id: "rival.benchmark", kind: "work", owner: "market-signal", description: "Score rivals found in accepted comparisons against the same evidence model." },
     { id: "actions.generate", kind: "work", owner: "market-signal", description: "Generate evidence-grounded next moves." },
     { id: "report.persist", kind: "state", owner: "market-signal", description: "Persist hash-bound facts, report artifacts, and limitations." },
@@ -46,7 +50,11 @@ export const MARKET_SIGNAL_LOOP_GRAPH = {
     { from: "catalog.crawl", to: "comparison.search", on: "catalog_ready", guard: null, loopBack: false },
     { from: "comparison.search", to: "candidate.retrieve", on: "candidates_found", guard: null, loopBack: false },
     { from: "candidate.retrieve", to: "comparison.publish", on: "evidence_ready", guard: null, loopBack: false },
-    { from: "comparison.publish", to: "rival.benchmark", on: "priced_comparisons_ready", guard: "emptyPublishedPriceCount = 0", loopBack: false },
+    { from: "comparison.publish", to: "report.quality_evaluate", on: "draft_ready", guard: "emptyPublishedPriceCount = 0", loopBack: false },
+    { from: "report.quality_evaluate", to: "rival.benchmark", on: "pass", guard: "validComparisonCount = comparisonTarget", loopBack: false },
+    { from: "report.quality_evaluate", to: "report.quality_feedback", on: "quantity_deficient", guard: "repairRound < 3 and eligibleRepairProducts > 0", loopBack: false },
+    { from: "report.quality_feedback", to: "comparison.search", on: "repair_requested", guard: "repairRound <= 3 and feedbackHash is distinct", loopBack: true },
+    { from: "report.quality_evaluate", to: "rival.benchmark", on: "repair_exhausted", guard: "report status is limited and no invalid comparison is persisted", loopBack: false },
     { from: "rival.benchmark", to: "actions.generate", on: "scores_ready", guard: null, loopBack: false },
     { from: "actions.generate", to: "report.persist", on: "report_ready", guard: null, loopBack: false },
     { from: "report.persist", to: "output.return", on: "terminal_saved", guard: null, loopBack: false },
@@ -76,8 +84,11 @@ export function validateMarketSignalLoopGraph() {
     if (!nodeSet.has(edge.from) || !nodeSet.has(edge.to)) issues.push(`edge ${edge.from}->${edge.to} references an unknown node`);
   }
   const loopEdges = MARKET_SIGNAL_LOOP_GRAPH.edges.filter((edge) => edge.loopBack);
-  if (loopEdges.length !== 1 || loopEdges[0]?.from !== "candidate.revert" || loopEdges[0]?.to !== "candidate.implement") issues.push("the graph must have exactly one declared improvement back-edge");
-  if (MARKET_SIGNAL_LOOP_GRAPH.maximumImprovementAttempts !== 3 || loopEdges[0]?.guard !== "attemptNumber < 3 and next candidateHash is distinct") issues.push("the improvement loop must be bounded to three distinct attempts");
+  const reportRepairEdge = loopEdges.find((edge) => edge.from === "report.quality_feedback" && edge.to === "comparison.search");
+  const improvementEdge = loopEdges.find((edge) => edge.from === "candidate.revert" && edge.to === "candidate.implement");
+  if (loopEdges.length !== 2 || !reportRepairEdge || !improvementEdge) issues.push("the graph must declare exactly one report-repair back-edge and one improvement back-edge");
+  if (MARKET_SIGNAL_LOOP_GRAPH.maximumReportRepairRounds !== 3 || reportRepairEdge?.guard !== "repairRound <= 3 and feedbackHash is distinct") issues.push("the report-quality loop must be bounded to three hash-distinct repair rounds");
+  if (MARKET_SIGNAL_LOOP_GRAPH.maximumImprovementAttempts !== 3 || improvementEdge?.guard !== "attemptNumber < 3 and next candidateHash is distinct") issues.push("the improvement loop must be bounded to three distinct attempts");
 
   const adjacency = new Map<string, string[]>();
   for (const nodeId of nodeIds) adjacency.set(nodeId, []);

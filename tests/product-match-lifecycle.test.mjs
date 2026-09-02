@@ -234,7 +234,7 @@ test("direct search publishes every priced result and omits empty or zero-price 
   const empty = { ...priced, product: product("empty", "rival.test") };
   const zero = { ...priced, product: product("zero", "rival.test") };
   primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
-  priced.product.priceSignals = [{ raw: "GBP 8", currency: "GBP", amount: 8 }];
+  priced.product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
   zero.product.priceSignals = [{ raw: "USD 0", currency: "USD", amount: 0 }];
   candidate.rows[0].matches = [priced, empty, zero];
 
@@ -245,6 +245,27 @@ test("direct search publishes every priced result and omits empty or zero-price 
   assert.equal(published.coverage.assignedPairCount, 1);
   assert.equal(published.matching.publication.reasons["missing-valid-rival-price"], 2);
   assert.ok(published.rows[0].matches.every((match) => !match.excludedProduct));
+});
+
+test("direct search drops cross-currency and self-domain results before report quality evaluation", () => {
+  const candidate = comparison({ selected: ["p1"], assessed: ["p1"], rows: [row("p1", "cross-currency")], accepted: 2, method: "direct-web-search" });
+  candidate.rows[0].primary.priceSignals = [{ raw: "USD 10", currency: "USD", amount: 10 }];
+  const crossCurrency = candidate.rows[0].matches[0];
+  crossCurrency.product.priceSignals = [{ raw: "GBP 8", currency: "GBP", amount: 8 }];
+  const self = structuredClone(crossCurrency);
+  self.domain = candidate.primaryDomain;
+  self.product.domain = candidate.primaryDomain;
+  self.product.id = "self";
+  self.product.sourceUrl = `https://${candidate.primaryDomain}/products/self`;
+  self.product.priceSignals = [{ raw: "USD 9", currency: "USD", amount: 9 }];
+  candidate.rows[0].matches = [crossCurrency, self];
+
+  const published = publishPricedProductComparison(candidate);
+
+  assert.equal(published.coverage.assignedPairCount, 0);
+  assert.equal(published.rows[0].matches.length, 0);
+  assert.equal(published.matching.publication.reasons["incompatible-price-currency"], 1);
+  assert.equal(published.matching.publication.reasons["self-comparison"], 1);
 });
 
 test("the final publication gate excludes cross-currency product prices without FX conversion", () => {
