@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { competitorInvestigationComplete, finalizedComparisonTargetCoverage, finalizedDiscoveryCoverage, investigationGapSourceUrl, MAX_PRIMARY_CATALOG_PRODUCTS, rememberedReverificationFailures, resolvePrimaryDiscoveryPolicy, selectComparisonTarget, verifiedExactMatchHints, verifyDiscoveredCompetitor, verifyDiscoveredCompetitorWithInferredLeads, verifyInferredProductLead, verifyInferredProductLeads } from "../app/api/crawl/route.ts";
+import { competitorInvestigationComplete, finalizedComparisonTargetCoverage, finalizedDiscoveryCoverage, investigationGapSourceUrl, MAX_PRIMARY_CATALOG_PRODUCTS, rememberedReverificationFailures, resolvePrimaryDiscoveryPolicy, selectComparisonTarget, shouldSkipLegacyCompetitorDiscovery, verifiedExactMatchHints, verifyDiscoveredCompetitor, verifyDiscoveredCompetitorWithInferredLeads, verifyInferredProductLead, verifyInferredProductLeads } from "../app/api/crawl/route.ts";
 import { resolveVerificationMarket } from "../app/lib/competitor-verification.ts";
 
 function product(domain, name) {
@@ -89,6 +89,13 @@ function rememberedCandidate() {
 
 test("the primary catalog screening bound is independent of the 20-result publication target", () => {
   assert.equal(MAX_PRIMARY_CATALOG_PRODUCTS, 1_000);
+});
+
+test("direct product search owns discovery only for product-overlap comparison reports", () => {
+  assert.equal(shouldSkipLegacyCompetitorDiscovery(true, true), true);
+  assert.equal(shouldSkipLegacyCompetitorDiscovery(true, false), false);
+  assert.equal(shouldSkipLegacyCompetitorDiscovery(false, true), false);
+  assert.equal(shouldSkipLegacyCompetitorDiscovery(false, false), false);
 });
 
 test("route policy keeps ecommerce overlap mandatory when discovery is unavailable", () => {

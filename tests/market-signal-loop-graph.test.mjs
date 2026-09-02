@@ -56,7 +56,7 @@ function validOutput(overrides = {}) {
       { kind: "report", schemaVersion: "report_v1", reference: `report:${"a".repeat(32)}`, contentHash: hash("b"), mediaType: "application/json", recordCount: 1 },
       { kind: "comparisons", schemaVersion: "comparisons_v1", reference: `report-matches:${"a".repeat(32)}`, contentHash: hash("c"), mediaType: "application/json", recordCount: 20 },
     ],
-    metrics: { comparisonTarget: 20, publishedComparisons: 20, pricedComparisons: 20, competitorCount: 5, usageStatus: "known", costMicrousd: 20_000, durationMs: 120_000 },
+    metrics: { comparisonTarget: 20, publishedComparisons: 20, pricedComparisons: 20, competitorCount: 5, repairRounds: 0, usageStatus: "known", costMicrousd: 20_000, durationMs: 120_000 },
     evaluation: { status: "pending", evaluationId: null, evaluatorVersion: null, resultHash: null },
     failure: null,
     startedAt: "2026-09-02T00:00:00.000Z",
@@ -177,6 +177,7 @@ test("stored production evidence for a real limited report maps into the callabl
       publishedComparisons: report.acceptedPricedMatches,
       pricedComparisons: report.acceptedPricedMatches,
       competitorCount: acceptedCompetitorCount,
+      repairRounds: 0,
       usageStatus: "unknown",
       costMicrousd: null,
       durationMs: report.runtimeSeconds * 1_000,
@@ -189,12 +190,19 @@ test("stored production evidence for a real limited report maps into the callabl
   assert.equal(output.metrics.competitorCount, 1);
 });
 
-test("the graph has one declared back-edge bounded to three attempts", () => {
+test("the graph has two independently bounded back-edges", () => {
   assert.deepEqual(validateMarketSignalLoopGraph(), { valid: true, issues: [] });
+  assert.equal(MARKET_SIGNAL_LOOP_GRAPH.maximumReportRepairRounds, 3);
   assert.equal(MARKET_SIGNAL_LOOP_GRAPH.maximumImprovementAttempts, 3);
   assert.deepEqual(MARKET_SIGNAL_LOOP_GRAPH.edges.filter((edge) => edge.loopBack).map((edge) => [edge.from, edge.to, edge.guard]), [
+    ["report.quality_feedback", "comparison.search", "repairRound <= 3 and feedbackHash is distinct"],
     ["candidate.revert", "candidate.implement", "attemptNumber < 3 and next candidateHash is distinct"],
   ]);
+});
+
+test("callable outputs expose a bounded report repair count", () => {
+  assert.equal(parseMarketSignalLoopOutput(validOutput({ metrics: { ...validOutput().metrics, repairRounds: 3 } })).metrics.repairRounds, 3);
+  assert.throws(() => parseMarketSignalLoopOutput(validOutput({ metrics: { ...validOutput().metrics, repairRounds: 4 } })), /cannot exceed three/);
 });
 
 test("a measurably better candidate is kept and ends the cycle", () => {

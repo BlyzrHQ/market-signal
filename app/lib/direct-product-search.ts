@@ -5,6 +5,7 @@ import { hasComparablePublicPrice, type ProductComparison, type ProductEnrichmen
 import { publishedRivalConstraintKeys } from "./product-match-lifecycle.ts";
 import { publicHttpUrl } from "./public-url.ts";
 import { enrichProductTargets, type ProductEnrichmentCoverage } from "./storefront-product-enrichment.ts";
+import type { ReportQualityRepairFeedback } from "../../src/shared/report-quality-gate.ts";
 
 export type DirectProductSearchCheckpointKey = {
   primaryIndex: number;
@@ -42,7 +43,7 @@ export type DirectProductSearchCheckpointRecord = {
   resultHash: string;
 };
 
-type DirectSearch = (primaryDomain: string, primary: ProductRecord, marketCountryCode?: string) => Promise<DirectProductPageSearchResult>;
+type DirectSearch = (primaryDomain: string, primary: ProductRecord, marketCountryCode?: string, repairFeedback?: ReportQualityRepairFeedback) => Promise<DirectProductPageSearchResult>;
 type DirectEnrichment = (targets: ProductEnrichmentTarget[], maxPages?: number) => Promise<{ products: ProductRecord[]; coverage: ProductEnrichmentCoverage }>;
 
 export type DirectProductSearchOptions = {
@@ -52,6 +53,7 @@ export type DirectProductSearchOptions = {
   maxWorkMs?: number;
   marketCountryCode?: string;
   referenceTimeMs?: number;
+  repairFeedback?: ReportQualityRepairFeedback;
   now?: () => number;
   search?: DirectSearch;
   enrich?: DirectEnrichment;
@@ -71,14 +73,15 @@ function canonicalProductUrl(value: string, expectedDomain?: string) {
   }
 }
 
-function searchInputHash(primaryDomain: string, primary: ProductRecord, marketCountryCode: string) {
+function searchInputHash(primaryDomain: string, primary: ProductRecord, marketCountryCode: string, repairFeedback?: ReportQualityRepairFeedback) {
   return createHash("sha256").update(JSON.stringify({
-    version: 1,
+    version: repairFeedback ? 2 : 1,
     primaryDomain: canonicalDomain(primaryDomain),
     primaryProductId: primary.id,
     primarySourceUrl: canonicalProductUrl(primary.sourceUrl, primaryDomain),
     primaryName: primary.name,
     marketCountryCode,
+    ...(repairFeedback ? { repairFeedbackHash: repairFeedback.feedbackHash } : {}),
   })).digest("hex");
 }
 
@@ -257,6 +260,11 @@ export async function buildDirectProductSearchComparison(primaryDomainValue: str
   const enrich = options.enrich || enrichProductTargets;
   const maxNewPrimaryProducts = Math.max(1, Math.min(100, Math.floor(options.maxNewPrimaryProducts ?? 100)));
   const maxWorkMs = Math.max(1_000, Math.min(10 * 60 * 1_000, Math.floor(options.maxWorkMs ?? 8 * 60 * 1_000)));
+  const repairPrimaryIds = options.repairFeedback ? new Set(options.repairFeedback.primaryProductIds) : null;
+  const excludedRivalSourceUrls = new Set(options.repairFeedback?.excludedRivalSourceUrls || []);
+  const searchProducts = primaryProducts
+    .map((primary, primaryIndex) => ({ primary, primaryIndex }))
+    .filter(({ primary }) => !repairPrimaryIds || repairPrimaryIds.has(primary.id));
   const rows: ProductComparison["rows"] = [];
   const processedPrimaryIds: string[] = [];
   const gaps: string[] = [];
@@ -298,15 +306,15 @@ export async function buildDirectProductSearchComparison(primaryDomainValue: str
     if (matches.length) rows.push({ primary, matches });
   };
 
-  for (let primaryIndex = 0; primaryIndex < primaryProducts.length && seenPairs.size < resultTarget; primaryIndex += 1) {
-    const primary = primaryProducts[primaryIndex];
+  for (const { primary, primaryIndex } of searchProducts) {
+    if (seenPairs.size >= resultTarget) break;
     // A row can never meet the user's no-empty-price contract if the submitted
     // product itself has no displayable observed price. Do not spend search on it.
     // Search checkpoints and queries must remain bound to a priced,
     // attributable public HTTPS product page. Canonicalization returns an
     // empty string for HTTP, off-domain, private, or otherwise unsafe sources.
     if (!searchablePrimaryProduct(primary, referenceTimeMs)) continue;
-    const key = { primaryIndex, inputHash: searchInputHash(primaryDomain, primary, marketCountryCode) };
+    const key = { primaryIndex, inputHash: searchInputHash(primaryDomain, primary, marketCountryCode, options.repairFeedback) };
     const loaded = options.loadSearchCheckpoint ? await options.loadSearchCheckpoint(key) : null;
     const loadedResultHash = loaded && /^[a-f0-9]{64}$/.test(loaded.resultHash) ? loaded.resultHash : undefined;
     // Checkpoint rows are an optimization, not authority over the current
@@ -324,14 +332,14 @@ export async function buildDirectProductSearchComparison(primaryDomainValue: str
     newPrimaryProducts += 1;
     let resultHash = checkpoint ? loadedResultHash : undefined;
     if (!checkpoint) {
-      const result = await search(primaryDomain, primary, marketCountryCode);
+      const result = await search(primaryDomain, primary, marketCountryCode, options.repairFeedback);
       checkpoint = validSearchCheckpoint({
         version: 1,
         primaryProductId: primary.id,
         primarySourceUrl: primary.sourceUrl,
         completed: result.completed,
         queries: result.queries,
-        candidates: result.candidates,
+        candidates: result.candidates.filter((candidate) => !excludedRivalSourceUrls.has(canonicalProductUrl(candidate.sourceUrl, candidate.domain))),
         ...(result.gap ? { gap: result.gap } : {}),
       }, primary, referenceTimeMs);
       if (!checkpoint) throw new Error("Direct product search returned an invalid bounded result.");
@@ -390,7 +398,7 @@ export async function buildDirectProductSearchComparison(primaryDomainValue: str
 
   const assignedPairCount = rows.reduce((total, row) => total + row.matches.length, 0);
   const comparisonDomains = [...new Set(rows.flatMap((row) => row.matches.map((match) => canonicalDomain(match.domain))))];
-  const eligiblePrimaryCount = primaryProducts.filter((product) => searchablePrimaryProduct(product, referenceTimeMs)).length;
+  const eligiblePrimaryCount = searchProducts.filter(({ primary }) => searchablePrimaryProduct(primary, referenceTimeMs)).length;
   const exhausted = processedPrimaryIds.length >= eligiblePrimaryCount;
   const resultShortfall = Math.max(0, resultTarget - assignedPairCount);
   return {

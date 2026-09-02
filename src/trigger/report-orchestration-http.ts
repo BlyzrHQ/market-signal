@@ -71,6 +71,7 @@ export const OPERATION_BUDGETS_MS = {
   rivalBenchmark: 90_000,
   brief: 90_000,
   match: 750_000,
+  matchRepair: 240_000,
   enrich: 120_000,
   actions: 35_000,
 } as const;
@@ -84,6 +85,7 @@ export const MAX_BOUNDED_CHECKPOINT_READ_PAGES_ON_CRITICAL_PATH = 72;
 // Read + preflight + crawl events + crawl + longest parallel lane
 // (matching-start + two bounded match calls, where the second replays durable
 // judge checkpoints and only requests missing work, + enrichment-start + bounded
+// three bounded quality-repair calls, +
 // bounded range-projected durable-checkpoint reads + enrichment batch waves and their bounded
 // save/ambiguous-save recovery callbacks +
 // enrichment-complete + actions-start + actions + actions-complete +
@@ -94,6 +96,7 @@ export const WORST_CASE_CRITICAL_PATH_MS = (OPERATION_BUDGETS_MS.report * (24 + 
   + OPERATION_BUDGETS_MS.crawl
   + (OPERATION_BUDGETS_MS.rivalBenchmark * Math.ceil(MAX_RIVAL_BENCHMARK_DOMAINS / RIVAL_BENCHMARK_CONCURRENCY))
   + (OPERATION_BUDGETS_MS.match * 2)
+  + (OPERATION_BUDGETS_MS.matchRepair * 3)
   + (OPERATION_BUDGETS_MS.enrich * MAX_FINAL_ENRICHMENT_BATCH_WAVES)
   + OPERATION_BUDGETS_MS.actions;
 
@@ -382,7 +385,8 @@ export function createReportOrchestrationHttpPort(configuration: { appOrigin: st
       return await call(PATHS.brief, "Market brief", OPERATION_BUDGETS_MS.brief, input);
     },
     async match(input) {
-      const payload = requiredObject<Awaited<ReturnType<ReportOrchestrationPort["match"]>>>(await call(PATHS.match, "Product matching", OPERATION_BUDGETS_MS.match, input), "Product matching");
+      const timeoutMs = input.repairFeedback ? OPERATION_BUDGETS_MS.matchRepair : OPERATION_BUDGETS_MS.match;
+      const payload = requiredObject<Awaited<ReturnType<ReportOrchestrationPort["match"]>>>(await call(PATHS.match, "Product matching", timeoutMs, input), "Product matching");
       if (payload.ok !== true) throw new OrchestrationHttpError("Product matching", 422, false);
       return payload;
     },

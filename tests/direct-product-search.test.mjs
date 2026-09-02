@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 
 import { buildDirectProductSearchComparison } from "../app/lib/direct-product-search.ts";
 import { mergePublishedProductComparisonState } from "../app/lib/product-match-lifecycle.ts";
+import { evaluateReportDraftQuality } from "../src/shared/report-quality-gate.ts";
 
 const observedAt = "2026-08-23T10:00:00.000Z";
 
@@ -382,4 +383,80 @@ test("an invalid durable priced outcome is repaired from fresh bounded search", 
   assert.equal(saves[1].expectedResultHash, createHash("sha256").update(JSON.stringify(saves[0].checkpoint)).digest("hex"));
   assert.equal(result.coverage.assignedPairCount, 0);
   assert.equal(result.matching?.resultShortfallReason, "bounded-candidate-pool-exhausted");
+});
+
+test("quality repair searches only named primaries, excludes accepted URLs, and replays without another search", async () => {
+  const primaryA = product("shop.test", "primary-a", "Apple Juice 1L", 3.5);
+  const primaryB = product("shop.test", "primary-b", "Banana Juice 1L", 4);
+  const acceptedUrl = "https://seller.test/products/apple";
+  const freshUrl = "https://other.test/products/banana";
+  const records = new Map();
+  const checkpointKeys = [];
+  let searches = 0;
+  const callbacks = {
+    loadSearchCheckpoint: async (key) => records.get(key.inputHash) || null,
+    saveSearchCheckpoint: async (key, checkpoint, expectedResultHash) => {
+      checkpointKeys.push(key.inputHash);
+      const existing = records.get(key.inputHash);
+      if (expectedResultHash !== undefined) assert.equal(existing?.resultHash, expectedResultHash);
+      const record = { result: structuredClone(checkpoint), resultHash: createHash("sha256").update(JSON.stringify(checkpoint)).digest("hex") };
+      records.set(key.inputHash, record);
+      return record;
+    },
+  };
+  const search = async (_domain, primary, _market, feedback) => {
+    searches += 1;
+    if (primary.id === primaryA.id) {
+      assert.equal(feedback, undefined);
+      return { completed: true, queries: [primary.name], candidates: [{ domain: "seller.test", sourceUrl: acceptedUrl, title: primary.name }] };
+    }
+    assert.equal(primary.id, primaryB.id);
+    assert.equal(feedback.round, 1);
+    return { completed: true, queries: [primary.name], candidates: [
+      { domain: "seller.test", sourceUrl: acceptedUrl, title: "Repeated Apple Juice" },
+      { domain: "other.test", sourceUrl: freshUrl, title: primary.name },
+    ] };
+  };
+  const enrich = async (targets) => ({
+    products: targets.map((target) => product(target.domain, target.productId, target.expectedName, 5, "GBP", target.sourceUrl)),
+    coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: targets.length, gaps: [] },
+  });
+
+  const base = await buildDirectProductSearchComparison("shop.test", [{ domain: "shop.test", products: [primaryA, primaryB] }], {
+    resultTarget: 2,
+    maxNewPrimaryProducts: 1,
+    referenceTimeMs: Date.parse(observedAt),
+    search,
+    enrich,
+    ...callbacks,
+  });
+  const verdict = evaluateReportDraftQuality({
+    comparison: base,
+    comparisonTarget: 2,
+    primaryDomain: "shop.test",
+    primaryProducts: [primaryB],
+    referenceTimeMs: Date.parse(observedAt),
+  });
+  assert.equal(verdict.status, "repair");
+  assert.deepEqual(verdict.feedback.primaryProductIds, [primaryB.id]);
+  assert.deepEqual(verdict.feedback.excludedRivalSourceUrls, [acceptedUrl]);
+
+  const repairOptions = {
+    resultTarget: 2,
+    maxNewPrimaryProducts: 1,
+    referenceTimeMs: Date.parse(observedAt),
+    repairFeedback: verdict.feedback,
+    search,
+    enrich,
+    ...callbacks,
+  };
+  const repaired = await buildDirectProductSearchComparison("shop.test", [{ domain: "shop.test", products: [primaryA, primaryB] }], repairOptions);
+  const replay = await buildDirectProductSearchComparison("shop.test", [{ domain: "shop.test", products: [primaryA, primaryB] }], repairOptions);
+
+  assert.equal(searches, 2);
+  assert.equal(new Set(checkpointKeys).size, 2);
+  assert.equal(repaired.coverage.assignedPairCount, 1);
+  assert.equal(replay.coverage.assignedPairCount, 1);
+  assert.deepEqual(repaired.rows.map((row) => row.primary.id), [primaryB.id]);
+  assert.deepEqual(repaired.rows[0].matches.map((match) => match.product.sourceUrl), [freshUrl]);
 });

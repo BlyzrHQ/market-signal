@@ -165,6 +165,8 @@ export type ProductComparison = {
     publishedPrimaryProducts?: number;
     resultShortfall?: number;
     resultShortfallReason?: "bounded-candidate-pool-exhausted" | "processing-incomplete";
+    qualityGateVersion?: string;
+    qualityRepairRounds?: number;
     candidatePairsAssessed: number;
     retrievalPairsScored: number;
     judgeCalls: number;

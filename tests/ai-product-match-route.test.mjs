@@ -1,7 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { createMatchHandler, directSearchCheckpointIndex, MAX_MATCH_BODY_BYTES, parseCatalogs, parsePinnedPairs, persistedCheckpointIndex, productAnalysisBudgetMs, productAnalysisConcurrency, productAnalysisLimit, productBackfillPoolSize } from "../app/api/match/route.ts";
+import { createMatchHandler, directSearchCheckpointIndex, DIRECT_REPAIR_WORK_BUDGET_MS, MAX_MATCH_BODY_BYTES, parseCatalogs, parsePinnedPairs, persistedCheckpointIndex, productAnalysisBudgetMs, productAnalysisConcurrency, productAnalysisLimit, productBackfillPoolSize } from "../app/api/match/route.ts";
+
+function repairFeedback(primaryProductIds = ["primary"]) {
+  const value = {
+    version: 1,
+    round: 1,
+    reasonCodes: ["comparison_target_shortfall"],
+    primaryProductIds,
+    excludedRivalSourceUrls: [],
+  };
+  return { ...value, feedbackHash: createHash("sha256").update(JSON.stringify(value)).digest("hex") };
+}
 
 test("matching checkpoints have disjoint task-attempt namespaces", () => {
   assert.equal(persistedCheckpointIndex(1, 0), 1_400);
@@ -234,6 +245,77 @@ test("an overlapping direct route is rejected before any paid comparison work", 
   assert.equal(response.status, 425);
   assert.equal(response.headers.get("retry-after"), "5");
   assert.equal(directCalls, 0);
+});
+
+test("the direct route rejects malformed quality feedback before paid work", async () => {
+  const token = "direct-route-token-that-is-long-enough";
+  let directCalls = 0;
+  const handler = createMatchHandler({
+    async buildDirect() { directCalls += 1; return {}; },
+    async loadEntitlement() { return { plan: "starter", productLimit: 20, reportObservedAt: "2026-08-23T10:00:00.000Z" }; },
+  }, token);
+  const response = await handler(new Request("https://signal.test/api/match", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      publicId: "d".repeat(32), reportAttempt: 1, taskAttemptNumber: 1, reportObservedAt: "2026-08-23T10:00:00.000Z",
+      primaryDomain: "shop.test", productLimit: 20, matchingMode: "direct-product-search",
+      repairFeedback: { ...repairFeedback(), feedbackHash: "f".repeat(64) },
+      catalogs: [{ domain: "shop.test", products: [{ id: "primary", name: "Honey", sourceUrl: "https://shop.test/products/primary" }] }],
+    }),
+  }));
+  assert.equal(response.status, 400);
+  assert.equal(directCalls, 0);
+});
+
+test("the direct route rejects quality feedback outside the current primary catalog", async () => {
+  const token = "direct-route-token-that-is-long-enough";
+  let directCalls = 0;
+  const handler = createMatchHandler({
+    async buildDirect() { directCalls += 1; return {}; },
+    async loadEntitlement() { return { plan: "starter", productLimit: 20, reportObservedAt: "2026-08-23T10:00:00.000Z" }; },
+  }, token);
+  const response = await handler(new Request("https://signal.test/api/match", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      publicId: "d".repeat(32), reportAttempt: 1, taskAttemptNumber: 1, reportObservedAt: "2026-08-23T10:00:00.000Z",
+      primaryDomain: "shop.test", productLimit: 20, matchingMode: "direct-product-search",
+      repairFeedback: repairFeedback(["outside-catalog"]),
+      catalogs: [{ domain: "shop.test", products: [{ id: "primary", name: "Honey", sourceUrl: "https://shop.test/products/primary" }] }],
+    }),
+  }));
+  assert.equal(response.status, 409);
+  assert.equal(directCalls, 0);
+});
+
+test("the direct route forwards valid quality feedback with a smaller bounded repair budget", async () => {
+  const token = "direct-route-token-that-is-long-enough";
+  let receivedOptions;
+  const handler = createMatchHandler({
+    async buildDirect(_domain, _catalogs, options) {
+      receivedOptions = options;
+      return { ok: true };
+    },
+    async loadCheckpoints() { return []; },
+    async loadEntitlement() { return { plan: "starter", productLimit: 20, reportObservedAt: "2026-08-23T10:00:00.000Z" }; },
+    async acquireLease() { return { acquired: true, expiresAt: "2026-08-23T10:13:00.000Z" }; },
+    async releaseLease() {},
+  }, token);
+  const feedback = repairFeedback(["primary"]);
+  const response = await handler(new Request("https://signal.test/api/match", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      publicId: "d".repeat(32), reportAttempt: 1, taskAttemptNumber: 1, reportObservedAt: "2026-08-23T10:00:00.000Z",
+      primaryDomain: "shop.test", productLimit: 20, matchingMode: "direct-product-search", repairFeedback: feedback,
+      catalogs: [{ domain: "shop.test", products: [{ id: "primary", name: "Honey", sourceUrl: "https://shop.test/products/primary" }] }],
+    }),
+  }));
+  assert.equal(response.status, 200);
+  assert.equal(receivedOptions.maxWorkMs, DIRECT_REPAIR_WORK_BUDGET_MS);
+  assert.equal(receivedOptions.maxNewPrimaryProducts, 1);
+  assert.deepEqual(receivedOptions.repairFeedback, feedback);
 });
 
 test("AI matching input keeps a broad but bounded first-party catalog", () => {

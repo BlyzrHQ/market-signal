@@ -1315,6 +1315,10 @@ export function buildDocument(results: DomainCrawl[], primaryDomain: string, dis
   return { version: "1", generatedAt: new Date().toISOString(), blocks };
 }
 
+export function shouldSkipLegacyCompetitorDiscovery(directProductSearch: boolean, comparisonTargetMode: boolean) {
+  return directProductSearch && comparisonTargetMode;
+}
+
 export async function POST(request: Request) {
   const roleResponse = workerOnlyResponse();
   if (roleResponse) return roleResponse;
@@ -1463,7 +1467,7 @@ export async function POST(request: Request) {
       : "";
     const discoveryPolicy = resolvePrimaryDiscoveryPolicy(primary);
     const comparisonTargetMode = discoveryPolicy.requireProductOverlap;
-    if (directProductSearch && comparisonTargetMode) {
+    if (shouldSkipLegacyCompetitorDiscovery(directProductSearch, comparisonTargetMode)) {
       const discovery: DiscoveryResult = {
         available: true,
         provider: "unavailable",

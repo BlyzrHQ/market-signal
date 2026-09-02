@@ -17,11 +17,15 @@ import {
   PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX,
   ACTION_PLAN_CHECKPOINT_BATCH_INDEX,
   RIVAL_BENCHMARK_CHECKPOINT_BATCH_INDEX,
+  REPORT_QUALITY_FEEDBACK_CHECKPOINT_BATCH_INDEX_BASE,
+  REPORT_QUALITY_OUTCOME_CHECKPOINT_BATCH_INDEX_BASE,
   MAX_OPERATION_TIMEOUT_MS,
   comparisonWithinPrimaryCatalog,
   orchestrateReport,
   pricedResultEnrichmentBudget,
   productEvidenceReferenceTimeMs,
+  reportQualityFeedbackCheckpointIndex,
+  reportQualityOutcomeCheckpointIndex,
   selectRivalBenchmarkDomains,
   validEnrichmentCheckpoint,
   validPublishedResultCheckpoint,
@@ -251,6 +255,56 @@ function comparison({ withPair = false, count = withPair ? 20 : 1 } = {}) {
       attempts: 1,
     },
   };
+}
+
+function directComparisonSlice(source, start, end, resultTarget = 20) {
+  const value = structuredClone(source);
+  value.rows = value.rows.slice(start, end);
+  const pairCount = value.rows.reduce((total, row) => total + row.matches.length, 0);
+  value.comparisonDomains = [...new Set(value.rows.flatMap((row) => row.matches.map((match) => match.domain)))];
+  value.unmatched = [];
+  value.coverage = {
+    ...value.coverage,
+    primaryProductsScanned: value.rows.length,
+    primaryProductFamiliesCompared: value.rows.length,
+    competitorProductsAvailable: pairCount,
+    competitorProductsScanned: pairCount,
+    assignedPairCount: pairCount,
+    verifiedPairCount: pairCount,
+    rowsReturned: value.rows.length,
+    rowLimit: resultTarget,
+    truncated: false,
+  };
+  const primaryIds = value.rows.map((row) => row.primary.id);
+  value.matching = {
+    ...value.matching,
+    method: "direct-web-search",
+    embeddingModel: "",
+    promptVersion: "direct-product-search-v1",
+    primaryProductsAssessed: value.rows.length,
+    primaryProductsScreened: value.coverage.primaryProductsAvailable,
+    resultTarget,
+    publishedPairs: pairCount,
+    publishedPrimaryProducts: value.rows.length,
+    resultShortfall: Math.max(0, resultTarget - pairCount),
+    resultShortfallReason: "bounded-candidate-pool-exhausted",
+    candidatePairsAssessed: pairCount,
+    retrievalPairsScored: 0,
+    judgeCalls: 0,
+    embeddingCalls: 0,
+    gaps: [],
+    selectedPrimaryIds: primaryIds,
+    assessedPrimaryIds: primaryIds,
+    processedPrimaryIds: primaryIds,
+  };
+  value.rows.forEach((row) => {
+    row.primary.imageUrl = `${new URL(row.primary.sourceUrl).origin}/images/${row.primary.id}.jpg`;
+    row.matches.forEach((match) => {
+      delete match.assessment;
+      if (match.product) match.product.imageUrl = `${new URL(match.product.sourceUrl).origin}/images/${match.product.id}.jpg`;
+    });
+  });
+  return value;
 }
 
 async function persistJudgeEvidence(port, value, envelopeBatchIndex = 1_400) {
@@ -568,6 +622,443 @@ test("the current contract crawls only the primary catalog and publishes priced 
   assert.ok(matchFacts.every((fact) => fact.verdict === "search_result"));
   assert.ok(matchFacts.every((fact) => fact.evidence.method === "direct-web-search"));
   assert.ok(matchFacts.every((fact) => fact.evidence.publication?.priceEligible === true));
+});
+
+test("an invalid direct-search price pair is removed and the paid report publishes its valid rows as limited", async () => {
+  const invalid = comparison({ withPair: true, count: 20 });
+  invalid.rows.forEach((row) => {
+    row.primary.imageUrl = `https://shop.example/images/${row.primary.id}.jpg`;
+    row.matches[0].product.imageUrl = `https://rival.example/images/${row.matches[0].product.id}.jpg`;
+  });
+  invalid.rows[0].matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+  invalid.matching = {
+    ...invalid.matching,
+    method: "direct-web-search",
+    resultTarget: 20,
+    resultShortfall: 0,
+    resultShortfallReason: "bounded-candidate-pool-exhausted",
+  };
+  const port = mockPort({
+    async match() { return { ok: true, comparison: structuredClone(invalid) }; },
+    async enrich({ targets }) {
+      const products = invalid.rows.flatMap((row) => [row.primary, ...row.matches.flatMap((match) => match.product ? [match.product] : [])]);
+      return {
+        ok: true,
+        products: targets.map((target) => structuredClone(products.find((product) => product.id === target.productId))),
+        coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: targets.length, gaps: [] },
+      };
+    },
+  });
+
+  const result = await orchestrateReport({ ...payload, contractVersion: "6" }, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port);
+
+  assert.equal(result.reportStatus, "limited");
+  assert.equal(port.saves.length, 1);
+  const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
+  assert.equal(block.coverage.assignedPairCount, 19);
+  assert.equal(block.rows.some((row) => row.matches.some((match) => match.product?.priceSignals[0]?.currency === "USD")), false);
+  assert.equal(port.events.some((item) => item.status === "failed"), false);
+});
+
+test("the report quality loop checkpoints feedback before a focused repair reaches the comparison target", async () => {
+  const source = comparison({ withPair: true, count: 20 });
+  const initial = directComparisonSlice(source, 0, 19);
+  const repair = directComparisonSlice(source, 19, 20);
+  const timeline = [];
+  let matchCalls = 0;
+  let port;
+  port = mockPort({
+    async enrich() { throw new Error("direct-search quality repairs must not re-fetch already priced rows"); },
+    async match(input) {
+      matchCalls += 1;
+      if (!input.repairFeedback) {
+        timeline.push("initial-match");
+        return { ok: true, comparison: structuredClone(initial) };
+      }
+      assert.equal(port.checkpoints.has(REPORT_QUALITY_FEEDBACK_CHECKPOINT_BATCH_INDEX_BASE), true);
+      assert.ok(port.events.some((item) => item.idempotencyKey.endsWith("-quality-repair-1-started")));
+      timeline.push(`repair-${input.repairFeedback.round}`);
+      assert.equal(input.repairFeedback.round, 1);
+      assert.ok(input.repairFeedback.primaryProductIds.includes(source.rows[19].primary.id));
+      assert.equal(input.repairFeedback.excludedRivalSourceUrls.length, 19);
+      return { ok: true, comparison: structuredClone(repair) };
+    },
+  });
+  const saveCheckpoint = port.saveCheckpoint.bind(port);
+  port.saveCheckpoint = async (publicId, input) => {
+    if (input.batchIndex === REPORT_QUALITY_FEEDBACK_CHECKPOINT_BATCH_INDEX_BASE) timeline.push("feedback-1-saved");
+    return saveCheckpoint(publicId, input);
+  };
+
+  const result = await orchestrateReport({ ...payload, contractVersion: "6" }, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port);
+
+  assert.equal(result.reportStatus, "complete");
+  assert.equal(matchCalls, 2);
+  assert.ok(timeline.indexOf("feedback-1-saved") < timeline.indexOf("repair-1"));
+  assert.ok(port.checkpoints.has(REPORT_QUALITY_FEEDBACK_CHECKPOINT_BATCH_INDEX_BASE));
+  const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
+  assert.equal(block.coverage.assignedPairCount, 20);
+  assert.equal(block.matching.qualityGateVersion, "report-quality-gate-v1");
+  assert.equal(block.matching.qualityRepairRounds, 1);
+  assert.ok(port.events.some((item) => item.idempotencyKey.endsWith("-quality-complete")));
+});
+
+test("the report quality loop stops after three unsuccessful repairs and publishes a transparent limited report", async () => {
+  const source = comparison({ withPair: true, count: 20 });
+  const initial = directComparisonSlice(source, 0, 19);
+  const noAdditionalComparisons = directComparisonSlice(source, 20, 20);
+  const repairRounds = [];
+  const port = mockPort({
+    async match(input) {
+      if (!input.repairFeedback) return { ok: true, comparison: structuredClone(initial) };
+      repairRounds.push(input.repairFeedback.round);
+      return { ok: true, comparison: structuredClone(noAdditionalComparisons) };
+    },
+  });
+
+  const result = await orchestrateReport({ ...payload, contractVersion: "6" }, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port);
+
+  assert.equal(result.reportStatus, "limited");
+  assert.deepEqual(repairRounds, [1, 2, 3]);
+  for (let offset = 0; offset < 3; offset += 1) {
+    const checkpoint = port.checkpoints.get(REPORT_QUALITY_FEEDBACK_CHECKPOINT_BATCH_INDEX_BASE + offset);
+    assert.equal(checkpoint.result.round, offset + 1);
+  }
+  const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
+  assert.equal(block.coverage.assignedPairCount, 19);
+  assert.equal(block.matching.qualityGateVersion, "report-quality-gate-v1");
+  assert.equal(block.matching.qualityRepairRounds, 3);
+  assert.match(block.matching.gaps.join(" "), /retained 19 of 20 requested comparisons after 3 bounded repair rounds/i);
+  assert.ok(result.limitedPhases.includes("quality"));
+  assert.ok(port.events.some((item) => item.idempotencyKey.endsWith("-quality-limited")));
+});
+
+test("the report quality loop waits for direct-search discovery coverage to finish", async () => {
+  const source = comparison({ withPair: true, count: 20 });
+  const initial = directComparisonSlice(source, 0, 19);
+  const base = mockPort();
+  let ordinaryMatchCalls = 0;
+  let repairMatchCalls = 0;
+  const port = mockPort({
+    async crawl() {
+      const value = await base.crawl();
+      value.results[0].products = source.rows.map((row) => structuredClone(row.primary));
+      value.discovery.productSearchCoverage = {
+        ...value.discovery.productSearchCoverage,
+        eligibleAnchors: 40,
+        searchedAnchors: 20,
+        startIndex: 0,
+        endIndex: 20,
+        truncated: true,
+        complete: false,
+      };
+      return value;
+    },
+    async match(input) {
+      if (input.repairFeedback) repairMatchCalls += 1;
+      else ordinaryMatchCalls += 1;
+      return { ok: true, comparison: structuredClone(initial) };
+    },
+  });
+
+  await assert.rejects(
+    () => orchestrateReport({ ...payload, contractVersion: "6" }, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port),
+    /remained incomplete/i,
+  );
+
+  assert.ok(ordinaryMatchCalls > 0);
+  assert.equal(repairMatchCalls, 0);
+  assert.equal(port.events.some((item) => item.idempotencyKey.includes("quality-repair")), false);
+  assert.equal(port.checkpoints.has(REPORT_QUALITY_FEEDBACK_CHECKPOINT_BATCH_INDEX_BASE), false);
+});
+
+test("a failed quality-repair transport spends its round and advances without a Trigger task retry", async () => {
+  const source = comparison({ withPair: true, count: 20 });
+  const initial = directComparisonSlice(source, 0, 19);
+  const repair = directComparisonSlice(source, 19, 20);
+  let repairCalls = 0;
+  const port = mockPort({
+    async enrich() { throw new Error("direct-search quality repairs must not enter legacy enrichment"); },
+    async match(input) {
+      if (!input.repairFeedback) return { ok: true, comparison: structuredClone(initial) };
+      repairCalls += 1;
+      if (repairCalls === 1) throw new Error("temporary repair transport failure");
+      return { ok: true, comparison: structuredClone(repair) };
+    },
+  });
+
+  const result = await orchestrateReport({ ...payload, contractVersion: "6" }, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port);
+  const durableFeedback = structuredClone(port.checkpoints.get(REPORT_QUALITY_FEEDBACK_CHECKPOINT_BATCH_INDEX_BASE));
+  assert.ok(durableFeedback);
+  assert.equal(result.reportStatus, "complete");
+  assert.equal(repairCalls, 2);
+  assert.deepEqual(port.checkpoints.get(REPORT_QUALITY_FEEDBACK_CHECKPOINT_BATCH_INDEX_BASE), durableFeedback);
+  assert.equal(port.checkpoints.get(REPORT_QUALITY_OUTCOME_CHECKPOINT_BATCH_INDEX_BASE).result.status, "transport-failed");
+  assert.equal(port.checkpoints.get(REPORT_QUALITY_OUTCOME_CHECKPOINT_BATCH_INDEX_BASE + 1).result.status, "complete");
+  const block = port.saves[0].document.document.blocks.find((item) => item.type === "product-comparison");
+  assert.equal(block.coverage.assignedPairCount, 20);
+  assert.equal(block.matching.qualityRepairRounds, 2);
+});
+
+test("a processing-incomplete repair response spends each bounded round and publishes limited in the same task", async () => {
+  const source = comparison({ withPair: true, count: 20 });
+  const initial = directComparisonSlice(source, 0, 19);
+  const partial = directComparisonSlice(source, 20, 20);
+  partial.matching.resultShortfallReason = "processing-incomplete";
+  const repairRounds = [];
+  const port = mockPort({
+    async match(input) {
+      if (!input.repairFeedback) return { ok: true, comparison: structuredClone(initial) };
+      repairRounds.push(input.repairFeedback.round);
+      return { ok: true, comparison: structuredClone(partial) };
+    },
+  });
+
+  const result = await orchestrateReport({ ...payload, contractVersion: "6" }, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port);
+
+  assert.equal(result.reportStatus, "limited");
+  assert.deepEqual(repairRounds, [1, 2, 3]);
+  assert.deepEqual(Array.from({ length: 3 }, (_, offset) => port.checkpoints.get(REPORT_QUALITY_OUTCOME_CHECKPOINT_BATCH_INDEX_BASE + offset).result.status), ["incomplete", "incomplete", "incomplete"]);
+  assert.equal(port.events.some((item) => item.idempotencyKey.endsWith("-matching-task-retry")), false);
+});
+
+test("a task replay reuses a durable repair outcome instead of repeating paid repair search", async () => {
+  const source = comparison({ withPair: true, count: 20 });
+  const initial = directComparisonSlice(source, 0, 19);
+  const repair = directComparisonSlice(source, 19, 20);
+  let repairCalls = 0;
+  let saveCalls = 0;
+  const port = mockPort({
+    async match(input) {
+      if (!input.repairFeedback) return { ok: true, comparison: structuredClone(initial) };
+      repairCalls += 1;
+      return { ok: true, comparison: structuredClone(repair) };
+    },
+    async saveDocument(_publicId, value) {
+      saveCalls += 1;
+      if (saveCalls === 1) throw new Error("terminal callback lost");
+      port.saves.push(value);
+    },
+  });
+
+  await assert.rejects(() => orchestrateReport({ ...payload, contractVersion: "6" }, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /terminal callback lost/);
+  assert.equal(repairCalls, 1);
+  port.checkpoints.delete(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX);
+  port.checkpoints.delete(280);
+
+  const result = await orchestrateReport({ ...payload, contractVersion: "6" }, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
+
+  assert.equal(result.reportStatus, "complete");
+  assert.equal(repairCalls, 1);
+  assert.ok(port.events.some((item) => item.idempotencyKey.endsWith("-quality-repair-1-reused")));
+});
+
+test("a refreshed task-attempt catalog uses new quality slots instead of conflicting with stale feedback", async () => {
+  const oldSource = comparison({ withPair: true, count: 20 });
+  const oldInitial = directComparisonSlice(oldSource, 0, 19);
+  const oldRepair = directComparisonSlice(oldSource, 19, 20);
+  const seedPort = mockPort({
+    async match(input) {
+      return { ok: true, comparison: structuredClone(input.repairFeedback ? oldRepair : oldInitial) };
+    },
+  });
+  await orchestrateReport({ ...payload, contractVersion: "6" }, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, seedPort);
+  const staleFeedback = structuredClone(seedPort.checkpoints.get(reportQualityFeedbackCheckpointIndex(1, 1)));
+  const staleOutcome = structuredClone(seedPort.checkpoints.get(reportQualityOutcomeCheckpointIndex(1, 1)));
+  assert.ok(staleFeedback && staleOutcome);
+
+  const newSource = comparison({ withPair: true, count: 20 });
+  newSource.rows.forEach((row, index) => {
+    const number = index + 1;
+    row.primary.id = `refreshed-p${number}`;
+    row.primary.name = `Refreshed Honey ${number} 500g`;
+    row.primary.normalizedName = row.primary.name.toLowerCase();
+    row.primary.sourceUrl = `https://shop.example/products/refreshed-${number}?country=GB`;
+    row.primary.imageUrl = `https://shop.example/images/refreshed-${number}.jpg`;
+    row.matches[0].product.id = `refreshed-r${number}`;
+    row.matches[0].product.name = row.primary.name;
+    row.matches[0].product.normalizedName = row.primary.normalizedName;
+    row.matches[0].product.sourceUrl = `https://rival.example/products/refreshed-${number}?country=GB`;
+    row.matches[0].product.imageUrl = `https://rival.example/images/refreshed-${number}.jpg`;
+  });
+  const newInitial = directComparisonSlice(newSource, 0, 19);
+  const newRepair = directComparisonSlice(newSource, 19, 20);
+  const base = mockPort();
+  let crawlCalls = 0;
+  let firstTaskRepairCalls = 0;
+  let secondTaskRepairCalls = 0;
+  const port = mockPort({
+    async crawl() {
+      crawlCalls += 1;
+      const value = await base.crawl();
+      const selected = crawlCalls === 1 ? oldSource : newSource;
+      value.results[0].products = selected.rows.map((row) => structuredClone(row.primary));
+      value.results[0].homepage.regionCountryCode = "GB";
+      value.discovery.productSearchCoverage = {
+        ...value.discovery.productSearchCoverage,
+        eligibleAnchors: 20,
+        searchedAnchors: 20,
+        startIndex: 0,
+        endIndex: 20,
+        anchorSetHash: crawlCalls === 1 ? "quality-catalog-v1" : "quality-catalog-v2",
+        truncated: crawlCalls === 1,
+        complete: crawlCalls > 1,
+      };
+      return value;
+    },
+    async match(input) {
+      if (input.taskAttemptNumber === 1) {
+        if (input.repairFeedback) firstTaskRepairCalls += 1;
+        return { ok: true, comparison: structuredClone(oldInitial) };
+      }
+      if (input.repairFeedback) {
+        secondTaskRepairCalls += 1;
+        return { ok: true, comparison: structuredClone(newRepair) };
+      }
+      return { ok: true, comparison: structuredClone(newInitial) };
+    },
+  });
+
+  await assert.rejects(
+    () => orchestrateReport({ ...payload, contractVersion: "6" }, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port),
+    /remained incomplete/i,
+  );
+  assert.equal(firstTaskRepairCalls, 0);
+  port.checkpoints.set(reportQualityFeedbackCheckpointIndex(1, 1), staleFeedback);
+  port.checkpoints.set(reportQualityOutcomeCheckpointIndex(1, 1), staleOutcome);
+
+  const result = await orchestrateReport({ ...payload, contractVersion: "6" }, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
+
+  assert.equal(result.reportStatus, "complete");
+  assert.equal(crawlCalls, 2);
+  assert.equal(secondTaskRepairCalls, 1);
+  const currentFeedback = port.checkpoints.get(reportQualityFeedbackCheckpointIndex(2, 1));
+  const currentOutcome = port.checkpoints.get(reportQualityOutcomeCheckpointIndex(2, 1));
+  assert.ok(currentFeedback && currentOutcome);
+  assert.notEqual(currentFeedback.inputHash, staleFeedback.inputHash);
+  assert.equal(currentOutcome.inputHash, currentFeedback.inputHash);
+});
+
+test("a new report attempt replaces stale quality feedback and outcome slots instead of deadlocking", async () => {
+  const oldSource = comparison({ withPair: true, count: 20 });
+  const oldInitial = directComparisonSlice(oldSource, 0, 19);
+  const oldRepair = directComparisonSlice(oldSource, 19, 20);
+  const seedPort = mockPort({
+    async match(input) {
+      return { ok: true, comparison: structuredClone(input.repairFeedback ? oldRepair : oldInitial) };
+    },
+  });
+  await orchestrateReport({ ...payload, contractVersion: "6" }, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, seedPort);
+  const staleFeedback = structuredClone(seedPort.checkpoints.get(REPORT_QUALITY_FEEDBACK_CHECKPOINT_BATCH_INDEX_BASE));
+  const staleOutcome = structuredClone(seedPort.checkpoints.get(REPORT_QUALITY_OUTCOME_CHECKPOINT_BATCH_INDEX_BASE));
+  assert.ok(staleFeedback && staleOutcome);
+
+  const newSource = comparison({ withPair: true, count: 20 });
+  newSource.rows.forEach((row, index) => {
+    const number = index + 1;
+    row.primary.id = `attempt-2-p${number}`;
+    row.primary.name = `Attempt 2 Honey ${number} 500g`;
+    row.primary.normalizedName = row.primary.name.toLowerCase();
+    row.primary.sourceUrl = `https://shop.example/products/attempt-2-${number}?country=GB`;
+    row.primary.imageUrl = `https://shop.example/images/attempt-2-${number}.jpg`;
+    row.matches[0].product.id = `attempt-2-r${number}`;
+    row.matches[0].product.name = row.primary.name;
+    row.matches[0].product.normalizedName = row.primary.normalizedName;
+    row.matches[0].product.sourceUrl = `https://rival.example/products/attempt-2-${number}?country=GB`;
+    row.matches[0].product.imageUrl = `https://rival.example/images/attempt-2-${number}.jpg`;
+  });
+  const newInitial = directComparisonSlice(newSource, 0, 19);
+  const newRepair = directComparisonSlice(newSource, 19, 20);
+  let matchCalls = 0;
+  const port = mockPort({
+    async loadReport() {
+      return {
+        run: { publicId: payload.publicId, primaryDomain: payload.primaryDomain, locale: payload.locale, status: "queued", attemptCount: 2, createdAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:00:00.000Z", productPlan: "starter", productLimit: 20 },
+        events: [],
+      };
+    },
+    async crawl() {
+      return {
+        ok: true,
+        primaryDomain: payload.primaryDomain,
+        results: [{ domain: payload.primaryDomain, homepage: { sourceUrl: "https://shop.example", regionCountryCode: "GB" }, products: newSource.rows.map((row) => structuredClone(row.primary)) }],
+        discovery: { productSearchCoverage: { eligibleAnchors: 20, searchedAnchors: 20, startIndex: 0, endIndex: 20, truncated: false, searchesComplete: true, candidateDomainsFound: 1, candidateDomainsInvestigated: 1, candidateTruncated: false, verificationComplete: true, batchComplete: true, complete: true } },
+        document: { version: "1", blocks: [] },
+      };
+    },
+    async match(input) {
+      matchCalls += 1;
+      return { ok: true, comparison: structuredClone(input.repairFeedback ? newRepair : newInitial) };
+    },
+  });
+  port.checkpoints.set(REPORT_QUALITY_FEEDBACK_CHECKPOINT_BATCH_INDEX_BASE, staleFeedback);
+  port.checkpoints.set(REPORT_QUALITY_OUTCOME_CHECKPOINT_BATCH_INDEX_BASE, staleOutcome);
+  const saveCheckpoint = port.saveCheckpoint.bind(port);
+  port.saveCheckpoint = async (publicId, input) => {
+    if (input.attemptNumber === 2 && (input.batchIndex === REPORT_QUALITY_FEEDBACK_CHECKPOINT_BATCH_INDEX_BASE || input.batchIndex === REPORT_QUALITY_OUTCOME_CHECKPOINT_BATCH_INDEX_BASE)) {
+      port.checkpoints.set(input.batchIndex, { ...structuredClone(input) });
+      return;
+    }
+    return saveCheckpoint(publicId, input);
+  };
+
+  const result = await orchestrateReport({ ...recoveryPayload, contractVersion: "6" }, { attemptNumber: 2, taskAttemptNumber: 1, isFinalAttempt: false }, port);
+
+  assert.equal(result.reportStatus, "complete");
+  assert.equal(matchCalls, 2);
+  const currentFeedback = port.checkpoints.get(REPORT_QUALITY_FEEDBACK_CHECKPOINT_BATCH_INDEX_BASE);
+  const currentOutcome = port.checkpoints.get(REPORT_QUALITY_OUTCOME_CHECKPOINT_BATCH_INDEX_BASE);
+  assert.equal(currentFeedback.attemptNumber, 2);
+  assert.equal(currentOutcome.attemptNumber, 2);
+  assert.notEqual(currentFeedback.inputHash, staleFeedback.inputHash);
+  assert.equal(currentOutcome.inputHash, currentFeedback.inputHash);
+});
+
+test("direct-search recovery honors a pre-existing enrichment plan and never rematches it", async () => {
+  const source = comparison({ withPair: true, count: 20 });
+  const direct = directComparisonSlice(source, 0, 20);
+  for (const row of direct.rows) {
+    row.primary.priceSignals = [];
+    row.matches[0].product.priceSignals = [];
+  }
+  let matchCalls = 0;
+  let enrichCalls = 0;
+  const targetSets = [];
+  const port = mockPort({
+    async match() {
+      matchCalls += 1;
+      return { ok: true, comparison: structuredClone(direct) };
+    },
+    async enrich({ targets }) {
+      enrichCalls += 1;
+      targetSets.push(targets.map((target) => `${target.role}:${target.productId}:${target.sourceUrl}`));
+      if (enrichCalls === 1) throw new Error("temporary enrichment transport failure");
+      return {
+        ok: true,
+        products: targets.map((target) => ({
+          ...product(target.domain, target.productId),
+          name: target.expectedName,
+          normalizedName: target.expectedName.toLowerCase(),
+          sourceUrl: target.sourceUrl,
+          imageUrl: `https://${target.domain}/images/${target.productId}.jpg`,
+          priceSignals: [{ raw: target.role === "primary" ? "GBP 10" : "GBP 8", currency: "GBP", amount: target.role === "primary" ? 10 : 8 }],
+        })),
+        coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: targets.length, gaps: [] },
+      };
+    },
+  });
+
+  await assert.rejects(() => orchestrateReport({ ...payload, contractVersion: "6" }, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port), /remained incomplete/);
+  const savedPlan = structuredClone(port.checkpoints.get(299));
+  assert.ok(savedPlan);
+
+  const result = await orchestrateReport({ ...payload, contractVersion: "6" }, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port);
+
+  assert.equal(result.reportStatus, "complete");
+  assert.equal(matchCalls, 1);
+  assert.equal(enrichCalls, 2);
+  assert.deepEqual(targetSets[1], targetSets[0]);
+  assert.deepEqual(port.checkpoints.get(299), savedPlan);
 });
 
 test("rival scoreboard selection is deterministic, bounded, and tied to published public-domain matches", () => {
@@ -1814,7 +2305,7 @@ test("all operation deadlines keep a two-minute margin below the stale marker", 
   for (const timeout of Object.values(OPERATION_BUDGETS_MS)) assert.ok(timeout <= MAX_OPERATION_TIMEOUT_MS);
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS > OPERATION_BUDGETS_MS.match, "Undici must not preempt the match operation deadline");
   assert.ok(ORCHESTRATION_FETCH_TIMEOUT_MS < MAX_OPERATION_TIMEOUT_MS, "the worker deadline must remain inside the outer edge window");
-  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 13_211_000);
+  assert.equal(WORST_CASE_CRITICAL_PATH_MS, 13_931_000);
   assert.ok(WORST_CASE_CRITICAL_PATH_MS <= 14_580_000, "critical path must preserve a two-minute task-ceiling margin");
 });
 
@@ -2402,6 +2893,55 @@ test("a durable twenty-pair checkpoint prevents paid crawl and matching from rep
   assert.equal(result.reportStatus, "complete");
   assert.equal(crawlCalls, 1);
   assert.equal(matchCalls, 1);
+});
+
+test("direct-search recovery sanitizes an obsolete cross-currency pair from slot 279", async () => {
+  const directPayload = { ...payload, contractVersion: "6" };
+  const source = comparison({ withPair: true, count: 20 });
+  const direct = directComparisonSlice(source, 0, 20);
+  const empty = directComparisonSlice(source, 20, 20);
+  const base = mockPort();
+  let matchCalls = 0;
+  let saveCalls = 0;
+  const port = mockPort({
+    async crawl() {
+      const value = await base.crawl();
+      value.results[0].products = direct.rows.map((row) => structuredClone(row.primary));
+      value.results[0].homepage.regionCountryCode = "GB";
+      value.discovery.productSearchCoverage = { ...value.discovery.productSearchCoverage, eligibleAnchors: 20, searchedAnchors: 20, startIndex: 0, endIndex: 20, complete: true };
+      return value;
+    },
+    async match() {
+      matchCalls += 1;
+      return { ok: true, comparison: structuredClone(matchCalls === 1 ? direct : empty) };
+    },
+    async saveDocument(_publicId, value) {
+      saveCalls += 1;
+      if (saveCalls === 1) throw new Error("terminal callback lost");
+      port.saves.push(value);
+    },
+  });
+  const now = () => new Date("2026-07-20T10:01:00.000Z");
+
+  await assert.rejects(
+    () => orchestrateReport(directPayload, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: false }, port, now),
+    /terminal callback lost/,
+  );
+  const checkpoint = port.checkpoints.get(PUBLISHED_RESULT_CHECKPOINT_BATCH_INDEX);
+  assert.ok(checkpoint);
+  checkpoint.result.comparison.rows[0].matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+  checkpoint.result.evidence.rows[0].matches[0].product.priceSignals = [{ raw: "USD 8", currency: "USD", amount: 8 }];
+  port.checkpoints.delete(250);
+  port.checkpoints.delete(299);
+  port.checkpoints.delete(280);
+
+  const result = await orchestrateReport(directPayload, { attemptNumber: 1, taskAttemptNumber: 2, isFinalAttempt: false }, port, now);
+  const block = port.saves.at(-1).document.document.blocks.find((item) => item.type === "product-comparison");
+
+  assert.equal(result.reportStatus, "limited");
+  assert.equal(block.coverage.assignedPairCount, 19);
+  assert.equal(block.rows.some((row) => row.matches.some((match) => match.product?.priceSignals[0]?.currency === "USD")), false);
+  assert.ok(matchCalls > 1);
 });
 
 test("report recovery restores priced results accumulated by a later task attempt", async () => {

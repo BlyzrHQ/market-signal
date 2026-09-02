@@ -55,6 +55,7 @@ export type MarketSignalLoopOutput = {
     publishedComparisons: number;
     pricedComparisons: number;
     competitorCount: number;
+    repairRounds: number;
     usageStatus: "not_called" | "known" | "unknown";
     costMicrousd: number | null;
     durationMs: number;
@@ -74,7 +75,7 @@ const INPUT_KEYS = ["comparisonTarget", "contractVersion", "functionId", "functi
 const OUTPUT_KEYS = ["artifacts", "contractVersion", "evaluation", "failure", "finishedAt", "functionId", "functionVersion", "metrics", "primaryDomain", "productPlan", "report", "requestId", "runId", "startedAt", "status"].sort();
 const REPORT_KEYS = ["completedPhases", "limitedPhases", "ownerPath", "publicId", "status"].sort();
 const ARTIFACT_KEYS = ["contentHash", "kind", "mediaType", "recordCount", "reference", "schemaVersion"].sort();
-const METRIC_KEYS = ["comparisonTarget", "competitorCount", "costMicrousd", "durationMs", "pricedComparisons", "publishedComparisons", "usageStatus"].sort();
+const METRIC_KEYS = ["comparisonTarget", "competitorCount", "costMicrousd", "durationMs", "pricedComparisons", "publishedComparisons", "repairRounds", "usageStatus"].sort();
 const EVALUATION_KEYS = ["evaluationId", "evaluatorVersion", "resultHash", "status"].sort();
 const FAILURE_KEYS = ["code", "message"].sort();
 const DOMAIN_PATTERN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -184,7 +185,8 @@ export function parseMarketSignalLoopOutput(value: unknown): MarketSignalLoopOut
 
   const metrics = record(output.metrics, "metrics");
   exactKeys(metrics, METRIC_KEYS, "metrics");
-  for (const key of ["comparisonTarget", "publishedComparisons", "pricedComparisons", "competitorCount", "durationMs"] as const) nonNegativeInteger(metrics[key], `metrics.${key}`);
+  for (const key of ["comparisonTarget", "publishedComparisons", "pricedComparisons", "competitorCount", "repairRounds", "durationMs"] as const) nonNegativeInteger(metrics[key], `metrics.${key}`);
+  if (Number(metrics.repairRounds) > 3) throw new MarketSignalLoopContractError("Report quality repair rounds cannot exceed three.");
   if (metrics.publishedComparisons !== metrics.pricedComparisons) throw new MarketSignalLoopContractError("Every published comparison must have a supported price.");
   if (Number(metrics.publishedComparisons) > Number(metrics.comparisonTarget)) throw new MarketSignalLoopContractError("Published comparisons cannot exceed the requested target.");
   if (Number(metrics.competitorCount) > Number(metrics.publishedComparisons)) throw new MarketSignalLoopContractError("Competitor count cannot exceed published comparisons.");
