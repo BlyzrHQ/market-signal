@@ -13,6 +13,8 @@ import {
   markReportDispatchFailed,
   reportStorageDiagnosticCode,
   type ReportCreateDiagnostic,
+  type ReportPhase,
+  type ReportRunStatus,
 } from "./report-store.ts";
 import { runtimeEnvironmentValue } from "./runtime-env.ts";
 
@@ -21,8 +23,8 @@ export type CreatedReport = {
   publicId: string;
   primaryDomain: string;
   locale: "en" | "ar";
-  status: "queued";
-  currentPhase: "queued";
+  status: ReportRunStatus;
+  currentPhase: ReportPhase;
   attemptCount: number;
   createdAt: string;
   expiresAt: string;
@@ -33,7 +35,7 @@ export type CreatedReport = {
 
 type CreationBoundaryDiagnostic = "create-not-callable" | "create-rejected" | "create-malformed" | "create-access-failed";
 type CreationBoundaryResult =
-  | { kind: "accepted"; report: CreatedReport }
+  | { kind: "accepted"; report: CreatedReport; replayed: boolean; dispatchRecorded: boolean }
   | { kind: "rejected"; diagnosticCode: ReportCreateDiagnostic }
   | { kind: "boundary-failed"; diagnosticCode: CreationBoundaryDiagnostic };
 
@@ -60,9 +62,9 @@ export type ReportCommandDependencies = {
 
 export type ReportCommandFailure = {
   ok: false;
-  status: 400 | 402 | 429 | 503;
+  status: 400 | 402 | 409 | 429 | 503;
   error: string;
-  errorCode: "invalid-domain" | "subscription-required" | "report-limit-reached" | "storage-create-failed" | "dispatch-failed" | "report-create-failed";
+  errorCode: "invalid-domain" | "subscription-required" | "idempotency-conflict" | "report-limit-reached" | "storage-create-failed" | "dispatch-failed" | "report-create-failed";
   publicId?: string;
   usage?: { used: number; limit: number };
   diagnosticCode?: string;
@@ -70,7 +72,7 @@ export type ReportCommandFailure = {
 };
 
 export type ReportCommandResult =
-  | { ok: true; report: CreatedReport; job: { dispatched: true; runId: string } }
+  | { ok: true; replayed: boolean; report: CreatedReport; job: { dispatched: boolean; runId: string } }
   | ReportCommandFailure;
 
 export type PublicReportCommandFailure = Omit<ReportCommandFailure, "status" | "diagnosticCode" | "stage">;
@@ -86,7 +88,9 @@ export function publicReportCommandFailure(result: ReportCommandFailure): Public
 }
 
 const PUBLIC_REPORT_ID = /^[a-f0-9]{32}$/;
-const REPORT_CREATE_DIAGNOSTIC = /^(?:invalid-domain|storage-unavailable|database-(?:import-failed|binding-missing)|schema-statement-[1-9]\d?-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api)|run-create-unclassified)$/;
+const REPORT_CREATE_DIAGNOSTIC = /^(?:invalid-domain|storage-unavailable|database-(?:import-failed|binding-missing)|schema-statement-[1-9]\d?-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api)|command-intent-conflict|run-create-unclassified)$/;
+const REPORT_STATUSES = new Set<ReportRunStatus>(["queued", "running", "complete", "limited", "failed", "interrupted"]);
+const REPORT_PHASES = new Set<ReportPhase>(["queued", "crawl", "competitors", "brief", "products", "matching", "enrichment", "quality", "actions", "ads", "persistence", "complete", "failed", "interrupted"]);
 
 async function consumeReportCreation(
   create: unknown,
@@ -132,13 +136,15 @@ async function consumeReportCreation(
 
   try {
     const report = (value as { report?: Record<string, unknown> }).report;
+    const replayed = (value as { replayed?: unknown }).replayed === true;
     if (!report || typeof report !== "object"
       || typeof report.id !== "string" || !report.id
       || typeof report.publicId !== "string" || !PUBLIC_REPORT_ID.test(report.publicId)
       || typeof report.primaryDomain !== "string" || !report.primaryDomain
       || (report.locale !== "en" && report.locale !== "ar")
-      || report.status !== "queued"
-      || report.currentPhase !== "queued"
+      || !REPORT_STATUSES.has(report.status as ReportRunStatus)
+      || !REPORT_PHASES.has(report.currentPhase as ReportPhase)
+      || (!replayed && (report.status !== "queued" || report.currentPhase !== "queued"))
       || typeof report.attemptCount !== "number" || !Number.isInteger(report.attemptCount) || report.attemptCount < 1
       || typeof report.createdAt !== "string" || !report.createdAt
       || typeof report.expiresAt !== "string" || !report.expiresAt) {
@@ -146,13 +152,15 @@ async function consumeReportCreation(
     }
     return {
       kind: "accepted",
+      replayed,
+      dispatchRecorded: (value as { dispatchRecorded?: unknown }).dispatchRecorded === true,
       report: {
         id: report.id,
         publicId: report.publicId,
         primaryDomain: report.primaryDomain,
         locale: report.locale,
-        status: report.status,
-        currentPhase: report.currentPhase,
+        status: report.status as ReportRunStatus,
+        currentPhase: report.currentPhase as ReportPhase,
         attemptCount: report.attemptCount,
         createdAt: report.createdAt,
         expiresAt: report.expiresAt,
@@ -203,8 +211,8 @@ export async function createReportCommand(input: ReportCommandInput, services: R
   let reservationId = "";
   let publicId = "";
   try {
-    if (input.actor) {
-      reservation = services.reserve ? await services.reserve(input.actor.workspaceId, input.commandId) : null;
+    if (input.actor && services.reserve) {
+      reservation = await services.reserve(input.actor.workspaceId, input.commandId);
       if (!reservation) {
         return { ok: false, status: 402, error: "An active paid plan is required to create a report.", errorCode: "subscription-required", stage: "reservation" };
       }
@@ -224,16 +232,21 @@ export async function createReportCommand(input: ReportCommandInput, services: R
     const creation = await consumeReportCreation(services.create, {
       primaryDomain: input.primaryDomain,
       locale: input.locale,
-      ...(input.actor && reservation ? {
+      ...(input.actor ? {
         workspaceId: input.actor.workspaceId,
-        billingReservationId: reservation.id,
-        entitlement: { plan: reservation.plan.id, productLimit: reservation.plan.productLimit },
+        ...(reservation ? {
+          billingReservationId: reservation.id,
+          entitlement: { plan: reservation.plan.id, productLimit: reservation.plan.productLimit },
+        } : {}),
         ...(input.commandId ? { commandId: input.commandId } : {}),
       } : {}),
     });
     if (creation.kind !== "accepted") {
-      await safelyReleaseReservation(services, reservationId);
       const diagnosticCode = creation.diagnosticCode;
+      if (creation.kind === "rejected" && diagnosticCode === "command-intent-conflict") {
+        return { ok: false, status: 409, error: "This request id is already bound to a different report intent.", errorCode: "idempotency-conflict", diagnosticCode, stage: "storage-create" };
+      }
+      await safelyReleaseReservation(services, reservationId);
       if (creation.kind === "rejected" && diagnosticCode === "invalid-domain") {
         return { ok: false, status: 400, error: "A valid public domain is required.", errorCode: "invalid-domain", diagnosticCode, stage: "storage-create" };
       }
@@ -242,18 +255,23 @@ export async function createReportCommand(input: ReportCommandInput, services: R
 
     const report = creation.report;
     publicId = report.publicId;
+    if (creation.replayed && (report.status !== "queued" || creation.dispatchRecorded)) {
+      return { ok: true, replayed: true, report, job: { dispatched: false, runId: "" } };
+    }
     let job: Awaited<ReturnType<typeof dispatchReportJob>>;
     try {
       job = await services.dispatch(report);
     } catch (error) {
       const diagnosticCode = error instanceof ReportDispatchError ? error.code : "dispatch-failed";
-      try { await services.markDispatchFailed(report.publicId); } catch { /* the command still fails closed */ }
-      await safelyReleaseReservation(services, reservationId);
+      if (!creation.replayed) {
+        try { await services.markDispatchFailed(report.publicId); } catch { /* the command still fails closed */ }
+        await safelyReleaseReservation(services, reservationId);
+      }
       return { ok: false, status: 503, error: "The background report job could not be started.", errorCode: "dispatch-failed", publicId, diagnosticCode, stage: "dispatch" };
     }
 
     try { await services.markDispatched(report.publicId, job.runId); } catch { /* accepted work remains live if telemetry races */ }
-    return { ok: true, report, job: { dispatched: true, runId: job.runId } };
+    return { ok: true, replayed: creation.replayed, report, job: { dispatched: true, runId: job.runId } };
   } catch (error) {
     await safelyReleaseReservation(services, reservationId);
     const message = error instanceof Error ? error.message : "The persistent report could not be created.";

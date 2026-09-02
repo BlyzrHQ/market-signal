@@ -42,6 +42,13 @@ export async function hasValidAnalysisAuthorization(authorization: string | null
   return callbackValid || apiValid;
 }
 
+export async function hasValidApiAuthorization(authorization: string | null, expectedOverride?: string) {
+  const expected = expectedOverride === undefined
+    ? await runtimeEnvironmentValue("MARKET_SIGNAL_API_TOKEN")
+    : expectedOverride;
+  return hasValidBearerAuthorization(authorization, expected, 32);
+}
+
 export type OwnerAuthorizationOverrides = { read: string; write: string; callback: string };
 export type MonitorAuthorizationOverrides = { read: string; acknowledge: string; ownerRead: string; ownerWrite: string; callback: string };
 

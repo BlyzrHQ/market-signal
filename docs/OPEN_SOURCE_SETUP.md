@@ -73,3 +73,18 @@ go -C cli run ./cmd/marketsignal crawl books.toscrape.com --base-url http://loca
 The command may return a limited-data exit status for a sparse or unsupported
 catalog, but it must authenticate, validate the response contract, and show
 observed crawl coverage instead of returning HTTP 401.
+
+For loop-to-loop use, the same controlled token can submit and resume one
+durable report command:
+
+```bash
+go -C cli run ./cmd/marketsignal submit books.toscrape.com --request-id local:books:001 --output json
+go -C cli run ./cmd/marketsignal wait <public-report-id> --request-id local:books:001 --output json
+```
+
+`submit` can start paid provider work configured on your installation. It is
+not automatically retried. Reuse the exact request id after an ambiguous
+response; the server returns the original command. When persistence succeeded
+but no dispatch receipt exists, it repeats only the idempotent dispatch for that
+same report so the command cannot remain stranded. The shared token is accepted
+only when hosted billing is off.

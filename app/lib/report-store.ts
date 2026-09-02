@@ -83,6 +83,10 @@ export type StoredReportAccess = {
   expiresAt: string;
 };
 
+export type StoredReportLoopAccess = StoredReportAccess & {
+  commandId: string;
+};
+
 export type StoredReportEvent = {
   sequence: number;
   idempotencyKey: string;
@@ -99,6 +103,14 @@ export type StoredReportSnapshot = {
   document: unknown;
   documentSchemaVersion: number;
   documentObservedAt: string;
+  factManifest?: {
+    manifestId: string;
+    attemptNumber: number;
+    manifestHash: string;
+    counts: { companies: number; products: number; matches: number; ads: number };
+    status: string;
+    completedAt: string;
+  } | null;
   primaryProducts?: StoredPrimaryProducts;
 };
 
@@ -276,6 +288,7 @@ export type ReportCreateDiagnostic =
   | "database-path-missing"
   | `schema-statement-${number}-failed`
   | `run-create-batch-${"schema-mismatch" | "constraint" | "binding-count" | "transaction" | "batch-api"}`
+  | "command-intent-conflict"
   | "run-create-unclassified";
 
 const REPORT_SCHEMA_VERSION = 1;
@@ -301,7 +314,7 @@ const STATUSES = new Set<ReportRunStatus>(["queued", "running", "complete", "lim
 const TERMINAL_REPORT_STATUSES = new Set<ReportRunStatus>(["complete", "limited", "failed", "interrupted"]);
 const schemaInitialization = new WeakMap<object, Promise<void>>();
 const emittedStorageDiagnostics = new Set<string>();
-const REPORT_STORAGE_DIAGNOSTIC = /^(?:database-(?:import-failed|path-missing)|schema-statement-[1-9]\d?-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api))$/;
+const REPORT_STORAGE_DIAGNOSTIC = /^(?:database-(?:import-failed|path-missing)|schema-statement-[1-9]\d?-failed|run-create-batch-(?:schema-mismatch|constraint|binding-count|transaction|batch-api)|command-intent-conflict)$/;
 
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS report_runs (id text PRIMARY KEY NOT NULL, public_id text NOT NULL, primary_domain text NOT NULL, locale text DEFAULT 'en' NOT NULL, workspace_id text DEFAULT '' NOT NULL, billing_reservation_id text DEFAULT '' NOT NULL, mcp_command_id text DEFAULT '' NOT NULL, status text NOT NULL, current_phase text NOT NULL, attempt_count integer DEFAULT 1 NOT NULL, created_at text NOT NULL, updated_at text NOT NULL, heartbeat_at text NOT NULL, expires_at text NOT NULL, error_code text DEFAULT '' NOT NULL, error_message text DEFAULT '' NOT NULL)`,
@@ -1185,7 +1198,12 @@ async function reportForMcpCommand(database: D1DatabaseLike, commandId: string, 
   const rows = await database.prepare(`SELECT
       runs.id, runs.public_id, runs.primary_domain, runs.locale, runs.status, runs.current_phase,
       runs.attempt_count, runs.created_at, runs.expires_at,
-      entitlements.plan_tier, entitlements.product_limit, entitlements.target_kind
+      entitlements.plan_tier, entitlements.product_limit, entitlements.target_kind,
+      EXISTS (
+        SELECT 1 FROM report_events AS events
+        WHERE events.run_id = runs.id
+          AND events.idempotency_key = 'job-dispatched-attempt-' || runs.attempt_count
+      ) AS dispatch_recorded
     FROM report_runs AS runs
     JOIN report_product_entitlements AS entitlements ON entitlements.run_id = runs.id
     WHERE runs.mcp_command_id = ? AND runs.workspace_id = ?
@@ -1198,18 +1216,19 @@ async function reportForMcpCommand(database: D1DatabaseLike, commandId: string, 
     publicId: String(row.public_id || ""),
     primaryDomain: String(row.primary_domain || ""),
     locale: row.locale === "ar" ? "ar" as const : "en" as const,
-    status: "queued" as const,
-    currentPhase: "queued" as const,
+    status: STATUSES.has(row.status as ReportRunStatus) ? row.status as ReportRunStatus : "failed" as const,
+    currentPhase: PHASES.has(row.current_phase as ReportPhase) ? row.current_phase as ReportPhase : "failed" as const,
     attemptCount: Number(row.attempt_count || 1),
     createdAt: String(row.created_at || ""),
     expiresAt: String(row.expires_at || ""),
     productPlan: Object.hasOwn(PRODUCT_PLAN_LIMITS, plan) ? plan : "starter" as ProductPlan,
     productLimit: Number(row.product_limit || PRODUCT_PLAN_LIMITS.starter),
     productTargetKind: "pairs" as const,
+    dispatchRecorded: Number(row.dispatch_recorded || 0) === 1,
   };
 }
 
-export async function createReportRun(input: { primaryDomain: string; locale?: string; entitlement?: ProductEntitlement; workspaceId?: string; billingReservationId?: string; commandId?: string }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+async function createReportRunWithReplay(input: { primaryDomain: string; locale?: string; entitlement?: ProductEntitlement; workspaceId?: string; billingReservationId?: string; commandId?: string }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
   const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
   if (!database) throw new Error(STORAGE_UNAVAILABLE_MESSAGE);
   const primaryDomain = canonicalDomain(input.primaryDomain);
@@ -1218,15 +1237,21 @@ export async function createReportRun(input: { primaryDomain: string; locale?: s
   const workspaceId = String(input.workspaceId || "");
   if (commandId && (!/^[A-Za-z0-9:_-]{1,120}$/.test(commandId) || !workspaceId)) throw new Error("Invalid report command id.");
   const locale: "en" | "ar" = input.locale === "ar" ? "ar" : "en";
+  const productPlan = input.entitlement?.plan && Object.hasOwn(PRODUCT_PLAN_LIMITS, input.entitlement.plan) ? input.entitlement.plan : "starter";
+  const productLimit = PRODUCT_PLAN_LIMITS[productPlan];
   await ensureSchema(database);
   const existing = await reportForMcpCommand(database, commandId, workspaceId);
-  if (existing) return existing;
+  if (existing) {
+    if (existing.primaryDomain !== primaryDomain || existing.locale !== locale || existing.productPlan !== productPlan || existing.productLimit !== productLimit) {
+      throw new ReportStorageError("command-intent-conflict");
+    }
+    const { dispatchRecorded, ...report } = existing;
+    return { report, replayed: true as const, dispatchRecorded };
+  }
   const id = internalId();
   const shareId = publicId();
   const observedAt = now.toISOString();
   const expiresAt = addDays(now, REPORT_RETENTION_DAYS);
-  const productPlan = input.entitlement?.plan && Object.hasOwn(PRODUCT_PLAN_LIMITS, input.entitlement.plan) ? input.entitlement.plan : "starter";
-  const productLimit = PRODUCT_PLAN_LIMITS[productPlan];
   try {
     await database.batch([
       database.prepare(`INSERT INTO report_runs (id, public_id, primary_domain, locale, workspace_id, billing_reservation_id, mcp_command_id, status, current_phase, attempt_count, created_at, updated_at, heartbeat_at, expires_at, error_code, error_message) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', 1, ?, ?, ?, ?, '', '')`).bind(id, shareId, primaryDomain, locale, workspaceId, String(input.billingReservationId || ""), commandId, observedAt, observedAt, observedAt, expiresAt),
@@ -1235,17 +1260,31 @@ export async function createReportRun(input: { primaryDomain: string; locale?: s
     ]);
   } catch (error) {
     const replay = await reportForMcpCommand(database, commandId, workspaceId);
-    if (replay) return replay;
+    if (replay) {
+      if (replay.primaryDomain !== primaryDomain || replay.locale !== locale || replay.productPlan !== productPlan || replay.productLimit !== productLimit) {
+        throw new ReportStorageError("command-intent-conflict");
+      }
+      const { dispatchRecorded, ...report } = replay;
+      return { report, replayed: true as const, dispatchRecorded };
+    }
     const diagnosticCode = `run-create-batch-${batchFailureClass(error)}`;
     logStorageDiagnostic(diagnosticCode);
     throw new ReportStorageError(diagnosticCode);
   }
-  return { id, publicId: shareId, primaryDomain, locale, status: "queued" as const, currentPhase: "queued" as const, attemptCount: 1, createdAt: observedAt, expiresAt, productPlan, productLimit, productTargetKind: "pairs" as const };
+  return {
+    report: { id, publicId: shareId, primaryDomain, locale, status: "queued" as const, currentPhase: "queued" as const, attemptCount: 1, createdAt: observedAt, expiresAt, productPlan, productLimit, productTargetKind: "pairs" as const },
+    replayed: false as const,
+    dispatchRecorded: false,
+  };
+}
+
+export async function createReportRun(input: { primaryDomain: string; locale?: string; entitlement?: ProductEntitlement; workspaceId?: string; billingReservationId?: string; commandId?: string }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
+  return (await createReportRunWithReplay(input, now, databaseOverride)).report;
 }
 
 export async function createReportRunResult(input: { primaryDomain: string; locale?: string; entitlement?: ProductEntitlement; workspaceId?: string; billingReservationId?: string; commandId?: string }, now = new Date(), databaseOverride?: D1DatabaseLike | null) {
   try {
-    return { ok: true as const, report: await createReportRun(input, now, databaseOverride) };
+    return { ok: true as const, ...await createReportRunWithReplay(input, now, databaseOverride) };
   } catch (error) {
     let diagnosticCode: ReportCreateDiagnostic = "run-create-unclassified";
     const message = safeErrorMessage(error);
@@ -2316,6 +2355,25 @@ export async function loadStoredReportAccess(publicReportId: string, databaseOve
     workspaceId: run.workspaceId,
     expiresAt: run.expiresAt,
   } : null;
+}
+
+export async function loadStoredReportLoopAccess(publicReportId: string, databaseOverride?: D1DatabaseLike | null): Promise<StoredReportLoopAccess | null> {
+  const database = databaseOverride === undefined ? await getDatabase() : databaseOverride;
+  if (!database) throw new Error(STORAGE_UNAVAILABLE_MESSAGE);
+  if (!PUBLIC_ID_PATTERN.test(publicReportId)) throw new Error("Invalid report id.");
+  await ensureSchema(database);
+  const rows = await database.prepare(`SELECT id, public_id, workspace_id, expires_at, mcp_command_id FROM report_runs WHERE public_id = ? LIMIT 1`)
+    .bind(publicReportId)
+    .all<Record<string, unknown>>();
+  const row = rows.results?.[0];
+  if (!row || !String(row.mcp_command_id || "")) return null;
+  return {
+    runId: String(row.id || ""),
+    publicId: String(row.public_id || ""),
+    workspaceId: String(row.workspace_id || ""),
+    expiresAt: String(row.expires_at || ""),
+    commandId: String(row.mcp_command_id || ""),
+  };
 }
 
 export async function getStoredReport(publicReportId: string, now = new Date(), databaseOverride?: D1DatabaseLike | null) {

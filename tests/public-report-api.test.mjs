@@ -48,7 +48,7 @@ test("owned reports authorize before reading or settling and use private cache h
   );
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "private, no-store");
-  assert.equal(response.headers.get("vary"), "Cookie");
+  assert.equal(response.headers.get("vary"), "Cookie, Authorization");
   assert.equal(reads, 1);
   assert.equal(settles, 1);
   const body = await response.json();

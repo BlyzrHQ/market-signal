@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://marketsignal.dev/contracts/report-result.v1.schema.json",
+  "title": "Market Signal loop result",
+  "oneOf": [
+    { "$ref": "#/$defs/pending" },
+    { "$ref": "#/$defs/terminal" }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9:_-]{0,119}$"
+    },
+    "publicId": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{32}$"
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "plan": {
+      "enum": ["starter", "solo", "growth", "agency"]
+    },
+    "pending": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "requestId", "publicReportId", "primaryDomain", "status", "phase", "attempt", "heartbeatAt", "pollAfterSeconds"],
+      "properties": {
+        "state": { "const": "pending" },
+        "requestId": { "$ref": "#/$defs/id" },
+        "publicReportId": { "$ref": "#/$defs/publicId" },
+        "primaryDomain": { "type": "string", "minLength": 3, "maxLength": 253, "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$" },
+        "status": { "enum": ["queued", "running"] },
+        "phase": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$" },
+        "attempt": { "type": "integer", "minimum": 1 },
+        "heartbeatAt": { "$ref": "#/$defs/timestamp" },
+        "pollAfterSeconds": { "type": "integer", "minimum": 1, "maximum": 300 }
+      }
+    },
+    "terminal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "output", "decision", "comparisons"],
+      "properties": {
+        "state": { "const": "terminal" },
+        "output": { "$ref": "#/$defs/output" },
+        "decision": { "$ref": "#/$defs/decision" },
+        "comparisons": { "$ref": "#/$defs/comparisons" }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contractVersion", "functionId", "functionVersion", "requestId", "primaryDomain", "productPlan", "runId", "status", "report", "artifacts", "metrics", "evaluation", "failure", "startedAt", "finishedAt"],
+      "properties": {
+        "contractVersion": { "const": "1" },
+        "functionId": { "const": "market-signal.report" },
+        "functionVersion": { "const": "1" },
+        "requestId": { "$ref": "#/$defs/id" },
+        "primaryDomain": { "type": "string", "minLength": 3, "maxLength": 253, "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$" },
+        "productPlan": { "$ref": "#/$defs/plan" },
+        "runId": { "$ref": "#/$defs/id" },
+        "status": { "enum": ["complete", "limited", "failed", "outcome_unknown"] },
+        "report": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["publicId", "ownerPath", "status", "completedPhases", "limitedPhases"],
+              "properties": {
+                "publicId": { "$ref": "#/$defs/publicId" },
+                "ownerPath": { "type": "string", "pattern": "^/reports/[a-f0-9]{32}$" },
+                "status": { "enum": ["complete", "limited"] },
+                "completedPhases": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$" } },
+                "limitedPhases": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$" } }
+              }
+            }
+          ]
+        },
+        "artifacts": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "schemaVersion", "reference", "contentHash", "mediaType", "recordCount"],
+            "properties": {
+              "kind": { "enum": ["report", "comparisons", "competitor_scores", "evidence", "evaluation"] },
+              "schemaVersion": { "$ref": "#/$defs/id" },
+              "reference": { "type": "string", "pattern": "^[a-z][a-z0-9+.-]*:[^\\s]{1,500}$" },
+              "contentHash": { "$ref": "#/$defs/hash" },
+              "mediaType": { "const": "application/json" },
+              "recordCount": { "type": ["integer", "null"], "minimum": 0 }
+            }
+          }
+        },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["comparisonTarget", "publishedComparisons", "pricedComparisons", "competitorCount", "repairRounds", "usageStatus", "costMicrousd", "durationMs"],
+          "properties": {
+            "comparisonTarget": { "enum": [20, 50, 500, 1000] },
+            "publishedComparisons": { "type": "integer", "minimum": 0, "maximum": 1000 },
+            "pricedComparisons": { "type": "integer", "minimum": 0, "maximum": 1000 },
+            "competitorCount": { "type": "integer", "minimum": 0, "maximum": 1000 },
+            "repairRounds": { "type": "integer", "minimum": 0, "maximum": 3 },
+            "usageStatus": { "enum": ["not_called", "known", "unknown"] },
+            "costMicrousd": { "type": ["integer", "null"], "minimum": 0 },
+            "durationMs": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "evaluation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "evaluationId", "evaluatorVersion", "resultHash"],
+          "properties": {
+            "status": { "enum": ["pending", "complete", "needs_human_review", "unavailable"] },
+            "evaluationId": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+            "evaluatorVersion": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+            "resultHash": { "oneOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] }
+          }
+        },
+        "failure": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["code", "message"],
+              "properties": {
+                "code": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,79}$" },
+                "message": { "type": "string", "minLength": 1, "maxLength": 240 }
+              }
+            }
+          ]
+        },
+        "startedAt": { "$ref": "#/$defs/timestamp" },
+        "finishedAt": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["headline", "coverage", "competitorDomains", "limitations", "recommendedActions"],
+      "properties": {
+        "headline": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["target", "delivered", "percent"],
+          "properties": {
+            "target": { "type": "integer", "minimum": 0, "maximum": 1000 },
+            "delivered": { "type": "integer", "minimum": 0, "maximum": 1000 },
+            "percent": { "type": "number", "minimum": 0, "maximum": 100 }
+          }
+        },
+        "competitorDomains": { "type": "array", "uniqueItems": true, "maxItems": 1000, "items": { "type": "string", "minLength": 3, "maxLength": 253 } },
+        "limitations": { "type": "array", "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 240 } },
+        "recommendedActions": { "type": "array", "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 500 } }
+      }
+    },
+    "comparisons": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inline", "totalCount", "manifestHash", "nextCursor", "pageUrl"],
+      "properties": {
+        "inline": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["primary", "rival", "match", "key"],
+            "properties": {
+              "primary": { "type": "object" },
+              "rival": { "type": "object" },
+              "match": { "type": "object" },
+              "key": { "type": "string", "minLength": 1, "maxLength": 500 }
+            }
+          }
+        },
+        "totalCount": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "manifestHash": { "type": "string", "pattern": "^(?:|[a-f0-9]{64})$" },
+        "nextCursor": { "type": ["string", "null"], "maxLength": 600 },
+        "pageUrl": { "type": "string", "pattern": "^/api/reports/[a-f0-9]{32}/matches$" }
+      }
+    }
+  }
+}

@@ -7,31 +7,55 @@ import {
   type ReportCommandDependencies,
 } from "../../lib/report-command-service.ts";
 import { reportStorageDiagnosticCode } from "../../lib/report-store.ts";
+import { reportApiAccountContext } from "../../lib/report-api-auth.ts";
 
 type ReportCreationDependencies = ReportCommandDependencies & {
   authorize?: (request: Request) => Promise<AccountContext | null>;
+  authorizeLoop?: (request: Request) => Promise<AccountContext | null>;
+  requireAccount?: boolean;
 };
 
 export function reportCreationDependencies(environment: Record<string, string | undefined> = process.env): ReportCreationDependencies {
-  const dependencies: ReportCreationDependencies = reportCommandDependencies(environment);
-  if (!hostedBillingEnabled(environment)) return dependencies;
-  return { ...dependencies, authorize: (request) => accountContext(request) };
+  const dependencies = reportCommandDependencies(environment);
+  const loopAuthorization = (request: Request) => reportApiAccountContext(request, environment);
+  if (!hostedBillingEnabled(environment)) return {
+    ...dependencies,
+    authorizeLoop: loopAuthorization,
+    requireAccount: false,
+  };
+  return {
+    ...dependencies,
+    authorize: accountContext,
+    authorizeLoop: loopAuthorization,
+    requireAccount: true,
+  };
 }
 
 export async function createPersistentReport(request: Request, services: ReportCreationDependencies = reportCreationDependencies()) {
   let stage: "request" | "storage-create" = "request";
   try {
     let account: AccountContext | null = null;
-    if (services.authorize) {
-      account = await services.authorize(request);
+    const requiresBrowserAccount = Boolean(services.requireAccount || (services.requireAccount === undefined && services.authorize));
+    if (requiresBrowserAccount) {
+      account = services.authorize ? await services.authorize(request) : null;
       if (!account) return Response.json({ ok: false, error: "Sign in to create a report.", errorCode: "authentication-required" }, { status: 401, headers: { "Cache-Control": "no-store" } });
     }
-    const body = await request.json() as { primaryDomain?: unknown; locale?: unknown };
+    const body = await request.json() as { primaryDomain?: unknown; locale?: unknown; commandId?: unknown };
+    const commandId = typeof body.commandId === "string" ? body.commandId.trim() : "";
+    if (commandId && !/^[A-Za-z0-9][A-Za-z0-9:_-]{0,119}$/.test(commandId)) {
+      return Response.json({ ok: false, error: "A valid request id is required.", errorCode: "invalid-request-id" }, { status: 400, headers: { "Cache-Control": "no-store" } });
+    }
+    if (commandId && !account) {
+      const authorize = services.authorizeLoop || services.authorize;
+      account = authorize ? await authorize(request) : null;
+      if (!account) return Response.json({ ok: false, error: "Sign in to create a report.", errorCode: "authentication-required" }, { status: 401, headers: { "Cache-Control": "no-store" } });
+    }
     stage = "storage-create";
     const result = await createReportCommand({
       primaryDomain: typeof body.primaryDomain === "string" ? body.primaryDomain : "",
       locale: body.locale === "ar" ? "ar" : "en",
       ...(account ? { actor: { workspaceId: account.workspaceId, userId: account.user.id } } : {}),
+      ...(commandId ? { commandId } : {}),
     }, services);
     if (result.ok === false) {
       if (result.status === 503) {
@@ -40,7 +64,7 @@ export async function createPersistentReport(request: Request, services: ReportC
       }
       return Response.json(publicReportCommandFailure(result), { status: result.status, headers: { "Cache-Control": "no-store" } });
     }
-    return Response.json({ ok: true, report: result.report, job: result.job }, { status: 202, headers: { "Cache-Control": "no-store" } });
+    return Response.json({ ok: true, requestId: commandId || null, replayed: result.replayed, report: result.report, job: result.job }, { status: 202, headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     console.error("report creation failed", {
