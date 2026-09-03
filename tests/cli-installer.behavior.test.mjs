@@ -61,8 +61,9 @@ windowsOnly("the documented irm pipe works in PowerShell 5.1 without leaking ins
       response.end(body);
     }, async (baseUrl) => {
       hostedInstaller = (await readFile(installerPath, "utf8"))
+        .replace(/\r?\n/g, "\r\n")
         .replace("https://signal.blyzr.com/downloads", `${baseUrl}/downloads`)
-        .replace("[switch]$SkipPathUpdate\n)", "[switch]$SkipPathUpdate = $true\n)");
+        .replace(/\[switch\]\$SkipPathUpdate\r?\n\)/, "[switch]$SkipPathUpdate = $true\n)");
       const command = [
         "function Invoke-VerifiedDownloadWithRetry { 'sentinel' }",
         `irm '${baseUrl}/install.ps1' | iex`,

@@ -45,6 +45,7 @@ test("installer refuses remote plaintext downloads and verifies before install",
 
 test("installer retries the complete verification transaction and validates the .NET hash result", async () => {
   const installer = await readFile(new URL("../public/install.ps1", import.meta.url), "utf8");
+  const normalizedInstaller = installer.replaceAll("\r\n", "\n");
 
   assert.match(installer, /function Invoke-VerifiedDownloadWithRetry/);
   assert.match(installer, /for \(\$attempt = 1; \$attempt -le 3; \$attempt\+\+\)/);
@@ -52,5 +53,5 @@ test("installer retries the complete verification transaction and validates the 
   assert.match(installer, /\$hashBytes\.Length -ne 32/);
   assert.doesNotMatch(installer, /Get-FileHash/);
   assert.match(installer, /could not be verified after 3 attempts/i);
-  assert.ok(installer.indexOf("$actualChecksum") < installer.indexOf("return\n      } catch"));
+  assert.ok(normalizedInstaller.indexOf("$actualChecksum") < normalizedInstaller.indexOf("return\n      } catch"));
 });
