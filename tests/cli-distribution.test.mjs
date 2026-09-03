@@ -41,3 +41,14 @@ test("installer refuses remote plaintext downloads and verifies before install",
   assert.match(installer, /50MB/);
   assert.match(installer, /64KB/);
 });
+
+test("installer retries transient transfers and never dereferences a missing hash", async () => {
+  const installer = await readFile(new URL("../public/install.ps1", import.meta.url), "utf8");
+
+  assert.match(installer, /function Invoke-DownloadWithRetry/);
+  assert.match(installer, /for \(\$attempt = 1; \$attempt -le 3; \$attempt\+\+\)/);
+  assert.match(installer, /function Get-Sha256WithRetry/);
+  assert.match(installer, /\$null -ne \$hashResult/);
+  assert.doesNotMatch(installer, /\(Get-FileHash[^\n]+\)\.Hash\.ToUpperInvariant\(\)/);
+  assert.match(installer, /could not be verified after 3 attempts/i);
+});
