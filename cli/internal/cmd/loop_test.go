@@ -240,6 +240,51 @@ func TestSubmitWaitAndResultCommandsUseDurableLoopContract(t *testing.T) {
 	t.Logf("RESULT OUTPUT\n%s", resultOut.String())
 }
 
+func TestReportCommandSubmitsAndReturnsTheTerminalLoopResult(t *testing.T) {
+	var submissions atomic.Int32
+	var reads atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/api/reports":
+			submissions.Add(1)
+			var body map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Errorf("decode report body: %v", err)
+			}
+			if body["primaryDomain"] != "babanuj.com" || body["commandId"] != testRequestID || body["locale"] != "en" {
+				t.Errorf("unexpected report body: %#v", body)
+			}
+			_, _ = writer.Write(submissionFixture())
+		case request.Method == http.MethodGet && request.URL.Path == "/api/reports/"+testPublicReportID+"/result":
+			reads.Add(1)
+			if request.URL.Query().Get("requestId") != testRequestID {
+				t.Errorf("request correlation id was not preserved")
+			}
+			_, _ = writer.Write(terminalLoopFixture("complete", 20))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	var stdout bytes.Buffer
+	root := NewRoot("test")
+	root.SetOut(&stdout)
+	root.SetArgs([]string{"report", "https://www.babanuj.com/", "--request-id", testRequestID, "--base-url", server.URL, "--quiet", "--poll", "1ms", "--max-wait", "1s"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if submissions.Load() != 1 || reads.Load() != 1 {
+		t.Fatalf("report must submit once and read once; submissions=%d reads=%d", submissions.Load(), reads.Load())
+	}
+	for _, expected := range []string{"Babanuj returned 20 priced product comparisons.", "20/20 priced comparisons", "rival.example — 20 comparisons", "Babanuj product 20 ($10.00)"} {
+		if !strings.Contains(stdout.String(), expected) {
+			t.Fatalf("report output missing %q:\n%s", expected, stdout.String())
+		}
+	}
+}
+
 func TestSubmitAcceptsAnExactReplayWithoutClaimingAnotherDispatch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")

@@ -7,7 +7,12 @@ import {
   type ReportCommandDependencies,
 } from "../../lib/report-command-service.ts";
 import { reportStorageDiagnosticCode } from "../../lib/report-store.ts";
-import { reportApiAccountContext } from "../../lib/report-api-auth.ts";
+import {
+  ReportApiAuthorizationError,
+  reportApiAccountContext,
+  reportApiAuthenticationRequiredResponse,
+  reportApiAuthorizationErrorResponse,
+} from "../../lib/report-api-auth.ts";
 
 type ReportCreationDependencies = ReportCommandDependencies & {
   authorize?: (request: Request) => Promise<AccountContext | null>;
@@ -37,8 +42,9 @@ export async function createPersistentReport(request: Request, services: ReportC
     let account: AccountContext | null = null;
     const requiresBrowserAccount = Boolean(services.requireAccount || (services.requireAccount === undefined && services.authorize));
     if (requiresBrowserAccount) {
-      account = services.authorize ? await services.authorize(request) : null;
-      if (!account) return Response.json({ ok: false, error: "Sign in to create a report.", errorCode: "authentication-required" }, { status: 401, headers: { "Cache-Control": "no-store" } });
+      const authorize = services.authorizeLoop || services.authorize;
+      account = authorize ? await authorize(request) : null;
+      if (!account) return reportApiAuthenticationRequiredResponse("Sign in to create a report.");
     }
     const body = await request.json() as { primaryDomain?: unknown; locale?: unknown; commandId?: unknown };
     const commandId = typeof body.commandId === "string" ? body.commandId.trim() : "";
@@ -48,7 +54,7 @@ export async function createPersistentReport(request: Request, services: ReportC
     if (commandId && !account) {
       const authorize = services.authorizeLoop || services.authorize;
       account = authorize ? await authorize(request) : null;
-      if (!account) return Response.json({ ok: false, error: "Sign in to create a report.", errorCode: "authentication-required" }, { status: 401, headers: { "Cache-Control": "no-store" } });
+      if (!account) return reportApiAuthenticationRequiredResponse("Sign in to create a report.");
     }
     stage = "storage-create";
     const result = await createReportCommand({
@@ -66,6 +72,7 @@ export async function createPersistentReport(request: Request, services: ReportC
     }
     return Response.json({ ok: true, requestId: commandId || null, replayed: result.replayed, report: result.report, job: result.job }, { status: 202, headers: { "Cache-Control": "no-store" } });
   } catch (error) {
+    if (error instanceof ReportApiAuthorizationError) return reportApiAuthorizationErrorResponse(error);
     const message = error instanceof Error ? error.message : "";
     console.error("report creation failed", {
       stage,

@@ -7,7 +7,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
+
+const validHostedAPIKey = "msk_live_abcdefghijklmnop_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ"
 
 const reportFixture = `{
   "ok": true,
@@ -25,7 +28,7 @@ const reportFixture = `{
   "crawl":{"maxPagesPerDomain":5,"robotsAware":true,"generatedAt":"2026-07-15T10:00:02Z"}
 }`
 
-func TestReportCommandRendersDecisionSummary(t *testing.T) {
+func TestCrawlCommandRendersDecisionSummary(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/crawl" {
 			http.NotFound(w, r)
@@ -40,19 +43,19 @@ func TestReportCommandRendersDecisionSummary(t *testing.T) {
 	root := NewRoot("test")
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)
-	root.SetArgs([]string{"report", "https://myjam.co.uk/", "--base-url", server.URL, "--quiet"})
+	root.SetArgs([]string{"crawl", "https://myjam.co.uk/", "--base-url", server.URL, "--quiet"})
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
 	output := stdout.String()
-	for _, expected := range []string{"myjam.co.uk", "1 verified", "2 rows", "2/2 fetched"} {
+	for _, expected := range []string{"myjam.co.uk", "LIVE — contract v1 validated", "rival.example", "2/2 fetched"} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected %q in output:\n%s", expected, output)
 		}
 	}
 }
 
-func TestReportCommandUsesContractDriftExitCode(t *testing.T) {
+func TestCrawlCommandUsesContractDriftExitCode(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
@@ -60,7 +63,7 @@ func TestReportCommandUsesContractDriftExitCode(t *testing.T) {
 	defer server.Close()
 
 	root := NewRoot("test")
-	root.SetArgs([]string{"report", "myjam.co.uk", "--base-url", server.URL, "--quiet"})
+	root.SetArgs([]string{"crawl", "myjam.co.uk", "--base-url", server.URL, "--quiet"})
 	err := root.Execute()
 	var exitErr *ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 3 {
@@ -68,7 +71,7 @@ func TestReportCommandUsesContractDriftExitCode(t *testing.T) {
 	}
 }
 
-func TestJSONReportPreservesPayloadAndReturnsGapExitCode(t *testing.T) {
+func TestJSONCrawlPreservesPayloadAndReturnsGapExitCode(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		payload := strings.Replace(reportFixture, `{"type":"summary","id":"scan-summary"}`, `{"type":"summary","id":"scan-summary"},{"type":"market-profile","id":"market-profile","gaps":["Discovery lane timed out"]}`, 1)
@@ -79,7 +82,7 @@ func TestJSONReportPreservesPayloadAndReturnsGapExitCode(t *testing.T) {
 	var stdout bytes.Buffer
 	root := NewRoot("test")
 	root.SetOut(&stdout)
-	root.SetArgs([]string{"report", "myjam.co.uk", "--base-url", server.URL, "--output", "json", "--quiet"})
+	root.SetArgs([]string{"crawl", "myjam.co.uk", "--base-url", server.URL, "--output", "json", "--quiet"})
 	err := root.Execute()
 	var exitErr *ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 2 {
@@ -114,5 +117,63 @@ func TestAdsCommandIsNotAvailable(t *testing.T) {
 	err := root.Execute()
 	if err == nil || !strings.Contains(err.Error(), `unknown command "ads"`) {
 		t.Fatalf("expected ads to be removed from the CLI, got %v", err)
+	}
+}
+
+func TestRootHelpKeepsTheHostedCustomerFlowSimple(t *testing.T) {
+	var stdout bytes.Buffer
+	root := NewRoot("test")
+	root.SetOut(&stdout)
+	root.SetArgs([]string{"--help"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	help := stdout.String()
+	for _, visible := range []string{"login", "logout", "report", "version"} {
+		if !strings.Contains(help, visible) {
+			t.Fatalf("expected %q in customer help:\n%s", visible, help)
+		}
+	}
+	for _, hidden := range []string{"crawl ", "submit ", "wait ", "result ", "completion ", "--base-url", "--timeout"} {
+		if strings.Contains(help, hidden) {
+			t.Fatalf("advanced command or flag %q leaked into customer help:\n%s", hidden, help)
+		}
+	}
+}
+
+func TestLoginAPIKeyFlagNeverEchoesAnAccidentallySuppliedSecret(t *testing.T) {
+	root := NewRoot("test")
+	root.SetArgs([]string{"login", "--api-key=" + validHostedAPIKey})
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "use --api-key without a value") {
+		t.Fatalf("expected sanitized flag error, got %v", err)
+	}
+	if strings.Contains(err.Error(), validHostedAPIKey) {
+		t.Fatal("flag error echoed the API key")
+	}
+}
+
+func TestNonInteractiveAPIKeyLoginRequiresEnvironmentVariable(t *testing.T) {
+	t.Setenv("MARKET_SIGNAL_API_KEY", "")
+	root := NewRoot("test")
+	root.SetIn(strings.NewReader(validHostedAPIKey))
+	root.SetArgs([]string{"login", "--api-key"})
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "set MARKET_SIGNAL_API_KEY for non-interactive use") {
+		t.Fatalf("expected non-interactive environment guidance, got %v", err)
+	}
+}
+
+func TestHostedAPIKeysCannotFollowAnOverriddenBaseURL(t *testing.T) {
+	_, _, err := dependencies(&options{baseURL: "https://attacker.example", apiKey: validHostedAPIKey, timeout: time.Second})
+	if err == nil || !strings.Contains(err.Error(), "can be sent only") {
+		t.Fatalf("expected exact-origin API key rejection, got %v", err)
+	}
+}
+
+func TestCredentialEnvironmentVariablesAreMutuallyExclusive(t *testing.T) {
+	_, _, err := dependencies(&options{baseURL: "https://signal.blyzr.com", apiKey: validHostedAPIKey, apiToken: "controlled-token", timeout: time.Second})
+	if err == nil || !strings.Contains(err.Error(), "set only one") {
+		t.Fatalf("expected ambiguous credential rejection, got %v", err)
 	}
 }

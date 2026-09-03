@@ -13,7 +13,7 @@ runtime or fallback.
 Requirements:
 
 - Node.js 22.13 or newer
-- Go 1.22 or newer for the optional CLI
+- Go 1.22 or newer only when developing the optional CLI from source
 
 Install exactly the dependency versions in the lockfile, then run the
 credential-free startup check:
@@ -51,9 +51,13 @@ and the server-side provider credentials for the capabilities you enable. The
 hosted Stripe and account settings are optional and remain disabled when their
 documented values are absent.
 
-The Go CLI requires `MARKET_SIGNAL_API_TOKEN` on both the local API and CLI
-process. Keep it distinct from the Trigger callback token; see
-[`docs/CLI.md`](docs/CLI.md) for shell-specific examples.
+The hosted CLI supports browser login and revocable workspace API keys. Normal
+interactive use does not require a key. Agent loops can set
+`MARKET_SIGNAL_API_KEY`; report quota and ownership remain enforced by the
+hosted service. A CLI built from source can still use
+`MARKET_SIGNAL_API_TOKEN` against a local or explicitly controlled service;
+keep that deployment token distinct from customer keys and the Trigger
+callback token.
 
 ### Run your own background workers
 
@@ -93,8 +97,33 @@ release evidence and may describe retired architecture.
 
 ## Go CLI
 
-The CLI validates and calls a selected Market Signal HTTP service; it does not
-scrape websites locally.
+Windows users can install the hosted CLI without Go, Node.js, or this
+repository:
+
+```powershell
+irm https://signal.blyzr.com/install.ps1 | iex
+marketsignal login
+marketsignal report example.com
+```
+
+The CLI opens Market Signal in the browser for sign-in, stores its rotating
+credential in Windows Credential Manager, and prints the private report's
+competitors and priced product comparisons. The crawler and report loop run on
+the Market Signal service, not inside the CLI process.
+
+For a non-interactive agent, create a scoped key under **Account → API keys**
+and provide it through the environment:
+
+```powershell
+$env:MARKET_SIGNAL_API_KEY = "your-key"
+marketsignal report example.com --output json
+```
+
+To save that key in Windows Credential Manager instead, run
+`marketsignal login --api-key` and paste it at the hidden prompt. Never put a
+key directly in a command argument.
+
+Contributors can still run it from source:
 
 ```bash
 go -C cli run ./cmd/marketsignal --help
@@ -102,10 +131,9 @@ go -C cli run ./cmd/marketsignal version
 go -C cli run ./cmd/marketsignal report example.com --base-url http://localhost:3000
 ```
 
-Replace `example.com` with any valid public company domain. The hosted service
-does not expose general-purpose API tokens yet, so use the CLI only against a
-local or explicitly controlled deployment. See [docs/CLI.md](docs/CLI.md) for
-all commands, flags, output formats, exit codes, and troubleshooting.
+Replace `example.com` with any valid public company domain. See
+[docs/CLI.md](docs/CLI.md) for advanced commands, flags, output formats, exit
+codes, local-development authentication, and troubleshooting.
 
 ## Architecture
 

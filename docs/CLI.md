@@ -5,116 +5,131 @@ competitive-intelligence output. It is a Go client for the Market Signal HTTP
 API: the crawler, competitor discovery, and product matching run on the API
 service, not inside the CLI process.
 
-## Before you begin
+## Install and run your first report
 
-You need:
+The hosted CLI preview supports Windows x64 and Arm64. You need a Market Signal
+account with an active report plan; you do **not** need Go, Node.js, this
+repository, or a local server.
 
-- [Go 1.22 or newer](https://go.dev/dl/)
-- Node.js 22.13 or newer only when running the API locally
-- this repository checked out locally
+Open PowerShell and install the CLI:
 
-Verify the tools from the repository root:
-
-```bash
-go version
-node --version
+```powershell
+irm https://signal.blyzr.com/install.ps1 | iex
 ```
 
-You do not need to learn Go to use the CLI from source. In a command such as
-`go -C cli run ./cmd/marketsignal version`:
+The preview binary is not yet code-signed, so Windows may ask you to confirm
+its first launch. The installer verifies the binary against the SHA-256
+manifest served by Market Signal before installing it in your user profile.
 
-- `go` starts the Go toolchain;
-- `-C cli` runs it from this repository's `cli/` directory;
-- `run ./cmd/marketsignal` builds a temporary binary and runs it.
+Sign in:
 
-Go downloads the CLI dependencies automatically on the first run.
-
-## Start safely
-
-Help and version commands are local and do not create a report or use paid API
-resources:
-
-```bash
-go -C cli run ./cmd/marketsignal --help
-go -C cli run ./cmd/marketsignal version
+```powershell
+marketsignal login
 ```
 
-When run from source, `version` prints `dev`. Release builds can inject a
-specific version.
+Your browser opens the normal Market Signal sign-in and consent screens. The
+CLI never receives your password. Its rotating OAuth credential is stored in
+Windows Credential Manager and grants only report read/create access for your
+own workspace.
 
-Commands that create reports need a running Market Signal API. For local
-development, use two terminals from the repository root.
+Then create a report:
 
-Terminal 1 — install dependencies and start the API:
-
-```bash
-npm install
-npm run dev
+```powershell
+marketsignal report example.com
 ```
 
-Terminal 2 — run a report against that local API:
+`report` submits exactly once, waits for the private report to finish, and
+prints the decision summary, competitors, priced product comparisons,
+limitations, and recommended actions. Replace `example.com` with a public
+company domain. Localhost, private IP addresses, and malformed domains are
+rejected.
 
-```bash
-export MARKET_SIGNAL_API_TOKEN="replace-with-a-random-value-at-least-32-characters"
-go -C cli run ./cmd/marketsignal report example.com
+To disconnect this computer:
+
+```powershell
+marketsignal logout
 ```
 
-Set the same `MARKET_SIGNAL_API_TOKEN` value in the API server's `.env.local`
-before starting it. Use a random value of at least 32 characters and keep it
-separate from `MARKET_SIGNAL_CALLBACK_TOKEN`. In PowerShell, set it with
-`$env:MARKET_SIGNAL_API_TOKEN = "..."` for the CLI process. The CLI reads the
-token only from the environment so it does not appear in command history or the
-process list. When a token is configured, remote API URLs must use HTTPS;
-plain HTTP is accepted only for loopback development.
+You can also revoke the CLI from **Account → Connected apps**. Browser sign-out
+does not silently turn a report into a public artifact; every CLI result stays
+bound to the approving workspace.
 
-The default service URL is `http://localhost:3000`. Replace `example.com` with
-any valid public company domain. The command rejects localhost, private IP
-addresses, and malformed domains as analysis targets.
+## API keys for agents and scripts
 
-> **Current distribution boundary:** do not point a publicly distributed CLI at
-> the production deployment. It does not yet provide scoped headless tokens or
-> per-customer quotas. Use a local or otherwise controlled service deployment.
-> Report and crawl commands can consume the AI and provider resources
-> configured on that service.
+When a browser login is impractical, create a key under **Account → API keys**.
+Choose read-only access for a consumer or create-and-read access for a loop
+that starts reports. Keys are workspace-bound, expire after the selected
+period, can be shown only once, and do not bypass plan quota or rate limits.
 
-The asynchronous loop commands below are for a local or explicitly controlled,
-single-tenant service. `MARKET_SIGNAL_API_TOKEN` is deployment-wide access; it
-is not a customer-scoped credential. Hosted use remains disabled until a
-separate workspace-scoped API-key and rate-limit change is reviewed and
-deployed.
+For a non-interactive process, provide the key as an environment variable:
+
+```powershell
+$env:MARKET_SIGNAL_API_KEY = "your-key"
+marketsignal report example.com --output json
+```
+
+For an interactive one-time setup, save it in the operating-system credential
+store using a hidden prompt:
+
+```powershell
+marketsignal login --api-key
+```
+
+Never append the key to `--api-key` or another command argument, where shell
+history and process inspection could expose it. `msk_live_` keys are accepted
+only by `https://signal.blyzr.com`; changing `MARKET_SIGNAL_BASE_URL` causes the
+CLI to fail before sending the credential. `marketsignal logout` self-revokes
+a saved API key before deleting its local copy. Revoke an environment-supplied
+key from the account page.
 
 ## Commands
+
+### `login` and `logout`
+
+`login` uses OAuth authorization code flow with S256 PKCE and a temporary
+loopback callback. It always prints the authorization URL as a fallback if the
+browser cannot open. Credentials are scoped to the exact production origin and
+stored by the operating system, never in a repository file.
+
+```powershell
+marketsignal login
+marketsignal logout
+```
+
+`logout` revokes the saved refresh grant or API key before removing it locally.
+The account page can revoke connected OAuth grants and individual API keys.
 
 ### `report`
 
 Build a live competitive-intelligence report and print its decision summary.
 
 ```bash
-go -C cli run ./cmd/marketsignal report example.com
-go -C cli run ./cmd/marketsignal report https://example.com --output json
+marketsignal report example.com
+marketsignal report https://example.com --output json
 ```
 
 The domain can be a bare hostname or an HTTP/HTTPS URL. A leading `www.` is
 normalized away. JSON output is validated against the versioned report
 contract before it is printed.
 
-Because report creation can consume paid provider resources, `report` and
-`crawl` make one POST attempt. They do not automatically retry an ambiguous
-network or transient server failure; retry those commands intentionally after
-checking whether the first request created a report.
+Because report creation can consume plan quota and paid provider resources,
+`report` makes one POST attempt and never blindly resubmits an ambiguous
+failure. Its generated request id makes an intentional replay safe. If a wait
+is interrupted, use the printed report/request ids with `wait` rather than
+starting a second report.
 
 ### `crawl`
 
-Run the same report pipeline as `report`, but emphasize crawl coverage in the
-human-readable output.
+Run the low-level direct-crawl diagnostic against a local or otherwise
+controlled Market Signal service. Normal hosted users should use `report`.
 
 ```bash
-go -C cli run ./cmd/marketsignal crawl example.com
-go -C cli run ./cmd/marketsignal crawl example.com --output json
+go -C cli run ./cmd/marketsignal crawl example.com --base-url http://localhost:3000
+go -C cli run ./cmd/marketsignal crawl example.com --base-url http://localhost:3000 --output json
 ```
 
-This is not a separate local Go scraper. Both `report` and `crawl` call the
-service's `/api/crawl` endpoint.
+This is not a local Go scraper. `crawl` calls `/api/crawl`; `report` uses the
+durable `/api/reports` loop and returns its normalized terminal result.
 
 ### `submit`
 
@@ -192,31 +207,26 @@ zero.
 Print the CLI version without contacting the API:
 
 ```bash
-go -C cli run ./cmd/marketsignal version
-```
-
-### `completion`
-
-The Cobra framework can generate shell-completion scripts. See the help for
-your shell before installing one:
-
-```bash
-go -C cli run ./cmd/marketsignal completion --help
+marketsignal version
 ```
 
 ## Global flags
 
-Global flags work with every network command.
+The default help keeps the customer path focused on `login`, `report`, and
+`logout`. The advanced service flags below remain available to contributors
+and orchestrators even though `--base-url` and `--timeout` are hidden from the
+default help.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--base-url <url>` | `http://localhost:3000` | Market Signal service to call. |
+| `--base-url <url>` | `https://signal.blyzr.com` | Market Signal service to call. |
 | `--timeout <duration>` | `1m30s` | Maximum duration of each HTTP request, using Go duration syntax such as `30s` or `2m`. It does not replace `wait --max-wait`. |
 | `--output table\|json`, `-o` | `table` | Readable summary or validated source JSON. |
 | `--quiet` | off | Hide progress messages written to standard error. |
 | `--help`, `-h` | — | Show help without making an API request. |
 
-Instead of repeating `--base-url`, set it for the current shell.
+Normal users should keep the production default. Contributors can point a
+source build at a controlled local service by setting `MARKET_SIGNAL_BASE_URL`.
 
 macOS/Linux:
 
@@ -252,10 +262,15 @@ pipe-friendly. Use `--quiet` to suppress progress entirely.
 | `7` | The account has no active subscription or report quota. | Resolve the plan or quota before submitting new paid work. |
 | `8` | The terminal report's authoritative facts are unavailable or inconsistent. | Stop automatic retries and inspect the report/storage state. |
 
-## Build a reusable binary
+## Contributors: build from source
 
-Running from source is simplest while contributing. To create a reusable local
-binary:
+Source development requires Go 1.22 or newer, Node.js 22.13 or newer, and this
+repository. A local service may use `MARKET_SIGNAL_API_TOKEN`; it is a
+deployment-wide controlled-development credential, not a hosted customer
+credential. Hosted production ignores it and accepts only workspace-bound
+OAuth tokens, workspace API keys, or the browser session.
+
+To create a reusable local binary:
 
 macOS/Linux:
 
@@ -271,15 +286,16 @@ go -C cli build -o ..\bin\marketsignal.exe ./cmd/marketsignal
 .\bin\marketsignal.exe --help
 ```
 
-After placing the binary on your `PATH`, replace
-`go -C cli run ./cmd/marketsignal` in the examples with `marketsignal`.
+When run from source, `version` prints `dev`. The production image injects the
+exact deployed revision into the downloadable Windows builds.
 
 ## Troubleshooting
 
 ### Connection refused or exit code 4
 
-The CLI defaults to `http://localhost:3000`. Start the local API with
-`npm run dev`, or pass the URL of a controlled deployment with `--base-url`.
+Check that `https://signal.blyzr.com` is reachable, then run
+`marketsignal login` again. For local development, start the API with
+`npm run dev` and pass `--base-url http://localhost:3000`.
 
 ### The command returned code 2 even though output appeared
 
@@ -304,9 +320,10 @@ automation, capture the streams separately or add `--quiet`.
 
 ### Production authentication fails
 
-The current hosted product is not a supported public CLI API. Do not work
-around its access controls. Use a local or explicitly authorized controlled
-deployment until scoped CLI tokens, quotas, and report ownership are available.
+Run `marketsignal login` and approve the displayed report scopes, or create a
+new workspace key and set `MARKET_SIGNAL_API_KEY`. If access was revoked or a
+key expired, reconnect. A valid credential still needs an active plan and
+remaining report quota; quota failures return exit code `7`.
 
 ## Contributing to the CLI
 

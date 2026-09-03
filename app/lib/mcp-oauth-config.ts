@@ -4,6 +4,9 @@ import { mcp } from "@better-auth/mcp";
 import { jwt } from "better-auth/plugins";
 import { BILLING_PLANS, configuredPriceId, hostedBillingEnabled } from "./billing-plans.ts";
 import {
+  CLI_AUTHORIZATION_SCOPES,
+  CLI_ACCESS_TOKEN_TTL_SECONDS,
+  CLI_RESOURCE,
   MARKET_SIGNAL_ORIGIN,
   MCP_ACCESS_TOKEN_TTL_SECONDS,
   MCP_AUTHORIZATION_SCOPES,
@@ -49,6 +52,13 @@ export function createHostedMcpAuthPlugins(baseURL: string) {
         // Better Auth retains offline_access on the refresh-token family only
         // when the audience policy permits it; this enables strict rotation.
         allowedScopes: [...MCP_AUTHORIZATION_SCOPES],
+        signingAlgorithm: "EdDSA",
+      }, {
+        identifier: CLI_RESOURCE,
+        name: "Market Signal API",
+        accessTokenTtl: CLI_ACCESS_TOKEN_TTL_SECONDS,
+        refreshTokenTtl: MCP_REFRESH_TOKEN_TTL_SECONDS,
+        allowedScopes: [...CLI_AUTHORIZATION_SCOPES],
         signingAlgorithm: "EdDSA",
       }],
       resourceSeedMode: "overwrite",

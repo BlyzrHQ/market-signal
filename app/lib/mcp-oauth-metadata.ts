@@ -1,5 +1,10 @@
 import { accountAuthConfigFromEnvironment, configuredAccountAuth } from "./account-auth.ts";
-import { MCP_RESOURCE, MCP_RESOURCE_SCOPES } from "./mcp-oauth-shared.ts";
+import {
+  CLI_RESOURCE,
+  CLI_RESOURCE_SCOPES,
+  MCP_RESOURCE,
+  MCP_RESOURCE_SCOPES,
+} from "./mcp-oauth-shared.ts";
 
 export async function mcpOAuthMetadataResponse(request: Request, metadataPath: string) {
   const config = accountAuthConfigFromEnvironment(process.env);
@@ -14,11 +19,12 @@ export async function mcpOAuthMetadataResponse(request: Request, metadataPath: s
     if (!auth) return new Response(null, { status: 404, headers });
     body = { ...await auth.api.getOAuthServerConfig({ headers: request.headers }) };
   } else {
+    const cliResource = metadataPath === "/.well-known/oauth-protected-resource/api";
     body = {
-      resource: MCP_RESOURCE,
+      resource: cliResource ? CLI_RESOURCE : MCP_RESOURCE,
       authorization_servers: [config.baseURL],
       bearer_methods_supported: ["header"],
-      scopes_supported: [...MCP_RESOURCE_SCOPES],
+      scopes_supported: [...(cliResource ? CLI_RESOURCE_SCOPES : MCP_RESOURCE_SCOPES)],
     };
   }
   return new Response(request.method === "HEAD" ? null : JSON.stringify(body), { status: 200, headers });

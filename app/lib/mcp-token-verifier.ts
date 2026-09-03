@@ -6,12 +6,15 @@ import {
 } from "jose";
 import type { AuthInfo } from "@modelcontextprotocol/server";
 import {
+  CLI_CLIENT_ID,
+  CLI_RESOURCE,
+  CLI_RESOURCE_SCOPES,
   MCP_CLOCK_TOLERANCE_SECONDS,
   MARKET_SIGNAL_ORIGIN,
   MCP_RESOURCE,
   MCP_RESOURCE_SCOPES,
 } from "./mcp-oauth-shared.ts";
-import { authorizeMcpClaims } from "./mcp-oauth-store.ts";
+import { authorizeCliClaims, authorizeMcpClaims } from "./mcp-oauth-store.ts";
 
 const JWKS_GRACE_PERIOD_MS = 7 * 24 * 60 * 60 * 1_000;
 
@@ -106,30 +109,37 @@ export function mcpPrincipalFromAuthInfo(authInfo: AuthInfo | undefined): McpPri
   return authInfo ? principal(authInfo) : null;
 }
 
-export async function verifyMcpAccessToken(
+async function verifySignedAccessToken(
   database: Database.Database,
   token: string,
-  now = new Date(),
-): Promise<AuthInfo> {
+  audience: string,
+  now: Date,
+) {
   if (!token || token.length > 16_384 || !Number.isFinite(now.getTime())) {
-    throw new McpAccessTokenError("invalid_token", "The MCP access token is invalid.", 401);
+    throw new McpAccessTokenError("invalid_token", "The access token is invalid.", 401);
   }
 
-  let verified: Awaited<ReturnType<typeof jwtVerify>>;
   try {
-    const keySet = createLocalJWKSet(publicKeySet(database, now));
-    verified = await jwtVerify(token, keySet, {
+    return await jwtVerify(token, createLocalJWKSet(publicKeySet(database, now)), {
       algorithms: ["EdDSA"],
       issuer: MARKET_SIGNAL_ORIGIN,
-      audience: MCP_RESOURCE,
+      audience,
       typ: "at+jwt",
       clockTolerance: MCP_CLOCK_TOLERANCE_SECONDS,
       currentDate: now,
     });
   } catch (error) {
     if (error instanceof McpAccessTokenError) throw error;
-    throw new McpAccessTokenError("invalid_token", "The MCP access token is invalid or expired.", 401);
+    throw new McpAccessTokenError("invalid_token", "The access token is invalid or expired.", 401);
   }
+}
+
+export async function verifyMcpAccessToken(
+  database: Database.Database,
+  token: string,
+  now = new Date(),
+): Promise<AuthInfo> {
+  const verified = await verifySignedAccessToken(database, token, MCP_RESOURCE, now);
 
   const authorization = authorizeMcpClaims(database, verified.payload, [], now);
   if (authorization.ok === false) {
@@ -158,5 +168,39 @@ export async function verifyMcpAccessToken(
       workspaceId: authorization.context.workspaceId,
       userId: authorization.context.user.id,
     },
+  };
+}
+
+export type CliAccessTokenInfo = {
+  clientId: string;
+  scopes: string[];
+  workspaceId: string;
+  user: { id: string; name: string; email: string };
+};
+
+export async function verifyCliAccessToken(
+  database: Database.Database,
+  token: string,
+  requiredScopes: readonly (typeof CLI_RESOURCE_SCOPES)[number][] = [],
+  now = new Date(),
+): Promise<CliAccessTokenInfo> {
+  const verified = await verifySignedAccessToken(database, token, CLI_RESOURCE, now);
+  const authorization = authorizeCliClaims(database, verified.payload, requiredScopes, now);
+  if (authorization.ok === false) {
+    const insufficient = authorization.reason === "insufficient_scope";
+    throw new McpAccessTokenError(
+      insufficient ? "insufficient_scope" : "invalid_token",
+      insufficient ? "The CLI access token does not grant the required scope." : "The CLI authorization is invalid or revoked.",
+      insufficient ? 403 : 401,
+    );
+  }
+  if (authorization.context.clientId !== CLI_CLIENT_ID) {
+    throw new McpAccessTokenError("invalid_token", "The CLI access token client is invalid.", 401);
+  }
+  return {
+    clientId: authorization.context.clientId,
+    scopes: authorization.context.scopes,
+    workspaceId: authorization.context.workspaceId,
+    user: authorization.context.user,
   };
 }
