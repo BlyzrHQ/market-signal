@@ -21,7 +21,8 @@ test("hosted CLI distribution supports the simple login flow and scoped agent ke
   assert.match(root, /MARKET_SIGNAL_API_KEY/);
   assert.match(guide, /marketsignal login --api-key/);
   assert.match(guide, /never append the key/i);
-  assert.match(installer, /Get-FileHash[^\n]+SHA256/i);
+  assert.match(installer, /System\.Security\.Cryptography\.SHA256/);
+  assert.match(installer, /ComputeHash\(\$fileStream\)/);
   assert.match(installer, /Windows Credential Manager|Next: marketsignal login/i);
   assert.match(installer, /SetEnvironmentVariable\("Path", \$nextPath, "User"\)/);
   assert.match(dockerfile, /GOOS=windows GOARCH=amd64/);
@@ -42,13 +43,14 @@ test("installer refuses remote plaintext downloads and verifies before install",
   assert.match(installer, /64KB/);
 });
 
-test("installer retries transient transfers and never dereferences a missing hash", async () => {
+test("installer retries the complete verification transaction and validates the .NET hash result", async () => {
   const installer = await readFile(new URL("../public/install.ps1", import.meta.url), "utf8");
 
-  assert.match(installer, /function Invoke-DownloadWithRetry/);
+  assert.match(installer, /function Invoke-VerifiedDownloadWithRetry/);
   assert.match(installer, /for \(\$attempt = 1; \$attempt -le 3; \$attempt\+\+\)/);
-  assert.match(installer, /function Get-Sha256WithRetry/);
-  assert.match(installer, /\$null -ne \$hashResult/);
-  assert.doesNotMatch(installer, /\(Get-FileHash[^\n]+\)\.Hash\.ToUpperInvariant\(\)/);
+  assert.match(installer, /\$null -eq \$hashBytes/);
+  assert.match(installer, /\$hashBytes\.Length -ne 32/);
+  assert.doesNotMatch(installer, /Get-FileHash/);
   assert.match(installer, /could not be verified after 3 attempts/i);
+  assert.ok(installer.indexOf("$actualChecksum") < installer.indexOf("return\n      } catch"));
 });
