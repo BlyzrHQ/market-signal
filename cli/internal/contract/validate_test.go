@@ -36,3 +36,28 @@ func TestReportContract(t *testing.T) {
 		t.Fatal("expected incomplete report to fail validation")
 	}
 }
+
+func TestReportComparisonPageContract(t *testing.T) {
+	validator, err := NewValidator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := []byte(`{
+  "schemaVersion": "1",
+  "requestId": "orchestrator:test:001",
+  "publicReportId": "0123456789abcdef0123456789abcdef",
+  "authoritative": true,
+  "manifestHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "totalCount": 0,
+  "returnedCount": 0,
+  "items": [],
+  "nextCursor": null
+}`)
+	if err := validator.Validate(ReportComparisonPage, valid); err != nil {
+		t.Fatalf("valid comparison page rejected: %v", err)
+	}
+	invalid := []byte(`{"schemaVersion":"1","authoritative":true,"items":[]}`)
+	if err := validator.Validate(ReportComparisonPage, invalid); err == nil {
+		t.Fatal("expected incomplete comparison page to fail validation")
+	}
+}

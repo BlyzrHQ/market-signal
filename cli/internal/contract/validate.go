@@ -10,11 +10,15 @@ import (
 )
 
 const (
-	Report = "report"
+	Report               = "report"
+	ReportResult         = "report-result"
+	ReportComparisonPage = "report-comparison-page"
 )
 
 var schemaFiles = map[string]string{
-	Report: "report.v1.schema.json",
+	Report:               "report.v1.schema.json",
+	ReportResult:         "report-result.v1.schema.json",
+	ReportComparisonPage: "report-comparisons-page.v1.schema.json",
 }
 
 type Validator struct {
@@ -26,7 +30,7 @@ func NewValidator() (*Validator, error) {
 	compiler.Draft = jsonschema.Draft2020
 	compiler.AssertFormat = true
 
-	for _, name := range []string{"evidence.v1.schema.json", "report.v1.schema.json"} {
+	for _, name := range []string{"evidence.v1.schema.json", "report.v1.schema.json", "report-result.v1.schema.json", "report-comparisons-page.v1.schema.json"} {
 		data, err := contractfiles.Files.ReadFile(name)
 		if err != nil {
 			return nil, fmt.Errorf("read embedded contract %s: %w", name, err)

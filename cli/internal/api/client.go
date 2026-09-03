@@ -24,6 +24,7 @@ type Client struct {
 
 type APIError struct {
 	Status int
+	Code   string
 	Msg    string
 }
 
@@ -69,22 +70,40 @@ func isLoopbackHost(host string) bool {
 }
 
 func (c *Client) Post(ctx context.Context, path string, payload any) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("encode request: %w", err)
 	}
-	endpoint := c.baseURL.ResolveReference(&url.URL{Path: path}).String()
+	return c.request(ctx, http.MethodPost, path, body)
+}
+
+func (c *Client) Get(ctx context.Context, path string) ([]byte, error) {
+	return c.request(ctx, http.MethodGet, path, nil)
+}
+
+func (c *Client) request(ctx context.Context, method, path string, body []byte) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+	reference, err := url.Parse(path)
+	if err != nil || reference.IsAbs() || reference.Host != "" || !strings.HasPrefix(reference.Path, "/") {
+		return nil, fmt.Errorf("invalid API path %q", path)
+	}
+	endpoint := c.baseURL.ResolveReference(reference).String()
 
 	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
-		request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	maxAttempts := 1
+	if method == http.MethodGet || method == http.MethodHead {
+		maxAttempts = 2
+	}
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		request, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
 		if err != nil {
 			return nil, fmt.Errorf("create request: %w", err)
 		}
 		request.Header.Set("Accept", "application/json")
-		request.Header.Set("Content-Type", "application/json")
+		if body != nil {
+			request.Header.Set("Content-Type", "application/json")
+		}
 		request.Header.Set("User-Agent", "MarketSignalCLI/0.1")
 		if c.token != "" {
 			request.Header.Set("Authorization", "Bearer "+c.token)
@@ -93,7 +112,7 @@ func (c *Client) Post(ctx context.Context, path string, payload any) ([]byte, er
 		response, err := c.httpClient.Do(request)
 		if err != nil {
 			lastErr = &APIError{Msg: "request failed: " + err.Error()}
-			if attempt == 0 && ctx.Err() == nil {
+			if attempt+1 < maxAttempts && ctx.Err() == nil {
 				continue
 			}
 			return nil, lastErr
@@ -106,12 +125,13 @@ func (c *Client) Post(ctx context.Context, path string, payload any) ([]byte, er
 		if len(data) > maxResponseBytes {
 			return nil, &APIError{Status: response.StatusCode, Msg: "response exceeded 25 MiB limit"}
 		}
-		if isTransient(response.StatusCode) && attempt == 0 {
+		if isTransient(response.StatusCode) && attempt+1 < maxAttempts {
 			lastErr = &APIError{Status: response.StatusCode, Msg: "transient server failure"}
 			continue
 		}
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
-			return nil, &APIError{Status: response.StatusCode, Msg: errorMessage(data)}
+			message, code := errorDetails(data)
+			return nil, &APIError{Status: response.StatusCode, Code: code, Msg: message}
 		}
 		if !json.Valid(data) {
 			contentType := response.Header.Get("Content-Type")
@@ -129,15 +149,16 @@ func isTransient(status int) bool {
 	return status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
 }
 
-func errorMessage(data []byte) string {
+func errorDetails(data []byte) (string, string) {
 	var body struct {
-		Error string `json:"error"`
+		Error     string `json:"error"`
+		ErrorCode string `json:"errorCode"`
 	}
 	if json.Unmarshal(data, &body) == nil && strings.TrimSpace(body.Error) != "" {
-		return body.Error
+		return body.Error, strings.TrimSpace(body.ErrorCode)
 	}
 	if bytes.HasPrefix(bytes.TrimSpace(data), []byte("<")) {
-		return "server returned HTML instead of JSON; check the base URL and authentication"
+		return "server returned HTML instead of JSON; check the base URL and authentication", ""
 	}
-	return strings.TrimSpace(string(data))
+	return strings.TrimSpace(string(data)), ""
 }

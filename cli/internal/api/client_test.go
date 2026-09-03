@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -27,7 +28,7 @@ func TestClientExplainsHTMLResponse(t *testing.T) {
 	}
 }
 
-func TestClientRetriesTransientFailureOnce(t *testing.T) {
+func TestClientRetriesTransientGETFailureOnce(t *testing.T) {
 	attempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		attempts++
@@ -44,7 +45,7 @@ func TestClientRetriesTransientFailureOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Post(context.Background(), "/api/test", nil); err != nil {
+	if _, err := client.Get(context.Background(), "/api/test"); err != nil {
 		t.Fatal(err)
 	}
 	if attempts != 2 {
@@ -52,11 +53,32 @@ func TestClientRetriesTransientFailureOnce(t *testing.T) {
 	}
 }
 
+func TestClientNeverRetriesPOSTAfterAmbiguousFailure(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		http.Error(w, "temporary", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Post(context.Background(), "/api/reports", map[string]string{"commandId": "loop-1"}); err == nil {
+		t.Fatal("expected the ambiguous POST failure to be returned")
+	}
+	if attempts != 1 {
+		t.Fatalf("POST must not be retried automatically, got %d attempts", attempts)
+	}
+}
+
 func TestClientSendsConfiguredAPITokenWithoutLoggingIt(t *testing.T) {
 	const token = "local-api-token-12345678901234567890"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		if request.Header.Get("Authorization") != "Bearer "+token {
-			t.Fatalf("expected bearer API token, got %q", request.Header.Get("Authorization"))
+			t.Errorf("expected bearer API token, got %q", request.Header.Get("Authorization"))
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
@@ -81,5 +103,59 @@ func TestClientRefusesToSendAPITokenOverRemotePlainHTTP(t *testing.T) {
 
 	if _, err := NewClient("https://example.com", time.Second, token); err != nil {
 		t.Fatalf("expected remote HTTPS to be accepted, got %v", err)
+	}
+}
+
+func TestClientGetPreservesQueryAndBearerToken(t *testing.T) {
+	const token = "local-api-token-12345678901234567890"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/api/reports/report/result" || request.URL.Query().Get("requestId") != "loop-1" {
+			t.Errorf("unexpected request %s %s", request.Method, request.URL.String())
+			return
+		}
+		if request.Header.Get("Authorization") != "Bearer "+token {
+			t.Error("configured bearer token was not forwarded")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"state":"pending"}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, time.Second, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Get(context.Background(), "/api/reports/report/result?requestId=loop-1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClientRejectsAbsoluteAPIPath(t *testing.T) {
+	client, err := NewClient("http://localhost:3000", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Get(context.Background(), "https://attacker.example/path"); err == nil || !strings.Contains(err.Error(), "invalid API path") {
+		t.Fatalf("expected absolute path rejection, got %v", err)
+	}
+}
+
+func TestClientPreservesMachineReadableAPIErrorCode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":"Authoritative report comparison facts are inconsistent.","errorCode":"facts-inconsistent"}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Get(context.Background(), "/api/reports/report/result")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusConflict || apiErr.Code != "facts-inconsistent" {
+		t.Fatalf("expected preserved facts-inconsistent API error, got %#v", err)
 	}
 }

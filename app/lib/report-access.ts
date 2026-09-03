@@ -3,7 +3,7 @@ import type { StoredReportAccess } from "./report-store.ts";
 
 export const PRIVATE_REPORT_HEADERS = {
   "cache-control": "private, no-store",
-  vary: "Cookie",
+  vary: "Cookie, Authorization",
 } as const;
 
 export const LEGACY_PUBLIC_REPORT_HEADERS = {

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://marketsignal.dev/contracts/report-comparisons-page.v1.schema.json",
+  "title": "Market Signal normalized comparison page",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "requestId", "publicReportId", "authoritative", "manifestHash", "totalCount", "returnedCount", "items", "nextCursor"],
+  "properties": {
+    "schemaVersion": { "const": "1" },
+    "requestId": { "$ref": "report-result.v1.schema.json#/$defs/id" },
+    "publicReportId": { "$ref": "report-result.v1.schema.json#/$defs/publicId" },
+    "authoritative": { "const": true },
+    "manifestHash": { "$ref": "report-result.v1.schema.json#/$defs/hash" },
+    "totalCount": { "type": "integer", "minimum": 0, "maximum": 1000 },
+    "returnedCount": { "type": "integer", "minimum": 0, "maximum": 50 },
+    "items": {
+      "type": "array",
+      "maxItems": 50,
+      "items": { "$ref": "report-result.v1.schema.json#/$defs/comparison" }
+    },
+    "nextCursor": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}~(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?~[a-f0-9]{64}$",
+          "maxLength": 600
+        },
+        { "type": "null" }
+      ]
+    }
+  }
+}

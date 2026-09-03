@@ -1,5 +1,6 @@
-import { accountContext, type AccountContext } from "../../../../lib/account-auth.ts";
+import { type AccountContext } from "../../../../lib/account-auth.ts";
 import { authorizeStoredReport, PRIVATE_REPORT_HEADERS, reportResponseHeaders } from "../../../../lib/report-access.ts";
+import { reportApiAccountContext } from "../../../../lib/report-api-auth.ts";
 import { loadStoredReportAccess, loadStoredReportMatchPage } from "../../../../lib/report-store.ts";
 import { hostedBillingEnabled } from "../../../../lib/billing-plans.ts";
 
@@ -17,7 +18,7 @@ export function reportMatchesDependencies(): ReportMatchesDependencies {
     now: () => new Date(),
     loadAccess: loadStoredReportAccess,
     loadMatchPage: loadStoredReportMatchPage,
-    authorize: accountContext,
+    authorize: reportApiAccountContext,
     allowLegacyPublic: () => !hostedBillingEnabled(process.env),
   };
 }

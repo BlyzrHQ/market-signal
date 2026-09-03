@@ -86,7 +86,7 @@ test("owned match pages require the owning workspace and are never publicly cach
   const response = await publicReportMatches(new Request(`https://signal.example/api/reports/${publicId}/matches`), { params: { publicId } }, owned);
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "private, no-store");
-  assert.equal(response.headers.get("vary"), "Cookie");
+  assert.equal(response.headers.get("vary"), "Cookie, Authorization");
   assert.equal(response.headers.get("etag"), null);
   assert.equal(reads, 1);
 

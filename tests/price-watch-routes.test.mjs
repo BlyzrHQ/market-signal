@@ -58,7 +58,7 @@ test("activation resolves only owned persisted match facts and ignores client ta
     }), services(item.openDatabase));
     assert.equal(response.status, 201);
     assert.equal(response.headers.get("cache-control"), "private, no-store");
-    assert.equal(response.headers.get("vary"), "Cookie");
+  assert.equal(response.headers.get("vary"), "Cookie, Authorization");
     const body = await response.json();
     assert.equal(body.created, 1);
 
