@@ -3,6 +3,9 @@ import { randomUUID } from "node:crypto";
 import type { JWTPayload } from "jose";
 import { ensurePersonalWorkspace } from "./account-auth.ts";
 import {
+  CLI_AUTHORIZATION_SCOPES,
+  CLI_CLIENT_ID,
+  CLI_RESOURCE,
   MCP_AUTHORIZATION_SCOPES,
   MCP_RESOURCE,
   MCP_RESOURCE_SCOPES,
@@ -71,18 +74,20 @@ function includesEvery(haystack: string[], needles: readonly string[]) {
   return needles.every((needle) => available.has(needle));
 }
 
-function hasExactResource(value: unknown) {
-  return normalizeMcpScopes(value).includes(MCP_RESOURCE);
+function hasResource(value: unknown, resource: string) {
+  return normalizeMcpScopes(value).includes(resource);
 }
 
 function connectedAppFromRows(consent: OAuthConsentRow, refreshTokens: RefreshTokenRow[], now: Date) {
   const scopes = normalizeMcpScopes(consent.scopes);
+  const resources = normalizeMcpScopes(consent.resources);
   const activeGrant = refreshTokens.some((token) => {
     const expiresAt = parseDate(token.expiresAt);
     return Boolean(
       expiresAt &&
       expiresAt > now &&
-      hasExactResource(token.resources) &&
+      resources.length > 0 &&
+      includesEvery(normalizeMcpScopes(token.resources), resources) &&
       includesEvery(normalizeMcpScopes(token.scopes), scopes),
     );
   });
@@ -92,7 +97,7 @@ function connectedAppFromRows(consent: OAuthConsentRow, refreshTokens: RefreshTo
     clientUri: consent.clientUri,
     discovery: consent.clientDiscoveryId || "pre-registered",
     scopes,
-    resources: normalizeMcpScopes(consent.resources),
+    resources,
     connectedAt: parseDate(consent.createdAt)?.toISOString() || "",
     updatedAt: parseDate(consent.updatedAt)?.toISOString() || "",
     status: activeGrant ? "active" as const : "reauthorization_required" as const,
@@ -125,8 +130,9 @@ export function listConnectedMcpApps(
     const refreshTokens = database.prepare(`
       SELECT resources, scopes, expiresAt
       FROM oauthRefreshToken
-      WHERE userId = ? AND clientId = ? AND sessionId IS NOT NULL AND revoked IS NULL
-    `).all(userId, consent.clientId) as RefreshTokenRow[];
+      WHERE userId = ? AND clientId = ? AND revoked IS NULL
+        AND (clientId = ? OR sessionId IS NOT NULL)
+    `).all(userId, consent.clientId, CLI_CLIENT_ID) as RefreshTokenRow[];
     return connectedAppFromRows(consent, refreshTokens, now);
   });
 }
@@ -234,7 +240,7 @@ export function authorizeMcpClaims(
     WHERE userId = ? AND clientId = ?
   `).all(userId, clientId) as Array<{ id: string; resources: string | null; scopes: string }>;
   const consent = consentRows.find((candidate) =>
-    hasExactResource(candidate.resources) && includesEvery(normalizeMcpScopes(candidate.scopes), scopes),
+    hasResource(candidate.resources, MCP_RESOURCE) && includesEvery(normalizeMcpScopes(candidate.scopes), scopes),
   );
   if (!consent) return { ok: false, reason: "missing_consent" };
 
@@ -248,7 +254,7 @@ export function authorizeMcpClaims(
     return Boolean(
       expiresAt &&
       expiresAt > now &&
-      hasExactResource(token.resources) &&
+      hasResource(token.resources, MCP_RESOURCE) &&
       includesEvery(normalizeMcpScopes(token.scopes), scopes),
     );
   });
@@ -261,6 +267,80 @@ export function authorizeMcpClaims(
       clientId,
       scopes,
       user: { id: userId, name: session.name || "", email: session.email },
+      workspaceId,
+    },
+  };
+}
+
+export function authorizeCliClaims(
+  database: Database.Database,
+  claims: JWTPayload,
+  requiredScopes: readonly ("reports:read" | "reports:create")[] = [],
+  now = new Date(),
+): McpAuthorizationResult {
+  const userId = typeof claims.sub === "string" ? claims.sub : "";
+  const clientId = typeof claims.client_id === "string"
+    ? claims.client_id
+    : typeof claims.azp === "string" ? claims.azp : "";
+  const jti = typeof claims.jti === "string" ? claims.jti : "";
+  const scopes = normalizeMcpScopes(claims.scope);
+  if (!userId || clientId !== CLI_CLIENT_ID || !jti || claims.aud !== CLI_RESOURCE) {
+    return { ok: false, reason: "invalid_claims" };
+  }
+  if (!includesEvery(scopes, ["offline_access", ...requiredScopes]) || !scopes.every((scope) => CLI_AUTHORIZATION_SCOPES.includes(scope as never))) {
+    return { ok: false, reason: "insufficient_scope" };
+  }
+
+  const client = database.prepare(`
+    SELECT clientId, disabled, requirePKCE, tokenEndpointAuthMethod
+    FROM oauthClient
+    WHERE clientId = ?
+  `).get(clientId) as { clientId: string; disabled: number | null; requirePKCE: number | null; tokenEndpointAuthMethod: string | null } | undefined;
+  const linked = database.prepare(`
+    SELECT 1 AS linked
+    FROM oauthClientResource
+    WHERE clientId = ? AND resourceId = ?
+  `).get(clientId, CLI_RESOURCE);
+  if (!client || client.disabled || client.requirePKCE === 0 || client.tokenEndpointAuthMethod !== "none" || !linked) {
+    return { ok: false, reason: "inactive_client" };
+  }
+
+  const user = database.prepare(`SELECT id, name, email FROM user WHERE id = ?`).get(userId) as { id: string; name: string; email: string } | undefined;
+  if (!user) return { ok: false, reason: "inactive_session" };
+
+  const consentRows = database.prepare(`
+    SELECT id, resources, scopes
+    FROM oauthConsent
+    WHERE userId = ? AND clientId = ?
+  `).all(userId, clientId) as Array<{ id: string; resources: string | null; scopes: string }>;
+  const consent = consentRows.find((candidate) =>
+    hasResource(candidate.resources, CLI_RESOURCE) && includesEvery(normalizeMcpScopes(candidate.scopes), scopes),
+  );
+  if (!consent) return { ok: false, reason: "missing_consent" };
+
+  const refreshTokens = database.prepare(`
+    SELECT resources, scopes, expiresAt
+    FROM oauthRefreshToken
+    WHERE userId = ? AND clientId = ? AND revoked IS NULL
+  `).all(userId, clientId) as RefreshTokenRow[];
+  const activeGrant = refreshTokens.some((token) => {
+    const expiresAt = parseDate(token.expiresAt);
+    return Boolean(
+      expiresAt &&
+      expiresAt > now &&
+      hasResource(token.resources, CLI_RESOURCE) &&
+      includesEvery(normalizeMcpScopes(token.scopes), scopes),
+    );
+  });
+  if (!activeGrant) return { ok: false, reason: "inactive_grant" };
+
+  const workspaceId = ensurePersonalWorkspace(database, { id: userId, name: user.name || "Personal" });
+  return {
+    ok: true,
+    context: {
+      clientId,
+      scopes,
+      user: { id: userId, name: user.name || "", email: user.email },
       workspaceId,
     },
   };

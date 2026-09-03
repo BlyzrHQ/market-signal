@@ -12,6 +12,10 @@ const nextConfig: NextConfig = {
         destination: "/api/mcp/oauth-protected-resource/mcp",
       },
       {
+        source: "/.well-known/oauth-protected-resource/api",
+        destination: "/api/mcp/oauth-protected-resource/api",
+      },
+      {
         source: "/.well-known/oauth-authorization-server",
         destination: "/api/mcp/oauth-authorization-server",
       },

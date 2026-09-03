@@ -61,14 +61,14 @@ export default function OAuthConsentPage() {
   return <main className="oauth-consent-page">
     <header><Link className="brand" href="/"><span className="brand-mark"><i /><i /><i /></span><span>Market Signal</span></Link></header>
     <section className="oauth-consent-card">
-      <span>CONNECT AN AI CLIENT</span>
+      <span>{identity.verified ? "CONNECT MARKET SIGNAL CLI" : "CONNECT AN AI CLIENT"}</span>
       <h1>Allow access to your workspace?</h1>
       <div className="oauth-client-identity">
         <strong>{identity.name}</strong>
         <code>{identity.clientId || "Missing client ID"}</code>
-        <small>Host: {identity.host || "unknown"} · Self-asserted, unverified identity</small>
+        <small>Host: {identity.host || "unknown"} · {identity.verified ? "Verified Market Signal client" : "Self-asserted, unverified identity"}</small>
       </div>
-      <p>Only approve this request if the client ID host is the one you intended to connect.</p>
+      <p>{identity.verified ? "This first-party CLI will use only the permissions listed below." : "Only approve this request if the client ID host is the one you intended to connect."}</p>
       <div className="oauth-scope-list">
         {requestedScopes.filter((scope): scope is McpResourceScope => scope in MCP_SCOPE_DETAILS).map((scope) => <article key={scope}>
           <strong>{MCP_SCOPE_DETAILS[scope].title}</strong>

@@ -1,6 +1,12 @@
 import { type AccountContext } from "../../../../../lib/account-auth.ts";
 import { authorizeStoredReport, PRIVATE_REPORT_HEADERS } from "../../../../../lib/report-access.ts";
-import { reportApiAccountContext } from "../../../../../lib/report-api-auth.ts";
+import {
+  ReportApiAuthorizationError,
+  reportApiAccountContext,
+  reportApiAuthenticationRequiredResponse,
+  reportApiAuthorizationErrorResponse,
+  reportApiBearerPresented,
+} from "../../../../../lib/report-api-auth.ts";
 import {
   agentComparisons,
   decodeAgentComparisonCursor,
@@ -65,7 +71,11 @@ export async function getReportComparisonResult(
       now: services.now(),
       allowLegacyPublic: false,
     });
-    if (!authorization) return Response.json({ ok: false, error: "Report not found.", errorCode: "not-found" }, { status: 404, headers: PRIVATE_REPORT_HEADERS });
+    if (!authorization) {
+      return reportApiBearerPresented(request)
+        ? reportApiAuthenticationRequiredResponse()
+        : Response.json({ ok: false, error: "Report not found.", errorCode: "not-found" }, { status: 404, headers: PRIVATE_REPORT_HEADERS });
+    }
 
     const report = await services.loadReport(publicId, services.now());
     if (!report || report.run.id !== access.runId || report.run.workspaceId !== access.workspaceId) {
@@ -89,6 +99,7 @@ export async function getReportComparisonResult(
       nextCursor: encodeAgentComparisonCursor(publicId, matches.nextCursor),
     }, { headers: PRIVATE_REPORT_HEADERS });
   } catch (error) {
+    if (error instanceof ReportApiAuthorizationError) return reportApiAuthorizationErrorResponse(error);
     const message = error instanceof Error ? error.message : "The report comparisons could not be read.";
     const invalid = /invalid report id|invalid report match page size/i.test(message);
     const unavailable = /authoritative report match(?:es)? facts are unavailable/i.test(message);

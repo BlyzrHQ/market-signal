@@ -222,6 +222,14 @@ test("loop result route binds both report ownership and the original request id"
   const foreign = await getReportLoopResult(new Request(`https://signal.example/api/reports/${PUBLIC_ID}/result?requestId=${REQUEST_ID}`), { params: { publicId: PUBLIC_ID } }, services);
   assert.equal(foreign.status, 404);
   assert.equal(sensitiveReads, 0);
+
+  const expiredCli = await getReportLoopResult(new Request(`https://signal.example/api/reports/${PUBLIC_ID}/result?requestId=${REQUEST_ID}`, {
+    headers: { authorization: "Bearer expired-cli-token" },
+  }), { params: { publicId: PUBLIC_ID } }, services);
+  assert.equal(expiredCli.status, 401);
+  assert.equal((await expiredCli.json()).errorCode, "authentication-required");
+  assert.match(expiredCli.headers.get("www-authenticate") || "", /oauth-protected-resource\/api/);
+  assert.equal(sensitiveReads, 0);
 });
 
 test("loop result route returns pending without loading terminal facts", async () => {

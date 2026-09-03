@@ -151,5 +151,32 @@ export function ensureMcpOAuthSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS "mcp_oauth_connection_events_user_created_idx"
       ON "mcp_oauth_connection_events"("user_id", "created_at");
+    CREATE TABLE IF NOT EXISTS "report_api_keys" (
+      "id" text PRIMARY KEY NOT NULL,
+      "user_id" text NOT NULL REFERENCES "user"("id") ON DELETE CASCADE,
+      "workspace_id" text NOT NULL REFERENCES "workspaces"("id") ON DELETE CASCADE,
+      "name" text NOT NULL,
+      "secret_hash" text NOT NULL CHECK(length("secret_hash") = 43),
+      "last_four" text NOT NULL CHECK(length("last_four") = 4),
+      "scopes" text NOT NULL,
+      "created_at" text NOT NULL,
+      "expires_at" text NOT NULL,
+      "last_used_at" text,
+      "revoked_at" text
+    );
+    CREATE INDEX IF NOT EXISTS "report_api_keys_owner_idx"
+      ON "report_api_keys"("user_id", "workspace_id", "created_at");
+    CREATE INDEX IF NOT EXISTS "report_api_keys_active_idx"
+      ON "report_api_keys"("workspace_id", "revoked_at");
+    CREATE TABLE IF NOT EXISTS "report_api_key_events" (
+      "id" text PRIMARY KEY NOT NULL,
+      "key_id" text NOT NULL,
+      "user_id" text NOT NULL REFERENCES "user"("id") ON DELETE CASCADE,
+      "workspace_id" text NOT NULL REFERENCES "workspaces"("id") ON DELETE CASCADE,
+      "event_type" text NOT NULL,
+      "created_at" text NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS "report_api_key_events_owner_idx"
+      ON "report_api_key_events"("user_id", "workspace_id", "created_at");
   `);
 }

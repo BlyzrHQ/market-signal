@@ -13,19 +13,27 @@ import {
   hostedMcpEnabled,
 } from "../app/lib/mcp-oauth-config.ts";
 import {
+  CLI_ACCESS_TOKEN_TTL_SECONDS,
+  CLI_AUTHORIZATION_SCOPES,
+  CLI_CLIENT_ID,
+  CLI_REGISTERED_REDIRECT_URI,
+  CLI_RESOURCE,
   MCP_ACCESS_TOKEN_TTL_SECONDS,
   MCP_AUTHORIZATION_SCOPES,
   MCP_RESOURCE,
 } from "../app/lib/mcp-oauth-shared.ts";
 import {
+  authorizeCliClaims,
   authorizeMcpClaims,
   listConnectedMcpApps,
   revokeConnectedMcpApp,
 } from "../app/lib/mcp-oauth-store.ts";
 import {
   McpAccessTokenError,
+  verifyCliAccessToken,
   verifyMcpAccessToken,
 } from "../app/lib/mcp-token-verifier.ts";
+import { ReportApiAuthorizationError, reportApiAccountContext } from "../app/lib/report-api-auth.ts";
 
 const BASE_URL = "https://signal.blyzr.com";
 const CALLBACK_URL = "http://127.0.0.1:45891/callback";
@@ -41,7 +49,23 @@ async function fixture() {
     secret: "a-high-entropy-mcp-oauth-test-secret-with-more-than-thirty-two-characters",
   });
   await auth.$context;
-  return { auth, database: auth.options.database, directory };
+  return { auth, database: auth.options.database, databasePath, directory };
+}
+
+function hostedEnvironment(databasePath) {
+  return {
+    MARKET_SIGNAL_DEPLOY_TARGET: "node",
+    MARKET_SIGNAL_HOSTED_BILLING: "true",
+    MARKET_SIGNAL_SQLITE_PATH: databasePath,
+    BETTER_AUTH_URL: BASE_URL,
+    BETTER_AUTH_SECRET: "a-high-entropy-mcp-oauth-test-secret-with-more-than-thirty-two-characters",
+    STRIPE_RESTRICTED_KEY: `rk_test_${"a".repeat(24)}`,
+    STRIPE_WEBHOOK_SECRET: `whsec_${"b".repeat(24)}`,
+    STRIPE_PRICE_STARTER: "price_starter",
+    STRIPE_PRICE_SOLO: "price_solo",
+    STRIPE_PRICE_GROWTH: "price_growth",
+    STRIPE_PRICE_AGENCY: "price_agency",
+  };
 }
 
 function registerTestClient(database) {
@@ -152,6 +176,71 @@ async function refreshGrant(auth, refreshToken) {
   return response;
 }
 
+async function refreshCliGrant(auth, refreshToken) {
+  return auth.handler(new Request(`${BASE_URL}/api/auth/oauth2/token`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", origin: BASE_URL },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: CLI_CLIENT_ID,
+      refresh_token: refreshToken,
+      resource: CLI_RESOURCE,
+    }),
+  }));
+}
+
+async function issueCliTokens(auth, cookie, port = 45892) {
+  const callbackURL = `http://127.0.0.1:${port}/callback`;
+  const verifier = "market-signal-cli-code-verifier-with-more-than-forty-three-characters-123";
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
+  const authorize = new URL(`${BASE_URL}/api/auth/oauth2/authorize`);
+  authorize.searchParams.set("client_id", CLI_CLIENT_ID);
+  authorize.searchParams.set("redirect_uri", callbackURL);
+  authorize.searchParams.set("response_type", "code");
+  authorize.searchParams.set("scope", CLI_AUTHORIZATION_SCOPES.join(" "));
+  authorize.searchParams.set("state", "cli-state");
+  authorize.searchParams.set("code_challenge", challenge);
+  authorize.searchParams.set("code_challenge_method", "S256");
+  authorize.searchParams.set("resource", CLI_RESOURCE);
+  authorize.searchParams.set("prompt", "consent");
+  const authorizeResponse = await auth.handler(new Request(authorize, {
+    headers: { cookie, accept: "text/html", "sec-fetch-mode": "navigate" },
+  }));
+  assert.equal(authorizeResponse.status, 302, await authorizeResponse.text());
+  const consentLocation = authorizeResponse.headers.get("location");
+  assert.ok(consentLocation, "missing CLI consent redirect");
+  const consentURL = new URL(consentLocation, BASE_URL);
+  assert.equal(consentURL.origin + consentURL.pathname, `${BASE_URL}/oauth/consent`);
+
+  const consentResponse = await auth.handler(new Request(`${BASE_URL}/api/auth/oauth2/consent`, {
+    method: "POST",
+    headers: { cookie, "content-type": "application/json", origin: BASE_URL },
+    body: JSON.stringify({ accept: true, oauth_query: consentURL.search.slice(1) }),
+  }));
+  assert.equal(consentResponse.status, 200, await consentResponse.clone().text());
+  const consentResult = await consentResponse.json();
+  const callback = new URL(consentResult.redirect_uri || consentResult.url);
+  assert.equal(callback.origin + callback.pathname, callbackURL);
+  assert.equal(callback.searchParams.get("state"), "cli-state");
+  const code = callback.searchParams.get("code");
+  assert.ok(code);
+
+  const tokenResponse = await auth.handler(new Request(`${BASE_URL}/api/auth/oauth2/token`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", origin: BASE_URL },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      client_id: CLI_CLIENT_ID,
+      code,
+      code_verifier: verifier,
+      redirect_uri: callbackURL,
+      resource: CLI_RESOURCE,
+    }),
+  }));
+  assert.equal(tokenResponse.status, 200, await tokenResponse.clone().text());
+  return tokenResponse.json();
+}
+
 test("hosted MCP activates only on the canonical billed production deployment", () => {
   const environment = {
     MARKET_SIGNAL_HOSTED_BILLING: "true",
@@ -181,7 +270,7 @@ test("OAuth metadata advertises CIMD, exact resource scopes, PKCE, and no DCR", 
     assert.deepEqual(metadata.grant_types_supported, ["authorization_code", "refresh_token"]);
     assert.deepEqual(metadata.scopes_supported, [...MCP_AUTHORIZATION_SCOPES]);
     assert.deepEqual(
-      database.prepare("SELECT identifier, accessTokenTtl, signingAlgorithm, allowedScopes FROM oauthResource").get(),
+      database.prepare("SELECT identifier, accessTokenTtl, signingAlgorithm, allowedScopes FROM oauthResource WHERE identifier = ?").get(MCP_RESOURCE),
       {
         identifier: MCP_RESOURCE,
         accessTokenTtl: MCP_ACCESS_TOKEN_TTL_SECONDS,
@@ -249,6 +338,116 @@ test("authorization code plus S256 issues an audience-bound rotating grant", asy
     assert.equal(authorized.ok, true, JSON.stringify({ authorized, claims }));
     assert.equal(authorized.ok && authorized.context.workspaceId.length > 0, true);
     assert.equal(listConnectedMcpApps(database, claims.sub).at(0)?.status, "active");
+  } finally {
+    database.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("first-party CLI login accepts random loopback ports and stays API-audience bound", async () => {
+  const { auth, database, databasePath, directory } = await fixture();
+  try {
+    const client = database.prepare(`
+      SELECT clientId, clientSecret, disabled, name, uri, redirectUris,
+             tokenEndpointAuthMethod, applicationType, requirePKCE, skipConsent
+      FROM oauthClient WHERE clientId = ?
+    `).get(CLI_CLIENT_ID);
+    assert.deepEqual(client, {
+      clientId: CLI_CLIENT_ID,
+      clientSecret: null,
+      disabled: 0,
+      name: "Market Signal CLI",
+      uri: CLI_CLIENT_ID,
+      redirectUris: JSON.stringify([CLI_REGISTERED_REDIRECT_URI]),
+      tokenEndpointAuthMethod: "none",
+      applicationType: "native",
+      requirePKCE: 1,
+      skipConsent: 0,
+    });
+    assert.deepEqual(
+      database.prepare("SELECT identifier, accessTokenTtl, signingAlgorithm, allowedScopes FROM oauthResource WHERE identifier = ?").get(CLI_RESOURCE),
+      {
+        identifier: CLI_RESOURCE,
+        accessTokenTtl: CLI_ACCESS_TOKEN_TTL_SECONDS,
+        signingAlgorithm: "EdDSA",
+        allowedScopes: JSON.stringify(CLI_AUTHORIZATION_SCOPES),
+      },
+    );
+
+    const cookie = await signUp(auth);
+    const tokens = await issueCliTokens(auth, cookie, 49171);
+    const claims = decodeJwt(tokens.access_token);
+    assert.equal(claims.aud, CLI_RESOURCE);
+    assert.equal(claims.client_id, CLI_CLIENT_ID);
+    assert.equal(claims.scope, CLI_AUTHORIZATION_SCOPES.join(" "));
+    const authorized = await verifyCliAccessToken(database, tokens.access_token, ["reports:create"]);
+    assert.equal(authorized.clientId, CLI_CLIENT_ID);
+    assert.equal(authorized.workspaceId.length > 0, true);
+    assert.equal(authorized.user.id, claims.sub);
+    await assert.rejects(
+      () => verifyMcpAccessToken(database, tokens.access_token),
+      (error) => error instanceof McpAccessTokenError && error.code === "invalid_token",
+    );
+
+    const mcpTokens = await (async () => {
+      registerTestClient(database);
+      return issueTokens(auth, cookie);
+    })();
+    await assert.rejects(
+      () => verifyCliAccessToken(database, mcpTokens.access_token, ["reports:read"]),
+      (error) => error instanceof McpAccessTokenError && error.code === "invalid_token",
+    );
+
+    const environment = hostedEnvironment(databasePath);
+    const request = new Request(`${BASE_URL}/api/reports`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokens.access_token}` },
+    });
+    const context = await reportApiAccountContext(request, environment);
+    assert.equal(context?.workspaceId, authorized.workspaceId);
+    assert.equal(context?.user.id, claims.sub);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      assert.ok(await reportApiAccountContext(request, environment));
+    }
+    await assert.rejects(
+      () => reportApiAccountContext(request, environment),
+      (error) => error instanceof ReportApiAuthorizationError && error.status === 429 && error.errorCode === "rate-limit-exceeded",
+    );
+
+    const signOut = await auth.handler(new Request(`${BASE_URL}/api/auth/sign-out`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json", origin: BASE_URL },
+      body: "{}",
+    }));
+    assert.equal(signOut.status, 200, await signOut.text());
+    const afterBrowserSignOut = authorizeCliClaims(database, claims, ["reports:read"]);
+    assert.equal(afterBrowserSignOut.ok, true, `CLI offline grant should survive browser sign-out: ${JSON.stringify(afterBrowserSignOut)}`);
+    assert.equal(
+      listConnectedMcpApps(database, claims.sub).find((app) => app.client.clientId === CLI_CLIENT_ID)?.status,
+      "active",
+    );
+
+    const refreshResponse = await refreshCliGrant(auth, tokens.refresh_token);
+    assert.equal(refreshResponse.status, 200, await refreshResponse.clone().text());
+    const rotated = await refreshResponse.json();
+    assert.notEqual(rotated.refresh_token, tokens.refresh_token);
+    assert.equal(decodeJwt(rotated.access_token).sid, null);
+    assert.equal((await verifyCliAccessToken(database, rotated.access_token, ["reports:read"])).workspaceId, authorized.workspaceId);
+
+    const revoke = await auth.handler(new Request(`${BASE_URL}/api/auth/oauth2/revoke`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", origin: BASE_URL },
+      body: new URLSearchParams({
+        client_id: CLI_CLIENT_ID,
+        token: rotated.refresh_token,
+        token_type_hint: "refresh_token",
+      }),
+    }));
+    assert.equal(revoke.status, 200, await revoke.text());
+    await assert.rejects(
+      () => verifyCliAccessToken(database, rotated.access_token, ["reports:read"]),
+      (error) => error instanceof McpAccessTokenError && error.code === "invalid_token",
+    );
   } finally {
     database.close();
     await rm(directory, { recursive: true, force: true });
@@ -337,6 +536,7 @@ test("the Vinext production bundle retains exact OAuth discovery rewrites and ha
   for (const route of [
     "/api/mcp/oauth-protected-resource",
     "/api/mcp/oauth-protected-resource/mcp",
+    "/api/mcp/oauth-protected-resource/api",
     "/api/mcp/oauth-authorization-server",
   ]) {
     assert.match(builtServer, new RegExp(route.replaceAll("/", "\\/")));
@@ -344,6 +544,7 @@ test("the Vinext production bundle retains exact OAuth discovery rewrites and ha
   for (const publicPath of [
     "/.well-known/oauth-protected-resource",
     "/.well-known/oauth-protected-resource/mcp",
+    "/.well-known/oauth-protected-resource/api",
     "/.well-known/oauth-authorization-server",
   ]) {
     assert.match(nextConfig, new RegExp(publicPath.replaceAll("/", "\\/")));

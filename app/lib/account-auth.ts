@@ -3,6 +3,7 @@ import { betterAuth } from "better-auth";
 import { createHash, randomUUID } from "node:crypto";
 import { createHostedMcpAuthPlugins, hostedMcpEnabled } from "./mcp-oauth-config.ts";
 import { ensureMcpOAuthSchema } from "./mcp-oauth-schema.ts";
+import { ensureFirstPartyCliClient } from "./cli-oauth.ts";
 import { canonicalNodeSqlitePath } from "./node-sqlite-database.ts";
 
 const MINIMUM_SECRET_LENGTH = 32;
@@ -111,7 +112,7 @@ export async function createAccountAuth(config: AccountAuthConfig) {
   const plugins = config.mcpEnabled ? createHostedMcpAuthPlugins(config.baseURL) : [];
   if (config.mcpEnabled) ensureMcpOAuthSchema(database);
 
-  return betterAuth({
+  const auth = betterAuth({
     appName: "Market Signal",
     baseURL: config.baseURL,
     database,
@@ -135,6 +136,11 @@ export async function createAccountAuth(config: AccountAuthConfig) {
       },
     },
   });
+  if (config.mcpEnabled) {
+    await auth.$context;
+    ensureFirstPartyCliClient(database);
+  }
+  return auth;
 }
 
 export function ensureAccountSchema(database: Database.Database): void {

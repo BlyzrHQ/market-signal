@@ -1,6 +1,10 @@
 export const MARKET_SIGNAL_ORIGIN = "https://signal.blyzr.com";
 export const MCP_RESOURCE = `${MARKET_SIGNAL_ORIGIN}/mcp`;
+export const CLI_RESOURCE = `${MARKET_SIGNAL_ORIGIN}/api`;
+export const CLI_CLIENT_ID = `${MARKET_SIGNAL_ORIGIN}/cli`;
+export const CLI_REGISTERED_REDIRECT_URI = "http://127.0.0.1/callback";
 export const MCP_ACCESS_TOKEN_TTL_SECONDS = 10 * 60;
+export const CLI_ACCESS_TOKEN_TTL_SECONDS = 10 * 60;
 export const MCP_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 export const MCP_CLOCK_TOLERANCE_SECONDS = 60;
 
@@ -13,6 +17,16 @@ export const MCP_RESOURCE_SCOPES = [
 
 export const MCP_AUTHORIZATION_SCOPES = [
   ...MCP_RESOURCE_SCOPES,
+  "offline_access",
+] as const;
+
+export const CLI_RESOURCE_SCOPES = [
+  "reports:read",
+  "reports:create",
+] as const;
+
+export const CLI_AUTHORIZATION_SCOPES = [
+  ...CLI_RESOURCE_SCOPES,
   "offline_access",
 ] as const;
 
@@ -52,6 +66,7 @@ export function normalizeMcpScopes(value: unknown): string[] {
 }
 
 export function mcpClientIdentity(clientId: string, selfAssertedName?: string | null) {
+  const firstPartyCli = clientId === CLI_CLIENT_ID;
   let host = clientId;
   try {
     host = new URL(clientId).host;
@@ -61,7 +76,7 @@ export function mcpClientIdentity(clientId: string, selfAssertedName?: string | 
   return {
     clientId,
     host,
-    name: String(selfAssertedName || "").trim() || host,
-    verified: false as const,
+    name: firstPartyCli ? "Market Signal CLI" : String(selfAssertedName || "").trim() || host,
+    verified: firstPartyCli,
   };
 }

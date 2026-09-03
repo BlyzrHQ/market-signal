@@ -237,10 +237,60 @@ test("hosted report creation requires auth, subscription, and available quota", 
   const request = () => new Request("https://signal.example/api/reports", { method: "POST", body: JSON.stringify({ primaryDomain: "myjam.co.uk" }) });
   const unauthenticated = await createPersistentReport(request(), { ...base, authorize: async () => null });
   assert.equal(unauthenticated.status, 401);
+  assert.match(unauthenticated.headers.get("www-authenticate") || "", /oauth-protected-resource\/api/);
   const unpaid = await createPersistentReport(request(), { ...base, authorize: async () => ({ user: { id: "u", name: "U", email: "u@example.com" }, workspaceId: "w" }), reserve: async () => null });
   assert.equal(unpaid.status, 402);
   const limited = await createPersistentReport(request(), { ...base, authorize: async () => ({ user: { id: "u", name: "U", email: "u@example.com" }, workspaceId: "w" }), reserve: async () => ({ id: "", plan: BILLING_PLANS.starter, used: 5, limit: 5 }) });
   assert.equal(limited.status, 429);
+});
+
+test("hosted report creation reaches the workspace-scoped CLI authorizer", async () => {
+  let browserAuthorizerCalls = 0;
+  let loopAuthorizerCalls = 0;
+  let creationInput;
+  const response = await createPersistentReport(new Request("https://signal.blyzr.com/api/reports", {
+    method: "POST",
+    body: JSON.stringify({ primaryDomain: "myjam.co.uk", locale: "en", commandId: "cli:myjam:001" }),
+  }), {
+    requireAccount: true,
+    authorize: async () => {
+      browserAuthorizerCalls += 1;
+      return null;
+    },
+    authorizeLoop: async () => {
+      loopAuthorizerCalls += 1;
+      return { user: { id: "cli-user", name: "CLI User", email: "cli@example.com" }, workspaceId: "cli-workspace" };
+    },
+    reserve: async () => ({ id: "reservation-cli", plan: BILLING_PLANS.starter, used: 1, limit: 5 }),
+    create: async (value) => {
+      creationInput = value;
+      return {
+        ok: true,
+        report: {
+          id: "run-cli",
+          publicId: "b".repeat(32),
+          primaryDomain: "myjam.co.uk",
+          locale: "en",
+          status: "queued",
+          currentPhase: "queued",
+          attemptCount: 1,
+          createdAt: "now",
+          expiresAt: "later",
+          productPlan: "starter",
+          productLimit: 20,
+        },
+      };
+    },
+    dispatch: async () => ({ runId: "trigger-cli", idempotencyKey: "key-cli" }),
+    markDispatched: async () => {},
+    markDispatchFailed: async () => {},
+    finishReservation: async () => {},
+  });
+  assert.equal(response.status, 202, await response.clone().text());
+  assert.equal(browserAuthorizerCalls, 0);
+  assert.equal(loopAuthorizerCalls, 1);
+  assert.equal(creationInput.workspaceId, "cli-workspace");
+  assert.equal(creationInput.commandId, "cli:myjam:001");
 });
 
 test("paid report creation forwards only server-resolved workspace entitlement and leaves usage reserved until terminal", async () => {

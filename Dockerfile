@@ -1,10 +1,25 @@
 # syntax=docker/dockerfile:1.7
 
+FROM golang:1.22.0-bookworm AS cli-build
+ARG MARKET_SIGNAL_REVISION=unknown
+WORKDIR /src
+COPY contracts ./contracts
+COPY cli ./cli
+RUN cd cli \
+    && { [ "${MARKET_SIGNAL_REVISION}" = "unknown" ] || printf '%s' "${MARKET_SIGNAL_REVISION}" | grep -Eq '^[0-9a-f]{40}$'; } \
+    && go mod download \
+    && mkdir -p /out \
+    && CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=${MARKET_SIGNAL_REVISION}" -o /out/marketsignal-windows-amd64.exe ./cmd/marketsignal \
+    && CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=${MARKET_SIGNAL_REVISION}" -o /out/marketsignal-windows-arm64.exe ./cmd/marketsignal \
+    && cd /out \
+    && sha256sum marketsignal-windows-amd64.exe marketsignal-windows-arm64.exe > SHA256SUMS.txt
+
 FROM node:22.18.0-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
+COPY --from=cli-build /out ./public/downloads
 RUN npm run build:vps
 
 FROM node:22.18.0-bookworm-slim AS runtime

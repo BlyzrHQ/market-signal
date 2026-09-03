@@ -16,11 +16,14 @@ import (
 const maxResponseBytes = 25 << 20
 
 type Client struct {
-	baseURL    *url.URL
-	httpClient *http.Client
-	timeout    time.Duration
-	token      string
+	baseURL     *url.URL
+	httpClient  *http.Client
+	timeout     time.Duration
+	token       string
+	tokenSource func(context.Context) (string, error)
 }
+
+type TokenSource func(context.Context) (string, error)
 
 type APIError struct {
 	Status int
@@ -36,6 +39,14 @@ func (e *APIError) Error() string {
 }
 
 func NewClient(baseURL string, timeout time.Duration, tokens ...string) (*Client, error) {
+	return newClient(baseURL, timeout, nil, tokens...)
+}
+
+func NewClientWithTokenSource(baseURL string, timeout time.Duration, source TokenSource) (*Client, error) {
+	return newClient(baseURL, timeout, source)
+}
+
+func newClient(baseURL string, timeout time.Duration, source TokenSource, tokens ...string) (*Client, error) {
 	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(baseURL), "/"))
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return nil, fmt.Errorf("invalid base URL %q", baseURL)
@@ -50,10 +61,14 @@ func NewClient(baseURL string, timeout time.Duration, tokens ...string) (*Client
 	if token != "" && parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
 		return nil, fmt.Errorf("API tokens require HTTPS unless the base URL is localhost")
 	}
+	if source != nil && parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
+		return nil, fmt.Errorf("OAuth tokens require HTTPS unless the base URL is localhost")
+	}
 	return &Client{
-		baseURL: parsed,
-		timeout: timeout,
-		token:   token,
+		baseURL:     parsed,
+		timeout:     timeout,
+		token:       token,
+		tokenSource: source,
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
@@ -96,6 +111,14 @@ func (c *Client) request(ctx context.Context, method, path string, body []byte) 
 		maxAttempts = 2
 	}
 	for attempt := 0; attempt < maxAttempts; attempt++ {
+		token := c.token
+		if c.tokenSource != nil {
+			token, err = c.tokenSource(ctx)
+			if err != nil {
+				return nil, &APIError{Msg: err.Error()}
+			}
+			token = strings.TrimSpace(token)
+		}
 		request, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
 		if err != nil {
 			return nil, fmt.Errorf("create request: %w", err)
@@ -105,8 +128,8 @@ func (c *Client) request(ctx context.Context, method, path string, body []byte) 
 			request.Header.Set("Content-Type", "application/json")
 		}
 		request.Header.Set("User-Agent", "MarketSignalCLI/0.1")
-		if c.token != "" {
-			request.Header.Set("Authorization", "Bearer "+c.token)
+		if token != "" {
+			request.Header.Set("Authorization", "Bearer "+token)
 		}
 
 		response, err := c.httpClient.Do(request)
