@@ -21,13 +21,33 @@ const (
 )
 
 func terminalLoopFixture(status string, delivered int) []byte {
+	return terminalLoopFixtureForPlan(status, delivered, "starter", 20)
+}
+
+func terminalLoopFixtureForPlan(status string, delivered int, plan string, target int) []byte {
 	rows := make([]map[string]any, delivered)
 	for index := range rows {
 		rows[index] = map[string]any{
-			"key":     fmt.Sprintf("match-%02d", index+1),
-			"primary": map[string]any{"name": fmt.Sprintf("Babanuj product %d", index+1), "domain": "babanuj.com", "priceSignals": []any{map[string]any{"raw": "$10.00", "currency": "USD", "amount": 10}}},
-			"rival":   map[string]any{"name": fmt.Sprintf("Rival product %d", index+1), "domain": "rival.example", "priceSignals": []any{map[string]any{"raw": "$9.00", "currency": "USD", "amount": 9}}},
-			"match":   map[string]any{"assessment": map[string]any{"verdict": "same_product", "confidence": 0.94}, "decision": map[string]any{"recommendedMove": "Review the verified price gap."}},
+			"id": fmt.Sprintf("%064x", index+1),
+			"primaryProduct": map[string]any{
+				"id": fmt.Sprintf("primary-%02d", index+1), "domain": "babanuj.com", "title": fmt.Sprintf("Babanuj product %d", index+1),
+				"sourceUrl": fmt.Sprintf("https://babanuj.com/products/%d", index+1), "imageUrl": nil, "observedAt": "2026-09-02T10:00:30.000Z",
+				"price": map[string]any{"display": "$10.00", "amount": 10, "currency": "USD"}, "quantity": nil,
+			},
+			"rivalProduct": map[string]any{
+				"id": fmt.Sprintf("rival-%02d", index+1), "domain": "rival.example", "title": fmt.Sprintf("Rival product %d", index+1),
+				"sourceUrl": fmt.Sprintf("https://rival.example/products/%d", index+1), "imageUrl": nil, "observedAt": "2026-09-02T10:00:30.000Z",
+				"price": map[string]any{"display": "$9.00", "amount": 9, "currency": "USD"}, "quantity": nil,
+			},
+			"match": map[string]any{
+				"verdict": "search_result", "confidence": 0.94, "score": 0.91, "method": "direct-web-search", "claimType": "Inferred",
+				"reasons": []string{"Same product and size."}, "contradictions": []string{}, "sharedTerms": []string{"hummus"}, "category": "food", "variant": nil, "size": nil, "model": nil, "promptVersion": "direct-product-search-v1",
+			},
+			"priceComparison": map[string]any{
+				"kind": "direct", "position": "rival_lower", "currency": "USD", "primaryAmount": 10, "rivalAmount": 9, "gapAmount": 1, "gapPercent": 10,
+				"unitBasis": nil, "unit": nil, "primaryUnitAmount": nil, "rivalUnitAmount": nil, "unavailableReason": nil, "summary": "Rival is 10% cheaper", "detail": "Percent is relative to the higher observed price.", "note": "Verified direct comparison",
+			},
+			"recommendation": map[string]any{"action": "Review the verified price gap.", "rationale": "The rival has a lower observed price.", "source": "deterministic", "leverType": nil, "model": nil, "promptVersion": nil, "evidenceKeys": []string{}},
 		}
 	}
 	limitations := []string{}
@@ -40,25 +60,29 @@ func terminalLoopFixture(status string, delivered int) []byte {
 		"state": "terminal",
 		"output": map[string]any{
 			"contractVersion": "1", "functionId": "market-signal.report", "functionVersion": "1",
-			"requestId": testRequestID, "primaryDomain": "babanuj.com", "productPlan": "starter", "runId": "run_babanuj_001", "status": status,
+			"requestId": testRequestID, "primaryDomain": "babanuj.com", "productPlan": plan, "runId": "run_babanuj_001", "status": status,
 			"report": map[string]any{"publicId": testPublicReportID, "ownerPath": "/reports/" + testPublicReportID, "status": status, "completedPhases": []string{"crawl", "products", "persistence"}, "limitedPhases": limitedPhases},
 			"artifacts": []any{
 				map[string]any{"kind": "report", "schemaVersion": "1", "reference": "market-signal:report:" + testPublicReportID, "contentHash": strings.Repeat("a", 64), "mediaType": "application/json", "recordCount": 1},
 				map[string]any{"kind": "comparisons", "schemaVersion": "1", "reference": "market-signal:comparisons:" + testPublicReportID, "contentHash": strings.Repeat("b", 64), "mediaType": "application/json", "recordCount": delivered},
 			},
-			"metrics":    map[string]any{"comparisonTarget": 20, "publishedComparisons": delivered, "pricedComparisons": delivered, "competitorCount": 1, "repairRounds": 1, "usageStatus": "unknown", "costMicrousd": nil, "durationMs": 92000},
+			"metrics":    map[string]any{"comparisonTarget": target, "publishedComparisons": delivered, "pricedComparisons": delivered, "competitorCount": 1, "repairRounds": 1, "usageStatus": "unknown", "costMicrousd": nil, "durationMs": 92000},
 			"evaluation": map[string]any{"status": "unavailable", "evaluationId": nil, "evaluatorVersion": nil, "resultHash": nil},
 			"failure":    nil,
 			"startedAt":  "2026-09-02T10:00:00.000Z", "finishedAt": "2026-09-02T10:01:32.000Z",
 		},
 		"decision": map[string]any{
 			"headline":           fmt.Sprintf("Babanuj returned %d priced product comparisons.", delivered),
-			"coverage":           map[string]any{"target": 20, "delivered": delivered, "percent": float64(delivered) / 20 * 100},
+			"coverage":           map[string]any{"target": target, "delivered": delivered, "percent": float64(delivered) / float64(target) * 100},
 			"competitorDomains":  []string{"rival.example"},
 			"limitations":        limitations,
 			"recommendedActions": []string{"Review the largest verified price gaps first."},
 		},
-		"comparisons": map[string]any{"inline": rows, "totalCount": delivered, "manifestHash": strings.Repeat("b", 64), "nextCursor": nil, "pageUrl": "/api/reports/" + testPublicReportID + "/matches"},
+		"competitors": map[string]any{"authoritative": true, "items": []any{map[string]any{
+			"domain": "rival.example", "name": "Rival Market", "comparisonCount": delivered, "comparisonSharePercent": 100,
+			"relationship": "direct substitute", "confidence": "High", "reason": "Carries accepted priced alternatives.", "verificationScore": 91, "websiteUrl": "https://rival.example/",
+		}}, "totalCount": 1},
+		"comparisons": map[string]any{"authoritative": true, "items": rows, "returnedCount": delivered, "totalCount": delivered, "directPriceCount": delivered, "manifestHash": strings.Repeat("b", 64), "nextCursor": nil, "pageUrl": "/api/reports/" + testPublicReportID + "/result/comparisons"},
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -133,7 +157,8 @@ func failedLoopFixture(status string) []byte {
 			"competitorDomains": []string{}, "limitations": []string{"The primary storefront could not be crawled."},
 			"recommendedActions": []string{"Inspect the failure before submitting a new request id."},
 		},
-		"comparisons": map[string]any{"inline": []any{}, "totalCount": 0, "manifestHash": "", "nextCursor": nil, "pageUrl": "/api/reports/" + testPublicReportID + "/matches"},
+		"competitors": map[string]any{"authoritative": false, "items": []any{}, "totalCount": 0},
+		"comparisons": map[string]any{"authoritative": false, "items": []any{}, "returnedCount": 0, "totalCount": 0, "directPriceCount": 0, "manifestHash": "", "nextCursor": nil, "pageUrl": "/api/reports/" + testPublicReportID + "/result/comparisons"},
 	}
 	data, _ := json.Marshal(payload)
 	return data
@@ -207,7 +232,7 @@ func TestSubmitWaitAndResultCommandsUseDurableLoopContract(t *testing.T) {
 	if err := result.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"Babanuj returned 20 priced product comparisons.", "20/20 priced comparisons", "Provider cost unknown", "Babanuj product 1", "Review the largest verified price gaps first."} {
+	for _, expected := range []string{"Babanuj returned 20 priced product comparisons.", "20/20 priced comparisons", "Provider cost unknown", "Competitors", "rival.example — 20 comparisons", "Product comparisons (20 returned of 20)", "Babanuj product 1 ($10.00)", "Babanuj product 20 ($10.00)", "https://rival.example/products/20", "Review the largest verified price gaps first."} {
 		if !strings.Contains(resultOut.String(), expected) {
 			t.Fatalf("human result missing %q:\n%s", expected, resultOut.String())
 		}
@@ -394,6 +419,70 @@ func TestLimitedAndContractDriftHaveDistinctExitCodes(t *testing.T) {
 	}
 }
 
+func TestResultRejectsOpaqueRowsAndEmptyPricesAsContractDrift(t *testing.T) {
+	for _, testCase := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{
+			name: "opaque rows",
+			mutate: func(payload map[string]any) {
+				items := make([]any, 20)
+				for index := range items {
+					items[index] = map[string]any{"primary": "hidden", "rival": "hidden"}
+				}
+				payload["comparisons"].(map[string]any)["items"] = items
+			},
+		},
+		{
+			name: "empty rival price",
+			mutate: func(payload map[string]any) {
+				items := payload["comparisons"].(map[string]any)["items"].([]any)
+				items[0].(map[string]any)["rivalProduct"].(map[string]any)["price"] = map[string]any{"display": "", "amount": 0, "currency": "USD"}
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var payload map[string]any
+			if err := json.Unmarshal(terminalLoopFixture("complete", 20), &payload); err != nil {
+				t.Fatal(err)
+			}
+			testCase.mutate(payload)
+			data, _ := json.Marshal(payload)
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				_, _ = writer.Write(data)
+			}))
+			defer server.Close()
+			root := NewRoot("test")
+			root.SetArgs([]string{"result", testPublicReportID, "--request-id", testRequestID, "--base-url", server.URL, "--output", "json", "--quiet"})
+			err := root.Execute()
+			var exitErr *ExitError
+			if !errors.As(err, &exitErr) || exitErr.Code != 3 {
+				t.Fatalf("expected contract-drift exit 3, got %v", err)
+			}
+		})
+	}
+}
+
+func TestSoloHumanResultPrintsEveryInlineComparison(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write(terminalLoopFixtureForPlan("complete", 50, "solo", 50))
+	}))
+	defer server.Close()
+	var stdout bytes.Buffer
+	root := NewRoot("test")
+	root.SetOut(&stdout)
+	root.SetArgs([]string{"result", testPublicReportID, "--request-id", testRequestID, "--base-url", server.URL, "--quiet"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(stdout.String(), "   Rival       rival.example") != 50 || !strings.Contains(stdout.String(), "Babanuj product 50 ($10.00)") {
+		t.Fatalf("human result did not render all 50 inline comparisons:\n%s", stdout.String())
+	}
+}
+
 func TestFailedAndOutcomeUnknownHaveDistinctExitCodes(t *testing.T) {
 	for _, testCase := range []struct {
 		status   string
@@ -477,5 +566,26 @@ func TestSubmitMapsQuotaRefusalToExitSeven(t *testing.T) {
 	var exitErr *ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 7 {
 		t.Fatalf("expected quota exit 7, got %v", err)
+	}
+}
+
+func TestResultMapsPermanentFactFailureToExitEight(t *testing.T) {
+	for _, errorCode := range []string{"facts-inconsistent", "facts-unavailable"} {
+		t.Run(errorCode, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				writer.WriteHeader(http.StatusConflict)
+				_, _ = fmt.Fprintf(writer, `{"error":"Authoritative report facts cannot be returned.","errorCode":%q}`, errorCode)
+			}))
+			defer server.Close()
+
+			root := NewRoot("test")
+			root.SetArgs([]string{"result", testPublicReportID, "--request-id", testRequestID, "--base-url", server.URL, "--output", "json", "--quiet"})
+			err := root.Execute()
+			var exitErr *ExitError
+			if !errors.As(err, &exitErr) || exitErr.Code != 8 {
+				t.Fatalf("expected permanent fact failure exit 8, got %v", err)
+			}
+		})
 	}
 }

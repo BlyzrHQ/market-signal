@@ -20,3 +20,7 @@ Signal service, the Go CLI, and future crawler/comparison services.
 - `report-result.v1.schema.json` validates the asynchronous loop status and
   bounded decision-ready response returned by `/api/reports/{publicId}/result`
   and consumed by `wait` and `result`.
+- `report-comparisons-page.v1.schema.json` validates each private continuation
+  page from `/api/reports/{publicId}/result/comparisons`. Every row uses the
+  same normalized product, price, match, source, and recommendation shape as
+  the inline rows in `report-result.v1.schema.json`.

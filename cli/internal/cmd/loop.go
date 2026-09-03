@@ -290,8 +290,13 @@ func validSubmissionLifecycle(replayed bool, status, phase string, dispatched bo
 
 func loopAPIError(err error) error {
 	var apiErr *api.APIError
-	if errors.As(err, &apiErr) && (apiErr.Status == 402 || apiErr.Status == 429) {
-		return &ExitError{Code: 7, Err: err}
+	if errors.As(err, &apiErr) {
+		if apiErr.Status == 402 || apiErr.Status == 429 {
+			return &ExitError{Code: 7, Err: err}
+		}
+		if apiErr.Status == 409 && (apiErr.Code == "facts-inconsistent" || apiErr.Code == "facts-unavailable") {
+			return &ExitError{Code: 8, Err: err}
+		}
 	}
 	return &ExitError{Code: 4, Err: err}
 }

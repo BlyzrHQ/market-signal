@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -137,5 +138,24 @@ func TestClientRejectsAbsoluteAPIPath(t *testing.T) {
 	}
 	if _, err := client.Get(context.Background(), "https://attacker.example/path"); err == nil || !strings.Contains(err.Error(), "invalid API path") {
 		t.Fatalf("expected absolute path rejection, got %v", err)
+	}
+}
+
+func TestClientPreservesMachineReadableAPIErrorCode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":"Authoritative report comparison facts are inconsistent.","errorCode":"facts-inconsistent"}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Get(context.Background(), "/api/reports/report/result")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusConflict || apiErr.Code != "facts-inconsistent" {
+		t.Fatalf("expected preserved facts-inconsistent API error, got %#v", err)
 	}
 }

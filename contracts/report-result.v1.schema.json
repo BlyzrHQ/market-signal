@@ -45,11 +45,12 @@
     "terminal": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["state", "output", "decision", "comparisons"],
+      "required": ["state", "output", "decision", "competitors", "comparisons"],
       "properties": {
         "state": { "const": "terminal" },
         "output": { "$ref": "#/$defs/output" },
         "decision": { "$ref": "#/$defs/decision" },
+        "competitors": { "$ref": "#/$defs/competitors" },
         "comparisons": { "$ref": "#/$defs/comparisons" }
       }
     },
@@ -165,30 +166,154 @@
         "recommendedActions": { "type": "array", "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 500 } }
       }
     },
+    "price": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["display", "amount", "currency"],
+      "properties": {
+        "display": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "amount": { "type": "number", "exclusiveMinimum": 0 },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }
+      }
+    },
+    "quantity": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "amount", "unit"],
+          "properties": {
+            "kind": { "type": "string", "minLength": 1, "maxLength": 40 },
+            "amount": { "type": "number", "exclusiveMinimum": 0 },
+            "unit": { "type": "string", "minLength": 1, "maxLength": 20 }
+          }
+        }
+      ]
+    },
+    "product": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "domain", "title", "sourceUrl", "imageUrl", "observedAt", "price", "quantity"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "domain": { "type": "string", "minLength": 3, "maxLength": 253 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "sourceUrl": { "type": "string", "pattern": "^https://", "maxLength": 2000 },
+        "imageUrl": { "oneOf": [{ "type": "string", "pattern": "^https://", "maxLength": 2000 }, { "type": "null" }] },
+        "observedAt": { "$ref": "#/$defs/timestamp" },
+        "price": { "$ref": "#/$defs/price" },
+        "quantity": { "$ref": "#/$defs/quantity" }
+      }
+    },
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verdict", "confidence", "score", "method", "claimType", "reasons", "contradictions", "sharedTerms", "category", "variant", "size", "model", "promptVersion"],
+      "properties": {
+        "verdict": { "enum": ["same_product", "close_substitute", "search_result"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "method": { "enum": ["ai-hybrid", "direct-web-search"] },
+        "claimType": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "reasons": { "type": "array", "maxItems": 12, "items": { "type": "string", "minLength": 1, "maxLength": 320 } },
+        "contradictions": { "type": "array", "maxItems": 12, "items": { "type": "string", "minLength": 1, "maxLength": 320 } },
+        "sharedTerms": { "type": "array", "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 120 } },
+        "category": { "type": ["string", "null"], "minLength": 1, "maxLength": 160 },
+        "variant": { "type": ["string", "null"], "minLength": 1, "maxLength": 160 },
+        "size": { "type": ["string", "null"], "minLength": 1, "maxLength": 120 },
+        "model": { "type": ["string", "null"], "minLength": 1, "maxLength": 120 },
+        "promptVersion": { "type": ["string", "null"], "minLength": 1, "maxLength": 120 }
+      }
+    },
+    "priceComparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "position", "currency", "primaryAmount", "rivalAmount", "gapAmount", "gapPercent", "unitBasis", "unit", "primaryUnitAmount", "rivalUnitAmount", "unavailableReason", "summary", "detail", "note"],
+      "properties": {
+        "kind": { "enum": ["direct", "unit-normalized", "listed-gap", "listed-equal", "approved-unparsed", "both-observed", "one-observed", "none-observed"] },
+        "position": { "enum": ["primary_lower", "rival_lower", "equal", "not_calculable"] },
+        "currency": { "oneOf": [{ "type": "string", "pattern": "^[A-Z]{3}$" }, { "type": "null" }] },
+        "primaryAmount": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "rivalAmount": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "gapAmount": { "type": ["number", "null"], "minimum": 0 },
+        "gapPercent": { "type": ["number", "null"], "minimum": 0 },
+        "unitBasis": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "unit": { "type": ["string", "null"], "minLength": 1, "maxLength": 20 },
+        "primaryUnitAmount": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "rivalUnitAmount": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "unavailableReason": { "enum": ["currency", "format", "unparsed", "missing_price", null] },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "detail": { "type": "string", "maxLength": 500 },
+        "note": { "type": "string", "maxLength": 500 }
+      }
+    },
+    "recommendation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "rationale", "source", "leverType", "model", "promptVersion", "evidenceKeys"],
+      "properties": {
+        "action": { "type": ["string", "null"], "minLength": 1, "maxLength": 500 },
+        "rationale": { "type": ["string", "null"], "minLength": 1, "maxLength": 500 },
+        "source": { "enum": ["ai", "deterministic", "unknown"] },
+        "leverType": { "type": ["string", "null"], "minLength": 1, "maxLength": 80 },
+        "model": { "type": ["string", "null"], "minLength": 1, "maxLength": 120 },
+        "promptVersion": { "type": ["string", "null"], "minLength": 1, "maxLength": 120 },
+        "evidenceKeys": { "type": "array", "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 160 } }
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "primaryProduct", "rivalProduct", "match", "priceComparison", "recommendation"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "primaryProduct": { "$ref": "#/$defs/product" },
+        "rivalProduct": { "$ref": "#/$defs/product" },
+        "match": { "$ref": "#/$defs/match" },
+        "priceComparison": { "$ref": "#/$defs/priceComparison" },
+        "recommendation": { "$ref": "#/$defs/recommendation" }
+      }
+    },
+    "competitor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["domain", "name", "comparisonCount", "comparisonSharePercent", "relationship", "confidence", "reason", "verificationScore", "websiteUrl"],
+      "properties": {
+        "domain": { "type": "string", "minLength": 3, "maxLength": 253 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "comparisonCount": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "comparisonSharePercent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "relationship": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "confidence": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "verificationScore": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+        "websiteUrl": { "oneOf": [{ "type": "string", "pattern": "^https://", "maxLength": 2000 }, { "type": "null" }] }
+      }
+    },
+    "competitors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authoritative", "items", "totalCount"],
+      "properties": {
+        "authoritative": { "type": "boolean" },
+        "items": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/$defs/competitor" } },
+        "totalCount": { "type": "integer", "minimum": 0, "maximum": 1000 }
+      }
+    },
     "comparisons": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["inline", "totalCount", "manifestHash", "nextCursor", "pageUrl"],
+      "required": ["authoritative", "items", "returnedCount", "totalCount", "directPriceCount", "manifestHash", "nextCursor", "pageUrl"],
       "properties": {
-        "inline": {
-          "type": "array",
-          "maxItems": 50,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["primary", "rival", "match", "key"],
-            "properties": {
-              "primary": { "type": "object" },
-              "rival": { "type": "object" },
-              "match": { "type": "object" },
-              "key": { "type": "string", "minLength": 1, "maxLength": 500 }
-            }
-          }
-        },
+        "authoritative": { "type": "boolean" },
+        "items": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/comparison" } },
+        "returnedCount": { "type": "integer", "minimum": 0, "maximum": 50 },
         "totalCount": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "directPriceCount": { "type": "integer", "minimum": 0, "maximum": 1000 },
         "manifestHash": { "type": "string", "pattern": "^(?:|[a-f0-9]{64})$" },
         "nextCursor": { "type": ["string", "null"], "maxLength": 600 },
-        "pageUrl": { "type": "string", "pattern": "^/api/reports/[a-f0-9]{32}/matches$" }
+        "pageUrl": { "type": "string", "pattern": "^/api/reports/[a-f0-9]{32}/result/comparisons$" }
       }
     }
   }

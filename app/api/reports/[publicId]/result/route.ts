@@ -1,7 +1,9 @@
 import { type AccountContext } from "../../../../lib/account-auth.ts";
 import { authorizeStoredReport, PRIVATE_REPORT_HEADERS } from "../../../../lib/report-access.ts";
 import { reportApiAccountContext } from "../../../../lib/report-api-auth.ts";
+import { ReportLoopFactsError } from "../../../../lib/report-loop-projection.ts";
 import { buildMarketSignalLoopResult } from "../../../../lib/report-loop-result.ts";
+import { MarketSignalLoopContractError } from "../../../../../src/shared/market-signal-loop-contract.ts";
 import {
   getReportEvaluation,
   getStoredReport,
@@ -70,12 +72,19 @@ export async function getReportLoopResult(
   } catch (error) {
     const message = error instanceof Error ? error.message : "The report result could not be read.";
     const invalid = /invalid report id/i.test(message);
-    const unavailable = /authoritative report matches are unavailable/i.test(message);
+    const unavailable = /authoritative report match(?:es)? facts are unavailable/i.test(message);
+    const inconsistent = error instanceof ReportLoopFactsError || error instanceof MarketSignalLoopContractError;
     return Response.json({
       ok: false,
-      error: invalid ? "Invalid report id." : unavailable ? "Authoritative report matches are unavailable." : "The report result could not be read.",
-      errorCode: invalid ? "invalid-request" : unavailable ? "facts-unavailable" : "result-read-failed",
-    }, { status: invalid ? 400 : unavailable ? 409 : 503, headers: PRIVATE_REPORT_HEADERS });
+      error: invalid
+        ? "Invalid report id."
+        : unavailable
+          ? "Authoritative report matches are unavailable."
+          : inconsistent
+            ? "Authoritative report comparison facts are inconsistent."
+            : "The report result could not be read.",
+      errorCode: invalid ? "invalid-request" : unavailable ? "facts-unavailable" : inconsistent ? "facts-inconsistent" : "result-read-failed",
+    }, { status: invalid ? 400 : unavailable || inconsistent ? 409 : 503, headers: PRIVATE_REPORT_HEADERS });
   }
 }
 

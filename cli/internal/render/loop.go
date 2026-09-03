@@ -34,7 +34,7 @@ func LoopResultTable(writer io.Writer, result loop.ResultEnvelope) error {
 			result.PrimaryDomain, result.RequestID, result.PublicReportID, result.Status, result.Phase, result.Attempt, result.HeartbeatAt, result.PollAfter)
 		return err
 	}
-	if result.Output == nil || result.Decision == nil || result.Comparisons == nil {
+	if result.Output == nil || result.Decision == nil || result.Competitors == nil || result.Comparisons == nil {
 		return fmt.Errorf("terminal result is missing decision data")
 	}
 	output := result.Output
@@ -69,20 +69,51 @@ func LoopResultTable(writer io.Writer, result loop.ResultEnvelope) error {
 		return err
 	}
 
-	if len(result.Comparisons.Inline) > 0 {
-		if _, err := fmt.Fprintln(writer, "\nSample comparisons"); err != nil {
+	if len(result.Competitors.Items) > 0 {
+		if _, err := fmt.Fprintln(writer, "\nCompetitors"); err != nil {
 			return err
 		}
-		limit := len(result.Comparisons.Inline)
-		if limit > 5 {
-			limit = 5
+		for _, competitor := range result.Competitors.Items {
+			label := "comparisons"
+			if competitor.ComparisonCount == 1 {
+				label = "comparison"
+			}
+			if _, err := fmt.Fprintf(writer, "- %s — %d %s (%.1f%% of report)\n", competitor.Domain, competitor.ComparisonCount, label, competitor.ComparisonSharePercent); err != nil {
+				return err
+			}
 		}
-		for _, row := range result.Comparisons.Inline[:limit] {
-			primary := object(row["primary"])
-			rival := object(row["rival"])
-			match := object(row["match"])
-			assessment := object(match["assessment"])
-			if _, err := fmt.Fprintf(writer, "- %s → %s (%s, %s)\n", text(primary["name"]), text(rival["name"]), text(rival["domain"]), text(assessment["verdict"])); err != nil {
+	}
+
+	if len(result.Comparisons.Items) > 0 {
+		if _, err := fmt.Fprintf(writer, "\nProduct comparisons (%d returned of %d)\n", result.Comparisons.ReturnedCount, result.Comparisons.TotalCount); err != nil {
+			return err
+		}
+		for index, comparison := range result.Comparisons.Items {
+			confidence := fmt.Sprintf("%.0f%% confidence", comparison.Match.Confidence*100)
+			if _, err := fmt.Fprintf(writer, "%d. %s (%s) → %s (%s)\n   Rival       %s\n   Match       %s · %s · %s\n   Price       %s\n   Your source %s\n   Rival source %s\n",
+				index+1,
+				comparison.PrimaryProduct.Title,
+				comparison.PrimaryProduct.Price.Display,
+				comparison.RivalProduct.Title,
+				comparison.RivalProduct.Price.Display,
+				comparison.RivalProduct.Domain,
+				strings.ReplaceAll(comparison.Match.Verdict, "_", " "),
+				confidence,
+				comparison.Match.Method,
+				comparison.PriceComparison.Summary,
+				comparison.PrimaryProduct.SourceURL,
+				comparison.RivalProduct.SourceURL,
+			); err != nil {
+				return err
+			}
+			if comparison.Recommendation.Action != nil {
+				if _, err := fmt.Fprintf(writer, "   Action      %s\n", *comparison.Recommendation.Action); err != nil {
+					return err
+				}
+			}
+		}
+		if result.Comparisons.NextCursor != nil {
+			if _, err := fmt.Fprintf(writer, "\nMore comparisons are available at %s using cursor %s.\n", result.Comparisons.PageURL, *result.Comparisons.NextCursor); err != nil {
 				return err
 			}
 		}
@@ -98,17 +129,4 @@ func LoopResultTable(writer io.Writer, result loop.ResultEnvelope) error {
 		}
 	}
 	return nil
-}
-
-func object(value any) map[string]any {
-	result, _ := value.(map[string]any)
-	return result
-}
-
-func text(value any) string {
-	result, _ := value.(string)
-	if strings.TrimSpace(result) == "" {
-		return "unknown"
-	}
-	return strings.TrimSpace(result)
 }

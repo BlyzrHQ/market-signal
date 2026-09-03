@@ -6,6 +6,13 @@ import {
   type MarketSignalLoopOutput,
 } from "../../src/shared/market-signal-loop-contract.ts";
 import { reportFactHash } from "../../src/shared/report-facts.ts";
+import {
+  agentComparisons,
+  agentCompetitors,
+  encodeAgentComparisonCursor,
+  type AgentComparison,
+  type AgentCompetitor,
+} from "./report-loop-projection.ts";
 import type {
   StoredReportEvaluation,
   StoredReportMatchPage,
@@ -34,9 +41,17 @@ export type MarketSignalLoopTerminal = {
     limitations: string[];
     recommendedActions: string[];
   };
-  comparisons: {
-    inline: StoredReportMatchPage["items"];
+  competitors: {
+    authoritative: boolean;
+    items: AgentCompetitor[];
     totalCount: number;
+  };
+  comparisons: {
+    authoritative: boolean;
+    items: AgentComparison[];
+    returnedCount: number;
+    totalCount: number;
+    directPriceCount: number;
     manifestHash: string;
     nextCursor: string | null;
     pageUrl: string;
@@ -143,8 +158,10 @@ export async function buildMarketSignalLoopResult(input: {
   const phases = isStoredSuccess ? uniquePhases(report, reportStatus) : { completedPhases: [], limitedPhases: [] };
   const evaluation = await evaluationResult(input.evaluation || null);
   const reportHash = isStoredSuccess ? await reportFactHash(report.document) : "";
-  const pageUrl = `/api/reports/${run.publicId}/matches`;
-  const competitorDomains = matches ? Object.keys(matches.domainCounts).filter(Boolean).sort() : [];
+  const pageUrl = `/api/reports/${run.publicId}/result/comparisons`;
+  const competitorItems = matches ? agentCompetitors(report, matches) : [];
+  const comparisonItems = matches ? agentComparisons(matches, report) : [];
+  const competitorDomains = competitorItems.map((item) => item.domain).sort();
   const limitations = outputStatus === "limited"
     ? [`The report delivered ${delivered} of ${target} requested priced comparisons.`]
     : outputStatus === "failed" || outputStatus === "outcome_unknown"
@@ -203,11 +220,19 @@ export async function buildMarketSignalLoopResult(input: {
         ? ["Review the largest verified price gaps first."]
         : ["Inspect the failure or coverage limitation before submitting a new request id."],
     },
+    competitors: {
+      authoritative: Boolean(matches),
+      items: competitorItems,
+      totalCount: competitorItems.length,
+    },
     comparisons: {
-      inline: matches?.items || [],
+      authoritative: Boolean(matches),
+      items: comparisonItems,
+      returnedCount: comparisonItems.length,
       totalCount: delivered,
+      directPriceCount: matches?.directPriceCount || 0,
       manifestHash: matches?.manifestHash || "",
-      nextCursor: matches?.nextCursor || null,
+      nextCursor: encodeAgentComparisonCursor(run.publicId, matches?.nextCursor || null),
       pageUrl,
     },
   };

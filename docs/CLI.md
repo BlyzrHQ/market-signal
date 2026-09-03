@@ -98,6 +98,11 @@ The domain can be a bare hostname or an HTTP/HTTPS URL. A leading `www.` is
 normalized away. JSON output is validated against the versioned report
 contract before it is printed.
 
+Because report creation can consume paid provider resources, `report` and
+`crawl` make one POST attempt. They do not automatically retry an ambiguous
+network or transient server failure; retry those commands intentionally after
+checking whether the first request created a report.
+
 ### `crawl`
 
 Run the same report pipeline as `report`, but emphasize crawl coverage in the
@@ -146,16 +151,37 @@ marketsignal wait 0123456789abcdef0123456789abcdef \
 ### `result`
 
 Read one status snapshot. A terminal response contains the loop output,
-coverage summary, limitations, recommended actions, and at most 50 priced
-comparison rows. Starter and Solo can fit all 20 or 50 comparisons inline.
-Growth and Agency return `pageUrl` and `nextCursor` API metadata for a caller
-that implements additional pagination; this CLI does not currently expose a
-separate pagination command.
+coverage summary, competitor roll-up, limitations, recommended actions, and at
+most 50 authoritative priced comparison rows. Each comparison includes the
+primary and rival product identity, both positive same-market prices, source
+URLs, observed timestamps, match method and confidence, calculated price gap,
+and any stored recommendation. Starter and Solo can fit all 20 or 50
+comparisons inline. Growth and Agency return a report-bound `nextCursor` and a
+`pageUrl`; an orchestrating agent can follow that private endpoint in pages of
+up to 50 while preserving the same `requestId` and authentication.
 
 ```bash
 marketsignal result 0123456789abcdef0123456789abcdef \
   --request-id orchestrator:example:001
 ```
+
+The JSON shape is deliberately agent-readable rather than a copy of the UI.
+For example, use `comparisons.items[*].primaryProduct`, `rivalProduct`,
+`match`, `priceComparison`, and `recommendation`, and use
+`competitors.items[*].comparisonCount` to understand how much of the report
+each rival represents. No empty-price comparison can pass this boundary; an
+inconsistent stored row fails closed as `facts-inconsistent` instead of being
+silently omitted or shown as a partial truth.
+
+To retrieve a continuation page, call the relative `pageUrl` with the original
+request id and returned cursor:
+
+```text
+GET {pageUrl}?requestId={requestId}&limit=50&cursor={nextCursor}
+```
+
+The endpoint returns `report-comparisons-page.v1.schema.json`. A cursor is
+bound to its report and cannot be replayed against another report.
 
 Provider cost remains `null` with `usageStatus: "unknown"` when the service has
 not attributed a known cost to the report. Unknown cost is never rendered as
@@ -224,6 +250,7 @@ pipe-friendly. Use `--quiet` to suppress progress entirely.
 | `5` | The durable report ended in a failed state. | Read the machine-readable failure code; use a new request id only for an intentional retry. |
 | `6` | The report is pending, interrupted, outcome-unknown, or the wait timed out. | Resume `wait` or inspect the returned report id; do not resubmit automatically. |
 | `7` | The account has no active subscription or report quota. | Resolve the plan or quota before submitting new paid work. |
+| `8` | The terminal report's authoritative facts are unavailable or inconsistent. | Stop automatic retries and inspect the report/storage state. |
 
 ## Build a reusable binary
 

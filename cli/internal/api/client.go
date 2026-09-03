@@ -24,6 +24,7 @@ type Client struct {
 
 type APIError struct {
 	Status int
+	Code   string
 	Msg    string
 }
 
@@ -129,7 +130,8 @@ func (c *Client) request(ctx context.Context, method, path string, body []byte) 
 			continue
 		}
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
-			return nil, &APIError{Status: response.StatusCode, Msg: errorMessage(data)}
+			message, code := errorDetails(data)
+			return nil, &APIError{Status: response.StatusCode, Code: code, Msg: message}
 		}
 		if !json.Valid(data) {
 			contentType := response.Header.Get("Content-Type")
@@ -147,15 +149,16 @@ func isTransient(status int) bool {
 	return status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
 }
 
-func errorMessage(data []byte) string {
+func errorDetails(data []byte) (string, string) {
 	var body struct {
-		Error string `json:"error"`
+		Error     string `json:"error"`
+		ErrorCode string `json:"errorCode"`
 	}
 	if json.Unmarshal(data, &body) == nil && strings.TrimSpace(body.Error) != "" {
-		return body.Error
+		return body.Error, strings.TrimSpace(body.ErrorCode)
 	}
 	if bytes.HasPrefix(bytes.TrimSpace(data), []byte("<")) {
-		return "server returned HTML instead of JSON; check the base URL and authentication"
+		return "server returned HTML instead of JSON; check the base URL and authentication", ""
 	}
-	return strings.TrimSpace(string(data))
+	return strings.TrimSpace(string(data)), ""
 }

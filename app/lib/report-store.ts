@@ -952,7 +952,7 @@ function matchPageItem(row: Record<string, unknown>) {
       sharedTerms: Array.isArray(evidence.sharedTerms) ? evidence.sharedTerms : [],
       claimIds: Array.isArray(evidence.claimIds) ? evidence.claimIds : [],
       assessment: {
-        method: evidence.method === "direct-web-search" ? "direct-web-search" : row.model ? "ai-hybrid" : "",
+        method: evidence.method === "direct-web-search" || evidence.method === "ai-hybrid" ? evidence.method : "",
         claimType: String(row.claim_type || ""),
         verdict: String(row.verdict || ""),
         confidence: Number.isFinite(confidence) ? confidence : null,

@@ -8,7 +8,7 @@ import { Worker } from "node:worker_threads";
 
 import { loadRememberedCompetitors, rememberVerifiedCompetitors } from "../app/lib/competitor-memory.ts";
 import { NodeSqliteDatabase } from "../app/lib/node-sqlite-database.ts";
-import { appendReportEvent, createReportRun, evaluateStoredReport, finalizeReportFactManifest, getReportEvaluation, getStoredReport, loadReportMatchBatchCheckpoints, recoverInterruptedReport, saveReportDocument, saveReportFactChunk, saveReportMatchBatchCheckpoint } from "../app/lib/report-store.ts";
+import { appendReportEvent, createReportRun, evaluateStoredReport, finalizeReportFactManifest, getReportEvaluation, getStoredReport, loadReportMatchBatchCheckpoints, loadStoredReportMatchPage, recoverInterruptedReport, saveReportDocument, saveReportFactChunk, saveReportMatchBatchCheckpoint } from "../app/lib/report-store.ts";
 import { buildReportFactBundle, canonicalReportFact, reportFactHash } from "../src/shared/report-facts.ts";
 import { closeRuntimeDatabases, runtimeDatabase } from "../app/lib/runtime-database.ts";
 import { publicHttpUrl } from "../app/lib/public-url.ts";
@@ -242,7 +242,7 @@ test("full relational report facts survive snapshot compaction with replay-safe 
       comparison: {
         primaryDomain: "catalog.example",
         comparisonDomains: ["rival.example"],
-        rows: [{ primary: products[0], matches: [{ domain: "rival.example", product: rivalProduct, score: 0.91, confidence: "Medium", sharedTerms: ["observed", "product"], claimIds: ["claim-0"], decision: null, assessment: { method: "ai-hybrid", claimType: "Inferred", verdict: "same_product", confidence: 0.91, model: "test-model", promptVersion: "test-v1", reasons: ["Observed identity aligns."], contradictions: [], normalizedCategory: "grocery", normalizedVariant: "", normalizedSize: "", primarySourceUrl: products[0].sourceUrl, rivalSourceUrl: rivalProduct.sourceUrl } }] }],
+        rows: [{ primary: products[0], matches: [{ domain: "rival.example", product: rivalProduct, score: 0.91, confidence: "Medium", sharedTerms: ["observed", "product"], claimIds: ["claim-0"], decision: null, publication: { priceEligible: true }, assessment: { method: "ai-hybrid", claimType: "Inferred", verdict: "same_product", confidence: 0.91, model: "", promptVersion: "test-v1", reasons: ["Observed identity aligns."], contradictions: [], normalizedCategory: "grocery", normalizedVariant: "", normalizedSize: "", primarySourceUrl: products[0].sourceUrl, rivalSourceUrl: rivalProduct.sourceUrl } }] }],
         unmatched: [],
         coverage: { primaryProductsAvailable: 61, primaryProductsScanned: 61, primaryProductFamiliesCompared: 1, competitorProductsAvailable: 1, competitorProductsScanned: 1, assignedPairCount: 1, verifiedPairCount: 1, rowsReturned: 1, rowLimit: 30, truncated: false },
       },
@@ -273,6 +273,8 @@ test("full relational report facts survive snapshot compaction with replay-safe 
     assert.equal(savedProducts.results[0].count, 63);
     assert.equal(savedMatches.results[0].count, 1);
     assert.equal(savedAds.results[0].count, 1);
+    const matchPage = await loadStoredReportMatchPage(created.publicId, {}, database);
+    assert.equal(matchPage.items[0].match.assessment.method, "ai-hybrid");
     const catalogSnapshot = JSON.parse(snapshot.results[0].document_json).blocks[0];
     assert.equal(catalogSnapshot.products.length, 12);
     assert.equal(catalogSnapshot.totalProductCount, 61);

@@ -6,8 +6,10 @@ import test from "node:test";
 
 import { createPersistentReport } from "../app/api/reports/route.ts";
 import { getReportLoopResult } from "../app/api/reports/[publicId]/result/route.ts";
+import { getReportComparisonResult } from "../app/api/reports/[publicId]/result/comparisons/route.ts";
 import { CONTROLLED_CLI_WORKSPACE_ID, reportApiAccountContext } from "../app/lib/report-api-auth.ts";
 import { createReportCommand } from "../app/lib/report-command-service.ts";
+import { ReportLoopFactsError } from "../app/lib/report-loop-projection.ts";
 import { buildMarketSignalLoopResult } from "../app/lib/report-loop-result.ts";
 import { NodeSqliteDatabase } from "../app/lib/node-sqlite-database.ts";
 import { createReportRunResult, markReportDispatched } from "../app/lib/report-store.ts";
@@ -44,7 +46,10 @@ function report(status = "complete", delivered = 20) {
       { sequence: 2, idempotencyKey: "quality-complete", phase: "quality", status: "complete", message: "Quality complete.", metadata: { repairs: delivered === 20 ? 1 : 3 }, observedAt: "2026-09-02T10:01:30.000Z" },
       { sequence: 3, idempotencyKey: "report-saved", phase: "persistence", status, message: "Report saved.", metadata: {}, observedAt: NOW.toISOString() },
     ],
-    document: { primaryDomain: "babanuj.com", document: { blocks: [{ type: "summary", body: "Bounded result" }] } },
+    document: { primaryDomain: "babanuj.com", document: { blocks: [
+      { type: "summary", body: "Bounded result" },
+      { type: "competitor", domain: "rival.example", companyName: "Rival Market", relationship: "direct substitute", confidence: "High", reason: "Carries accepted priced alternatives.", verificationScore: 91, websiteSourceUrl: "https://rival.example/" },
+    ] } },
     documentSchemaVersion: 1,
     documentObservedAt: NOW.toISOString(),
     factManifest: null,
@@ -60,10 +65,10 @@ function matchPage(delivered = 20) {
     directPriceCount: delivered,
     domainCounts: delivered ? { "rival.example": delivered } : {},
     items: Array.from({ length: Math.min(50, delivered) }, (_, index) => ({
-      key: `match-${index + 1}`,
-      primary: { name: `Babanuj product ${index + 1}`, domain: "babanuj.com", priceSignals: [{ raw: "$10.00", currency: "USD", amount: 10 }] },
-      rival: { name: `Rival product ${index + 1}`, domain: "rival.example", priceSignals: [{ raw: "$9.00", currency: "USD", amount: 9 }] },
-      match: { assessment: { verdict: "same_product", confidence: 0.94 }, decision: { recommendedMove: "Review the verified price gap." } },
+      key: String(index + 1).padStart(64, "0"),
+      primary: { id: `primary-${index + 1}`, name: `Babanuj product ${index + 1}`, domain: "babanuj.com", sourceUrl: `https://babanuj.com/products/${index + 1}`, imageUrl: "", observedAt: NOW.toISOString(), priceSignals: [{ raw: "$10.00", currency: "USD", amount: 10 }] },
+      rival: { id: `rival-${index + 1}`, name: `Rival product ${index + 1}`, domain: "rival.example", sourceUrl: `https://rival.example/products/${index + 1}`, imageUrl: "", observedAt: NOW.toISOString(), priceSignals: [{ raw: "$9.00", currency: "USD", amount: 9 }] },
+      match: { score: 0.91, confidence: "0.94", sharedTerms: ["hummus"], assessment: { verdict: "search_result", confidence: 0.94, method: "direct-web-search", claimType: "Inferred", reasons: ["Same product and size."], contradictions: [], normalizedCategory: "food", model: "", promptVersion: "direct-product-search-v1" }, decision: { priceComparison: { primaryRaw: "$10.00", rivalRaw: "$9.00" }, recommendedMove: "Review the verified price gap.", whyTheyMayWin: "The rival has a lower observed price." } },
     })),
     nextCursor: null,
   };
@@ -81,6 +86,16 @@ function routeServices(snapshot = report(), page = matchPage()) {
   };
 }
 
+function comparisonRouteServices(snapshot = report(), loadMatches = async () => matchPage()) {
+  return {
+    now: () => NOW,
+    loadAccess: async () => ({ runId: snapshot.run.id, publicId: PUBLIC_ID, workspaceId: snapshot.run.workspaceId, expiresAt: snapshot.run.expiresAt, commandId: REQUEST_ID }),
+    loadReport: async () => snapshot,
+    loadMatches,
+    authorize: async () => ({ user: { id: "controlled-cli", name: "Controlled CLI", email: "" }, workspaceId: snapshot.run.workspaceId }),
+  };
+}
+
 test("loop result projects a decision-ready 20/20 terminal response", async () => {
   const result = await buildMarketSignalLoopResult({ requestId: REQUEST_ID, report: report(), matches: matchPage(), evaluation: null });
   assert.equal(result.state, "terminal");
@@ -90,7 +105,109 @@ test("loop result projects a decision-ready 20/20 terminal response", async () =
   assert.equal(result.output.metrics.costMicrousd, null);
   assert.equal(result.output.report.ownerPath, `/reports/${PUBLIC_ID}`);
   assert.equal(result.decision.headline, "babanuj.com returned 20 priced product comparisons.");
-  assert.equal(result.comparisons.inline.length, 20);
+  assert.equal(result.competitors.totalCount, 1);
+  assert.deepEqual(result.competitors.items[0], {
+    domain: "rival.example",
+    name: "Rival Market",
+    comparisonCount: 20,
+    comparisonSharePercent: 100,
+    relationship: "direct substitute",
+    confidence: "High",
+    reason: "Carries accepted priced alternatives.",
+    verificationScore: 91,
+    websiteUrl: "https://rival.example/",
+  });
+  assert.equal(result.comparisons.items.length, 20);
+  assert.equal(result.comparisons.returnedCount, 20);
+  assert.equal(result.comparisons.items[0].primaryProduct.title, "Babanuj product 1");
+  assert.equal(result.comparisons.items[0].rivalProduct.sourceUrl, "https://rival.example/products/1");
+  assert.equal(result.comparisons.items[0].priceComparison.position, "rival_lower");
+  assert.equal(result.comparisons.items[0].priceComparison.gapPercent, 10);
+});
+
+test("loop result fails closed instead of publishing an empty-price comparison", async () => {
+  const page = matchPage();
+  page.items[0].rival.priceSignals = [];
+  page.items[0].match.decision.priceComparison.rivalRaw = "";
+  await assert.rejects(
+    buildMarketSignalLoopResult({ requestId: REQUEST_ID, report: report(), matches: page, evaluation: null }),
+    (error) => error instanceof ReportLoopFactsError && /incomplete rival product facts/i.test(error.message),
+  );
+});
+
+test("loop result route maps unavailable and inconsistent facts to distinct 409 responses", async () => {
+  const unavailableServices = routeServices();
+  unavailableServices.loadMatches = async () => { throw new Error("Authoritative report match facts are unavailable."); };
+  const unavailable = await getReportLoopResult(new Request(`https://signal.example/api/reports/${PUBLIC_ID}/result?requestId=${REQUEST_ID}`), { params: { publicId: PUBLIC_ID } }, unavailableServices);
+  assert.equal(unavailable.status, 409);
+  assert.equal((await unavailable.json()).errorCode, "facts-unavailable");
+
+  const inconsistentPage = matchPage();
+  inconsistentPage.items[0].rival.priceSignals = [];
+  inconsistentPage.items[0].match.decision.priceComparison.rivalRaw = "";
+  const inconsistent = await getReportLoopResult(new Request(`https://signal.example/api/reports/${PUBLIC_ID}/result?requestId=${REQUEST_ID}`), { params: { publicId: PUBLIC_ID } }, routeServices(report(), inconsistentPage));
+  assert.equal(inconsistent.status, 409);
+  assert.equal((await inconsistent.json()).errorCode, "facts-inconsistent");
+
+  const inconsistentSummary = report();
+  inconsistentSummary.run.productLimit = 1;
+  const contractFailure = await getReportLoopResult(new Request(`https://signal.example/api/reports/${PUBLIC_ID}/result?requestId=${REQUEST_ID}`), { params: { publicId: PUBLIC_ID } }, routeServices(inconsistentSummary, matchPage()));
+  assert.equal(contractFailure.status, 409);
+  assert.equal((await contractFailure.json()).errorCode, "facts-inconsistent");
+});
+
+test("normalized comparison pages preserve report binding and every agent-facing fact", async () => {
+  const rawCursor = `rival.example~${String(2).padStart(64, "0")}`;
+  const boundCursor = `${PUBLIC_ID}~${rawCursor}`;
+  const requested = [];
+  const services = comparisonRouteServices(report(), async (_publicId, input) => {
+    requested.push(input);
+    if (input.cursor) {
+      const page = matchPage(3);
+      page.items = page.items.slice(2);
+      page.nextCursor = null;
+      return page;
+    }
+    const page = matchPage(3);
+    page.items = page.items.slice(0, 2);
+    page.nextCursor = rawCursor;
+    return page;
+  });
+  const first = await getReportComparisonResult(new Request(`https://signal.example/api/reports/${PUBLIC_ID}/result/comparisons?requestId=${REQUEST_ID}&limit=2`), { params: { publicId: PUBLIC_ID } }, services);
+  assert.equal(first.status, 200);
+  const firstBody = await first.json();
+  assert.equal(firstBody.schemaVersion, "1");
+  assert.equal(firstBody.returnedCount, 2);
+  assert.equal(firstBody.totalCount, 3);
+  assert.equal(firstBody.nextCursor, boundCursor);
+  assert.deepEqual(firstBody.items[0].primaryProduct.price, { display: "$10.00", amount: 10, currency: "USD" });
+  assert.deepEqual(firstBody.items[0].rivalProduct.price, { display: "$9.00", amount: 9, currency: "USD" });
+  assert.equal(firstBody.items[0].match.method, "direct-web-search");
+  assert.equal(firstBody.items[0].priceComparison.gapAmount, 1);
+  assert.equal(firstBody.items[0].recommendation.action, "Review the verified price gap.");
+
+  const second = await getReportComparisonResult(new Request(`https://signal.example/api/reports/${PUBLIC_ID}/result/comparisons?requestId=${REQUEST_ID}&limit=2&cursor=${encodeURIComponent(boundCursor)}`), { params: { publicId: PUBLIC_ID } }, services);
+  assert.equal(second.status, 200);
+  const secondBody = await second.json();
+  assert.equal(secondBody.returnedCount, 1);
+  assert.equal(secondBody.nextCursor, null);
+  assert.deepEqual(requested, [{ cursor: undefined, limit: 2 }, { cursor: rawCursor, limit: 2 }]);
+
+  let accessReads = 0;
+  const foreignServices = comparisonRouteServices(report());
+  foreignServices.loadAccess = async () => { accessReads += 1; return null; };
+  const foreignCursor = `${"f".repeat(32)}~${rawCursor}`;
+  const foreign = await getReportComparisonResult(new Request(`https://signal.example/api/reports/${PUBLIC_ID}/result/comparisons?requestId=${REQUEST_ID}&cursor=${encodeURIComponent(foreignCursor)}`), { params: { publicId: PUBLIC_ID } }, foreignServices);
+  assert.equal(foreign.status, 404);
+  assert.equal(accessReads, 0);
+});
+
+test("normalized comparison pages reject inconsistent stored facts", async () => {
+  const page = matchPage();
+  page.items[0].primary.sourceUrl = "https://wrong.example/products/1";
+  const response = await getReportComparisonResult(new Request(`https://signal.example/api/reports/${PUBLIC_ID}/result/comparisons?requestId=${REQUEST_ID}`), { params: { publicId: PUBLIC_ID } }, comparisonRouteServices(report(), async () => page));
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).errorCode, "facts-inconsistent");
 });
 
 test("loop result route binds both report ownership and the original request id", async () => {
