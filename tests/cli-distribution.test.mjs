@@ -2,9 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("hosted CLI distribution supports the simple login flow and scoped agent keys", async () => {
-  const [page, guide, readme, installer, dockerfile, root] = await Promise.all([
-    readFile(new URL("../app/cli/page.tsx", import.meta.url), "utf8"),
+test("customer CLI distribution retains its separate login flow and scoped agent keys", async () => {
+  const [guide, readme, installer, dockerfile, root] = await Promise.all([
     readFile(new URL("../docs/CLI.md", import.meta.url), "utf8"),
     readFile(new URL("../README.md", import.meta.url), "utf8"),
     readFile(new URL("../public/install.ps1", import.meta.url), "utf8"),
@@ -12,7 +11,7 @@ test("hosted CLI distribution supports the simple login flow and scoped agent ke
     readFile(new URL("../cli/internal/cmd/root.go", import.meta.url), "utf8"),
   ]);
 
-  for (const source of [page, guide, readme]) {
+  for (const source of [guide, readme]) {
     assert.match(source, /marketsignal login/);
     assert.match(source, /marketsignal report example\.com/);
     assert.doesNotMatch(source, /Current distribution boundary/);
@@ -29,6 +28,23 @@ test("hosted CLI distribution supports the simple login flow and scoped agent ke
   assert.match(dockerfile, /GOOS=windows GOARCH=arm64/);
   assert.match(dockerfile, /sha256sum marketsignal-windows-amd64\.exe marketsignal-windows-arm64\.exe/);
   assert.match(dockerfile, /-X main\.version=\$\{MARKET_SIGNAL_REVISION\}/);
+});
+
+test("CLI landing page documents only the company command interface, not customer onboarding", async () => {
+  const page = await readFile(new URL("../app/cli/page.tsx", import.meta.url), "utf8");
+  for (const command of ["report babanuj.com", "wait <public-report-id>", "result <public-report-id>", "version", "configure"]) {
+    assert.ok(page.includes(`marketsignal-internal ${command}`));
+  }
+  assert.match(page, /--comparisons 20 --request-id orchestrator:babanuj:001 --output json/);
+  assert.doesNotMatch(page, /marketsignal login|MARKET_SIGNAL_API_KEY|\/account|\/pricing|install\.ps1|\/downloads\//);
+  assert.match(page, /not a website login/);
+  assert.match(page, /Never paste a production Trigger key/);
+  assert.match(page, /does not.*call Trigger directly/);
+  assert.match(page, /not a live result/);
+  assert.match(page, /Missing cost remains unknown/);
+  const account = await readFile(new URL("../app/account/page.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(account, /href="\/cli"/);
+  assert.match(account, /href="\/install.ps1" download>Download customer CLI installer/);
 });
 
 test("installer refuses remote plaintext downloads and verifies before install", async () => {
