@@ -1,0 +1,44 @@
+# Direct Trigger CLI — separate from the website
+
+## Accepted request
+
+Colleagues install one CLI, supply the company Trigger environment key, run
+reports and retrieve complete structured data directly through Trigger.
+No Market Signal login, entitlement, database or VPS API calls.
+No preset store domains. Website runtime and deployment stay unchanged.
+
+## Architecture
+
+New marketsignal-trigger binary and separately deployed market-signal-direct-*
+tasks. Reuse crawl recovery, direct product web search, price extraction,
+deterministic recommendations and report quality validation as plain functions.
+The company operator deploys these tasks and sets the research provider key once.
+Colleagues need only a Trigger private environment key. That key has environment-
+wide privileges, so share only with trusted company agents.
+
+Fable architecture review used verified claude-fable-5-1. Accepted its separation
+of runtime/deployment credentials, output bounds and single-attempt execution.
+Rejected its suggestion to skip discovery: it interpreted the requested rival
+COUNT as supplied rival domains. This implementation discovers the rivals.
+
+## Boundaries
+
+- Comparison count means priced pairs; rivals means maximum distinct sellers.
+- One bounded search pass (up to 100 new primary searches and 8 minutes),
+  no automatic paid retries. Coverage shortfalls are explicit.
+- Unknown provider cost is null. No full independent AI recall evaluator yet.
+- Existing website tasks, quotas, endpoints and credentials are untouched.
+- Branch validation and deployed/live results must be reported separately.
+
+## Validation
+
+- Direct Node contract tests: 7/7 PASS; synthetic injections, no provider calls.
+- Full Node suite: 1348/1348 PASS after updating branch README checks.
+- Go CLI tests PASS; direct-task typecheck, lint, normal build and VPS build PASS.
+- Trigger 4.5.4 deploy dry-run PASS against the company project. No promotion.
+- Real company environment key bootstrap used the existing authenticated Trigger
+  operator profile. New CLI configure verified it against Trigger and saved it
+  through stdin in its isolated OS credential store without printing it.
+- User explicitly authorized key reuse; rotation remains recommended.
+- Exact-head review, packaged artifacts, deployed tasks and live report remain
+  separate release checks; do not label local fixture results as live reports.

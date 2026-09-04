@@ -11,7 +11,9 @@ test("customer CLI distribution retains its separate login flow and scoped agent
     readFile(new URL("../cli/internal/cmd/root.go", import.meta.url), "utf8"),
   ]);
 
-  for (const source of [guide, readme]) {
+  assert.match(readme, /marketsignal-trigger configure/);
+  assert.doesNotMatch(readme, /marketsignal login/);
+  for (const source of [guide]) {
     assert.match(source, /marketsignal login/);
     assert.match(source, /marketsignal report example\.com/);
     assert.doesNotMatch(source, /Current distribution boundary/);
