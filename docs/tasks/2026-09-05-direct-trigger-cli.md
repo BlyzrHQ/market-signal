@@ -57,3 +57,10 @@ remote indexer lacked the operator's local TRIGGER_PROJECT_REF. Reuse the base
 config placeholder during remote import; project selection still happens in
 the authenticated deployment CLI. The failed version was not promoted and ran
 no paid research. Remote deployment must be retried and verified.
+
+Unpromoted 20260904.2 successfully registered 11 tasks and passed real doctor/tools
+probes. The first real crawl failed. Reproduced the defect using dry-run output:
+the dynamically imported bundled undici module exported only default, so Agent
+was undefined and fetch returned the generic network failure. Keep undici external
+in the direct config and use Node 22 matching repository requirements. This is a
+worker packaging fix; do not weaken network protections or change the website.
