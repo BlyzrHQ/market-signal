@@ -235,7 +235,10 @@ func printLoopResult(opts *options, data []byte, result loopmodel.ResultEnvelope
 	case "failed":
 		return &ExitError{Code: 5, Quiet: true}
 	case "outcome_unknown":
-		return &ExitError{Code: 10, Quiet: true}
+		if opts.internal {
+			return &ExitError{Code: 10, Quiet: true}
+		}
+		return &ExitError{Code: 6, Quiet: true}
 	default:
 		return &ExitError{Code: 3, Err: fmt.Errorf("unsupported terminal loop status %q", result.Output.Status)}
 	}

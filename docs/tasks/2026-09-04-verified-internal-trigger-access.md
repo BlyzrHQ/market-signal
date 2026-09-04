@@ -64,3 +64,21 @@ blueland.com and nuts.com; 20 comparisons each, sequentially. None launched.
 - `npm run lint`: no errors; existing img-element performance warning only.
 - `git diff --check`: PASS.
 - No production changes or live provider calls. Revised Fable review pending.
+
+### Revised review follow-up
+
+The second Fable review accepted the server-only authorization/quota boundary.
+It read an earlier guide snapshot; the committed guide no longer has a Trigger
+key import command or verifier route. Its valid compatibility finding is fixed:
+exit 10 is internal-only, and the public customer CLI retains exit 6 for unknown
+outcomes. Both paths have tests. Fable could not run tests/network commands in
+its sandbox; Codex independently ran the validations listed above.
+
+The endpoint authentication question was independently checked against upstream
+commit `25af6517295dbf67a5c9ef4385346460c7ad0b68` on 2026-09-04:
+
+- [Bootstrap route](https://github.com/triggerdotdev/trigger.dev/blob/25af6517295dbf67a5c9ef4385346460c7ad0b68/apps/webapp/app/routes/api.v1.projects.%24projectRef.%24env.ts): resolves authenticated project/environment and returns project ID/API origin.
+- [Authentication helper](https://github.com/triggerdotdev/trigger.dev/blob/25af6517295dbf67a5c9ef4385346460c7ad0b68/apps/webapp/app/services/environmentVariableApiAccess.server.ts): bootstrap accepts valid private environment keys and echoes the authenticated caller's key, not another root key (functions at lines 22-34 and 66-92).
+
+This source check does not substitute for a live check with a fresh safely
+registered production credential. Live enablement remains blocked.

@@ -101,6 +101,22 @@ func TestInternalReportSelectsOnlyFixedComparisonTargets(t *testing.T) {
 	}
 }
 
+func TestInternalUnknownOutcomeIsTerminalNotPending(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(failedLoopFixture("outcome_unknown"))
+	}))
+	defer server.Close()
+	manager, _ := internalTestManager(t, server.URL)
+	root := newInternalRoot("test", manager, true)
+	root.SetArgs([]string{"result", testPublicReportID, "--request-id", testRequestID, "--base-url", server.URL})
+	err := root.Execute()
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 10 {
+		t.Fatalf("expected internal terminal unknown exit 10, got %v", err)
+	}
+}
+
 func TestInternalReportRequiresCallerOwnedRequestIDBeforeAnyNetworkCall(t *testing.T) {
 	root := newInternalRoot("test", nil, true)
 	root.SetArgs([]string{"report", "babanuj.com"})
