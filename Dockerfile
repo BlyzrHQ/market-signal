@@ -50,6 +50,7 @@ COPY --from=build --chown=10001:10001 /app/public ./public
 COPY --from=build --chown=10001:10001 /app/scripts/backup-sqlite.mjs ./scripts/backup-sqlite.mjs
 COPY --from=build --chown=10001:10001 /app/scripts/verify-sqlite-backup.mjs ./scripts/verify-sqlite-backup.mjs
 COPY --from=build --chown=10001:10001 /app/scripts/sqlite-backup-utils.mjs ./scripts/sqlite-backup-utils.mjs
+COPY --from=build --chown=10001:10001 /app/scripts/provision-internal-agent-cli.mjs ./scripts/provision-internal-agent-cli.mjs
 
 RUN mkdir -p /data /backups \
     && chown 10001:10001 /data /backups

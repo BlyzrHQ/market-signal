@@ -2,6 +2,7 @@ import { hostedBillingEnabled } from "./billing-plans.ts";
 import {
   finishReportReservation,
   openBillingDatabase,
+  ReportReservationConflictError,
   reserveReport,
   type ReportReservation,
 } from "./billing-store.ts";
@@ -49,6 +50,7 @@ export type ReportCommandInput = {
   locale: "en" | "ar";
   actor?: ReportCommandActor;
   commandId?: string;
+  comparisonTarget?: number;
 };
 
 export type ReportCommandDependencies = {
@@ -56,7 +58,7 @@ export type ReportCommandDependencies = {
   dispatch: typeof dispatchReportJob;
   markDispatched: typeof markReportDispatched;
   markDispatchFailed: typeof markReportDispatchFailed;
-  reserve?: (workspaceId: string, commandId?: string) => Promise<ReportReservation | null>;
+  reserve?: (workspaceId: string, commandId?: string, comparisonTarget?: number) => Promise<ReportReservation | null>;
   finishReservation?: (reservationId: string, outcome: "committed" | "released", runId?: string) => Promise<void>;
 };
 
@@ -190,9 +192,9 @@ export function reportCommandDependencies(environment: Record<string, string | u
   if (!hostedBillingEnabled(environment)) return dependencies;
   return {
     ...dependencies,
-    reserve: async (workspaceId, commandId = "") => {
+    reserve: async (workspaceId, commandId = "", comparisonTarget) => {
       const database = await openBillingDatabase();
-      try { return reserveReport(database, workspaceId, new Date(), commandId); } finally { database.close(); }
+      try { return reserveReport(database, workspaceId, new Date(), commandId, comparisonTarget); } finally { database.close(); }
     },
     finishReservation: async (reservationId, outcome, runId = "") => {
       const database = await openBillingDatabase();
@@ -212,15 +214,20 @@ export async function createReportCommand(input: ReportCommandInput, services: R
   let publicId = "";
   try {
     if (input.actor && services.reserve) {
-      reservation = await services.reserve(input.actor.workspaceId, input.commandId);
+      reservation = await services.reserve(input.actor.workspaceId, input.commandId, input.comparisonTarget);
       if (!reservation) {
         return { ok: false, status: 402, error: "An active paid plan is required to create a report.", errorCode: "subscription-required", stage: "reservation" };
       }
       if (!reservation.id) {
+        const error = reservation.quotaKind === "comparisons"
+          ? reservation.denialReason === "target-limit"
+            ? `This internal workspace allows at most ${reservation.maxComparisonTarget} comparisons per report.`
+            : `The internal UTC-day ceiling has ${reservation.used} of ${reservation.limit} comparison units reserved; this report would exceed it.`
+          : `Your ${reservation.plan.name} plan has used all ${reservation.limit} reports for this billing period.`;
         return {
           ok: false,
           status: 429,
-          error: `Your ${reservation.plan.name} plan has used all ${reservation.limit} reports for this billing period.`,
+          error,
           errorCode: "report-limit-reached",
           usage: { used: reservation.used, limit: reservation.limit },
           stage: "reservation",
@@ -274,6 +281,9 @@ export async function createReportCommand(input: ReportCommandInput, services: R
     return { ok: true, replayed: creation.replayed, report, job: { dispatched: true, runId: job.runId } };
   } catch (error) {
     await safelyReleaseReservation(services, reservationId);
+    if (error instanceof ReportReservationConflictError) {
+      return { ok: false, status: 409, error: "This request id is already bound to a different report intent.", errorCode: "idempotency-conflict", stage: "reservation" };
+    }
     const message = error instanceof Error ? error.message : "The persistent report could not be created.";
     if (/valid public domain/i.test(message)) {
       return { ok: false, status: 400, error: message, errorCode: "invalid-domain", diagnosticCode: "invalid-domain", stage: "request" };

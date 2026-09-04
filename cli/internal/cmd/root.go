@@ -15,15 +15,17 @@ import (
 )
 
 type options struct {
-	baseURL  string
-	apiToken string
-	apiKey   string
-	timeout  time.Duration
-	output   string
-	quiet    bool
-	stdout   io.Writer
-	stderr   io.Writer
-	auth     *oauth.Manager
+	baseURL                 string
+	apiToken                string
+	apiKey                  string
+	timeout                 time.Duration
+	output                  string
+	quiet                   bool
+	stdout                  io.Writer
+	stderr                  io.Writer
+	auth                    *oauth.Manager
+	internal                bool
+	allowInternalTestOrigin bool
 }
 
 func NewRoot(version string) *cobra.Command {
@@ -89,10 +91,84 @@ func NewRoot(version string) *cobra.Command {
 	return root
 }
 
+const internalCredentialService = "Market Signal Internal CLI"
+
+func NewInternalRoot(version string) *cobra.Command {
+	store := oauth.NewKeyringStoreWithService(internalCredentialService)
+	manager := oauth.NewManager(store, 90*time.Second)
+	return newInternalRoot(version, manager, false)
+}
+
+func newInternalRoot(version string, manager *oauth.Manager, allowTestOrigin bool) *cobra.Command {
+	opts := &options{
+		baseURL:                 oauth.ProductionOrigin,
+		timeout:                 90 * time.Second,
+		output:                  "json",
+		quiet:                   true,
+		auth:                    manager,
+		internal:                true,
+		allowInternalTestOrigin: allowTestOrigin,
+	}
+	root := &cobra.Command{
+		Use:               "marketsignal-internal",
+		Short:             "Company-internal Market Signal report loop",
+		SilenceUsage:      true,
+		SilenceErrors:     true,
+		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
+		PersistentPreRunE: func(command *cobra.Command, _ []string) error {
+			opts.stdout = command.OutOrStdout()
+			opts.stderr = command.ErrOrStderr()
+			if opts.output != "json" && opts.output != "table" {
+				return fmt.Errorf("--output must be json or table")
+			}
+			return nil
+		},
+	}
+	root.PersistentFlags().StringVar(&opts.baseURL, "base-url", opts.baseURL, "Market Signal service base URL")
+	root.PersistentFlags().DurationVar(&opts.timeout, "timeout", opts.timeout, "request timeout")
+	root.PersistentFlags().StringVarP(&opts.output, "output", "o", opts.output, "output format: json or table")
+	root.PersistentFlags().BoolVar(&opts.quiet, "quiet", opts.quiet, "hide progress messages")
+	_ = root.PersistentFlags().MarkHidden("base-url")
+	_ = root.PersistentFlags().MarkHidden("timeout")
+
+	root.AddCommand(newReportCommand(opts))
+	root.AddCommand(newWaitCommand(opts))
+	root.AddCommand(newResultCommand(opts))
+	configure := newInternalConfigureCommand(opts)
+	configure.Hidden = true
+	root.AddCommand(configure)
+	root.AddCommand(&cobra.Command{
+		Use:   "version",
+		Short: "Print the internal CLI version",
+		Run:   func(command *cobra.Command, _ []string) { fmt.Fprintln(command.OutOrStdout(), version) },
+	})
+	return root
+}
+
 func dependencies(opts *options) (*api.Client, *contract.Validator, error) {
 	var client *api.Client
 	var err error
 	origin := strings.TrimRight(strings.TrimSpace(opts.baseURL), "/")
+	if opts.internal {
+		if origin != oauth.ProductionOrigin && !opts.allowInternalTestOrigin {
+			return nil, nil, fmt.Errorf("the internal credential can be sent only to %s", oauth.ProductionOrigin)
+		}
+		client, err = api.NewClientWithTokenSource(opts.baseURL, opts.timeout, func(ctx context.Context) (string, error) {
+			token, tokenErr := opts.auth.AccessToken(ctx, opts.baseURL)
+			if tokenErr != nil {
+				return "", fmt.Errorf("internal credential is not provisioned on this machine")
+			}
+			return token, nil
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		validator, validatorErr := contract.NewValidator()
+		if validatorErr != nil {
+			return nil, nil, validatorErr
+		}
+		return client, validator, nil
+	}
 	if opts.apiKey != "" && opts.apiToken != "" {
 		return nil, nil, fmt.Errorf("set only one of MARKET_SIGNAL_API_KEY or MARKET_SIGNAL_API_TOKEN")
 	}

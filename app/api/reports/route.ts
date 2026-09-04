@@ -46,7 +46,7 @@ export async function createPersistentReport(request: Request, services: ReportC
       account = authorize ? await authorize(request) : null;
       if (!account) return reportApiAuthenticationRequiredResponse("Sign in to create a report.");
     }
-    const body = await request.json() as { primaryDomain?: unknown; locale?: unknown; commandId?: unknown };
+    const body = await request.json() as { primaryDomain?: unknown; locale?: unknown; commandId?: unknown; comparisonTarget?: unknown };
     const commandId = typeof body.commandId === "string" ? body.commandId.trim() : "";
     if (commandId && !/^[A-Za-z0-9][A-Za-z0-9:_-]{0,119}$/.test(commandId)) {
       return Response.json({ ok: false, error: "A valid request id is required.", errorCode: "invalid-request-id" }, { status: 400, headers: { "Cache-Control": "no-store" } });
@@ -56,12 +56,17 @@ export async function createPersistentReport(request: Request, services: ReportC
       account = authorize ? await authorize(request) : null;
       if (!account) return reportApiAuthenticationRequiredResponse("Sign in to create a report.");
     }
+    if (body.comparisonTarget !== undefined && (typeof body.comparisonTarget !== "number" || !Number.isInteger(body.comparisonTarget) || ![20, 50, 500, 1_000].includes(body.comparisonTarget))) {
+      return Response.json({ ok: false, error: "Comparison target must be 20, 50, 500, or 1000.", errorCode: "invalid-comparison-target" }, { status: 400, headers: { "Cache-Control": "no-store" } });
+    }
+    const comparisonTarget = typeof body.comparisonTarget === "number" ? body.comparisonTarget : undefined;
     stage = "storage-create";
     const result = await createReportCommand({
       primaryDomain: typeof body.primaryDomain === "string" ? body.primaryDomain : "",
       locale: body.locale === "ar" ? "ar" : "en",
       ...(account ? { actor: { workspaceId: account.workspaceId, userId: account.user.id } } : {}),
       ...(commandId ? { commandId } : {}),
+      ...(comparisonTarget !== undefined ? { comparisonTarget } : {}),
     }, services);
     if (result.ok === false) {
       if (result.status === 503) {
