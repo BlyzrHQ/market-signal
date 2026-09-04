@@ -1005,7 +1005,7 @@ function validEnrichmentPlanCheckpoint(value: unknown, expectedPlan: EnrichmentP
 
 type RunStatus = "queued" | "running" | "complete" | "limited" | "failed" | "interrupted";
 type ReportEvent = { idempotencyKey: string; phase: string; status: RunStatus; message: string; metadata?: Record<string, unknown> };
-type StoredReport = {
+export type StoredReport = {
   run: { publicId: string; primaryDomain: string; locale: "en" | "ar"; status: RunStatus; attemptCount: number; createdAt: string; updatedAt: string; productPlan?: "starter" | "solo" | "growth" | "agency"; productLimit?: number };
   events: Array<{ idempotencyKey?: string; phase: string; status: RunStatus; metadata?: Record<string, unknown> }>;
   factManifest?: { manifestId: string; attemptNumber: number; manifestHash: string; counts: Record<"companies" | "products" | "matches" | "ads", number>; status: string; completedAt: string } | null;
@@ -1574,6 +1574,17 @@ export async function orchestrateReport(
   now: () => Date = () => new Date(),
 ): Promise<ReportOrchestrationSummary> {
   const payload: ReportOrchestrationPayload = parseReportOrchestrationPayload(rawPayload);
+  return orchestrateValidatedReport(payload, attempt, port, now);
+}
+
+// Internal callers validate their own bounded request contract before entering
+// this engine. The website entry point above still enforces persisted plans.
+export async function orchestrateValidatedReport(
+  payload: ReportOrchestrationPayload,
+  attempt: ReportAttemptContext,
+  port: ReportOrchestrationPort,
+  now: () => Date = () => new Date(),
+): Promise<ReportOrchestrationSummary> {
   const publishedResultTargetKind = payload.contractVersion === "5" || payload.contractVersion === REPORT_ORCHESTRATION_CONTRACT_VERSION ? "pairs" as const : "primary-products" as const;
   const directProductSearch = payload.contractVersion === REPORT_ORCHESTRATION_CONTRACT_VERSION;
   if (payload.reportAttempt !== attempt.attemptNumber) throw new PermanentOrchestrationError("Dispatch payload attempt does not match the active report attempt.");

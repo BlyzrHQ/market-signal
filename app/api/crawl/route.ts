@@ -1323,6 +1323,12 @@ export async function POST(request: Request) {
   const roleResponse = workerOnlyResponse();
   if (roleResponse) return roleResponse;
   if (!await hasValidAnalysisAuthorization(request.headers.get("authorization"))) return unauthorizedInternalResponse();
+  return handleCrawlRequest(request);
+}
+
+// Shared business handler: HTTP callers retain the authorization boundary
+// above; the internal Trigger adapter supplies an in-process Request.
+export async function handleCrawlRequest(request: Request, options: { rememberedCompetitors?: boolean } = {}) {
   try {
     const payload = await request.json() as { primary?: unknown; domains?: unknown; productLimit?: unknown; comparisonPairsNeeded?: unknown; catalogProductLimit?: unknown; discoverySearchOffset?: unknown; discoveryPriorCoverageComplete?: unknown; discoveryExpectedAnchorSetHash?: unknown; discoverySearchLedger?: unknown; directProductSearch?: unknown; benchmarkOnly?: unknown };
     const productLimit = Number.isInteger(Number(payload.productLimit)) ? Math.max(1, Math.min(MAX_PRIMARY_CATALOG_PRODUCTS, Number(payload.productLimit))) : 20;
@@ -1523,7 +1529,7 @@ export async function POST(request: Request) {
       const gap = "Web competitor discovery stopped because its internal provider result could not be processed.";
       discovery = { available: false, provider: "unavailable", model: process.env.MARKET_SIGNAL_DISCOVERY_MODEL || "gpt-5.4-mini", category: "", region: primary.homepage.region, businessType: discoveryPolicy.businessType, strategy: discoveryPolicy.intendedStrategy, queries: [], candidates: [], gaps: [gap], gap, productSearchCoverage: { eligibleAnchors: primary.products.length, anchorSetHash: discoveryExpectedAnchorSetHash, searchedAnchors: 0, startIndex: discoverySearchOffset, endIndex: discoverySearchOffset, truncated: primary.products.length > discoverySearchOffset, searchesComplete: false, candidateDomainsFound: 0, candidateDomainsInvestigated: 0, candidateTruncated: false, verificationComplete: false, batchComplete: false, complete: false, searchAttemptsComplete: false, paidSearchesStarted: 0, reusedSearches: 0, providerFailureCategory: "internal", providerFailureCount: 1, providerCircuitOpen: true } };
     }
-    const memory = comparisonTargetMode ? null : await loadRememberedCompetitors(primary.domain);
+    const memory = comparisonTargetMode ? null : options.rememberedCompetitors === false ? { candidates: [], truncated: false, gap: "Cross-report competitor memory is not enabled in this isolated Trigger run." } : await loadRememberedCompetitors(primary.domain);
     const freshCandidates = discovery.candidates.filter((candidate) => !domains.includes(candidate.domain));
     const mergedInvestigationCoverage = comparisonTargetMode
       ? { candidates: freshCandidates.map((candidate): MemoryCandidate => ({ ...candidate, provenance: "discovered-this-run" })), truncated: false, freshTruncated: false, rememberedTruncated: false }
@@ -1587,8 +1593,8 @@ export async function POST(request: Request) {
     const confirmed: DomainCrawl[] = discoveredResults.filter((result): result is NonNullable<typeof result> => Boolean(result?.homepage && result.discovery?.accepted)).sort((left, right) => compareVerifiedCompetitors(left.discovery!, right.discovery!));
     if (!comparisonTargetMode) {
       const rememberedFailures = rememberedReverificationFailures(investigationCandidates, discoveredResults);
-      const forgotten = await forgetRememberedCompetitors(primary.domain, rememberedFailures.map((candidate) => candidate.domain));
-      const remembered = await rememberVerifiedCompetitors(primary.domain, confirmed.map((result) => ({ candidate: result.discovery as MemoryCandidate, verificationScore: result.discovery!.verificationScore })));
+      const forgotten = options.rememberedCompetitors === false ? { available: true } : await forgetRememberedCompetitors(primary.domain, rememberedFailures.map((candidate) => candidate.domain));
+      const remembered = options.rememberedCompetitors === false ? { available: true } : await rememberVerifiedCompetitors(primary.domain, confirmed.map((result) => ({ candidate: result.discovery as MemoryCandidate, verificationScore: result.discovery!.verificationScore })));
       if ((!forgotten.available && rememberedFailures.length) || (!remembered.available && confirmed.length)) {
         discovery = { ...discovery, gaps: [...discovery.gaps, "Verified competitor memory could not be updated; this batch remains retryable so verified rivals are not lost."], productSearchCoverage: { ...discovery.productSearchCoverage, batchComplete: false, complete: false } };
       }

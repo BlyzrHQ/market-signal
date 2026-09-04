@@ -93,8 +93,10 @@ marketsignal-trigger report "<domain>" --comparisons 20 --rivals 5 --request-id 
 
 The command submits to Trigger, prints the run ID on stderr, polls, and writes
 the final JSON on stdout. The report task runs the existing crawler/recovery,
-direct product search, price extraction, deterministic recommendations and
-quality gate inside Trigger. No VPS callbacks or database are required.
+direct product search, final price recovery, quality repair, AI-grounded actions
+with deterministic fallback, and rival experience benchmarks inside Trigger.
+It calls the same report orchestration engine as the website. No VPS callbacks,
+website login, or external database are required.
 
 Other research commands:
 
@@ -104,8 +106,8 @@ marketsignal-trigger compare "<domain>" --comparisons 20 --rivals 5 --request-id
 ```
 
 `crawl` returns public catalog data; its count limits returned catalog products.
-`compare` crawls and searches priced matches but omits recommendation generation.
-`report` includes comparisons, competitor roll-ups and recommendations.
+`compare` and `report` both run the complete shared report workflow, including
+comparisons, competitor roll-ups and recommendations.
 These are independent new runs; calling all three repeats research work.
 
 ## Resume and retrieve; do not start another paid run
@@ -138,13 +140,30 @@ For reports, `output` includes:
 - `competitors`: sellers derived from the returned comparisons and pair counts.
 - `metrics`: requested/delivered comparisons, catalog/search counts.
 - `evaluation`: explicitly labeled deterministic quality-gate verdict.
+- `facts`: the complete authoritative company/product/match facts, not a UI preview.
+- `report`, `benchmarks`, `progress`: structured presentation, measured rival
+  experience coverage, and the recorded stage/repair history.
 - `limitations` and `costMicrousd`: unknown cost is null, never zero.
 
 A completed Trigger run can contain a **limited** report. Targets are not a
-guarantee of that many valid matches. The standalone version performs one bounded
-search pass (up to 100 new primary searches and eight minutes); automatic repair,
-independent AI recall evaluation, report sharing, account billing and price-watch
-administration are not part of these direct tasks. No empty prices are published.
+guarantee of that many valid matches. The shared engine can resume up to ten
+bounded attempts, with up to 100 new primary searches per ordinary matching pass
+and up to three quality-repair rounds per attempt. This can cost more than the
+previous single-pass CLI: start with a small target and inspect usage. No empty
+prices are published. Independent post-publication AI recall evaluation, report
+sharing, account billing and price-watch administration are not automatically run.
+
+Checkpoints are compressed snapshots in a separate Trigger task queue, with a
+small, explicitly flushed pointer on the parent run. Saves are serialized and
+bound to the run and input. Trigger storage/compute charges and retention apply.
+Snapshots stop at 64 MiB uncompressed or 8 MiB encoded; they never truncate facts.
+If a provider response or durable save is ambiguous, the task stops before more
+paid work rather than automatically repeating the request. Inspect that run.
+
+Parity means shared research/quality code, not identical live web responses:
+Trigger's network can receive a different response from a site's VPS request.
+The CLI accepts an arbitrary bounded pair target and a seller cap; website plans
+remain unchanged. Cross-report competitor memory is not shared with the website.
 
 Exit codes: `0` success, `1` invalid input/configuration/transport, `2` limited
 report, `5` failed run/report, `6` pending (resume by run ID), `9` request-ID/input

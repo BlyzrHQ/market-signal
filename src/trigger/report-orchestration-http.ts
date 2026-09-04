@@ -174,7 +174,7 @@ function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
-async function acceptedParkedDomainResponse(response: Response, expectedPrimaryDomain: string) {
+export async function acceptedParkedDomainResponse(response: Response, expectedPrimaryDomain: string) {
   if (response.status !== 409 || !/application\/json/i.test(response.headers.get("content-type") || "")) return undefined;
   const text = await readBoundedText(response);
   if (text === null) return undefined;
@@ -205,7 +205,7 @@ async function acceptedParkedDomainResponse(response: Response, expectedPrimaryD
   return value;
 }
 
-async function acceptedUnavailableDomainResponse(response: Response, expectedPrimaryDomain: string) {
+export async function acceptedUnavailableDomainResponse(response: Response, expectedPrimaryDomain: string) {
   if (response.status !== 409 || !/application\/json/i.test(response.headers.get("content-type") || "")) return undefined;
   const text = await readBoundedText(response);
   if (text === null) return undefined;
@@ -238,7 +238,7 @@ async function acceptedUnavailableDomainResponse(response: Response, expectedPri
   return value;
 }
 
-async function acceptedCrawlFailureError(response: Response, expectedPrimaryDomain: string) {
+export async function acceptedCrawlFailureError(response: Response, expectedPrimaryDomain: string) {
   if (response.status !== 422 || !/application\/json/i.test(response.headers.get("content-type") || "")) return undefined;
   const text = await readBoundedText(response, 250_000);
   if (text === null) return undefined;

@@ -33,8 +33,9 @@ export function capabilities(searchConfigured: boolean) {
     tasks: ["market-signal-direct-report", "market-signal-direct-crawl", "market-signal-direct-compare", "market-signal-direct-capabilities"],
     providerConfigured: searchConfigured,
     comparisonMeaning: "priced primary/rival pairs, not catalog size", rivalMeaning: "maximum distinct sellers among delivered comparisons",
-    dailyQuota: null, retries: 1, limits: { comparisons: 1000, rivals: 50, newSearchesPerRun: 100, searchWorkMinutes: 8 },
-    limitations: ["The Trigger key authorizes this environment; provider credentials are configured by the operator on Trigger.", "Independent AI recall evaluation and automatic repair are not included in this standalone task version."] };
+    dailyQuota: null, retries: 10, limits: { comparisons: 1000, rivals: 50, newSearchesPerPass: 100, searchWorkMinutesPerPass: 8, qualityRepairRoundsPerAttempt: 3 },
+    workflow: "shared-website-report-engine", checkpoints: "Trigger-owned snapshots",
+    limitations: ["The Trigger key authorizes this environment; provider credentials are configured by the operator on Trigger.", "Independent post-publication AI recall evaluation is not automatically launched.", "Cross-report competitor memory is not shared with the website."] };
 }
 
 export async function runDirectCrawl(input: unknown, deps: DirectDependencies) {
