@@ -1,7 +1,5 @@
 .git
 .github
-.openai/*
-!.openai/hosting.json
 .trigger
 .vinext
 .wrangler

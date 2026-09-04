@@ -5,8 +5,7 @@ intelligence report: verified competitors, product comparisons, market
 positioning, and explicit data-quality limits.
 
 The project is open source. The hosted service runs the web application on a
-VPS and uses Trigger.dev for durable background jobs. There is no OpenAI Sites
-runtime or fallback.
+VPS and uses Trigger.dev for durable background jobs.
 
 ## Run locally
 

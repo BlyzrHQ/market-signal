@@ -12,8 +12,7 @@
 
 	handle @report_worker {
 		reverse_proxy worker:3000 {
-			# ChatGPT Sites injects these headers at a trusted edge. They are not an
-			# identity boundary on the public VPS and must never reach the worker.
+			# Retired edge identity headers are untrusted on the public VPS.
 			header_up -oai-authenticated-user-email
 			header_up -oai-authenticated-user-full-name
 			header_up -oai-authenticated-user-full-name-encoding
@@ -28,8 +27,7 @@
 
 	handle {
 		reverse_proxy app:3000 {
-			# ChatGPT Sites injects these headers at a trusted edge. They are not an
-			# identity boundary on the public VPS and must never reach the app.
+			# Retired edge identity headers are untrusted on the public VPS.
 			header_up -oai-authenticated-user-email
 			header_up -oai-authenticated-user-full-name
 			header_up -oai-authenticated-user-full-name-encoding
