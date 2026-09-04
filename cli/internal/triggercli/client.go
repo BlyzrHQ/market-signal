@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -22,15 +23,17 @@ var runPattern = regexp.MustCompile(`^run_[A-Za-z0-9_-]{1,160}$`)
 var requestPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9:_-]{0,119}$`)
 
 type Client struct {
-	base, key string
-	http      *http.Client
+	base, key     string
+	workerVersion string
+	http          *http.Client
+	artifactHTTP  *http.Client
 }
 
 func newClient(key string) (*Client, error) {
 	if !keyPattern.MatchString(key) {
 		return nil, fmt.Errorf("a private Trigger environment key is required; run configure")
 	}
-	return &Client{origin, key, &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	return &Client{base: origin, key: key, http: &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, artifactHTTP: artifactClient()}, nil
 }
 
 // Do not retry submissions or disclose response bodies/transport errors, which
@@ -82,11 +85,12 @@ func (c *Client) verify(ctx context.Context) error {
 }
 
 type Run struct {
-	ID      string          `json:"id"`
-	Status  string          `json:"status"`
-	Task    string          `json:"taskIdentifier"`
-	Output  json.RawMessage `json:"output,omitempty"`
-	Payload map[string]any  `json:"payload,omitempty"`
+	ID                 string          `json:"id"`
+	Status             string          `json:"status"`
+	Task               string          `json:"taskIdentifier"`
+	Output             json.RawMessage `json:"output,omitempty"`
+	Payload            map[string]any  `json:"payload,omitempty"`
+	OutputPresignedURL string          `json:"outputPresignedUrl,omitempty"`
 }
 
 func (c *Client) trigger(ctx context.Context, task, id string, payload any) (string, error) {
@@ -96,7 +100,11 @@ func (c *Client) trigger(ctx context.Context, task, id string, payload any) (str
 	var receipt struct {
 		ID string `json:"id"`
 	}
-	err := c.call(ctx, http.MethodPost, "/api/v1/tasks/"+url.PathEscape(task)+"/trigger", map[string]any{"payload": payload, "options": map[string]any{"idempotencyKey": id, "idempotencyKeyTTL": "24h"}}, &receipt)
+	options := map[string]any{"idempotencyKey": id, "idempotencyKeyTTL": "24h"}
+	if c.workerVersion != "" {
+		options["lockToVersion"] = c.workerVersion
+	}
+	err := c.call(ctx, http.MethodPost, "/api/v1/tasks/"+url.PathEscape(task)+"/trigger", map[string]any{"payload": payload, "options": options}, &receipt)
 	if err != nil {
 		return "", err
 	}
@@ -115,7 +123,62 @@ func (c *Client) retrieve(ctx context.Context, id string) (Run, error) {
 	if err == nil && (result.ID != id || !allowedTask(result.Task)) {
 		err = fmt.Errorf("run is not a Market Signal direct task")
 	}
+	if err == nil && result.Status == "COMPLETED" && (len(result.Output) == 0 || string(result.Output) == "null") && result.OutputPresignedURL != "" {
+		result.Output, err = c.downloadOutput(ctx, result.OutputPresignedURL)
+	}
+	result.OutputPresignedURL = "" // Never print a temporary access credential.
 	return result, err
+}
+
+func publicArtifactIP(ip net.IP) bool {
+	return ip.IsGlobalUnicast() && !ip.IsPrivate() && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() && !ip.IsUnspecified()
+}
+func artifactClient() *http.Client {
+	return &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }, Transport: &http.Transport{
+		// No proxy or inherited bearer headers. Pin a verified public IP so
+		// a subsequent DNS lookup cannot rebind this request to private services.
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(address)
+			if err != nil {
+				return nil, fmt.Errorf("invalid artifact address")
+			}
+			ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+			if err != nil || len(ips) == 0 {
+				return nil, fmt.Errorf("artifact DNS failed")
+			}
+			for _, ip := range ips {
+				if !publicArtifactIP(ip.IP) {
+					return nil, fmt.Errorf("artifact address is not public")
+				}
+			}
+			dialer := net.Dialer{Timeout: 15 * time.Second}
+			return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+		},
+	}}
+}
+func (c *Client) downloadOutput(ctx context.Context, rawURL string) (json.RawMessage, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme != "https" || u.User != nil || u.Hostname() == "" || (u.Port() != "" && u.Port() != "443") || net.ParseIP(u.Hostname()) != nil {
+		return nil, fmt.Errorf("invalid Trigger artifact URL")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("invalid artifact request")
+	}
+	// Deliberately no Authorization header, even for a Trigger-owned host.
+	res, err := c.artifactHTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("Trigger artifact download failed; retry result with the same run ID")
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Trigger artifact returned HTTP %d; retry result to refresh its signed URL", res.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(res.Body, maxBody+1))
+	if err != nil || len(data) > maxBody || !json.Valid(data) {
+		return nil, fmt.Errorf("Trigger artifact is unreadable, invalid JSON, or over 16 MiB")
+	}
+	return data, nil
 }
 
 func allowedTask(task string) bool {

@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +14,90 @@ import (
 )
 
 const fixtureKey = "tr_dev_synthetic_not_a_real_key"
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestOffloadedOutputIsRetrievedWithoutCredentials(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"id":"run_fixture","status":"COMPLETED","taskIdentifier":"market-signal-direct-report","output":null,"outputPresignedUrl":"https://artifact.example/output?signature=synthetic"}`))
+	}))
+	defer server.Close()
+	c, _ := newClient(fixtureKey)
+	c.base = server.URL
+	c.artifactHTTP.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" {
+			t.Fatal("credential forwarded to artifact")
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"contractVersion":"1","status":"complete","comparisons":[]}`)), Header: make(http.Header)}, nil
+	})
+	run, err := c.retrieve(context.Background(), "run_fixture")
+	if err != nil || !strings.Contains(string(run.Output), `"comparisons"`) || run.OutputPresignedURL != "" {
+		t.Fatalf("artifact not retrieved safely: %v", err)
+	}
+	encoded, _ := json.Marshal(run)
+	if strings.Contains(string(encoded), "signature") {
+		t.Fatal("signed URL exposed")
+	}
+}
+
+func TestArtifactBoundsAndURLValidation(t *testing.T) {
+	for _, raw := range []string{"http://artifact.example/out", "https://127.0.0.1/out", "https://user:pass@artifact.example/out", "https://artifact.example:8443/out"} {
+		c, _ := newClient(fixtureKey)
+		c.artifactHTTP.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) { t.Fatal("invalid URL contacted"); return nil, nil })
+		if _, err := c.downloadOutput(context.Background(), raw); err == nil {
+			t.Fatal("unsafe URL accepted")
+		}
+	}
+	for _, body := range []string{"not json", strings.Repeat(" ", maxBody+1)} {
+		c, _ := newClient(fixtureKey)
+		c.artifactHTTP.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+		})
+		if _, err := c.downloadOutput(context.Background(), "https://artifact.example/out?signature=synthetic"); err == nil || strings.Contains(err.Error(), "signature") {
+			t.Fatal("unsafe artifact accepted/error leaked")
+		}
+	}
+	for _, raw := range []string{"127.0.0.1", "10.0.0.1", "169.254.169.254", "::1", "fc00::1", "0.0.0.0"} {
+		if publicArtifactIP(net.ParseIP(raw)) {
+			t.Fatal("private artifact IP accepted")
+		}
+	}
+}
+
+func TestArtifactRedirectIsNotFollowed(t *testing.T) {
+	c, _ := newClient(fixtureKey)
+	calls := 0
+	c.artifactHTTP.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: 302, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{"Location": []string{"https://other.example/out"}}}, nil
+	})
+	_, err := c.downloadOutput(context.Background(), "https://artifact.example/out")
+	if err == nil || calls != 1 {
+		t.Fatal("artifact redirect followed")
+	}
+}
+
+func TestWorkerVersionPinsSubmission(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Options map[string]any `json:"options"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Options["lockToVersion"] != "synthetic.1" {
+			t.Error("worker version not pinned")
+		}
+		_, _ = w.Write([]byte(`{"id":"run_fixture"}`))
+	}))
+	defer server.Close()
+	c, _ := newClient(fixtureKey)
+	c.base = server.URL
+	c.workerVersion = "synthetic.1"
+	if _, err := c.trigger(context.Background(), "market-signal-direct-capabilities", "fixture:pin", map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+}
 
 type memoryStore struct{ key string }
 

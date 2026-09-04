@@ -80,9 +80,9 @@ export async function runDirectReport(input: unknown, deps: DirectDependencies, 
   const comparisons = comparison.rows.flatMap((row) => row.matches.flatMap((match) => match.product && hasValidObservedRivalPrice(row.primary) && hasValidObservedRivalPrice(match.product)
     ? [{ primaryProduct: row.primary, rivalProduct: match.product, assessment: match.assessment || { method: "direct-web-search", claimType: "Inferred", verdict: "search_result" }, recommendation: match.decision?.actionPlan || null }]
     : []));
-  const domains = [...new Set(comparisons.map((pair) => pair.rivalProduct.domain))];
+  const domains = [...new Set(comparisons.map((pair) => canonicalDomain(pair.rivalProduct.domain)))];
   return { contractVersion: "1", request, startedAt, completedAt: new Date().toISOString(), status: evaluation.status === "pass" ? "complete" : "limited",
-    comparisons, competitors: domains.map((domain) => ({ domain, comparisonCount: comparisons.filter((pair) => pair.rivalProduct.domain === domain).length })),
+    comparisons, competitors: domains.map((domain) => ({ domain, comparisonCount: comparisons.filter((pair) => canonicalDomain(pair.rivalProduct.domain) === domain).length })),
     metrics: { requestedComparisons: request.comparisons, pricedComparisons: comparisons.length, competitors: domains.length, catalogProducts: catalog.products.length, searchedProducts: comparison.coverage.primaryProductsScanned },
     evaluation: { basis: "deterministic-report-quality-gate", ...evaluation },
     limitations: [...catalog.gaps, ...(comparison.matching?.gaps || []), "Search-result relevance is inferred, not an independent exact-product certification.", "Provider cost is unknown; null must not be interpreted as zero.", "This version performs one bounded search pass, not automatic repair or independent AI recall evaluation."],

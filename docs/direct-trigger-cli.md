@@ -27,6 +27,12 @@ not retire existing tasks in the same project. The website itself is not deploye
 or changed by this command. Never use the old VPS orchestration task as the
 direct report entry point; that older task still depends on website callbacks.
 
+For branch acceptance testing without changing the active website worker, deploy
+with `--skip-promotion`, then pass `--worker-version "<deployed-version>"` to CLI
+commands. This pins new submissions to that version. Omit it only after the
+operator has promoted an approved version. `result` and `wait` always retrieve
+the original run and do not change its version.
+
 ## Install (colleagues)
 
 The operator supplies the ZIP from the **Direct Trigger CLI** GitHub Actions run
@@ -117,6 +123,9 @@ Never reuse an ID for different input or assume replay is safe after the TTL.
 ## Output
 
 The CLI returns a Trigger envelope with `id`, `status`, `taskIdentifier`, `output`.
+When Trigger offloads larger output, the CLI downloads its signed artifact over
+HTTPS with a 16 MiB limit, without forwarding the Trigger key or printing the
+signed URL. Private-network targets and redirects are refused.
 For reports, `output` includes:
 
 - `request`: domain, comparison target, rival limit and correlation ID.

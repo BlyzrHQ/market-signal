@@ -42,3 +42,12 @@ COUNT as supplied rival domains. This implementation discovers the rivals.
 - User explicitly authorized key reuse; rotation remains recommended.
 - Exact-head review, packaged artifacts, deployed tasks and live report remain
   separate release checks; do not label local fixture results as live reports.
+
+## First exact-head review
+
+Verified Fable 5 (`claude-fable-5-1`) reviewed f8f26ea and found one blocker:
+large Trigger output can be offloaded instead of inline. Added bounded HTTPS
+artifact retrieval with no inherited credentials, no redirects, public-IP DNS
+pinning and sanitized errors. Added regression tests and canonicalized rival
+roll-up domains. Added optional worker-version pinning for unpromoted branch
+acceptance tests; no website deployment or active-worker promotion is implied.

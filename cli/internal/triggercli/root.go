@@ -75,7 +75,12 @@ func domainInput(value string) (string, error) {
 
 func newRoot(version string, o options) *cobra.Command {
 	root := &cobra.Command{Use: "marketsignal-trigger", Short: "Run Market Signal directly in your Trigger project", SilenceUsage: true, SilenceErrors: true}
+	var workerVersion string
+	root.PersistentFlags().StringVar(&workerVersion, "worker-version", "", "operator testing: pin a deployed Trigger version without promoting it")
 	client := func() (*Client, error) {
+		if workerVersion != "" && !regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}$`).MatchString(workerVersion) {
+			return nil, fmt.Errorf("invalid worker version")
+		}
 		key := strings.TrimSpace(o.env("TRIGGER_SECRET_KEY"))
 		if key == "" {
 			var err error
@@ -84,7 +89,11 @@ func newRoot(version string, o options) *cobra.Command {
 				return nil, fmt.Errorf("run marketsignal-trigger configure or securely set TRIGGER_SECRET_KEY")
 			}
 		}
-		return o.connect(key)
+		cl, err := o.connect(key)
+		if err == nil {
+			cl.workerVersion = workerVersion
+		}
+		return cl, err
 	}
 	root.AddCommand(&cobra.Command{Use: "version", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error { fmt.Fprintln(c.OutOrStdout(), version); return nil }})
 	var stdin bool
@@ -232,7 +241,7 @@ func writeJSON(c *cobra.Command, value any) error {
 }
 func displayRun(c *cobra.Command, r Run) error {
 	if r.Status == "COMPLETED" && (len(r.Output) == 0 || string(r.Output) == "null") {
-		return fmt.Errorf("Trigger run completed without inline output; inspect the run in Trigger")
+		return fmt.Errorf("Trigger run completed without retrievable output; inspect the run in Trigger")
 	}
 	if r.Status == "COMPLETED" {
 		var contract struct {
