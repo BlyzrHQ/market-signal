@@ -26,11 +26,9 @@ Testing ran on Windows with Go 1.26.4 on September 5, 2026 local time
 
 ## Live production attempt
 
-Executed the built binary using the already-provisioned OS credential:
-
-```powershell
-.\marketsignal-internal.exe report myjam.co.uk --comparisons 20 --request-id codex:cli-test:myjam:20260905:001 --output json --max-wait 30s --timeout 20s
-```
+Executed the built binary using the already-provisioned OS credential, a
+20-comparison target, JSON output, and a stable request ID. The test domain
+and request identifiers have been removed at the user's request.
 
 Production `https://signal.blyzr.com` returned HTTP 429:
 
@@ -41,13 +39,11 @@ This verifies production connectivity, acceptance of the saved credential,
 and enforcement of the internal daily budget. It does not verify a newly
 completed report, delivered comparisons, evaluation, or live wait/result.
 No report ID or report data was returned. No quota or credential changes were
-made. A fresh end-to-end report remains blocked by the existing daily ceiling;
-retry the same request ID once capacity is available.
+made. A fresh end-to-end report remains blocked by the existing daily ceiling.
 
 ## Handoff observations
 
-- Confirmed input-validation defect: `report myjam.co.uk --comparisons 0
-  --request-id codex:cli-test:zero:20260905:001 --output json --timeout 20s`
+- Confirmed input-validation defect: a report request with `--comparisons 0`
   reaches production, receives HTTP 400 (`Comparison target must be 20, 50,
   500, or 1000.`), and exits 4. Other invalid targets are rejected locally
   with exit 1. In `report.go:48`, zero maps to an empty plan, then
