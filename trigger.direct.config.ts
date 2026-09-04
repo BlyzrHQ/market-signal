@@ -1,8 +1,10 @@
 import { defineConfig } from "@trigger.dev/sdk";
 import base from "./trigger.config.ts";
 
-const project = process.env.TRIGGER_PROJECT_REF?.trim();
-if (!project) throw new Error("Set TRIGGER_PROJECT_REF to the operator's Trigger project before deploying");
+// The CLI resolves the real project before uploading. Trigger's remote indexer
+// imports this module without the operator's shell environment; do not throw
+// there. Without local configuration, the base placeholder is not deployable.
+const project = process.env.TRIGGER_PROJECT_REF?.trim() || base.project;
 // Include existing tasks so deploying to the company project does not retire
 // its website tasks. Only direct tasks override retry/queue/duration settings.
 export default defineConfig({ ...base, project, dirs: ["./src/trigger", "./src/trigger-direct"] });

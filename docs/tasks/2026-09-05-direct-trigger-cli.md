@@ -51,3 +51,9 @@ artifact retrieval with no inherited credentials, no redirects, public-IP DNS
 pinning and sanitized errors. Added regression tests and canonicalized rival
 roll-up domains. Added optional worker-version pinning for unpromoted branch
 acceptance tests; no website deployment or active-worker promotion is implied.
+
+The first unpromoted remote build failed because the config threw when the
+remote indexer lacked the operator's local TRIGGER_PROJECT_REF. Reuse the base
+config placeholder during remote import; project selection still happens in
+the authenticated deployment CLI. The failed version was not promoted and ran
+no paid research. Remote deployment must be retried and verified.
