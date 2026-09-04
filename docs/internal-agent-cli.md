@@ -4,12 +4,55 @@
 company agents. It is not the customer CLI and it does not use browser login or
 a customer Stripe plan.
 
-## Agent command
+## 1. Install the company executable
+
+On Windows, install Git and Go 1.22 or newer and obtain access to this private
+GitHub repository. No Node.js, local website, or local Trigger worker is needed
+on the agent machine when using the company service.
 
 ```powershell
-marketsignal-internal report babanuj.com `
+git clone --branch codex/internal-cli-handoff --single-branch https://github.com/BlyzrHQ/market-signal.git
+Set-Location market-signal
+go -C cli build -o ../marketsignal-internal.exe ./cmd/marketsignal-internal
+.\marketsignal-internal.exe version
+.\marketsignal-internal.exe report --help
+```
+
+The executable is created in the repository root. The version is a development
+build identifier unless built with release metadata. Alternatively, your
+operator can supply the company executable. The website's public installer
+installs the **customer** CLI, not this executable.
+
+Commands below assume the executable is on PATH. If it is not, replace
+`marketsignal-internal` with `.\marketsignal-internal.exe` while in that folder.
+
+## 2. Configure once
+
+```powershell
+marketsignal-internal configure
+```
+
+Paste the scoped company credential from your operator into the hidden prompt.
+It is saved in the operating-system credential store. Do not paste a raw Trigger
+API key here. There is no browser login. If you do not yet have the credential,
+the operator must provision it using the section below; building the CLI does
+not grant access by itself.
+
+Current transport is CLI → authenticated VPS report service → Trigger.dev
+workers. The report service owns the Trigger connection; this executable is
+not a direct Trigger API client. This documentation branch does not change that
+architecture or enable the separately proposed unlimited internal usage mode.
+
+## 3. Request a report
+
+Replace `example.com` with your actual store domain. This is a placeholder,
+not a successful live test, and submitting a real report can incur provider
+costs. Start with the smallest supported target.
+
+```powershell
+marketsignal-internal report example.com `
   --comparisons 20 `
-  --request-id orchestrator:babanuj:001 `
+  --request-id orchestrator:example:001 `
   --output json
 ```
 
@@ -19,12 +62,17 @@ competitor roll-ups, priced product comparisons, quality-evaluation state,
 limitations, and provider cost when known.
 
 Use a unique, deterministic request ID for one logical request. Repeating the
-same command is safe and returns the same run. If the command exits with code 6,
-resume it without submitting again:
+same command is safe and returns the same run. A target is not guaranteed
+coverage: inspect the delivered count and limitations in the response.
+
+## 4. Resume or retrieve the same report
+
+If the command exits with code 6 and returns a `publicReportId`, replace
+`<public-report-id>` below with that value and keep the original request ID:
 
 ```powershell
 marketsignal-internal wait <public-report-id> `
-  --request-id orchestrator:babanuj:001 `
+  --request-id orchestrator:example:001 `
   --output json
 ```
 
@@ -32,9 +80,35 @@ To read a snapshot without waiting:
 
 ```powershell
 marketsignal-internal result <public-report-id> `
-  --request-id orchestrator:babanuj:001 `
+  --request-id orchestrator:example:001 `
   --output json
 ```
+
+If the outcome is unknown and no report ID was returned, retry the original
+`report` command with the exact same domain, target, and request ID. Never create
+a new ID just to retry an ambiguous request.
+
+## 5. Read the output
+
+The response is JSON for the calling agent, not just a website link. Key fields
+in a terminal result are:
+
+| Field | Meaning |
+| --- | --- |
+| `state` | Whether the response is pending or terminal |
+| `requestId`, `publicReportId` | Correlation and resume identifiers |
+| `output.status` | Report outcome; do not assume terminal means complete |
+| `output.metrics.comparisonTarget` | Requested comparison pairs |
+| `output.metrics.pricedComparisons` | Delivered pairs with prices |
+| `comparisons.items` | Product comparison records |
+| `competitors.items` | Competitor records |
+| `decision.limitations` | Coverage and evidence gaps |
+| `output.evaluation` | Evaluation state, which may still be pending |
+| `output.metrics.costMicrousd` | Known provider cost; `null` means unknown, not zero |
+
+Pending responses do not necessarily contain terminal data. See the exact
+[Go output types](../cli/internal/loop/model.go) for the complete field structure.
+Examples here are instructions, not live customer results.
 
 Exit codes are stable: `0` complete, `2` usable but limited, `3` contract drift,
 `4` authentication/transport, `5` failed, `6` pending or outcome unknown, `7`
