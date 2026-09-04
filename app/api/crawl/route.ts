@@ -1027,7 +1027,7 @@ async function enrichMatchedProductPages(inputResults: DomainCrawl[], primaryDom
   });
 }
 
-async function crawlPrimaryDomain(domain: string) {
+export async function crawlPrimaryDomain(domain: string) {
   const first = await crawlDomain(domain, "primary");
   if (first.homepage) return { ...first, coverage: { ...first.coverage, attempts: 1 } };
   if (first.siteState?.status === "parked") return { ...first, coverage: { ...first.coverage, attempts: 1 } };
@@ -1042,7 +1042,7 @@ async function crawlPrimaryDomain(domain: string) {
   };
 }
 
-async function sallaRecoveryDomainCrawl(previous: DomainCrawl, maxProducts: number): Promise<DomainCrawl | null> {
+export async function sallaRecoveryDomainCrawl(previous: DomainCrawl, maxProducts: number): Promise<DomainCrawl | null> {
   let recovery: SallaStorefrontRecovery | null = null;
   try { recovery = await recoverSallaStorefrontCatalog(previous.domain, { maxProducts }); } catch { return null; }
   if (!recovery) return null;
