@@ -20,8 +20,20 @@ This branch starts from master and does not depend on unmerged PR #222.
 
 ## Validation / release
 
-Pending: Node tests, lint, VPS build, CLI command-help validation, local rendered
-page checks, exact-head Fable review, focused draft PR and production deployment.
+Initial validation passed: 1341 Node tests including typechecks/build, lint with
+one pre-existing img warning, VPS build, CLI command-help validation. Local
+production /cli returned HTTP 200 with company commands and no login/account
+links. The browser webview could not attach; no screenshot pass is claimed.
+PR #223 is draft; final review, CI and production deployment remain pending.
 No paid reports are needed for this documentation-only page change. Use the real
 public /cli endpoint for deployed-page verification. Do not call it live until
 the approved commit is deployed and its page is verified.
+
+## Review
+
+Fable 5.1 found the customer account install link still pointing to /cli.
+Retargeted it to the existing downloadable customer installer and added a test;
+customers are no longer sent to the internal-only guide. The customer OAuth
+client identifier remains /cli for compatibility, but it is an identifier, not
+an install/help link; no client metadata, authentication or grants are changed.
+This page intentionally no longer serves customer onboarding per user request.

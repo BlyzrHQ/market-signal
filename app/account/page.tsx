@@ -194,7 +194,7 @@ export default function AccountPage() {
         <span>CONNECTED APPS</span>
         <h2>CLI and AI access</h2>
         <p>Market Signal CLI, Claude, Codex, and other connected clients appear here after you approve access. Third-party client names are self-asserted; verify their displayed client ID host before connecting.</p>
-        <div className="account-plan-actions"><Link href="/cli">Install Market Signal CLI</Link></div>
+        <div className="account-plan-actions"><a href="/install.ps1" download>Download customer CLI installer</a></div>
         {connectedApps.length === 0 ? <p>No apps are connected.</p> : <div className="connected-app-list">{connectedApps.map((app) => <div key={app.consentId}>
           <div><strong>{app.client.name}</strong><small>{app.client.host} · {app.client.verified ? "Verified Market Signal client" : "Unverified identity"}</small><small>{app.status === "active" ? "Active" : "Reauthorization required"}</small></div>
           <button disabled={busy} onClick={async () => {

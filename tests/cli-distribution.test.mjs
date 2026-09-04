@@ -42,6 +42,9 @@ test("CLI landing page documents only the company command interface, not custome
   assert.match(page, /does not.*call Trigger directly/);
   assert.match(page, /not a live result/);
   assert.match(page, /Missing cost remains unknown/);
+  const account = await readFile(new URL("../app/account/page.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(account, /href="\/cli"/);
+  assert.match(account, /href="\/install.ps1" download>Download customer CLI installer/);
 });
 
 test("installer refuses remote plaintext downloads and verifies before install", async () => {
