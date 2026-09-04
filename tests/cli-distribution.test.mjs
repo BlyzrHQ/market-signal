@@ -13,7 +13,7 @@ test("customer CLI distribution retains its separate login flow and scoped agent
 
   for (const source of [guide, readme]) {
     assert.match(source, /marketsignal login/);
-    assert.match(source, /marketsignal report example\.com/);
+    assert.match(source, /marketsignal report "<domain>"/);
     assert.doesNotMatch(source, /Current distribution boundary/);
   }
   assert.match(root, /defaultBaseURL = oauth\.ProductionOrigin/);
@@ -32,10 +32,10 @@ test("customer CLI distribution retains its separate login flow and scoped agent
 
 test("CLI landing page documents only the company command interface, not customer onboarding", async () => {
   const page = await readFile(new URL("../app/cli/page.tsx", import.meta.url), "utf8");
-  for (const command of ["report babanuj.com", "wait <public-report-id>", "result <public-report-id>", "version", "configure"]) {
+  for (const command of ['report "<domain>"', 'wait "<public-report-id>"', 'result "<public-report-id>"', "version", "configure"]) {
     assert.ok(page.includes(`marketsignal-internal ${command}`));
   }
-  assert.match(page, /--comparisons 20 --request-id orchestrator:babanuj:001 --output json/);
+  assert.match(page, /--comparisons 20 --request-id "<request-id>" --output json/);
   assert.doesNotMatch(page, /marketsignal login|MARKET_SIGNAL_API_KEY|\/account|\/pricing|install\.ps1|\/downloads\//);
   assert.match(page, /not a website login/);
   assert.match(page, /Never paste a production Trigger key/);
@@ -45,6 +45,29 @@ test("CLI landing page documents only the company command interface, not custome
   const account = await readFile(new URL("../app/account/page.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(account, /href="\/cli"/);
   assert.match(account, /href="\/install.ps1" download>Download customer CLI installer/);
+});
+
+test("GitHub handoff explains the company CLI without a brand-specific example", async () => {
+  const [readme, guide, page] = await Promise.all([
+    readFile(new URL("../README.md", import.meta.url), "utf8"),
+    readFile(new URL("../docs/internal-agent-cli.md", import.meta.url), "utf8"),
+    readFile(new URL("../app/cli/page.tsx", import.meta.url), "utf8"),
+  ]);
+  for (const source of [readme, guide, page]) {
+    assert.doesNotMatch(source, /babanuj|myjam|example\.com/i);
+    assert.match(source, /report "<domain>"/);
+    assert.doesNotMatch(source, /(?:report|submit|crawl)\s+(?:https?:\/\/)?[a-z0-9-]+\.[a-z]{2,}/i);
+  }
+  for (const source of [readme, guide]) {
+    assert.match(source, /codex\/internal-cli-handoff/);
+    assert.match(source, /go -C cli build -o \.\.\/marketsignal-internal\.exe/);
+    assert.match(source, /company credential/);
+    assert.match(source, /placeholder/);
+  }
+  assert.match(readme, /\[Full internal CLI instructions\]\(docs\/internal-agent-cli\.md\)/);
+  assert.match(guide, /comparisons\.items/);
+  assert.match(guide, /competitors\.items/);
+  assert.match(guide, /costMicrousd/);
 });
 
 test("installer refuses remote plaintext downloads and verifies before install", async () => {

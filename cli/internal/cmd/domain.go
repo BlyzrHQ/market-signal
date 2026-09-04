@@ -12,6 +12,9 @@ func canonicalDomain(input string) (string, error) {
 	if value == "" {
 		return "", fmt.Errorf("enter a public domain")
 	}
+	if strings.ContainsAny(value, "<>") {
+		return "", fmt.Errorf("replace the domain placeholder with your public domain")
+	}
 	if !strings.Contains(value, "://") {
 		value = "https://" + value
 	}

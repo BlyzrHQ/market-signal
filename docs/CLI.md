@@ -35,12 +35,12 @@ own workspace.
 Then create a report:
 
 ```powershell
-marketsignal report example.com
+marketsignal report "<domain>"
 ```
 
 `report` submits exactly once, waits for the private report to finish, and
 prints the decision summary, competitors, priced product comparisons,
-limitations, and recommended actions. Replace `example.com` with a public
+limitations, and recommended actions. Replace `<domain>` with a public
 company domain. Localhost, private IP addresses, and malformed domains are
 rejected.
 
@@ -65,7 +65,7 @@ For a non-interactive process, provide the key as an environment variable:
 
 ```powershell
 $env:MARKET_SIGNAL_API_KEY = "your-key"
-marketsignal report example.com --output json
+marketsignal report "<domain>" --output json
 ```
 
 For an interactive one-time setup, save it in the operating-system credential
@@ -104,8 +104,8 @@ The account page can revoke connected OAuth grants and individual API keys.
 Build a live competitive-intelligence report and print its decision summary.
 
 ```bash
-marketsignal report example.com
-marketsignal report https://example.com --output json
+marketsignal report "<domain>"
+marketsignal report "<domain>" --output json
 ```
 
 The domain can be a bare hostname or an HTTP/HTTPS URL. A leading `www.` is
@@ -124,8 +124,8 @@ Run the low-level direct-crawl diagnostic against a local or otherwise
 controlled Market Signal service. Normal hosted users should use `report`.
 
 ```bash
-go -C cli run ./cmd/marketsignal crawl example.com --base-url http://localhost:3000
-go -C cli run ./cmd/marketsignal crawl example.com --base-url http://localhost:3000 --output json
+go -C cli run ./cmd/marketsignal crawl "<domain>" --base-url http://localhost:3000
+go -C cli run ./cmd/marketsignal crawl "<domain>" --base-url http://localhost:3000 --output json
 ```
 
 This is not a local Go scraper. `crawl` calls `/api/crawl`; `report` uses the
@@ -138,7 +138,7 @@ calling loop and is the idempotency key; reuse it only to replay the same
 intent.
 
 ```bash
-marketsignal submit example.com --request-id orchestrator:example:001 --output json
+marketsignal submit "<domain>" --request-id "<request-id>" --output json
 ```
 
 The command returns immediately with a private report id. It does not wait for
@@ -157,7 +157,7 @@ never resubmits work and returns the report id so another process can resume.
 
 ```bash
 marketsignal wait 0123456789abcdef0123456789abcdef \
-  --request-id orchestrator:example:001 \
+  --request-id "<request-id>" \
   --poll 15s \
   --max-wait 60m \
   --output json
@@ -177,7 +177,7 @@ up to 50 while preserving the same `requestId` and authentication.
 
 ```bash
 marketsignal result 0123456789abcdef0123456789abcdef \
-  --request-id orchestrator:example:001
+  --request-id "<request-id>"
 ```
 
 The JSON shape is deliberately agent-readable rather than a copy of the UI.

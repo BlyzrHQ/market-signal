@@ -7,7 +7,47 @@ positioning, and explicit data-quality limits.
 The project is open source. The hosted service runs the web application on a
 VPS and uses Trigger.dev for durable background jobs.
 
-## Run locally
+## Company CLI: start here
+
+For a colleague or another company agent, use **`marketsignal-internal`**.
+No Market Signal browser login or customer subscription is needed. The customer
+CLI and website-development instructions below are separate.
+
+**[Full internal CLI instructions](docs/internal-agent-cli.md)** cover setup,
+report submission, resuming work, JSON output, exit codes, and operator setup.
+
+Quick start in PowerShell, with GitHub repository access and Go 1.22 or newer:
+
+```powershell
+git clone --branch codex/internal-cli-handoff --single-branch https://github.com/BlyzrHQ/market-signal.git
+Set-Location market-signal
+go -C cli build -o ../marketsignal-internal.exe ./cmd/marketsignal-internal
+.\marketsignal-internal.exe version
+.\marketsignal-internal.exe configure
+```
+
+At the hidden `configure` prompt, enter the scoped company credential supplied
+securely by your operator. Do **not** enter a Trigger API key or paste secrets
+into a command, GitHub, or chat. Configuration is once per agent machine.
+
+Then request a report (replace `<domain>` with the real store domain):
+
+```powershell
+.\marketsignal-internal.exe report "<domain>" --comparisons 20 --request-id "<request-id>" --output json
+```
+
+This command can incur provider costs. `<domain>` is only a placeholder, not
+a tested store. Twenty is the requested comparison-pair target, not a promise
+of twenty results. Keep the same request ID when retrying the same logical
+request; see the full guide before handling a pending or unknown outcome.
+
+Current transport: **company CLI → authenticated VPS report service →
+Trigger.dev workers → structured JSON back to the CLI**. The CLI does not call
+Trigger directly; the operator manages Trigger credentials server-side. Current
+server-side internal limits still apply. This branch does not enable unlimited
+usage or change production behavior.
+
+## Run the website locally (separate from company CLI use)
 
 Requirements:
 
@@ -102,7 +142,7 @@ repository:
 ```powershell
 irm https://signal.blyzr.com/install.ps1 | iex
 marketsignal login
-marketsignal report example.com
+marketsignal report "<domain>"
 ```
 
 The CLI opens Market Signal in the browser for sign-in, stores its rotating
@@ -115,7 +155,7 @@ and provide it through the environment:
 
 ```powershell
 $env:MARKET_SIGNAL_API_KEY = "your-key"
-marketsignal report example.com --output json
+marketsignal report "<domain>" --output json
 ```
 
 To save that key in Windows Credential Manager instead, run
@@ -127,10 +167,10 @@ Contributors can still run it from source:
 ```bash
 go -C cli run ./cmd/marketsignal --help
 go -C cli run ./cmd/marketsignal version
-go -C cli run ./cmd/marketsignal report example.com --base-url http://localhost:3000
+go -C cli run ./cmd/marketsignal report "<domain>" --base-url http://localhost:3000
 ```
 
-Replace `example.com` with any valid public company domain. See
+Replace `<domain>` with any valid public company domain. See
 [docs/CLI.md](docs/CLI.md) for advanced commands, flags, output formats, exit
 codes, local-development authentication, and troubleshooting.
 

@@ -16,7 +16,7 @@ import (
 
 const (
 	testPublicReportID = "0123456789abcdef0123456789abcdef"
-	testRequestID      = "orchestrator:babanuj:001"
+	testRequestID      = "orchestrator:fixture:001"
 	testLoopToken      = "loop-test-token-12345678901234567890"
 )
 
@@ -30,8 +30,8 @@ func terminalLoopFixtureForPlan(status string, delivered int, plan string, targe
 		rows[index] = map[string]any{
 			"id": fmt.Sprintf("%064x", index+1),
 			"primaryProduct": map[string]any{
-				"id": fmt.Sprintf("primary-%02d", index+1), "domain": "babanuj.com", "title": fmt.Sprintf("Babanuj product %d", index+1),
-				"sourceUrl": fmt.Sprintf("https://babanuj.com/products/%d", index+1), "imageUrl": nil, "observedAt": "2026-09-02T10:00:30.000Z",
+				"id": fmt.Sprintf("primary-%02d", index+1), "domain": "primary.example", "title": fmt.Sprintf("Fixture product %d", index+1),
+				"sourceUrl": fmt.Sprintf("https://primary.example/products/%d", index+1), "imageUrl": nil, "observedAt": "2026-09-02T10:00:30.000Z",
 				"price": map[string]any{"display": "$10.00", "amount": 10, "currency": "USD"}, "quantity": nil,
 			},
 			"rivalProduct": map[string]any{
@@ -60,7 +60,7 @@ func terminalLoopFixtureForPlan(status string, delivered int, plan string, targe
 		"state": "terminal",
 		"output": map[string]any{
 			"contractVersion": "1", "functionId": "market-signal.report", "functionVersion": "1",
-			"requestId": testRequestID, "primaryDomain": "babanuj.com", "productPlan": plan, "runId": "run_babanuj_001", "status": status,
+			"requestId": testRequestID, "primaryDomain": "primary.example", "productPlan": plan, "runId": "run_fixture_001", "status": status,
 			"report": map[string]any{"publicId": testPublicReportID, "ownerPath": "/reports/" + testPublicReportID, "status": status, "completedPhases": []string{"crawl", "products", "persistence"}, "limitedPhases": limitedPhases},
 			"artifacts": []any{
 				map[string]any{"kind": "report", "schemaVersion": "1", "reference": "market-signal:report:" + testPublicReportID, "contentHash": strings.Repeat("a", 64), "mediaType": "application/json", "recordCount": 1},
@@ -72,7 +72,7 @@ func terminalLoopFixtureForPlan(status string, delivered int, plan string, targe
 			"startedAt":  "2026-09-02T10:00:00.000Z", "finishedAt": "2026-09-02T10:01:32.000Z",
 		},
 		"decision": map[string]any{
-			"headline":           fmt.Sprintf("Babanuj returned %d priced product comparisons.", delivered),
+			"headline":           fmt.Sprintf("Fixture returned %d priced product comparisons.", delivered),
 			"coverage":           map[string]any{"target": target, "delivered": delivered, "percent": float64(delivered) / float64(target) * 100},
 			"competitorDomains":  []string{"rival.example"},
 			"limitations":        limitations,
@@ -94,7 +94,7 @@ func terminalLoopFixtureForPlan(status string, delivered int, plan string, targe
 func pendingLoopFixture() []byte {
 	payload := map[string]any{
 		"state": "pending", "requestId": testRequestID, "publicReportId": testPublicReportID,
-		"primaryDomain": "babanuj.com", "status": "running", "phase": "matching", "attempt": 1,
+		"primaryDomain": "primary.example", "status": "running", "phase": "matching", "attempt": 1,
 		"heartbeatAt": "2026-09-02T10:00:30.000Z", "pollAfterSeconds": 1,
 	}
 	data, _ := json.Marshal(payload)
@@ -104,8 +104,8 @@ func pendingLoopFixture() []byte {
 func submissionFixture() []byte {
 	payload := map[string]any{
 		"ok": true, "requestId": testRequestID, "replayed": false,
-		"report": map[string]any{"publicId": testPublicReportID, "primaryDomain": "babanuj.com", "locale": "en", "status": "queued", "currentPhase": "queued", "attemptCount": 1, "createdAt": "2026-09-02T10:00:00.000Z", "expiresAt": "2026-10-02T10:00:00.000Z", "productPlan": "starter", "productLimit": 20, "productTargetKind": "pairs"},
-		"job":    map[string]any{"dispatched": true, "runId": "run_babanuj_001"},
+		"report": map[string]any{"publicId": testPublicReportID, "primaryDomain": "primary.example", "locale": "en", "status": "queued", "currentPhase": "queued", "attemptCount": 1, "createdAt": "2026-09-02T10:00:00.000Z", "expiresAt": "2026-10-02T10:00:00.000Z", "productPlan": "starter", "productLimit": 20, "productTargetKind": "pairs"},
+		"job":    map[string]any{"dispatched": true, "runId": "run_fixture_001"},
 	}
 	data, _ := json.Marshal(payload)
 	return data
@@ -144,7 +144,7 @@ func failedLoopFixture(status string) []byte {
 		"state": "terminal",
 		"output": map[string]any{
 			"contractVersion": "1", "functionId": "market-signal.report", "functionVersion": "1",
-			"requestId": testRequestID, "primaryDomain": "babanuj.com", "productPlan": "starter", "runId": "run_babanuj_001", "status": status,
+			"requestId": testRequestID, "primaryDomain": "primary.example", "productPlan": "starter", "runId": "run_fixture_001", "status": status,
 			"report": nil, "artifacts": []any{},
 			"metrics":    map[string]any{"comparisonTarget": 20, "publishedComparisons": 0, "pricedComparisons": 0, "competitorCount": 0, "repairRounds": 0, "usageStatus": "unknown", "costMicrousd": nil, "durationMs": 92000},
 			"evaluation": map[string]any{"status": "unavailable", "evaluationId": nil, "evaluatorVersion": nil, "resultHash": nil},
@@ -180,7 +180,7 @@ func TestSubmitWaitAndResultCommandsUseDurableLoopContract(t *testing.T) {
 			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 				t.Errorf("decode submit body: %v", err)
 			}
-			if body["primaryDomain"] != "babanuj.com" || body["commandId"] != testRequestID {
+			if body["primaryDomain"] != "primary.example" || body["commandId"] != testRequestID {
 				t.Errorf("unexpected submit body: %#v", body)
 			}
 			_, _ = writer.Write(submissionFixture())
@@ -202,7 +202,7 @@ func TestSubmitWaitAndResultCommandsUseDurableLoopContract(t *testing.T) {
 	var submitOut bytes.Buffer
 	submit := NewRoot("test")
 	submit.SetOut(&submitOut)
-	submit.SetArgs([]string{"submit", "https://www.babanuj.com/", "--request-id", testRequestID, "--base-url", server.URL, "--output", "json", "--quiet"})
+	submit.SetArgs([]string{"submit", "https://www.primary.example/", "--request-id", testRequestID, "--base-url", server.URL, "--output", "json", "--quiet"})
 	if err := submit.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +220,7 @@ func TestSubmitWaitAndResultCommandsUseDurableLoopContract(t *testing.T) {
 	if err := wait.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(waitOut.String(), `"headline": "Babanuj returned 20 priced product comparisons."`) || !strings.Contains(waitOut.String(), `"costMicrousd": null`) {
+	if !strings.Contains(waitOut.String(), `"headline": "Fixture returned 20 priced product comparisons."`) || !strings.Contains(waitOut.String(), `"costMicrousd": null`) {
 		t.Fatalf("wait did not return the decision-ready terminal payload:\n%s", waitOut.String())
 	}
 	t.Logf("WAIT OUTPUT\n%s", waitOut.String())
@@ -232,7 +232,7 @@ func TestSubmitWaitAndResultCommandsUseDurableLoopContract(t *testing.T) {
 	if err := result.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"Babanuj returned 20 priced product comparisons.", "20/20 priced comparisons", "Provider cost unknown", "Competitors", "rival.example — 20 comparisons", "Product comparisons (20 returned of 20)", "Babanuj product 1 ($10.00)", "Babanuj product 20 ($10.00)", "https://rival.example/products/20", "Review the largest verified price gaps first."} {
+	for _, expected := range []string{"Fixture returned 20 priced product comparisons.", "20/20 priced comparisons", "Provider cost unknown", "Competitors", "rival.example — 20 comparisons", "Product comparisons (20 returned of 20)", "Fixture product 1 ($10.00)", "Fixture product 20 ($10.00)", "https://rival.example/products/20", "Review the largest verified price gaps first."} {
 		if !strings.Contains(resultOut.String(), expected) {
 			t.Fatalf("human result missing %q:\n%s", expected, resultOut.String())
 		}
@@ -252,7 +252,7 @@ func TestReportCommandSubmitsAndReturnsTheTerminalLoopResult(t *testing.T) {
 			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 				t.Errorf("decode report body: %v", err)
 			}
-			if body["primaryDomain"] != "babanuj.com" || body["commandId"] != testRequestID || body["locale"] != "en" {
+			if body["primaryDomain"] != "primary.example" || body["commandId"] != testRequestID || body["locale"] != "en" {
 				t.Errorf("unexpected report body: %#v", body)
 			}
 			_, _ = writer.Write(submissionFixture())
@@ -271,14 +271,14 @@ func TestReportCommandSubmitsAndReturnsTheTerminalLoopResult(t *testing.T) {
 	var stdout bytes.Buffer
 	root := NewRoot("test")
 	root.SetOut(&stdout)
-	root.SetArgs([]string{"report", "https://www.babanuj.com/", "--request-id", testRequestID, "--base-url", server.URL, "--quiet", "--poll", "1ms", "--max-wait", "1s"})
+	root.SetArgs([]string{"report", "https://www.primary.example/", "--request-id", testRequestID, "--base-url", server.URL, "--quiet", "--poll", "1ms", "--max-wait", "1s"})
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
 	if submissions.Load() != 1 || reads.Load() != 1 {
 		t.Fatalf("report must submit once and read once; submissions=%d reads=%d", submissions.Load(), reads.Load())
 	}
-	for _, expected := range []string{"Babanuj returned 20 priced product comparisons.", "20/20 priced comparisons", "rival.example — 20 comparisons", "Babanuj product 20 ($10.00)"} {
+	for _, expected := range []string{"Fixture returned 20 priced product comparisons.", "20/20 priced comparisons", "rival.example — 20 comparisons", "Fixture product 20 ($10.00)"} {
 		if !strings.Contains(stdout.String(), expected) {
 			t.Fatalf("report output missing %q:\n%s", expected, stdout.String())
 		}
@@ -294,7 +294,7 @@ func TestSubmitAcceptsAnExactReplayWithoutClaimingAnotherDispatch(t *testing.T) 
 	var stdout bytes.Buffer
 	root := NewRoot("test")
 	root.SetOut(&stdout)
-	root.SetArgs([]string{"submit", "babanuj.com", "--request-id", testRequestID, "--base-url", server.URL, "--output", "json", "--quiet"})
+	root.SetArgs([]string{"submit", "primary.example", "--request-id", testRequestID, "--base-url", server.URL, "--output", "json", "--quiet"})
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +321,7 @@ func TestSubmitAcceptsIdempotentDispatchRecoveryAndReportsTerminalReplayState(t 
 			var stdout bytes.Buffer
 			root := NewRoot("test")
 			root.SetOut(&stdout)
-			root.SetArgs([]string{"submit", "babanuj.com", "--request-id", testRequestID, "--base-url", server.URL, "--output", "json", "--quiet"})
+			root.SetArgs([]string{"submit", "primary.example", "--request-id", testRequestID, "--base-url", server.URL, "--output", "json", "--quiet"})
 			if err := root.Execute(); err != nil {
 				t.Fatal(err)
 			}
@@ -523,7 +523,7 @@ func TestSoloHumanResultPrintsEveryInlineComparison(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(stdout.String(), "   Rival       rival.example") != 50 || !strings.Contains(stdout.String(), "Babanuj product 50 ($10.00)") {
+	if strings.Count(stdout.String(), "   Rival       rival.example") != 50 || !strings.Contains(stdout.String(), "Fixture product 50 ($10.00)") {
 		t.Fatalf("human result did not render all 50 inline comparisons:\n%s", stdout.String())
 	}
 }
@@ -606,7 +606,7 @@ func TestSubmitMapsQuotaRefusalToExitSeven(t *testing.T) {
 	}))
 	defer server.Close()
 	root := NewRoot("test")
-	root.SetArgs([]string{"submit", "babanuj.com", "--request-id", testRequestID, "--base-url", server.URL, "--quiet"})
+	root.SetArgs([]string{"submit", "primary.example", "--request-id", testRequestID, "--base-url", server.URL, "--quiet"})
 	err := root.Execute()
 	var exitErr *ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 7 {

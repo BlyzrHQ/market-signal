@@ -15,9 +15,9 @@ const validHostedAPIKey = "msk_live_abcdefghijklmnop_abcdefghijklmnopqrstuvwxyzA
 const reportFixture = `{
   "ok": true,
   "live": true,
-  "primaryDomain": "myjam.co.uk",
+  "primaryDomain": "primary.example",
   "results": [
-    {"domain":"myjam.co.uk","role":"primary","pages":[],"products":[{}],"gaps":[],"coverage":{"pagesRequested":2,"pagesFetched":2,"maxPages":5,"robotsChecked":true},"fetchedAt":"2026-07-15T10:00:00Z"},
+    {"domain":"primary.example","role":"primary","pages":[],"products":[{}],"gaps":[],"coverage":{"pagesRequested":2,"pagesFetched":2,"maxPages":5,"robotsChecked":true},"fetchedAt":"2026-07-15T10:00:00Z"},
     {"domain":"rival.example","role":"discovered-competitor","pages":[],"products":[{}],"gaps":[],"coverage":{"pagesRequested":1,"pagesFetched":1,"maxPages":3,"robotsChecked":true},"fetchedAt":"2026-07-15T10:00:01Z"}
   ],
   "document": {"version":"1","generatedAt":"2026-07-15T10:00:02Z","blocks":[
@@ -43,12 +43,12 @@ func TestCrawlCommandRendersDecisionSummary(t *testing.T) {
 	root := NewRoot("test")
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)
-	root.SetArgs([]string{"crawl", "https://myjam.co.uk/", "--base-url", server.URL, "--quiet"})
+	root.SetArgs([]string{"crawl", "https://primary.example/", "--base-url", server.URL, "--quiet"})
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
 	output := stdout.String()
-	for _, expected := range []string{"myjam.co.uk", "LIVE — contract v1 validated", "rival.example", "2/2 fetched"} {
+	for _, expected := range []string{"primary.example", "LIVE — contract v1 validated", "rival.example", "2/2 fetched"} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected %q in output:\n%s", expected, output)
 		}
@@ -63,7 +63,7 @@ func TestCrawlCommandUsesContractDriftExitCode(t *testing.T) {
 	defer server.Close()
 
 	root := NewRoot("test")
-	root.SetArgs([]string{"crawl", "myjam.co.uk", "--base-url", server.URL, "--quiet"})
+	root.SetArgs([]string{"crawl", "primary.example", "--base-url", server.URL, "--quiet"})
 	err := root.Execute()
 	var exitErr *ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 3 {
@@ -82,7 +82,7 @@ func TestJSONCrawlPreservesPayloadAndReturnsGapExitCode(t *testing.T) {
 	var stdout bytes.Buffer
 	root := NewRoot("test")
 	root.SetOut(&stdout)
-	root.SetArgs([]string{"crawl", "myjam.co.uk", "--base-url", server.URL, "--output", "json", "--quiet"})
+	root.SetArgs([]string{"crawl", "primary.example", "--base-url", server.URL, "--output", "json", "--quiet"})
 	err := root.Execute()
 	var exitErr *ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 2 {
@@ -103,7 +103,7 @@ func TestReportCommandUsesTransportExitCode(t *testing.T) {
 	server.Close()
 
 	root := NewRoot("test")
-	root.SetArgs([]string{"report", "myjam.co.uk", "--base-url", serverURL, "--timeout", "200ms", "--quiet"})
+	root.SetArgs([]string{"report", "primary.example", "--base-url", serverURL, "--timeout", "200ms", "--quiet"})
 	err := root.Execute()
 	var exitErr *ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 4 {
@@ -113,7 +113,7 @@ func TestReportCommandUsesTransportExitCode(t *testing.T) {
 
 func TestAdsCommandIsNotAvailable(t *testing.T) {
 	root := NewRoot("test")
-	root.SetArgs([]string{"ads", "myjam.co.uk"})
+	root.SetArgs([]string{"ads", "primary.example"})
 	err := root.Execute()
 	if err == nil || !strings.Contains(err.Error(), `unknown command "ads"`) {
 		t.Fatalf("expected ads to be removed from the CLI, got %v", err)
