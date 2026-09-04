@@ -38,7 +38,9 @@ marketsignal-internal result <public-report-id> `
 
 Exit codes are stable: `0` complete, `2` usable but limited, `3` contract drift,
 `4` authentication/transport, `5` failed, `6` pending or outcome unknown, `7`
-quota/entitlement, and `8` inconsistent authoritative facts.
+quota/entitlement, `8` inconsistent authoritative facts, and `9` a request ID
+that is already bound to different work. Code `9` must be corrected by the
+orchestrator; it is not retryable as transport failure.
 
 ## Cost guard
 
@@ -62,9 +64,20 @@ node scripts/provision-internal-agent-cli.mjs \
   --secret-file /tmp/market-signal-internal.key
 ```
 
-Transfer the file over an approved encrypted operator channel without printing
-it. On each company agent host, import it once into the isolated operating-system
-credential store:
+The app container's `/tmp` is the only permitted extraction location. Never use
+`/data`, never print or `cat` the file, and remove both copies immediately after
+import. From the VPS deployment directory, copy it out with Docker's file-copy
+channel (the source file is mode `0600`):
+
+```sh
+container_id="$(docker compose ps -q app)"
+docker cp "${container_id}:/tmp/market-signal-internal.key" ./market-signal-internal.key
+docker compose exec -T app node -e "require('node:fs').unlinkSync('/tmp/market-signal-internal.key')"
+```
+
+Transfer the host copy over an approved encrypted operator channel without
+printing it. On each company agent host, import it once into the isolated
+operating-system credential store:
 
 ```powershell
 Get-Content -Raw .\market-signal-internal.key |
@@ -72,7 +85,10 @@ Get-Content -Raw .\market-signal-internal.key |
 Remove-Item -LiteralPath .\market-signal-internal.key
 ```
 
-For rotation, rerun provisioning with `--rotate`, import the new file, and
-delete the transfer file. The script prints only key metadata. There is no HTTP
+For rotation, stage the operator and agent-host steps first, then rerun
+provisioning with `--rotate`, import the new file, and delete the transfer file.
+Rotation deliberately revokes the prior key immediately, so agent calls pause
+until the new key is imported; losing the transfer file requires another
+explicit rotation. The script prints only key metadata. There is no HTTP
 endpoint that grants this entitlement, and no plaintext key is stored in the
 database.

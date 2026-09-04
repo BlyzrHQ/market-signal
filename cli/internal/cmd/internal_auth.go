@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/abdullabostani/market-signal/cli/internal/oauth"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -19,6 +20,10 @@ func newInternalConfigureCommand(opts *options) *cobra.Command {
 		Short: "Provision the company credential on this machine",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
+			origin := strings.TrimRight(strings.TrimSpace(opts.baseURL), "/")
+			if origin != oauth.ProductionOrigin && !opts.allowInternalTestOrigin {
+				return &ExitError{Code: 4, Err: fmt.Errorf("the internal credential can be stored only for %s", oauth.ProductionOrigin)}
+			}
 			apiKey, err := readInternalCredential(command, fromStdin)
 			if err != nil {
 				return &ExitError{Code: 4, Err: err}

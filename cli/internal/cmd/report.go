@@ -78,7 +78,7 @@ func newReportCommand(opts *options) *cobra.Command {
 			data, err := client.Post(command.Context(), "/api/reports", payload)
 			stop()
 			if err != nil {
-				return loopAPIError(err)
+				return reportAPIError(opts, err)
 			}
 			var response loopmodel.APIReportSubmission
 			if err := json.Unmarshal(data, &response); err != nil {

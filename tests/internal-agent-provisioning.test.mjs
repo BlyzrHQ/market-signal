@@ -6,11 +6,15 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 import Database from "better-sqlite3";
 
+import { createPersistentReport } from "../app/api/reports/route.ts";
 import { ensureAccountSchema } from "../app/lib/account-auth.ts";
-import { ensureBillingSchema } from "../app/lib/billing-store.ts";
+import { ensureBillingSchema, reserveReport } from "../app/lib/billing-store.ts";
 import { ensureMcpOAuthSchema } from "../app/lib/mcp-oauth-schema.ts";
+import { reportApiAccountContext } from "../app/lib/report-api-auth.ts";
 import { authorizeReportApiKey } from "../app/lib/report-api-keys.ts";
 import { provisionInternalAgent } from "../scripts/provision-internal-agent-cli.mjs";
+
+const ORIGIN = "https://signal.blyzr.com";
 
 function preparedDatabase(path) {
   const database = new Database(path);
@@ -90,6 +94,92 @@ test("provisioning executable prints metadata but never the credential", () => {
     const secret = readFileSync(secretFile, "utf8").trim();
     assert.match(secret, /^msk_live_/);
     assert.equal(result.stdout.includes(secret), false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a provisioned key traverses hosted authorization and applies only its internal comparison entitlement", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "market-signal-internal-integration-"));
+  try {
+    const databasePath = join(directory, "market-signal.sqlite");
+    const secretFile = join(directory, "agent.key");
+    preparedDatabase(databasePath);
+    const now = new Date("2026-09-04T12:00:00.000Z");
+    const provisioned = provisionInternalAgent({ databasePath, secretFile, now });
+    const apiKey = readFileSync(secretFile, "utf8").trim();
+    const environment = {
+      MARKET_SIGNAL_DEPLOY_TARGET: "node",
+      MARKET_SIGNAL_HOSTED_BILLING: "true",
+      MARKET_SIGNAL_SQLITE_PATH: databasePath,
+      BETTER_AUTH_URL: ORIGIN,
+      BETTER_AUTH_SECRET: "an-internal-agent-test-secret-longer-than-thirty-two-characters",
+      STRIPE_RESTRICTED_KEY: `rk_test_${"a".repeat(24)}`,
+      STRIPE_WEBHOOK_SECRET: `whsec_${"b".repeat(24)}`,
+      STRIPE_PRICE_STARTER: "price_starter",
+      STRIPE_PRICE_SOLO: "price_solo",
+      STRIPE_PRICE_GROWTH: "price_growth",
+      STRIPE_PRICE_AGENCY: "price_agency",
+    };
+    let creationInput;
+    const response = await createPersistentReport(new Request(`${ORIGIN}/api/reports`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        primaryDomain: "babanuj.com",
+        locale: "en",
+        commandId: "orchestrator:babanuj:001",
+        comparisonTarget: 20,
+      }),
+    }), {
+      requireAccount: true,
+      authorizeLoop: (request) => reportApiAccountContext(request, environment),
+      reserve: async (workspaceId, commandId, comparisonTarget) => {
+        const database = new Database(databasePath);
+        try {
+          database.pragma("foreign_keys = ON");
+          ensureBillingSchema(database);
+          return reserveReport(database, workspaceId, now, commandId, comparisonTarget);
+        } finally {
+          database.close();
+        }
+      },
+      create: async (input) => {
+        creationInput = input;
+        return {
+          ok: true,
+          report: {
+            id: "run-internal-integration",
+            publicId: "b".repeat(32),
+            primaryDomain: "babanuj.com",
+            locale: "en",
+            status: "queued",
+            currentPhase: "queued",
+            attemptCount: 1,
+            createdAt: now.toISOString(),
+            expiresAt: "2026-10-04T12:00:00.000Z",
+            productPlan: "starter",
+            productLimit: 20,
+          },
+        };
+      },
+      dispatch: async () => ({ runId: "trigger-internal-integration", idempotencyKey: "internal-integration" }),
+      markDispatched: async () => {},
+      markDispatchFailed: async () => {},
+      finishReservation: async () => {},
+    });
+    assert.equal(response.status, 202, await response.clone().text());
+    assert.equal(creationInput.workspaceId, provisioned.workspaceId);
+    assert.equal(creationInput.commandId, "orchestrator:babanuj:001");
+    assert.deepEqual(creationInput.entitlement, { plan: "starter", productLimit: 20 });
+
+    const inspection = new Database(databasePath);
+    const reservation = inspection.prepare(`
+      SELECT entitlement_source, comparison_target, status
+      FROM billing_report_reservations WHERE command_id = ?
+    `).get("orchestrator:babanuj:001");
+    assert.deepEqual(reservation, { entitlement_source: "internal", comparison_target: 20, status: "reserved" });
+    inspection.close();
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

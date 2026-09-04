@@ -176,3 +176,36 @@ func TestInternalMissingCredentialIsSanitized(t *testing.T) {
 		t.Fatalf("expected sanitized missing-credential error, got %v", err)
 	}
 }
+
+func TestInternalReportMakesIdempotencyConflictNonRetryable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusConflict)
+		_, _ = writer.Write([]byte(`{"ok":false,"error":"request id conflict","errorCode":"idempotency-conflict"}`))
+	}))
+	defer server.Close()
+	manager, _ := internalTestManager(t, server.URL)
+	root := newInternalRoot("test", manager, true)
+	root.SetArgs([]string{"report", "babanuj.com", "--request-id", testRequestID, "--base-url", server.URL})
+	err := root.Execute()
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 9 {
+		t.Fatalf("expected non-retryable request conflict exit 9, got %v", err)
+	}
+}
+
+func TestInternalConfigureRejectsNonProductionIssuer(t *testing.T) {
+	store := &memoryCredentialStore{}
+	manager := oauth.NewManager(store, time.Second)
+	root := newInternalRoot("test", manager, false)
+	root.SetIn(strings.NewReader(validHostedAPIKey + "\n"))
+	root.SetArgs([]string{"configure", "--stdin", "--base-url", "https://attacker.example"})
+	err := root.Execute()
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 4 || !strings.Contains(err.Error(), "stored only") {
+		t.Fatalf("expected production issuer rejection, got %v", err)
+	}
+	if store.credential.Issuer != "" {
+		t.Fatal("credential was stored for a non-production issuer")
+	}
+}

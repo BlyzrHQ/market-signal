@@ -294,7 +294,7 @@ export type ReportReservation = {
   used: number;
   limit: number;
   quotaKind: "reports" | "comparisons";
-  denialReason?: "daily-limit" | "target-limit";
+  denialReason?: "daily-limit" | "period-limit" | "target-limit";
   maxComparisonTarget?: number;
 };
 
@@ -411,7 +411,7 @@ export function reserveReport(
       }
       return { id: existing.id, plan, used, limit: plan.reportsPerMonth, quotaKind: "reports" };
     }
-    if (used >= plan.reportsPerMonth) return { id: "", plan, used, limit: plan.reportsPerMonth, quotaKind: "reports", denialReason: "daily-limit" };
+    if (used >= plan.reportsPerMonth) return { id: "", plan, used, limit: plan.reportsPerMonth, quotaKind: "reports", denialReason: "period-limit" };
     const id = randomUUID();
     database.prepare(`INSERT INTO billing_report_reservations (id, workspace_id, command_id, entitlement_source, plan_tier, comparison_target, period_start, period_end, status, created_at, updated_at) VALUES (?, ?, ?, 'subscription', ?, ?, ?, ?, 'reserved', ?, ?)`)
       .run(id, workspaceId, commandId, plan.id, plan.productLimit, subscription.currentPeriodStart, subscription.currentPeriodEnd, nowIso, nowIso);

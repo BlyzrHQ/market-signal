@@ -300,3 +300,11 @@ func loopAPIError(err error) error {
 	}
 	return &ExitError{Code: 4, Err: err}
 }
+
+func reportAPIError(opts *options, err error) error {
+	var apiErr *api.APIError
+	if opts.internal && errors.As(err, &apiErr) && apiErr.Status == 409 && apiErr.Code == "idempotency-conflict" {
+		return &ExitError{Code: 9, Err: err}
+	}
+	return loopAPIError(err)
+}

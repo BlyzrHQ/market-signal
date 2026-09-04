@@ -85,9 +85,17 @@ required blockers are represented above: transactional all-attempt UTC usage,
 smallest default, stable request IDs, existing rate limits, secure key storage,
 and no customer path to self-grant the entitlement.
 
+The first strict implementation review passed the branch head and identified
+release-hardening follow-ups rather than blockers. Before the final exact-head
+review, those follow-ups were applied: the operator runbook now gives an exact
+secret-extraction and deletion procedure, rotation is explicitly documented as
+an immediate cutover, a provisioned-key-to-real-reservation integration test was
+added, internal idempotency conflicts have a dedicated non-retryable exit code,
+and internal credential setup is production-origin locked outside tests.
+
 ## Validation record
 
-- `npm test`: passed (1,339 tests; 0 failed).
+- `npm test`: passed (1,340 tests; 0 failed).
 - `npm run lint`: passed with one pre-existing `next/image` advisory in
   `app/components/product-design-lab.tsx` and no errors.
 - `npm run test:open-source`: passed without private credentials.
