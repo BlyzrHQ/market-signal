@@ -534,7 +534,7 @@ func TestFailedAndOutcomeUnknownHaveDistinctExitCodes(t *testing.T) {
 		exitCode int
 	}{
 		{status: "failed", exitCode: 5},
-		{status: "outcome_unknown", exitCode: 6},
+		{status: "outcome_unknown", exitCode: 10},
 	} {
 		t.Run(testCase.status, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

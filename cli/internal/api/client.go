@@ -70,7 +70,8 @@ func newClient(baseURL string, timeout time.Duration, source TokenSource, tokens
 		token:       token,
 		tokenSource: source,
 		httpClient: &http.Client{
-			Timeout: timeout,
+			Timeout:       timeout,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
 		},
 	}, nil
 }

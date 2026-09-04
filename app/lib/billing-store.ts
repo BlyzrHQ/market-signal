@@ -4,6 +4,7 @@ import { canonicalNodeSqlitePath } from "./node-sqlite-database.ts";
 import { BILLING_PLANS, type BillingPlan } from "./billing-plans.ts";
 import { PRODUCT_PLAN_LIMITS, type ProductPlan } from "./product-entitlements.ts";
 import { ensurePriceWatchSchema, reconcilePriceWatchSubscription } from "./price-watch-store.ts";
+import { COMPANY_WORKSPACE_ID } from "./company-trigger-access.ts";
 
 const ACTIVE_STATUSES = new Set(["active", "trialing"]);
 // A full Agency report can span multiple 52-minute worker attempts. Keep the
@@ -296,6 +297,7 @@ export type ReportReservation = {
   quotaKind: "reports" | "comparisons";
   denialReason?: "daily-limit" | "period-limit" | "target-limit";
   maxComparisonTarget?: number;
+  unlimited?: boolean;
 };
 
 function utcDay(now: Date) {
@@ -337,7 +339,9 @@ function reserveInternalReport(
   now: Date,
   commandId: string,
   requestedComparisonTarget: number | undefined,
+  verifiedCompanyTrigger = false,
 ): ReportReservation {
+  const unlimited = verifiedCompanyTrigger && entitlement.workspaceId === COMPANY_WORKSPACE_ID;
   const target = requestedComparisonTarget === undefined ? PRODUCT_PLAN_LIMITS.starter : requestedComparisonTarget;
   if (!INTERNAL_TARGETS.has(target)) throw new Error("Invalid internal report comparison target.");
   const existing = commandReservation(database, commandId);
@@ -358,16 +362,16 @@ function reserveInternalReport(
   const used = Number(usage.total || 0);
   if (existing) {
     const plan = planForComparisonTarget(Number(existing.comparison_target));
-    return { id: existing.id, plan, used, limit: entitlement.dailyComparisonLimit, quotaKind: "comparisons" };
+    return { id: existing.id, plan, used, limit: entitlement.dailyComparisonLimit, quotaKind: "comparisons", ...(unlimited ? { unlimited: true } : {}) };
   }
   const plan = planForComparisonTarget(target);
-  if (target > entitlement.maxComparisonTarget) {
+  if (!unlimited && target > entitlement.maxComparisonTarget) {
     return {
       id: "", plan, used, limit: entitlement.dailyComparisonLimit, quotaKind: "comparisons",
       denialReason: "target-limit", maxComparisonTarget: entitlement.maxComparisonTarget,
     };
   }
-  if (used + target > entitlement.dailyComparisonLimit) {
+  if (!unlimited && used + target > entitlement.dailyComparisonLimit) {
     return { id: "", plan, used, limit: entitlement.dailyComparisonLimit, quotaKind: "comparisons", denialReason: "daily-limit" };
   }
   const id = randomUUID();
@@ -378,7 +382,7 @@ function reserveInternalReport(
       comparison_target, period_start, period_end, status, created_at, updated_at
     ) VALUES (?, ?, ?, 'internal', ?, ?, ?, ?, 'reserved', ?, ?)
   `).run(id, entitlement.workspaceId, commandId, plan.id, target, period.start, period.end, nowIso, nowIso);
-  return { id, plan, used: used + target, limit: entitlement.dailyComparisonLimit, quotaKind: "comparisons" };
+  return { id, plan, used: used + target, limit: entitlement.dailyComparisonLimit, quotaKind: "comparisons", ...(unlimited ? { unlimited: true } : {}) };
 }
 
 export function reserveReport(
@@ -387,12 +391,13 @@ export function reserveReport(
   now = new Date(),
   commandId = "",
   requestedComparisonTarget?: number,
+  verifiedCompanyTrigger = false,
 ): ReportReservation | null {
   if (commandId && !/^[A-Za-z0-9:_-]{1,120}$/.test(commandId)) throw new Error("Invalid report command id.");
   return database.transaction((): ReportReservation | null => {
     const internalEntitlement = getInternalReportEntitlement(database, workspaceId);
     if (internalEntitlement?.enabled) {
-      return reserveInternalReport(database, internalEntitlement, now, commandId, requestedComparisonTarget);
+      return reserveInternalReport(database, internalEntitlement, now, commandId, requestedComparisonTarget, verifiedCompanyTrigger);
     }
     const subscription = getWorkspaceSubscription(database, workspaceId);
     const plan = activeWorkspacePlan(database, workspaceId, now);

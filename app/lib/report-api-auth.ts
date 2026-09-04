@@ -6,6 +6,7 @@ import { openMcpOAuthDatabase } from "./mcp-oauth-store.ts";
 import { MARKET_SIGNAL_ORIGIN } from "./mcp-oauth-shared.ts";
 import { McpAccessTokenError, verifyCliAccessToken } from "./mcp-token-verifier.ts";
 import { authorizeReportApiKey, looksLikeReportApiKey } from "./report-api-keys.ts";
+import { COMPANY_USER_ID, COMPANY_WORKSPACE_ID, verifyCompanyTriggerKey } from "./company-trigger-access.ts";
 
 export const CONTROLLED_CLI_WORKSPACE_ID = "controlled-cli-workspace";
 export const REPORT_API_RESOURCE_METADATA = `${MARKET_SIGNAL_ORIGIN}/.well-known/oauth-protected-resource/api`;
@@ -117,9 +118,26 @@ export async function reportApiAccountContext(
         }
         throw error;
       }
+      let verifiedCompanyTrigger = false;
+      if (apiKeyAuthorization?.ok && authorization.workspaceId === COMPANY_WORKSPACE_ID
+        && authorization.user.id === COMPANY_USER_ID && policy.scope === "reports:create"
+        && environment.MARKET_SIGNAL_INTERNAL_UNLIMITED === "true") {
+        const internalOwner = database.prepare(`
+          SELECT 1 FROM workspace_members AS member
+          JOIN workspaces AS workspace ON workspace.id = member.workspace_id
+          JOIN internal_report_entitlements AS entitlement ON entitlement.workspace_id = workspace.id
+          WHERE member.workspace_id = ? AND member.user_id = ? AND member.role = 'owner'
+            AND workspace.kind = 'internal' AND entitlement.enabled = 1
+        `).get(COMPANY_WORKSPACE_ID, COMPANY_USER_ID);
+        if (!internalOwner || !await verifyCompanyTriggerKey(String(environment.TRIGGER_SECRET_KEY || ""), environment)) {
+          throw new ReportApiAuthorizationError(503, "authorization-unavailable", "Company Trigger access could not be verified. No report was started.");
+        }
+        verifiedCompanyTrigger = true;
+      }
       return {
         user: authorization.user,
         workspaceId: authorization.workspaceId,
+        ...(verifiedCompanyTrigger ? { verifiedCompanyTrigger: true } : {}),
       };
     } catch (error) {
       if (error instanceof ReportApiAuthorizationError) throw error;
