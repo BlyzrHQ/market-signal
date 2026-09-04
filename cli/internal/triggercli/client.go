@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -88,6 +89,7 @@ type Run struct {
 	ID                 string          `json:"id"`
 	Status             string          `json:"status"`
 	Task               string          `json:"taskIdentifier"`
+	Version            string          `json:"version,omitempty"`
 	Output             json.RawMessage `json:"output,omitempty"`
 	Payload            map[string]any  `json:"payload,omitempty"`
 	OutputPresignedURL string          `json:"outputPresignedUrl,omitempty"`
@@ -122,6 +124,9 @@ func (c *Client) retrieve(ctx context.Context, id string) (Run, error) {
 	err := c.call(ctx, http.MethodGet, "/api/v3/runs/"+url.PathEscape(id), nil, &result)
 	if err == nil && (result.ID != id || !allowedTask(result.Task)) {
 		err = fmt.Errorf("run is not a Market Signal direct task")
+	}
+	if err == nil && c.workerVersion != "" && (result.Version != "" || terminal(result.Status)) && result.Version != c.workerVersion {
+		err = fmt.Errorf("Trigger worker version does not match the requested pin; inspect this run, do not resubmit")
 	}
 	if err == nil && result.Status == "COMPLETED" && (len(result.Output) == 0 || string(result.Output) == "null") && result.OutputPresignedURL != "" {
 		result.Output, err = c.downloadOutput(ctx, result.OutputPresignedURL)
@@ -178,7 +183,25 @@ func (c *Client) downloadOutput(ctx context.Context, rawURL string) (json.RawMes
 	if err != nil || len(data) > maxBody || !json.Valid(data) {
 		return nil, fmt.Errorf("Trigger artifact is unreadable, invalid JSON, or over 16 MiB")
 	}
-	return data, nil
+	contentType, _, err := mime.ParseMediaType(res.Header.Get("Content-Type"))
+	if err != nil {
+		return nil, fmt.Errorf("Trigger artifact has an unsupported content type")
+	}
+	switch contentType {
+	case "application/json":
+		return data, nil
+	case "application/super+json":
+		var packet struct {
+			JSON json.RawMessage `json:"json"`
+			Meta json.RawMessage `json:"meta"`
+		}
+		if json.Unmarshal(data, &packet) != nil || len(packet.JSON) == 0 || (len(packet.Meta) > 0 && string(packet.Meta) != "null" && string(packet.Meta) != "{}") {
+			return nil, fmt.Errorf("Trigger artifact contains unsupported typed metadata; inspect worker output contract")
+		}
+		return packet.JSON, nil
+	default:
+		return nil, fmt.Errorf("Trigger artifact has an unsupported content type")
+	}
 }
 
 func allowedTask(task string) bool {
@@ -191,7 +214,7 @@ func allowedTask(task string) bool {
 
 func terminal(status string) bool {
 	switch status {
-	case "COMPLETED", "FAILED", "CANCELED", "CRASHED", "SYSTEM_FAILURE", "TIMED_OUT", "EXPIRED":
+	case "COMPLETED", "FAILED", "CANCELED", "CRASHED", "SYSTEM_FAILURE", "TIMED_OUT", "EXPIRED", "INTERRUPTED":
 		return true
 	}
 	return false

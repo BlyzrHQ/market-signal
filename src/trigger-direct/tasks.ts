@@ -4,8 +4,11 @@ import { directDependencies } from "./runtime.ts";
 
 const settings = { maxDuration: 3600, retry: { maxAttempts: 1 }, queue: { name: "market-signal-direct", concurrencyLimit: 2 } };
 function boundedOutput<T>(value: T): T {
-  if (Buffer.byteLength(JSON.stringify(value), "utf8") > 8 * 1024 * 1024) throw new Error("OUTPUT_TOO_LARGE: select a smaller target; no automatic rerun");
-  return value;
+  const json = JSON.stringify(value);
+  if (Buffer.byteLength(json, "utf8") > 8 * 1024 * 1024) throw new Error("OUTPUT_TOO_LARGE: select a smaller target; no automatic rerun");
+  // The external agent contract is plain JSON, not JS Date/undefined/Map types.
+  // Keep Trigger's superjson artifact free of type-rehydration metadata.
+  return JSON.parse(json) as T;
 }
 export const directCapabilities = task({ id: "market-signal-direct-capabilities", ...settings, maxDuration: 30,
   run: async () => capabilities(directDependencies.searchConfigured()) });

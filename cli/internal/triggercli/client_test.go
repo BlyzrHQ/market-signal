@@ -30,7 +30,7 @@ func TestOffloadedOutputIsRetrievedWithoutCredentials(t *testing.T) {
 		if r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" {
 			t.Fatal("credential forwarded to artifact")
 		}
-		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"contractVersion":"1","status":"complete","comparisons":[]}`)), Header: make(http.Header)}, nil
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"json":{"contractVersion":"1","status":"complete","comparisons":[]}}`)), Header: http.Header{"Content-Type": []string{"application/super+json"}}}, nil
 	})
 	run, err := c.retrieve(context.Background(), "run_fixture")
 	if err != nil || !strings.Contains(string(run.Output), `"comparisons"`) || run.OutputPresignedURL != "" {
@@ -63,6 +63,47 @@ func TestArtifactBoundsAndURLValidation(t *testing.T) {
 		if publicArtifactIP(net.ParseIP(raw)) {
 			t.Fatal("private artifact IP accepted")
 		}
+	}
+}
+
+func TestArtifactSerializationContract(t *testing.T) {
+	for _, tc := range []struct {
+		kind, body string
+		ok         bool
+	}{
+		{"application/json", `{"contractVersion":"1","status":"complete"}`, true},
+		{"application/super+json; charset=utf-8", `{"json":{"contractVersion":"1","status":"complete"}}`, true},
+		{"application/super+json", `{"json":{},"meta":{"values":{"date":["Date"]}}}`, false},
+		{"application/super+json", `{"wrong":{}}`, false},
+		{"text/plain", `{"contractVersion":"1"}`, false},
+	} {
+		c, _ := newClient(fixtureKey)
+		c.artifactHTTP.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(tc.body)), Header: http.Header{"Content-Type": []string{tc.kind}}}, nil
+		})
+		data, err := c.downloadOutput(context.Background(), "https://artifact.example/out")
+		if (err == nil) != tc.ok {
+			t.Fatalf("unexpected artifact result for %s: %v", tc.kind, err)
+		}
+		if tc.ok && !strings.Contains(string(data), `"contractVersion"`) {
+			t.Fatal("not unwrapped")
+		}
+	}
+}
+
+func TestWrongWorkerVersionFailsAndInterruptedIsTerminal(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"id":"run_fixture","status":"COMPLETED","taskIdentifier":"market-signal-direct-report","version":"wrong.1"}`))
+	}))
+	defer server.Close()
+	c, _ := newClient(fixtureKey)
+	c.base = server.URL
+	c.workerVersion = "expected.1"
+	if _, err := c.retrieve(context.Background(), "run_fixture"); err == nil {
+		t.Fatal("wrong worker version accepted")
+	}
+	if !terminal("INTERRUPTED") {
+		t.Fatal("interrupted run treated as pending")
 	}
 }
 

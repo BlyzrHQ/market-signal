@@ -32,6 +32,8 @@ with `--skip-promotion`, then pass `--worker-version "<deployed-version>"` to CL
 commands. This pins new submissions to that version. Omit it only after the
 operator has promoted an approved version. `result` and `wait` always retrieve
 the original run and do not change its version.
+The CLI checks the version reported by Trigger once assigned; a mismatch is an
+error, not a successful acceptance test. Inspect that run before resubmitting.
 
 ## Install (colleagues)
 
@@ -126,6 +128,8 @@ The CLI returns a Trigger envelope with `id`, `status`, `taskIdentifier`, `outpu
 When Trigger offloads larger output, the CLI downloads its signed artifact over
 HTTPS with a 16 MiB limit, without forwarding the Trigger key or printing the
 signed URL. Private-network targets and redirects are refused.
+It unwraps Trigger's superjson storage envelope for this plain-JSON contract;
+unexpected typed metadata or content types fail closed.
 For reports, `output` includes:
 
 - `request`: domain, comparison target, rival limit and correlation ID.

@@ -64,3 +64,12 @@ the dynamically imported bundled undici module exported only default, so Agent
 was undefined and fetch returned the generic network failure. Keep undici external
 in the direct config and use Node 22 matching repository requirements. This is a
 worker packaging fix; do not weaken network protections or change the website.
+
+The second full Fable review confirmed credential and redirect handling, but
+found the artifact body's superjson envelope was not decoded. Verified this in
+the installed SDK stringifyIO/exportPacket implementation. CLI now checks MIME
+type and unwraps the JSON envelope; tasks normalize output to plain JSON so
+unsupported type metadata cannot be emitted. Regression tests cover the actual
+SDK envelope, wrong content type, typed metadata, worker-version mismatch, and
+INTERRUPTED terminal state. Keeping this branch's README CLI-first is intentional
+for colleague handoff, not a change to the published website.
