@@ -292,9 +292,26 @@ export const stripeWebhookEvents = sqliteTable("stripe_webhook_events", {
   processedAt: text("processed_at").notNull(),
 });
 
+export const internalReportEntitlements = sqliteTable("internal_report_entitlements", {
+  workspaceId: text("workspace_id").primaryKey().references(() => workspaces.id, { onDelete: "cascade" }),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+  maxComparisonTarget: integer("max_comparison_target").notNull(),
+  dailyComparisonLimit: integer("daily_comparison_limit").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  check("internal_report_entitlements_enabled_check", sql`${table.enabled} IN (0, 1)`),
+  check("internal_report_entitlements_target_check", sql`${table.maxComparisonTarget} IN (20, 50, 500, 1000)`),
+  check("internal_report_entitlements_daily_limit_check", sql`${table.dailyComparisonLimit} >= ${table.maxComparisonTarget} AND ${table.dailyComparisonLimit} <= 100000`),
+]);
+
 export const billingReportReservations = sqliteTable("billing_report_reservations", {
   id: text("id").primaryKey(),
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  commandId: text("command_id").notNull().default(""),
+  entitlementSource: text("entitlement_source").notNull().default("subscription"),
+  planTier: text("plan_tier").notNull().default(""),
+  comparisonTarget: integer("comparison_target").notNull().default(0),
   periodStart: text("period_start").notNull(),
   periodEnd: text("period_end").notNull(),
   status: text("status").notNull(),
@@ -302,8 +319,10 @@ export const billingReportReservations = sqliteTable("billing_report_reservation
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 }, (table) => [
+  uniqueIndex("billing_report_reservations_command_uidx").on(table.commandId).where(sql`${table.commandId} != ''`),
   uniqueIndex("billing_report_reservations_run_uidx").on(table.runId).where(sql`${table.runId} != ''`),
   index("billing_report_reservations_usage_idx").on(table.workspaceId, table.periodStart, table.periodEnd, table.status),
+  index("billing_report_reservations_internal_usage_idx").on(table.workspaceId, table.entitlementSource, table.periodStart, table.periodEnd),
 ]);
 
 export const priceWatchEntitlements = sqliteTable("price_watch_entitlements", {

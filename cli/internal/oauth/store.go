@@ -15,10 +15,10 @@ import (
 )
 
 const (
-	keyringService     = "Market Signal CLI"
-	maxCredentialBytes = 2400
-	credentialOAuth    = "oauth"
-	credentialAPIKey   = "api_key"
+	defaultKeyringService = "Market Signal CLI"
+	maxCredentialBytes    = 2400
+	credentialOAuth       = "oauth"
+	credentialAPIKey      = "api_key"
 )
 
 var ErrNotLoggedIn = errors.New("not logged in")
@@ -44,9 +44,26 @@ type Store interface {
 	Delete(issuer string) error
 }
 
-type KeyringStore struct{}
+type KeyringStore struct {
+	service string
+}
 
-func NewKeyringStore() *KeyringStore { return &KeyringStore{} }
+func NewKeyringStore() *KeyringStore { return &KeyringStore{service: defaultKeyringService} }
+
+func NewKeyringStoreWithService(service string) *KeyringStore {
+	service = strings.TrimSpace(service)
+	if service == "" {
+		service = defaultKeyringService
+	}
+	return &KeyringStore{service: service}
+}
+
+func (s *KeyringStore) serviceName() string {
+	if s == nil || strings.TrimSpace(s.service) == "" {
+		return defaultKeyringService
+	}
+	return s.service
+}
 
 func normalizeIssuer(value string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(value))
@@ -127,7 +144,7 @@ func (s *KeyringStore) Load(issuer string) (Credential, error) {
 	}
 	accounts = append(accounts, legacy)
 	for _, account := range accounts {
-		value, err := keyring.Get(keyringService, account)
+		value, err := keyring.Get(s.serviceName(), account)
 		if errors.Is(err, keyring.ErrNotFound) {
 			continue
 		}
@@ -164,7 +181,7 @@ func (s *KeyringStore) Save(credential Credential) error {
 	if err != nil {
 		return err
 	}
-	if err := keyring.Set(keyringService, account, string(data)); err != nil {
+	if err := keyring.Set(s.serviceName(), account, string(data)); err != nil {
 		return fmt.Errorf("save login in the operating-system credential store: %w", err)
 	}
 	otherKind := credentialOAuth
@@ -174,7 +191,7 @@ func (s *KeyringStore) Save(credential Credential) error {
 	otherAccount, _ := accountName(credential.Issuer, otherKind)
 	legacyAccount, _ := legacyAccountName(credential.Issuer)
 	for _, staleAccount := range []string{otherAccount, legacyAccount} {
-		if err := keyring.Delete(keyringService, staleAccount); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+		if err := keyring.Delete(s.serviceName(), staleAccount); err != nil && !errors.Is(err, keyring.ErrNotFound) {
 			return fmt.Errorf("replace previous saved login: %w", err)
 		}
 	}
@@ -190,7 +207,7 @@ func (s *KeyringStore) Delete(issuer string) error {
 	oauthAccount, _ := accountName(issuer, credentialOAuth)
 	removed := false
 	for _, account := range []string{apiKeyAccount, oauthAccount, legacy} {
-		err = keyring.Delete(keyringService, account)
+		err = keyring.Delete(s.serviceName(), account)
 		if errors.Is(err, keyring.ErrNotFound) {
 			continue
 		}

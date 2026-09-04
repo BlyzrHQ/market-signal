@@ -54,7 +54,11 @@ jobs:
           go -C cli vet ./...
           go -C cli run ./cmd/marketsignal --help
           go -C cli run ./cmd/marketsignal version
+          go -C cli run ./cmd/marketsignal-internal --help
+          go -C cli run ./cmd/marketsignal-internal version
           mkdir -p outputs/cli
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go -C cli build -trimpath -o ../outputs/cli/marketsignal-windows-amd64.exe ./cmd/marketsignal
           CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go -C cli build -trimpath -o ../outputs/cli/marketsignal-windows-arm64.exe ./cmd/marketsignal
-          sha256sum outputs/cli/marketsignal-windows-amd64.exe outputs/cli/marketsignal-windows-arm64.exe
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go -C cli build -trimpath -o ../outputs/cli/marketsignal-internal-windows-amd64.exe ./cmd/marketsignal-internal
+          CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go -C cli build -trimpath -o ../outputs/cli/marketsignal-internal-windows-arm64.exe ./cmd/marketsignal-internal
+          sha256sum outputs/cli/*.exe

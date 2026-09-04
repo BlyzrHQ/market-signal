@@ -29,6 +29,7 @@ func newReportCommand(opts *options) *cobra.Command {
 	var poll time.Duration
 	var maxWait time.Duration
 	var requestID string
+	comparisonTarget := 20
 	command := &cobra.Command{
 		Use:   "report <domain>",
 		Short: "Build and return a private competitive-intelligence report",
@@ -44,7 +45,13 @@ func newReportCommand(opts *options) *cobra.Command {
 			if poll <= 0 || maxWait <= 0 {
 				return fmt.Errorf("--poll and --max-wait must be positive durations")
 			}
+			if opts.internal && !validPlanTarget(map[int]string{20: "starter", 50: "solo", 500: "growth", 1000: "agency"}[comparisonTarget], comparisonTarget) {
+				return fmt.Errorf("--comparisons must be 20, 50, 500, or 1000")
+			}
 			requestID = strings.TrimSpace(requestID)
+			if opts.internal && requestID == "" {
+				return fmt.Errorf("--request-id is required for internal reports so retries cannot create duplicate paid work")
+			}
 			if requestID == "" {
 				requestID, err = generatedRequestID(domain)
 				if err != nil {
@@ -60,14 +67,18 @@ func newReportCommand(opts *options) *cobra.Command {
 				return &ExitError{Code: 4, Err: err}
 			}
 			stop := startProgress(opts.stderr, opts.quiet, fmt.Sprintf("Submitting %s", domain))
-			data, err := client.Post(command.Context(), "/api/reports", map[string]any{
+			payload := map[string]any{
 				"primaryDomain": domain,
 				"locale":        locale,
 				"commandId":     requestID,
-			})
+			}
+			if opts.internal {
+				payload["comparisonTarget"] = comparisonTarget
+			}
+			data, err := client.Post(command.Context(), "/api/reports", payload)
 			stop()
 			if err != nil {
-				return loopAPIError(err)
+				return reportAPIError(opts, err)
 			}
 			var response loopmodel.APIReportSubmission
 			if err := json.Unmarshal(data, &response); err != nil {
@@ -77,7 +88,7 @@ func newReportCommand(opts *options) *cobra.Command {
 			if !response.Replayed {
 				dispatchValid = response.Job.Dispatched && loopRequestIDPattern.MatchString(response.Job.RunID)
 			}
-			if !response.OK || response.RequestID != requestID || !publicReportIDPattern.MatchString(response.Report.PublicID) || response.Report.PrimaryDomain != domain || !validPlanTarget(response.Report.ProductPlan, response.Report.ProductLimit) || response.Report.ProductTargetKind != "pairs" || !validSubmissionLifecycle(response.Replayed, response.Report.Status, response.Report.CurrentPhase, response.Job.Dispatched) || !dispatchValid {
+			if !response.OK || response.RequestID != requestID || !publicReportIDPattern.MatchString(response.Report.PublicID) || response.Report.PrimaryDomain != domain || !validPlanTarget(response.Report.ProductPlan, response.Report.ProductLimit) || (opts.internal && response.Report.ProductLimit != comparisonTarget) || response.Report.ProductTargetKind != "pairs" || !validSubmissionLifecycle(response.Replayed, response.Report.Status, response.Report.CurrentPhase, response.Job.Dispatched) || !dispatchValid {
 				return &ExitError{Code: 3, Err: fmt.Errorf("report submission contract drift")}
 			}
 
@@ -124,7 +135,14 @@ func newReportCommand(opts *options) *cobra.Command {
 	command.Flags().StringVar(&locale, "locale", "en", "report locale: en or ar")
 	command.Flags().DurationVar(&poll, "poll", 15*time.Second, "status polling interval")
 	command.Flags().DurationVar(&maxWait, "max-wait", 60*time.Minute, "maximum time to wait before returning a resumable pending result")
-	command.Flags().StringVar(&requestID, "request-id", "", "optional idempotency and correlation id")
+	requestIDHelp := "optional idempotency and correlation id"
+	if opts.internal {
+		requestIDHelp = "required caller-owned idempotency and correlation id"
+	}
+	command.Flags().StringVar(&requestID, "request-id", "", requestIDHelp)
+	if opts.internal {
+		command.Flags().IntVar(&comparisonTarget, "comparisons", 20, "priced comparison-pair target: 20, 50, 500, or 1000")
+	}
 	return command
 }
 
