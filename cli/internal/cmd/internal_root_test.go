@@ -58,7 +58,7 @@ func TestInternalReportDefaultsToTwentyComparisonsAndMachineReadableOutput(t *te
 			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 				t.Fatal(err)
 			}
-			if body["primaryDomain"] != "babanuj.com" || body["commandId"] != testRequestID || body["comparisonTarget"] != float64(20) {
+			if body["primaryDomain"] != "primary.example" || body["commandId"] != testRequestID || body["comparisonTarget"] != float64(20) {
 				t.Fatalf("unexpected internal report request: %#v", body)
 			}
 			_, _ = writer.Write(submissionFixture())
@@ -75,7 +75,7 @@ func TestInternalReportDefaultsToTwentyComparisonsAndMachineReadableOutput(t *te
 	root := newInternalRoot("test", manager, true)
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)
-	root.SetArgs([]string{"report", "babanuj.com", "--request-id", testRequestID, "--base-url", server.URL, "--poll", "1ms", "--max-wait", "1s"})
+	root.SetArgs([]string{"report", "primary.example", "--request-id", testRequestID, "--base-url", server.URL, "--poll", "1ms", "--max-wait", "1s"})
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -94,16 +94,42 @@ func TestInternalReportDefaultsToTwentyComparisonsAndMachineReadableOutput(t *te
 
 func TestInternalReportSelectsOnlyFixedComparisonTargets(t *testing.T) {
 	root := newInternalRoot("test", nil, true)
-	root.SetArgs([]string{"report", "babanuj.com", "--comparisons", "21", "--request-id", testRequestID})
+	root.SetArgs([]string{"report", "primary.example", "--comparisons", "21", "--request-id", testRequestID})
 	err := root.Execute()
 	if err == nil || !strings.Contains(err.Error(), "20, 50, 500, or 1000") {
 		t.Fatalf("expected bounded comparison target error, got %v", err)
 	}
 }
 
+func TestInternalReportRequiresExplicitDomainBeforeAnyNetworkCall(t *testing.T) {
+	for _, domain := range []string{"", "<domain>"} {
+		t.Run(domain, func(t *testing.T) {
+			var calls int
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				calls++
+				writer.WriteHeader(http.StatusInternalServerError)
+			}))
+			defer server.Close()
+			manager, _ := internalTestManager(t, server.URL)
+			root := newInternalRoot("test", manager, true)
+			args := []string{"report", "--request-id", testRequestID, "--base-url", server.URL}
+			if domain != "" {
+				args = append(args, domain)
+			}
+			root.SetArgs(args)
+			if err := root.Execute(); err == nil {
+				t.Fatal("expected missing or placeholder domain to fail")
+			}
+			if calls != 0 {
+				t.Fatalf("invalid domain made %d network calls", calls)
+			}
+		})
+	}
+}
+
 func TestInternalReportRequiresCallerOwnedRequestIDBeforeAnyNetworkCall(t *testing.T) {
 	root := newInternalRoot("test", nil, true)
-	root.SetArgs([]string{"report", "babanuj.com"})
+	root.SetArgs([]string{"report", "primary.example"})
 	err := root.Execute()
 	if err == nil || !strings.Contains(err.Error(), "--request-id is required") {
 		t.Fatalf("expected required idempotency key error, got %v", err)
@@ -186,7 +212,7 @@ func TestInternalReportMakesIdempotencyConflictNonRetryable(t *testing.T) {
 	defer server.Close()
 	manager, _ := internalTestManager(t, server.URL)
 	root := newInternalRoot("test", manager, true)
-	root.SetArgs([]string{"report", "babanuj.com", "--request-id", testRequestID, "--base-url", server.URL})
+	root.SetArgs([]string{"report", "primary.example", "--request-id", testRequestID, "--base-url", server.URL})
 	err := root.Execute()
 	var exitErr *ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 9 {

@@ -30,13 +30,13 @@ At the hidden `configure` prompt, enter the scoped company credential supplied
 securely by your operator. Do **not** enter a Trigger API key or paste secrets
 into a command, GitHub, or chat. Configuration is once per agent machine.
 
-Then request a report (replace `example.com` with the real store domain):
+Then request a report (replace `<domain>` with the real store domain):
 
 ```powershell
-.\marketsignal-internal.exe report example.com --comparisons 20 --request-id colleague:example:001 --output json
+.\marketsignal-internal.exe report "<domain>" --comparisons 20 --request-id "<request-id>" --output json
 ```
 
-This command can incur provider costs. `example.com` is only a placeholder, not
+This command can incur provider costs. `<domain>` is only a placeholder, not
 a tested store. Twenty is the requested comparison-pair target, not a promise
 of twenty results. Keep the same request ID when retrying the same logical
 request; see the full guide before handling a pending or unknown outcome.
@@ -142,7 +142,7 @@ repository:
 ```powershell
 irm https://signal.blyzr.com/install.ps1 | iex
 marketsignal login
-marketsignal report example.com
+marketsignal report "<domain>"
 ```
 
 The CLI opens Market Signal in the browser for sign-in, stores its rotating
@@ -155,7 +155,7 @@ and provide it through the environment:
 
 ```powershell
 $env:MARKET_SIGNAL_API_KEY = "your-key"
-marketsignal report example.com --output json
+marketsignal report "<domain>" --output json
 ```
 
 To save that key in Windows Credential Manager instead, run
@@ -167,10 +167,10 @@ Contributors can still run it from source:
 ```bash
 go -C cli run ./cmd/marketsignal --help
 go -C cli run ./cmd/marketsignal version
-go -C cli run ./cmd/marketsignal report example.com --base-url http://localhost:3000
+go -C cli run ./cmd/marketsignal report "<domain>" --base-url http://localhost:3000
 ```
 
-Replace `example.com` with any valid public company domain. See
+Replace `<domain>` with any valid public company domain. See
 [docs/CLI.md](docs/CLI.md) for advanced commands, flags, output formats, exit
 codes, local-development authentication, and troubleshooting.
 

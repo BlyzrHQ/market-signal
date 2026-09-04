@@ -45,14 +45,17 @@ architecture or enable the separately proposed unlimited internal usage mode.
 
 ## 3. Request a report
 
-Replace `example.com` with your actual store domain. This is a placeholder,
+Replace `<domain>` with your actual store domain. This is a placeholder,
 not a successful live test, and submitting a real report can incur provider
-costs. Start with the smallest supported target.
+costs. Start with the smallest supported target. Replace `<request-id>` with
+your unique identifier too. All angle-bracket values are required inputs, not
+defaults. Omitting the domain or leaving the placeholder unchanged fails before
+any report request is sent.
 
 ```powershell
-marketsignal-internal report example.com `
+marketsignal-internal report "<domain>" `
   --comparisons 20 `
-  --request-id orchestrator:example:001 `
+  --request-id "<request-id>" `
   --output json
 ```
 
@@ -71,16 +74,16 @@ If the command exits with code 6 and returns a `publicReportId`, replace
 `<public-report-id>` below with that value and keep the original request ID:
 
 ```powershell
-marketsignal-internal wait <public-report-id> `
-  --request-id orchestrator:example:001 `
+marketsignal-internal wait "<public-report-id>" `
+  --request-id "<request-id>" `
   --output json
 ```
 
 To read a snapshot without waiting:
 
 ```powershell
-marketsignal-internal result <public-report-id> `
-  --request-id orchestrator:example:001 `
+marketsignal-internal result "<public-report-id>" `
+  --request-id "<request-id>" `
   --output json
 ```
 

@@ -1,8 +1,8 @@
 import Link from "next/link";
 
-const reportCommand = "marketsignal-internal report example.com --comparisons 20 --request-id orchestrator:example:001 --output json";
-const waitCommand = "marketsignal-internal wait <public-report-id> --request-id orchestrator:example:001 --output json";
-const resultCommand = "marketsignal-internal result <public-report-id> --request-id orchestrator:example:001 --output json";
+const reportCommand = 'marketsignal-internal report "<domain>" --comparisons 20 --request-id "<request-id>" --output json';
+const waitCommand = 'marketsignal-internal wait "<public-report-id>" --request-id "<request-id>" --output json';
+const resultCommand = 'marketsignal-internal result "<public-report-id>" --request-id "<request-id>" --output json';
 
 export default function CliPage() {
   return <main className="standalone-page cli-page">
