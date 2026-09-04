@@ -42,7 +42,7 @@ These rules govern work in this repository.
 
 ## Production deployment
 
-- The supported production architecture is Trigger.dev plus the VPS at `signal.blyzr.com`; do not add an OpenAI Sites dependency or fallback.
+- The supported production architecture is Trigger.dev plus the VPS at `signal.blyzr.com`; deploy only those components.
 - Deploy Trigger tasks before the web application whenever their shared contract changes.
 - Build and publish the exact independently approved `master` revision, deploy its immutable image by digest through the pinned VPS workflow, and retain the previous healthy image for rollback.
 - Verify TLS, container health, the deployed revision, and at least one real public-domain report when live source behavior changes.
