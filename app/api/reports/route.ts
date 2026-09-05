@@ -48,6 +48,9 @@ export async function createPersistentReport(request: Request, services: ReportC
     }
     const body = await request.json() as { primaryDomain?: unknown; locale?: unknown; commandId?: unknown; comparisonTarget?: unknown };
     const commandId = typeof body.commandId === "string" ? body.commandId.trim() : "";
+    if (account?.verifiedCompanyTrigger && !commandId) {
+      return Response.json({ ok: false, error: "A request id is required for company reports.", errorCode: "invalid-request-id" }, { status: 400, headers: { "Cache-Control": "no-store" } });
+    }
     if (commandId && !/^[A-Za-z0-9][A-Za-z0-9:_-]{0,119}$/.test(commandId)) {
       return Response.json({ ok: false, error: "A valid request id is required.", errorCode: "invalid-request-id" }, { status: 400, headers: { "Cache-Control": "no-store" } });
     }
@@ -64,7 +67,7 @@ export async function createPersistentReport(request: Request, services: ReportC
     const result = await createReportCommand({
       primaryDomain: typeof body.primaryDomain === "string" ? body.primaryDomain : "",
       locale: body.locale === "ar" ? "ar" : "en",
-      ...(account ? { actor: { workspaceId: account.workspaceId, userId: account.user.id } } : {}),
+      ...(account ? { actor: { workspaceId: account.workspaceId, userId: account.user.id, ...(account.verifiedCompanyTrigger ? { verifiedCompanyTrigger: true } : {}) } } : {}),
       ...(commandId ? { commandId } : {}),
       ...(comparisonTarget !== undefined ? { comparisonTarget } : {}),
     }, services);

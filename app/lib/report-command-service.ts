@@ -43,6 +43,7 @@ type CreationBoundaryResult =
 export type ReportCommandActor = {
   workspaceId: string;
   userId: string;
+  verifiedCompanyTrigger?: boolean;
 };
 
 export type ReportCommandInput = {
@@ -58,7 +59,7 @@ export type ReportCommandDependencies = {
   dispatch: typeof dispatchReportJob;
   markDispatched: typeof markReportDispatched;
   markDispatchFailed: typeof markReportDispatchFailed;
-  reserve?: (workspaceId: string, commandId?: string, comparisonTarget?: number) => Promise<ReportReservation | null>;
+  reserve?: (workspaceId: string, commandId?: string, comparisonTarget?: number, verifiedCompanyTrigger?: boolean) => Promise<ReportReservation | null>;
   finishReservation?: (reservationId: string, outcome: "committed" | "released", runId?: string) => Promise<void>;
 };
 
@@ -192,9 +193,9 @@ export function reportCommandDependencies(environment: Record<string, string | u
   if (!hostedBillingEnabled(environment)) return dependencies;
   return {
     ...dependencies,
-    reserve: async (workspaceId, commandId = "", comparisonTarget) => {
+    reserve: async (workspaceId, commandId = "", comparisonTarget, verifiedCompanyTrigger = false) => {
       const database = await openBillingDatabase();
-      try { return reserveReport(database, workspaceId, new Date(), commandId, comparisonTarget); } finally { database.close(); }
+      try { return reserveReport(database, workspaceId, new Date(), commandId, comparisonTarget, verifiedCompanyTrigger); } finally { database.close(); }
     },
     finishReservation: async (reservationId, outcome, runId = "") => {
       const database = await openBillingDatabase();
@@ -214,7 +215,7 @@ export async function createReportCommand(input: ReportCommandInput, services: R
   let publicId = "";
   try {
     if (input.actor && services.reserve) {
-      reservation = await services.reserve(input.actor.workspaceId, input.commandId, input.comparisonTarget);
+      reservation = await services.reserve(input.actor.workspaceId, input.commandId, input.comparisonTarget, input.actor.verifiedCompanyTrigger === true);
       if (!reservation) {
         return { ok: false, status: 402, error: "An active paid plan is required to create a report.", errorCode: "subscription-required", stage: "reservation" };
       }

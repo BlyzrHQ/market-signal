@@ -24,6 +24,7 @@ type AccountUser = {
 export type AccountContext = {
   user: { id: string; name: string; email: string };
   workspaceId: string;
+  verifiedCompanyTrigger?: boolean;
 };
 
 type AccountAuthEnvironment = Record<string, string | undefined>;

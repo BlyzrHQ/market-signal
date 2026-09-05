@@ -29,6 +29,26 @@ func TestClientExplainsHTMLResponse(t *testing.T) {
 	}
 }
 
+func TestClientNeverFollowsCredentialRedirect(t *testing.T) {
+	redirected := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/destination" {
+			redirected++
+			return
+		}
+		http.Redirect(w, r, "/destination", http.StatusTemporaryRedirect)
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, time.Second, "synthetic-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Get(context.Background(), "/api/cli/internal-access")
+	if err == nil || redirected != 0 {
+		t.Fatal("credential request followed redirect")
+	}
+}
+
 func TestClientRetriesTransientGETFailureOnce(t *testing.T) {
 	attempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
