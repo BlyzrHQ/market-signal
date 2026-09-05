@@ -177,13 +177,14 @@ func newRoot(version string, o options) *cobra.Command {
 			if noWait {
 				return writeJSON(c, map[string]any{"runId": run, "state": "pending", "requestId": id})
 			}
+			fmt.Fprintln(c.ErrOrStderr(), "Report incoming. This command will show progress and return the result automatically; no separate wait command is needed.")
 			return waitRun(c, cl, run, maxWait, poll)
 		}}
 		command.Flags().IntVar(&count, "comparisons", 20, "priced comparison-pair target (crawl: catalog output limit)")
 		command.Flags().IntVar(&rivals, "rivals", 10, "maximum distinct rival domains in delivered comparisons")
 		command.Flags().StringVar(&id, "request-id", "", "required unique logical request ID; Trigger deduplication expires after 24h")
 		command.Flags().DurationVar(&maxWait, "max-wait", time.Hour, "wait budget; does not cancel the Trigger run")
-		command.Flags().DurationVar(&poll, "poll", 15*time.Second, "status poll interval")
+		command.Flags().DurationVar(&poll, "poll", 5*time.Second, "status poll interval")
 		command.Flags().BoolVar(&noWait, "no-wait", false, "return the Trigger run ID immediately")
 		root.AddCommand(command)
 	}
@@ -211,7 +212,7 @@ func newRoot(version string, o options) *cobra.Command {
 			return displayRun(c, r)
 		}}
 		command.Flags().DurationVar(&maxWait, "max-wait", time.Hour, "wait budget")
-		command.Flags().DurationVar(&poll, "poll", 15*time.Second, "poll interval")
+		command.Flags().DurationVar(&poll, "poll", 5*time.Second, "poll interval")
 		root.AddCommand(command)
 	}
 	for _, name := range []string{"doctor", "tools"} {
@@ -276,6 +277,9 @@ func displayRun(c *cobra.Command, r Run) error {
 func waitRun(c *cobra.Command, cl *Client, id string, maximum, poll time.Duration) error {
 	ctx, cancel := context.WithTimeout(c.Context(), maximum)
 	defer cancel()
+	started := time.Now()
+	lastStatus := ""
+	lastNotice := time.Time{}
 	for {
 		r, err := cl.retrieve(ctx, id)
 		if err != nil {
@@ -286,7 +290,25 @@ func waitRun(c *cobra.Command, cl *Client, id string, maximum, poll time.Duratio
 			return err
 		}
 		if terminal(r.Status) {
+			fmt.Fprintf(c.ErrOrStderr(), "[%s] %s. Retrieving result.\n", time.Since(started).Round(time.Second), r.Status)
 			return displayRun(c, r)
+		}
+		// Keep stdout a single machine-readable result. Never print arbitrary
+		// provider metadata or source content as terminal control sequences.
+		if r.Status != lastStatus || time.Since(lastNotice) >= 15*time.Second {
+			label := "Still working"
+			switch r.Status {
+			case "QUEUED", "PENDING_VERSION", "DEQUEUED":
+				label = "Queued in Trigger"
+			case "EXECUTING":
+				label = "Research running"
+			case "WAITING":
+				label = "Research waiting for a dependency"
+			case "REATTEMPTING":
+				label = "Trigger resuming the existing run"
+			}
+			fmt.Fprintf(c.ErrOrStderr(), "[%s] %s; result will appear here automatically.\n", time.Since(started).Round(time.Second), label)
+			lastStatus, lastNotice = r.Status, time.Now()
 		}
 		timer := time.NewTimer(poll)
 		select {

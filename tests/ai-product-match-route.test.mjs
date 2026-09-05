@@ -126,6 +126,41 @@ test("the direct route adopts a prior-attempt paid checkpoint before replacing i
   ]);
 });
 
+test("parallel repairs reserve different free checkpoint slots before asynchronous persistence", async () => {
+  const token = "direct-route-token-that-is-long-enough";
+  const old = { attemptNumber: 1, batchIndex: 4000, inputHash: "e".repeat(64), resultHash: "f".repeat(64), result: {}, createdAt: "", updatedAt: "" };
+  const writes = [];
+  const handler = createMatchHandler({
+    async buildDirect(_domain, _catalogs, options) {
+      await Promise.all(["a", "b", "c"].map(async (letter) => {
+        const key = { primaryIndex: 0, inputHash: letter.repeat(64) };
+        const saved = await options.saveSearchCheckpoint(key, { version: 1 });
+        assert.equal((await options.loadSearchCheckpoint(key)).resultHash, saved.resultHash);
+      }));
+      return {};
+    },
+    async loadCheckpoints() { return [old]; },
+    async saveCheckpoint(_id, input) {
+      writes.push(input);
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(writes.filter(w => w.batchIndex === input.batchIndex).length, 1, "checkpoint collision");
+      return { checkpoint: { ...input, resultHash: "d".repeat(64), createdAt: "", updatedAt: "" }, replayed: false };
+    },
+    async loadEntitlement() { return { plan: "starter", productLimit: 20, reportObservedAt: "2026-08-23T10:00:00.000Z" }; },
+    async acquireLease() { return { acquired: true, expiresAt: "2026-08-23T10:13:00.000Z" }; },
+    async releaseLease() {},
+  }, token);
+  const response = await handler(new Request("https://signal.test/api/match", {
+    method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ publicId: "d".repeat(32), reportAttempt: 1, taskAttemptNumber: 1, reportObservedAt: "2026-08-23T10:00:00.000Z",
+      primaryDomain: "shop.test", productLimit: 20, matchingMode: "direct-product-search",
+      catalogs: [{ domain: "shop.test", products: [{ id: "primary", name: "Honey", sourceUrl: "https://shop.test/products/primary" }] }],
+    }),
+  }));
+  assert.equal(response.status, 200, JSON.stringify(await response.json()));
+  assert.deepEqual(writes.map(w => w.batchIndex), [4001, 4002, 4003]);
+});
+
 test("catalog drift allocates a free stable checkpoint slot instead of failing on position mismatch", async () => {
   const token = "direct-route-token-that-is-long-enough";
   const oldLead = { version: 1, primaryProductId: "old", primarySourceUrl: "https://shop.test/products/old", completed: true, queries: [], candidates: [] };

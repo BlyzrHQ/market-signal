@@ -354,12 +354,22 @@ export function createMatchHandler(serviceOverrides: Partial<MatchServices> = {}
             }
           };
           for (const checkpoint of loadedCheckpointRows) rememberCheckpoint(checkpoint);
+          // Repairs reuse primary indices with new feedback-bound hashes. Reserve
+          // a free slot synchronously: concurrent saves must not all choose the
+          // first empty slot while the previous durable write is still awaiting.
+          const reservedCheckpointIndices = new Set(loadedCheckpointsByBatch.keys());
           const freeCheckpointIndex = (key: DirectProductSearchCheckpointKey) => {
             const preferred = directSearchCheckpointIndex(key.primaryIndex);
-            if (!loadedCheckpointsByBatch.has(preferred)) return preferred;
+            if (!reservedCheckpointIndices.has(preferred)) {
+              reservedCheckpointIndices.add(preferred);
+              return preferred;
+            }
             for (let offset = 0; offset < MAX_DIRECT_SEARCH_CHECKPOINTS; offset += 1) {
               const candidate = DIRECT_SEARCH_CHECKPOINT_BASE + offset;
-              if (!loadedCheckpointsByBatch.has(candidate)) return candidate;
+              if (!reservedCheckpointIndices.has(candidate)) {
+                reservedCheckpointIndices.add(candidate);
+                return candidate;
+              }
             }
             throw new Error("The bounded direct product-search checkpoint namespace is exhausted.");
           };

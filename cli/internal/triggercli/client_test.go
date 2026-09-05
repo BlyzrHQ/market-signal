@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -280,6 +281,38 @@ func TestResultAndWaitDoNotSubmit(t *testing.T) {
 		if ExitCode(root.Execute()) != 2 {
 			t.Fatal("limited report must exit 2")
 		}
+	}
+}
+
+func TestReportWaitsAutomaticallyWithProgressOnlyOnStderr(t *testing.T) {
+	posts, gets := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			posts++
+			_, _ = w.Write([]byte(`{"id":"run_fixture"}`))
+			return
+		}
+		gets++
+		status, output := "EXECUTING", "null"
+		if gets > 2 {
+			status, output = "COMPLETED", `{"contractVersion":"1","status":"complete"}`
+		}
+		_, _ = fmt.Fprintf(w, `{"id":"run_fixture","status":%q,"taskIdentifier":"market-signal-direct-report","payload":{"contractVersion":"1","domain":"primary.example","comparisons":20,"rivals":10,"requestId":"fixture:1"},"output":%s}`, status, output)
+	}))
+	defer server.Close()
+	root := newRoot("test", testOptions(server, &memoryStore{fixtureKey}))
+	var out, progress bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&progress)
+	root.SetArgs([]string{"report", "primary.example", "--request-id", "fixture:1", "--poll", "1ms"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if posts != 1 || !json.Valid(out.Bytes()) {
+		t.Fatal("must submit once and emit a single JSON result")
+	}
+	if !strings.Contains(progress.String(), "Report incoming") || !strings.Contains(progress.String(), "Research running") {
+		t.Fatal("missing automatic progress")
 	}
 }
 

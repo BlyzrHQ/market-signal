@@ -18,10 +18,16 @@ export type WorkflowState = {
   version: 1; ownerRunId: string; request: DirectRequest; revision: number;
   report: StoredReport; checkpoints: ReportMatchBatchCheckpoint[];
   chunks: ReportFactChunkInput[]; document: unknown;
-  operations: Record<string, { status: "started" | "complete"; result?: unknown }>;
+  operations: Record<string, { status: "started" | "complete"; result?: unknown; kind?: string; startedAt?: string; completedAt?: string; durationMs?: number }>;
 };
 export type StatePacket = { version: 1; ownerRunId: string; revision: number; hash: string; gzip: string };
-export type StatePointer = { runId: string; ownerRunId: string; revision: number; hash: string };
+export type StatePointer = { runId: string; ownerRunId: string; revision: number; hash: string; inline?: StatePacket };
+// Trigger Cloud permits 256 KiB for the complete metadata object. Leave 32 KiB
+// of headroom and use the existing artifact snapshot path for larger states.
+export function inlineStatePointer(packet: StatePacket, metadata: Record<string, unknown>): StatePointer | null {
+  const pointer = { runId: packet.ownerRunId, ownerRunId: packet.ownerRunId, revision: packet.revision, hash: packet.hash, inline: packet };
+  return Buffer.byteLength(JSON.stringify({ ...metadata, marketSignalWorkflowStateV1: pointer })) <= 224 * 1024 ? pointer : null;
+}
 export async function commitStatePointer(pointer: StatePointer, transport: {
   set: (pointer: StatePointer) => void; flush: () => Promise<void>; read: () => Promise<unknown>;
 }) {
@@ -29,7 +35,8 @@ export async function commitStatePointer(pointer: StatePointer, transport: {
   await transport.flush();
   const confirmed = await transport.read() as StatePointer | undefined;
   if (!confirmed || confirmed.runId !== pointer.runId || confirmed.ownerRunId !== pointer.ownerRunId
-    || confirmed.revision !== pointer.revision || confirmed.hash !== pointer.hash) throw new Error("STATE_POINTER_NOT_CONFIRMED");
+    || confirmed.revision !== pointer.revision || confirmed.hash !== pointer.hash
+    || hash(confirmed.inline || null) !== hash(pointer.inline || null)) throw new Error("STATE_POINTER_NOT_CONFIRMED");
 }
 export function encodeState(state: WorkflowState): StatePacket {
   const raw = Buffer.from(JSON.stringify(state));
@@ -57,7 +64,8 @@ export function initialState(ownerRunId: string, request: DirectRequest, observe
 // Exactly one writer exists per Trigger run. Persist before exposing a mutation;
 // any ambiguous write poisons this attempt so no later paid operation can run.
 export class WorkflowStore {
-  private tail: Promise<unknown> = Promise.resolve();
+  private pending: Array<{ change: (state: WorkflowState) => unknown | Promise<unknown>; resolve: (value: unknown) => void; reject: (error: unknown) => void }> = [];
+  private flushing = false;
   private broken = false;
   private state: WorkflowState;
   private persist: (packet: StatePacket) => Promise<void>;
@@ -65,17 +73,43 @@ export class WorkflowStore {
   assertHealthy() { if (this.broken) throw new Error("DURABLE_STATE_UNAVAILABLE: stop before more research"); }
   read() { this.assertHealthy(); return plain(this.state); }
   async update<T>(change: (state: WorkflowState) => T | Promise<T>): Promise<T> {
-    const work = this.tail.then(async () => {
-      this.assertHealthy();
-      const next = plain(this.state);
-      const result = await change(next);
-      next.revision += 1;
-      try { await this.persist(encodeState(next)); } catch { this.broken = true; throw new Error("DURABLE_STATE_UNAVAILABLE: checkpoint commit was not confirmed"); }
-      this.state = next;
-      return plain(result ?? null) as T;
+    this.assertHealthy();
+    return new Promise<T>((resolve, reject) => {
+      this.pending.push({ change, resolve: (value) => resolve(value as T), reject });
+      if (!this.flushing) {
+        this.flushing = true;
+        queueMicrotask(() => { void this.flushUpdates(); });
+      }
     });
-    this.tail = work.catch(() => undefined);
-    return work;
+  }
+  private async flushUpdates() {
+    while (this.pending.length) {
+      const batch = this.pending.splice(0);
+      const committed: Array<{ entry: typeof batch[number]; result: unknown }> = [];
+      let next = plain(this.state);
+      for (const entry of batch) {
+        try {
+          this.assertHealthy();
+          // A failed mutation must not leak part of itself into another write.
+          const candidate = plain(next);
+          const result = plain((await entry.change(candidate)) ?? null);
+          candidate.revision += 1;
+          next = candidate;
+          committed.push({ entry, result });
+        } catch (error) { entry.reject(error); }
+      }
+      if (!committed.length) continue;
+      try {
+        await this.persist(encodeState(next));
+        this.state = next;
+        for (const { entry, result } of committed) entry.resolve(result);
+      } catch {
+        this.broken = true;
+        const error = new Error("DURABLE_STATE_UNAVAILABLE: checkpoint commit was not confirmed");
+        for (const { entry } of committed) entry.reject(error);
+      }
+    }
+    this.flushing = false;
   }
   identity(publicId: string, attemptNumber = 1) {
     this.assertHealthy();
@@ -86,10 +120,15 @@ export class WorkflowStore {
     const prior = this.read().operations[id];
     if (prior?.status === "complete") return plain(prior.result) as T;
     if (prior) { this.broken = true; throw new Error("AMBIGUOUS_PROVIDER_OPERATION: automatic paid replay stopped"); }
-    await this.update((state) => { if (state.operations[id]) throw new Error("DUPLICATE_PROVIDER_OPERATION"); state.operations[id] = { status: "started" }; });
+    const kind = key.split(":")[0];
+    const startedAt = new Date().toISOString();
+    await this.update((state) => { if (state.operations[id]) throw new Error("DUPLICATE_PROVIDER_OPERATION"); state.operations[id] = { status: "started", kind, startedAt }; });
+    this.assertHealthy();
+    const workStarted = Date.now();
     let result: T;
     try { result = plain(await run()); } catch (error) { this.broken = true; throw error; }
-    await this.update((state) => { state.operations[id] = { status: "complete", result }; });
+    const durationMs = Date.now() - workStarted;
+    await this.update((state) => { state.operations[id] = { status: "complete", kind, startedAt, completedAt: new Date().toISOString(), durationMs, result }; });
     return result;
   }
   loadCheckpoints: ReportOrchestrationPort["loadCheckpoint"] = async (publicId, input) => {
@@ -121,7 +160,7 @@ export class WorkflowStore {
     this.identity(publicId, event.attemptNumber);
     await this.update((state) => {
       if (state.report.events.some((prior) => prior.idempotencyKey === event.idempotencyKey)) return;
-      state.report.events.push(event);
+      state.report.events.push({ ...event, metadata: { ...event.metadata, recordedAt: new Date().toISOString() } });
       state.report.run.updatedAt = new Date().toISOString();
       // Phase-level limited events do not terminate the entire report.
       if (event.phase === "failed" || event.status === "failed") state.report.run.status = "failed";

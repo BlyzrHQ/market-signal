@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { WorkflowStore, initialState, encodeState, decodeState, hash, commitStatePointer } from "../src/trigger-direct/workflow-state.ts";
+import { WorkflowStore, initialState, encodeState, decodeState, hash, commitStatePointer, inlineStatePointer } from "../src/trigger-direct/workflow-state.ts";
 import { createWorkflowPort, durableActionFetch } from "../src/trigger-direct/workflow-port.ts";
 import { workflowOutput } from "../src/trigger-direct/workflow-output.ts";
 import { orchestrateValidatedReport, orchestrateReport } from "../src/trigger/report-orchestration-core.ts";
@@ -28,6 +28,32 @@ test("durable state restores, binds request/run, and rejects corruption", async 
   assert.throws(() => decodeState(memory.packet(), "run_fixture", { ...request, comparisons: 20 }), /INTEGRITY/);
   assert.throws(() => decodeState({ ...memory.packet(), hash: "0".repeat(64) }, "run_fixture", request), /INTEGRITY/);
 });
+
+test("small durable states fit inline while larger states or other metadata keep the snapshot path", () => {
+  const packet = encodeState(initialState("run_fixture",request));
+  const pointer = inlineStatePointer(packet,{});
+  assert.equal(pointer.runId,"run_fixture");
+  assert.deepEqual(decodeState(pointer.inline,"run_fixture",request),decodeState(packet,"run_fixture",request));
+  assert.equal(inlineStatePointer({...packet,gzip:"x".repeat(224*1024)},{}),null);
+  assert.equal(inlineStatePointer(packet,{unrelated:"x".repeat(224*1024)}),null);
+  assert.ok(inlineStatePointer(packet,{marketSignalWorkflowStateV1:{inline:{gzip:"x".repeat(256*1024)}}}));
+});
+
+test("inline read-back must confirm the full packet before any paid operation", async () => {
+  let committed, calls=0;
+  const persist = packet => commitStatePointer(inlineStatePointer(packet,{}),{
+    set:pointer=>{committed=structuredClone(pointer);},flush:async()=>{},read:async()=>committed,
+  });
+  const store = new WorkflowStore(initialState("run_fixture",request),persist);
+  await store.operation("search:inline",async()=>{calls++;assert.equal(Object.values(decodeState(committed.inline,"run_fixture",request).operations)[0].status,"started");return {fixture:true};});
+  const restored=new WorkflowStore(decodeState(committed.inline,"run_fixture",request),persist);
+  assert.deepEqual(await restored.operation("search:inline",async()=>{calls++;}),{fixture:true});
+  assert.equal(calls,1);
+  const pointer=inlineStatePointer(encodeState(initialState("run_fixture",request)),{});
+  const reordered=Object.fromEntries(Object.entries(pointer.inline).reverse());
+  await commitStatePointer(pointer,{set:()=>{},flush:async()=>{},read:async()=>({...pointer,inline:reordered})});
+  await assert.rejects(commitStatePointer(pointer,{set:()=>{},flush:async()=>{},read:async()=>({...pointer,inline:{...pointer.inline,gzip:"corrupted"}})}),/NOT_CONFIRMED/);
+});
 test("concurrent writes serialize and checkpoints enforce compare-and-swap", async () => {
   const memory = memoryStore(), store = memory.store, id = store.read().report.run.publicId;
   await Promise.all([1, 2, 3].map((batchIndex) => store.saveCheckpoint(id, { attemptNumber: 1, batchIndex, inputHash: hash(batchIndex), result: { batchIndex } })));
@@ -36,6 +62,29 @@ test("concurrent writes serialize and checkpoints enforce compare-and-swap", asy
   await assert.rejects(store.saveCheckpoint(id, { ...before, resultHash: undefined, expectedResultHash: "0".repeat(64), result: { changed: true } }), /REVISION/);
   await store.saveCheckpoint(id, { ...before, resultHash: undefined, expectedResultHash: before.resultHash, result: { changed: true } });
   assert.equal(memory.store.read().checkpoints[0].result.changed, true);
+});
+
+test("parallel operation starts share a confirmed snapshot before any paid call", async () => {
+  let saves = 0, calls = 0, lastPacket;
+  const store = new WorkflowStore(initialState("run_fixture", request), async packet => { saves++; lastPacket = packet; });
+  await Promise.all(Array.from({length:8},(_,i)=>store.operation(`search-${i}`,async()=>{
+    assert.equal(saves,1);
+    const saved = decodeState(lastPacket,"run_fixture",request);
+    assert.equal(Object.values(saved.operations).filter(o=>o.status==="started").length,8);
+    calls++; return {id:i};
+  })));
+  assert.equal(calls,8);
+  assert.equal(saves,2);
+  assert.equal(Object.values(store.read().operations).filter(o=>o.status==="complete").length,8);
+});
+
+test("a failed batch commit rejects all callers without starting paid work", async () => {
+  let calls = 0;
+  const store = new WorkflowStore(initialState("run_fixture",request),async()=>{throw Error("receipt lost");});
+  const results = await Promise.allSettled(Array.from({length:8},(_,i)=>store.operation(`search-${i}`,async()=>{calls++;})));
+  assert.equal(calls,0);
+  assert.ok(results.every(r=>r.status==="rejected"));
+  assert.throws(()=>store.read(),/DURABLE_STATE/);
 });
 test("ambiguous durable writes stop the attempt before more paid research", async () => {
   const store = new WorkflowStore(initialState("run_fixture", request), async () => { throw Error("simulated lost commit receipt"); });
@@ -134,15 +183,15 @@ test("swallowed metadata flush failure cannot acknowledge a checkpoint or start 
   await commitStatePointer(pointer, { set: () => {}, flush: async () => {}, read: async () => pointer });
 });
 
-test("an incomplete provider response stops before the next product search", async () => {
+test("an incomplete provider response drains its bounded wave and stops before the next wave", async () => {
   const store = memoryStore().store, run = store.read().report.run;
   let calls = 0;
   const port = createWorkflowPort(store, { search: async () => { calls++; return { completed: false, queries: [], candidates: [], gap: "Synthetic response loss" }; } });
   await assert.rejects(port.match({ publicId: run.publicId, reportAttempt: 1, taskAttemptNumber: 1, reportObservedAt: run.createdAt, primaryDomain: request.domain, marketCountryCode: "GB", productLimit: 1,
-    catalogs: [{ domain: request.domain, products: [product(request.domain, "a"), product(request.domain, "b")] }], matchingMode: "direct-product-search" }), /RESEARCH_STAGE/);
-  assert.equal(calls, 1);
+    catalogs: [{ domain: request.domain, products: Array.from({length:16},(_,i)=>product(request.domain,String(i))) }], matchingMode: "direct-product-search" }), /RESEARCH_STAGE/);
+  assert.equal(calls, 8);
   await assert.rejects(store.operation("another-paid-operation", async () => { calls++; }), /DURABLE_STATE/);
-  assert.equal(calls, 1);
+  assert.equal(calls, 8);
 });
 
 async function executeFixture(research, input = { ...request, comparisons: 2 }) {

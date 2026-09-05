@@ -51,6 +51,8 @@ export type DirectProductSearchOptions = {
   maxPrimaryProducts?: number;
   maxNewPrimaryProducts?: number;
   maxWorkMs?: number;
+  /** Bounded parallel lookahead; website callers retain serial behavior. */
+  concurrency?: number;
   maxRivalDomains?: number;
   admittedRivalDomains?: string[];
   marketCountryCode?: string;
@@ -266,13 +268,13 @@ export async function buildDirectProductSearchComparison(primaryDomainValue: str
   const excludedRivalSourceUrls = new Set(options.repairFeedback?.excludedRivalSourceUrls || []);
   const searchProducts = primaryProducts
     .map((primary, primaryIndex) => ({ primary, primaryIndex }))
-    .filter(({ primary }) => !repairPrimaryIds || repairPrimaryIds.has(primary.id));
+    .filter(({ primary }) => (!repairPrimaryIds || repairPrimaryIds.has(primary.id)) && searchablePrimaryProduct(primary, referenceTimeMs));
   const rows: ProductComparison["rows"] = [];
+  const outcomes: Array<{ primary: ProductRecord; checkpoint: Extract<DirectProductSearchCheckpoint, { version: 2 }> }> = [];
   const processedPrimaryIds: string[] = [];
   const gaps: string[] = [];
   const seenPairs = new Set<string>();
   const seenRivalConstraints = new Set<string>();
-  const acceptedRivalDomains = new Set((options.admittedRivalDomains || []).map(canonicalDomain));
   let candidatePages = 0;
   let pagesRequested = 0;
   let pagesFetched = 0;
@@ -286,18 +288,36 @@ export async function buildDirectProductSearchComparison(primaryDomainValue: str
     pagesFetched += checkpoint.outcome.pagesFetched;
     if (checkpoint.gap) gaps.push(`${primary.name}: ${checkpoint.gap}`);
     if (checkpoint.outcome.gaps.length) gaps.push(...checkpoint.outcome.gaps.map((gap) => `${primary.name}: ${gap}`));
+    outcomes.push({ primary, checkpoint });
+  };
+  const assignOutcomes = () => {
+    rows.length = 0;
+    seenPairs.clear();
+    seenRivalConstraints.clear();
+    // Rank sellers by usable evidence, not arrival order. Invalid-currency
+    // candidates must never consume a slot and starve later valid sellers.
+    const compatible = (primary: ProductRecord, rival: ProductRecord) =>
+      canonicalDomain(rival.domain) !== primaryDomain &&
+      primary.priceSignals[0]?.currency.toUpperCase() === rival.priceSignals[0]?.currency.toUpperCase();
+    const sourcesByDomain = new Map<string, Set<string>>();
+    for (const { primary, checkpoint } of outcomes) for (const rival of checkpoint.outcome.products) {
+      if (!compatible(primary, rival)) continue;
+      const domain = canonicalDomain(rival.domain);
+      const sources = sourcesByDomain.get(domain) || new Set<string>();
+      sources.add(canonicalProductUrl(rival.sourceUrl, rival.domain));
+      sourcesByDomain.set(domain, sources);
+    }
+    const admitted = new Set([...sourcesByDomain].sort(([a, ac], [b, bc]) => bc.size - ac.size || a.localeCompare(b))
+      .slice(0, options.maxRivalDomains || sourcesByDomain.size).map(([domain]) => domain));
+    for (const { primary, checkpoint } of outcomes) {
     const matches: ProductMatch[] = [];
     for (const rival of checkpoint.outcome.products) {
       if (seenPairs.size >= resultTarget) break;
+      if (!compatible(primary, rival) || !admitted.has(canonicalDomain(rival.domain))) continue;
       const pairKey = `${primary.id}\n${canonicalProductUrl(rival.sourceUrl, rival.domain)}`;
       if (seenPairs.has(pairKey)) continue;
       const rivalConstraints = publishedRivalConstraintKeys(rival);
       if (rivalConstraints.some((constraint) => seenRivalConstraints.has(constraint))) continue;
-      const rivalDomain = canonicalDomain(rival.domain);
-      // Optional internal CLI constraint: reserve a seller only when a priced
-      // comparison is actually admitted, never during candidate enrichment.
-      if (options.maxRivalDomains && !acceptedRivalDomains.has(rivalDomain) && acceptedRivalDomains.size >= options.maxRivalDomains) continue;
-      acceptedRivalDomains.add(rivalDomain);
       seenPairs.add(pairKey);
       rivalConstraints.forEach((constraint) => seenRivalConstraints.add(constraint));
       matches.push({
@@ -312,16 +332,16 @@ export async function buildDirectProductSearchComparison(primaryDomainValue: str
       });
     }
     if (matches.length) rows.push({ primary, matches });
+    }
   };
 
-  for (const { primary, primaryIndex } of searchProducts) {
-    if (seenPairs.size >= resultTarget) break;
+  const processPrimary = async ({ primary, primaryIndex }: { primary: ProductRecord; primaryIndex: number }) => {
     // A row can never meet the user's no-empty-price contract if the submitted
     // product itself has no displayable observed price. Do not spend search on it.
     // Search checkpoints and queries must remain bound to a priced,
     // attributable public HTTPS product page. Canonicalization returns an
     // empty string for HTTP, off-domain, private, or otherwise unsafe sources.
-    if (!searchablePrimaryProduct(primary, referenceTimeMs)) continue;
+    if (!searchablePrimaryProduct(primary, referenceTimeMs)) return;
     const key = { primaryIndex, inputHash: searchInputHash(primaryDomain, primary, marketCountryCode, options.repairFeedback) };
     const loaded = options.loadSearchCheckpoint ? await options.loadSearchCheckpoint(key) : null;
     const loadedResultHash = loaded && /^[a-f0-9]{64}$/.test(loaded.resultHash) ? loaded.resultHash : undefined;
@@ -331,11 +351,11 @@ export async function buildDirectProductSearchComparison(primaryDomainValue: str
     let checkpoint = loadedResultHash ? validSearchCheckpoint(loaded?.result, primary, referenceTimeMs) : null;
     if (checkpoint?.version === 2) {
       addOutcome(primary, checkpoint);
-      continue;
+      return;
     }
     if (newPrimaryProducts >= maxNewPrimaryProducts || now() - startedAt >= maxWorkMs) {
       stoppedEarly = true;
-      continue;
+      return;
     }
     newPrimaryProducts += 1;
     let resultHash = checkpoint ? loadedResultHash : undefined;
@@ -402,6 +422,18 @@ export async function buildDirectProductSearchComparison(primaryDomainValue: str
       checkpoint = verified;
     } else checkpoint = completedCheckpoint;
     addOutcome(primary, checkpoint as Extract<DirectProductSearchCheckpoint, { version: 2 }>);
+  };
+  const concurrency = Math.max(1, Math.min(8, Math.floor(options.concurrency || 1)));
+  for (let offset = 0; offset < searchProducts.length; offset += concurrency) {
+    if (seenPairs.size >= resultTarget) break;
+    // Await every started operation, including on one failure. Never leave
+    // billable work running unobserved after the enclosing stage returns.
+    const wave = searchProducts.slice(offset, offset + concurrency);
+    const settled = await Promise.allSettled(wave.map(processPrimary));
+    const failure = settled.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
+    outcomes.sort((a, b) => primaryProducts.indexOf(a.primary) - primaryProducts.indexOf(b.primary));
+    assignOutcomes();
   }
 
   const assignedPairCount = rows.reduce((total, row) => total + row.matches.length, 0);

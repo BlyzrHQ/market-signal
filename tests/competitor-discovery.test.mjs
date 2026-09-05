@@ -1,7 +1,37 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { boundedPrimaryCatalogProducts, candidatesFromSearchEvidence, discoverCompetitors, entityCandidatesFromSearchEvidence, mergeCandidates, productSearchAnchors, publicDiscoveryCandidate, publicDiscoverySnapshot, sanitizeCandidate, searchDirectProductPages, structuredProductLeadCandidate } from "../app/lib/competitor-discovery.ts";
+import { boundedPrimaryCatalogProducts, candidatesFromSearchEvidence, discoverCompetitors, entityCandidatesFromSearchEvidence, mergeCandidates, productSearchAnchors, publicDiscoveryCandidate, publicDiscoverySnapshot, sanitizeCandidate, searchDirectProductPages, searchProviderUsage, structuredProductLeadCandidate } from "../app/lib/competitor-discovery.ts";
+
+test("provider usage preserves unknown token costs instead of recording zero", () => {
+  const missing = searchProviderUsage({}, "fixture-model", 50);
+  assert.equal(missing.inputTokens, null);
+  assert.equal(missing.outputTokens, null);
+  const known = searchProviderUsage({ id:"resp_fixture", model:"fixture-model", usage:{input_tokens:123,input_tokens_details:{cached_tokens:12},output_tokens:45},output:[{type:"web_search_call"},{type:"message"}] }, "other", 60);
+  assert.equal(known.inputTokens, 123);
+  assert.equal(known.cachedInputTokens, 12);
+  assert.equal(known.outputTokens, 45);
+  assert.equal(known.webSearchCalls, 1);
+});
+
+test("direct repair bounds tool work, names excluded URLs and prefers the observed page title", async () => {
+  const previousKey = process.env.OPENAI_API_KEY, previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "synthetic-fixture-only";
+  const sourceUrl = "https://seller.example/products/coconut-biscuits-19372545";
+  const feedback = {round:1,reasonCodes:["comparison_target_shortfall"],excludedRivalSourceUrls:["https://seller.example/products/old"]};
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    assert.equal(body.max_tool_calls, 2);
+    assert.equal(body.max_output_tokens, 2000);
+    assert.deepEqual(body.tools[0].filters.allowed_domains, ["seller.example"]);
+    assert.deepEqual(JSON.parse(body.input[1].content).repair.excludedSourceUrls, feedback.excludedRivalSourceUrls);
+    return Response.json({status:"completed", output:[{type:"web_search_call",status:"completed",action:{query:"Coconut Biscuits 180g",sources:[{url:sourceUrl,title:"Coconut Biscuits 180g | Seller"}]}}]});
+  };
+  try {
+    const result = await searchDirectProductPages("myjam.co.uk",product("Coconut Biscuits 180g","https://myjam.co.uk/products/coconut-biscuits"),"GB",feedback,{allowedRivalDomains:["seller.example"]});
+    assert.equal(result.candidates[0].title,"Coconut Biscuits 180g | Seller");
+  } finally { globalThis.fetch = previousFetch; if(previousKey)process.env.OPENAI_API_KEY=previousKey;else delete process.env.OPENAI_API_KEY; }
+});
 
 function product(name, sourceUrl) {
   return {
@@ -23,6 +53,37 @@ function product(name, sourceUrl) {
     claimIds: [],
   };
 }
+
+test("direct search keeps every bounded source-backed structured URL, not only the first private lead", async () => {
+  const previousKey = process.env.OPENAI_API_KEY, previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "synthetic-fixture-only";
+  const candidates = Array.from({length:6}, (_,i) => ({domain:"seller.example", companyName:"Seller", reason:"Possible gift alternative",searchQuery:"Saudi date gifts",websiteUrl:"https://seller.example/",evidenceUrl:`https://seller.example/products/sku-${i}`,evidenceTitle:`Gift assortment ${i}`,marketCategory:"Gifts",relationship:"adjacent",sharedOfferings:["Gift"],matchedPrimaryProductName:"الواحة",matchedProductUrl:`https://seller.example/products/sku-${i}`}));
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    assert.deepEqual(body.text.format.schema.properties.candidates.items.required,["url","title"]);
+    assert.match(body.input[0].content,/six distinct relevant product-detail URLs/);
+    assert.match(JSON.parse(body.input[1].content).task,/-site:myjam.co.uk/);
+    assert.match(JSON.parse(body.input[1].content).task,/OTHER businesses/);
+    return Response.json({status:"completed",output:[
+    {type:"web_search_call",status:"completed",action:{query:"Saudi date gifts",sources:candidates.map(c=>({url:c.matchedProductUrl,title:c.evidenceTitle}))}},
+    {type:"message",content:[{type:"output_text",text:JSON.stringify({queries:["Saudi date gifts"],candidates:candidates.map(c=>({url:c.matchedProductUrl,title:c.evidenceTitle}))})}]},
+  ]});};
+  try {
+    const result = await searchDirectProductPages("myjam.co.uk",product("الواحة","https://myjam.co.uk/products/gift"),"SA");
+    assert.equal(result.completed,true);
+    assert.equal(result.candidates.length,6);
+    assert.deepEqual(result.candidates.map(c=>c.title),candidates.map(c=>c.evidenceTitle));
+  } finally {globalThis.fetch=previousFetch;if(previousKey)process.env.OPENAI_API_KEY=previousKey;else delete process.env.OPENAI_API_KEY;}
+});
+
+test("Salla exact item routes remain private leads and listing routes remain excluded", () => {
+  const profile={domain:"primary.example",title:"Primary",description:"",region:"SA",language:"ar",products:[product("تمر محشي","https://primary.example/products/dates")]};
+  const lead=url=>structuredProductLeadCandidate({domain:"seller.example",websiteUrl:"https://seller.example/",matchedProductUrl:url,evidenceUrl:url,evidenceTitle:"Stuffed date gift"},profile.domain,profile);
+  assert.equal(lead("https://seller.example/date-gift/p1234567")?.observedAdmission,false);
+  assert.equal(lead("https://seller.example/en/date-gift/p1234567")?.inferredProductLeads.length,1);
+  assert.equal(lead("https://seller.example/categories/p1234567"),null);
+  assert.equal(lead("https://seller.example/search/p1234567"),null);
+});
 
 const profile = {
   domain: "myjam.co.uk",

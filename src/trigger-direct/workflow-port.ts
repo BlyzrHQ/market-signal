@@ -68,13 +68,20 @@ export function createWorkflowPort(store: WorkflowStore, research: {
     acquireLease: async (id, input) => { store.identity(id, input.attemptNumber); const expiresAt = new Date(Date.now() + input.ttlMs).toISOString(); if (leaseOwner) return { acquired: false, expiresAt }; leaseOwner = input.owner; return { acquired: true, expiresAt }; },
     releaseLease: async (id, input) => { store.identity(id, input.attemptNumber); if (leaseOwner === input.owner) leaseOwner = ""; },
     buildDirect: (domain, catalogs, options) => buildDirectProductSearchComparison(domain, catalogs, { ...options,
+      concurrency: 8,
       maxRivalDomains: store.read().request.rivals,
       admittedRivalDomains: retainedRivalDomains,
-      search: (...args) => store.operation(`search:${hash(args)}`, async () => {
-        const result = await (research.search || searchDirectProductPages)(...args);
+      search: (...args) => {
+        // A full seller allocation makes another unrestricted seller search
+        // wasteful. Repairs ask for new product pages within that allocation.
+        const scope = args[3] && retainedRivalDomains.length >= store.read().request.rivals
+          ? { allowedRivalDomains: [...retainedRivalDomains].sort() } : {};
+        return store.operation(`search:${hash(scope.allowedRivalDomains ? { args, scope } : args)}`, async () => {
+        const result = await (research.search || searchDirectProductPages)(...args, scope);
         if (!result.completed) throw new Error("PROVIDER_SEARCH_INCOMPLETE: uncertain result; further paid work stopped");
         return result;
-      }),
+        });
+      },
       enrich: research.enrich,
     }),
   }, token);
@@ -83,6 +90,7 @@ export function createWorkflowPort(store: WorkflowStore, research: {
     return store.operation(`crawl:${hash(input)}`, async () => research.crawl ? research.crawl(input) : crawlResponse(await handleCrawlRequest(localRequest(input), { rememberedCompetitors: false }), input.primary));
   };
   return {
+    rivalBenchmarkConcurrency: 5,
     constrainPublishedComparison: (comparison) => {
       const counts = new Map<string, number>();
       for (const row of comparison.rows) for (const match of row.matches) if (match.product && match.publication?.priceEligible === true) {
@@ -103,7 +111,7 @@ export function createWorkflowPort(store: WorkflowStore, research: {
       // Local validation is not an uncertain provider call. In particular the
       // shared engine can retain its deterministic fallback above 480 inputs.
       const inputs = parseActionInputs(input.inputs);
-      return { ok: true, result: await store.operation(`actions:${hash(input)}`, () => (research.actions || buildAIProductActions)(inputs, { fetch: durableActionFetch(store), concurrency: 1 })) };
+      return { ok: true, result: await store.operation(`actions:${hash(input)}`, () => (research.actions || buildAIProductActions)(inputs, { fetch: durableActionFetch(store), concurrency: 4 })) };
     },
     loadCheckpoint: store.loadCheckpoints,
     saveCheckpoint: async (id, input) => { await store.saveCheckpoint(id, input); },

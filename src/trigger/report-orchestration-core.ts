@@ -263,7 +263,7 @@ export function validPublishedResultCheckpoint(value: unknown, resultTarget: num
     })) return null;
     if (evidence && !evidence.rows.every((row) => row.matches.length > 0 && row.matches.every((match) => match.product && match.publication?.priceEligible === true))) return null;
     if (storedComparison.matching?.resultShortfallReason === "processing-incomplete") return null;
-    if (storedComparison.enrichment?.pagesTruncated === true || (storedComparison.enrichment?.failedBatchCount || 0) > 0) return null;
+    if ((storedComparison.enrichment?.pagesTruncated === true && storedComparison.enrichment?.retryable !== false) || (storedComparison.enrichment?.failedBatchCount || 0) > 0) return null;
     const comparisonForValidation = storedComparison.matching ? {
       ...storedComparison,
       matching: {
@@ -1325,6 +1325,8 @@ export type ReportAttemptContext = { attemptNumber: number; taskAttemptNumber?: 
 type CrawlPortInput = { primary: string; domains: string[]; productLimit: number; comparisonPairsNeeded: number; catalogProductLimit: number; discoverySearchOffset: number; discoveryPriorCoverageComplete: boolean; discoveryExpectedAnchorSetHash: string; discoverySearchLedger?: unknown; directProductSearch?: boolean; benchmarkOnly?: boolean };
 
 export interface ReportOrchestrationPort {
+  /** Direct CLI can overlap independent rival audits; web default stays two. */
+  rivalBenchmarkConcurrency?: number;
   constrainPublishedComparison?: (comparison: ProductComparison) => ProductComparison;
   preflight(): Promise<void>;
   loadReport(publicId: string): Promise<StoredReport | null>;
@@ -1376,8 +1378,9 @@ async function collectRivalBenchmark(
 
   await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "rival-benchmark-started"), "competitors", "Assessing the public shopping experience of the rivals found in accepted product comparisons.", { domains: domains.length }));
   const benchmarkDomains: Array<Record<string, unknown>> = [];
-  for (let start = 0; start < domains.length; start += RIVAL_BENCHMARK_CONCURRENCY) {
-    const wave = domains.slice(start, start + RIVAL_BENCHMARK_CONCURRENCY);
+  const concurrency = Math.max(1, Math.min(MAX_RIVAL_BENCHMARK_DOMAINS, Math.floor(port.rivalBenchmarkConcurrency || RIVAL_BENCHMARK_CONCURRENCY)));
+  for (let start = 0; start < domains.length; start += concurrency) {
+    const wave = domains.slice(start, start + concurrency);
     const settled = await Promise.allSettled(wave.map(async (domain) => {
       const outcome = await port.benchmark({
         primary: domain,
@@ -2151,6 +2154,7 @@ export async function orchestrateValidatedReport(
           maxPages: targets.length,
           pagesEligible: enrichmentPlan.totalEligible,
           pagesTruncated: enrichmentIncomplete,
+          ...(directProductSearch ? { retryable: failedBatchCount > 0 || gaps.some(isRetryableEnrichmentGap) } : {}),
           batchCount: batchesProcessed,
           failedBatchCount,
           gaps,
@@ -2184,6 +2188,7 @@ export async function orchestrateValidatedReport(
           maxPages: 0,
           pagesEligible: enrichmentPlan.totalEligible,
           pagesTruncated: true,
+          ...(directProductSearch ? { retryable: false } : {}),
           batchCount: 0,
           failedBatchCount: 0,
           gaps,
@@ -2439,7 +2444,7 @@ export async function orchestrateValidatedReport(
         throw new Error("The complete published-result checkpoint exceeds its persistence budget.");
       }
       const checkpointIsComplete = comparison.matching?.resultShortfallReason !== "processing-incomplete"
-        && comparison.enrichment?.pagesTruncated !== true
+        && (comparison.enrichment?.pagesTruncated !== true || comparison.enrichment?.retryable === false)
         && (comparison.enrichment?.failedBatchCount || 0) === 0;
       if (checkpointIsComplete) {
         if (!validPublishedResultCheckpoint(publishedCheckpoint, payload.productLimit, reportReferenceTimeMs, allowedPrimaryProductKeys, allowedPrimaryRecoveryIdentities, publishedResultTargetKind)) {

@@ -499,7 +499,7 @@ export function limitPublishedProductComparison(comparison: ProductComparison, r
         ? priorMatching.resultShortfallReason !== "processing-incomplete"
         : (marketResolved || emptyRivalPool) && priorMatching.gaps.length === 0)
       && [...selectedIds].every((id) => completedIds.has(id));
-    const enrichmentCompleted = !comparison.enrichment?.failedBatchCount && comparison.enrichment?.pagesTruncated !== true;
+    const enrichmentCompleted = !comparison.enrichment?.failedBatchCount && (comparison.enrichment?.pagesTruncated !== true || comparison.enrichment?.retryable === false);
     const resultShortfallReason = resultShortfall
       ? matchingCompleted && enrichmentCompleted ? "bounded-candidate-pool-exhausted" as const : "processing-incomplete" as const
       : undefined;
@@ -571,7 +571,7 @@ export function limitPublishedProductComparison(comparison: ProductComparison, r
       : (marketResolved || emptyRivalPool) && priorMatching.gaps.length === 0)
     && [...selectedIds].every((id) => completedIds.has(id));
   const enrichmentCompleted = !comparison.enrichment?.failedBatchCount
-    && comparison.enrichment?.pagesTruncated !== true;
+    && (comparison.enrichment?.pagesTruncated !== true || comparison.enrichment?.retryable === false);
   const resultShortfallReason = resultShortfall
     ? matchingCompleted && enrichmentCompleted
       ? "bounded-candidate-pool-exhausted" as const

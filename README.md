@@ -10,12 +10,14 @@ credential, or customer quota is involved.
 marketsignal-trigger configure
 marketsignal-trigger doctor
 marketsignal-trigger report "<domain>" --comparisons 20 --rivals 5 --request-id "<unique-request-id>"
-marketsignal-trigger result "<run-id>"
 ```
 
 Replace every placeholder with your own input. No test store is prefilled.
 The comparison count means priced product/rival pairs, not catalog size.
 JSON includes comparisons, rivals, evidence, quality checks, and limitations.
+The report command shows progress and returns its result automatically. Keep it
+open; `wait` is only for recovering an interrupted session or explicit background
+mode. The two-minute completed-report target is under validation, not guaranteed.
 
 The operator first deploys the direct tasks and sets research-provider
 credentials in the company Trigger environment. Colleagues only need the

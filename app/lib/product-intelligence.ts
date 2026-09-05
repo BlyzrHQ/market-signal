@@ -194,6 +194,8 @@ export type ProductComparison = {
     maxPages: number;
     pagesEligible?: number;
     pagesTruncated?: boolean;
+    /** False means coverage gaps are terminal, not work a task retry can advance. */
+    retryable?: boolean;
     batchCount?: number;
     failedBatchCount?: number;
     gaps: Array<{

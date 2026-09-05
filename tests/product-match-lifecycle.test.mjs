@@ -102,6 +102,19 @@ test("a defect-free thin AI result completes without a retry", () => {
   assert.equal(shouldRetryProductMatch(thin), false);
 });
 
+test("terminal enrichment gaps advance to quality repair while transient or legacy gaps still need task retry", () => {
+  const base = comparison({method:"direct-web-search",rows:[],accepted:0});
+  base.matching.resultTarget=20;
+  base.matching.resultShortfallReason="bounded-candidate-pool-exhausted";
+  for(const retryable of [undefined,true,false]) {
+    const candidate={...base,enrichment:{pagesRequested:8,pagesFetched:8,maxPages:8,pagesEligible:9,pagesTruncated:true,failedBatchCount:0,gaps:[{url:"",code:"unschedulable_targets",reason:"No safe product page"}],...(retryable===undefined?{}:{retryable})}};
+    const published=limitPublishedProductComparison(publishPricedProductComparison(candidate),20,"pairs");
+    assert.equal(published.matching.resultShortfallReason,retryable===false?"bounded-candidate-pool-exhausted":"processing-incomplete");
+    assert.equal(published.enrichment.pagesTruncated,true);
+    assert.equal(published.rows.length,0);
+  }
+});
+
 test("transport, unavailable semantic matching, gaps, and missing assessments trigger one retry gate", () => {
   assert.equal(shouldRetryProductMatch(null, true), true);
   assert.equal(shouldRetryProductMatch(comparison({ method: "lexical-fallback", available: false })), true);
