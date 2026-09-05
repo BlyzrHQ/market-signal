@@ -9,6 +9,7 @@ const FUNCTIONS: Array<[string, RegExp]> = [
   ["body-wash", /\b(?:body\s*wash|shower\s*gel)\b|غسول\s*الجسم/i],
   ["body-lotion", /\b(?:body|hand)\s*(?:and\s*(?:body|hand)\s*)?(?:lotion|cream|moisturi[sz]er)\b|لوشن\s*الجسم/i],
   ["body-scrub", /\b(?:body\s*scrub|body\s*polish)\b|مقشر\s*الجسم/i],
+  ["face-care", /\b(?:face|facial)\s*(?:essentials?|cleanser|moisturi[sz]er|wash|cream)\b|غسول\s*الوجه/i],
   ["shampoo", /\bshampoo\b|شامبو/i],
   ["conditioner", /\bconditioner\b|بلسم/i],
   ["food-jar", /\b(?:food\s*jar|food\s*container)\b/i],

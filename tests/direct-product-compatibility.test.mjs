@@ -5,6 +5,7 @@ const p = (name, category = "") => ({ name, category, attributes: [] });
 test("known observed-function contradictions are rejected, not ranked by price", () => {
   assert.ok(directProductContradictions(p("Body Sunscreen Last Chance"), p("Glow Restore Shower Oil")).includes("different-product-functions"));
   assert.ok(directProductContradictions(p("Body Sunscreen"), p("Skin Replenishing Body Wash")).includes("different-product-functions"));
+  assert.ok(directProductContradictions(p("Body Sunscreen"), p("Face Essentials (Cleanser + Moisturizer)")).includes("different-product-functions"));
   assert.ok(directProductContradictions(p("واقي شمس"), p("غسول الجسم")).includes("different-product-functions"));
 });
 test("bundles, explicit counts and observed quantities cannot inflate usable pairs", () => {

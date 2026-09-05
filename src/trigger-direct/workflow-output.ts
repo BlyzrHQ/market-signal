@@ -52,6 +52,7 @@ export function workflowOutput(store: WorkflowStore) {
       note: "Provider token/tool receipts are usage evidence, not a settled invoice. Legacy runs without receipts remain unknown.",
     },
     limitations: ["Public-source search matches are inferred alternatives, not independent exact-product certification.",
+      "The contradiction screen rejects known function, bundle and quantity conflicts, but unknown functions or unspecified pack contents remain unverified; raw price differences are not guaranteed savings.",
       "The website's research engine runs inside Trigger; network access can differ from the VPS.",
       "Cross-report competitor memory is not enabled. Trigger retention limits apply to checkpoints and results.",
       "AI provider cost is unknown; null must never be interpreted as zero."],
