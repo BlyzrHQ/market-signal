@@ -1,6 +1,7 @@
 import { task } from "@trigger.dev/sdk";
-import { capabilities, runDirectCrawl, runDirectReport } from "./core.ts";
+import { capabilities, runDirectCrawl } from "./core.ts";
 import { directDependencies } from "./runtime.ts";
+import { runWorkflow } from "./workflow-runtime.ts";
 
 const settings = { maxDuration: 3600, retry: { maxAttempts: 1 }, queue: { name: "market-signal-direct", concurrencyLimit: 2 } };
 function boundedOutput<T>(value: T): T {
@@ -14,7 +15,8 @@ export const directCapabilities = task({ id: "market-signal-direct-capabilities"
   run: async () => capabilities(directDependencies.searchConfigured()) });
 export const directCrawl = task({ id: "market-signal-direct-crawl", ...settings,
   run: async (payload: unknown) => boundedOutput(await runDirectCrawl(payload, directDependencies)) });
-export const directCompare = task({ id: "market-signal-direct-compare", ...settings,
-  run: async (payload: unknown) => boundedOutput(await runDirectReport(payload, directDependencies, false)) });
-export const directReport = task({ id: "market-signal-direct-report", ...settings,
-  run: async (payload: unknown) => boundedOutput(await runDirectReport(payload, directDependencies)) });
+const workflowSettings = { ...settings, maxDuration: 14_700, retry: { maxAttempts: 10, minTimeoutInMs: 2000, maxTimeoutInMs: 20000, factor: 2, randomize: true } };
+export const directCompare = task({ id: "market-signal-direct-compare", ...workflowSettings,
+  run: async (payload: unknown, { ctx }) => boundedOutput(await runWorkflow(payload, { runId: ctx.run.id, workerVersion: ctx.run.version!, attemptNumber: ctx.attempt.number, maxAttempts: ctx.run.maxAttempts || 10 })) });
+export const directReport = task({ id: "market-signal-direct-report", ...workflowSettings,
+  run: async (payload: unknown, { ctx }) => boundedOutput(await runWorkflow(payload, { runId: ctx.run.id, workerVersion: ctx.run.version!, attemptNumber: ctx.attempt.number, maxAttempts: ctx.run.maxAttempts || 10 })) });

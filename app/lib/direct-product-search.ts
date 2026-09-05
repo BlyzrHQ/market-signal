@@ -51,6 +51,8 @@ export type DirectProductSearchOptions = {
   maxPrimaryProducts?: number;
   maxNewPrimaryProducts?: number;
   maxWorkMs?: number;
+  maxRivalDomains?: number;
+  admittedRivalDomains?: string[];
   marketCountryCode?: string;
   referenceTimeMs?: number;
   repairFeedback?: ReportQualityRepairFeedback;
@@ -270,6 +272,7 @@ export async function buildDirectProductSearchComparison(primaryDomainValue: str
   const gaps: string[] = [];
   const seenPairs = new Set<string>();
   const seenRivalConstraints = new Set<string>();
+  const acceptedRivalDomains = new Set((options.admittedRivalDomains || []).map(canonicalDomain));
   let candidatePages = 0;
   let pagesRequested = 0;
   let pagesFetched = 0;
@@ -290,6 +293,11 @@ export async function buildDirectProductSearchComparison(primaryDomainValue: str
       if (seenPairs.has(pairKey)) continue;
       const rivalConstraints = publishedRivalConstraintKeys(rival);
       if (rivalConstraints.some((constraint) => seenRivalConstraints.has(constraint))) continue;
+      const rivalDomain = canonicalDomain(rival.domain);
+      // Optional internal CLI constraint: reserve a seller only when a priced
+      // comparison is actually admitted, never during candidate enrichment.
+      if (options.maxRivalDomains && !acceptedRivalDomains.has(rivalDomain) && acceptedRivalDomains.size >= options.maxRivalDomains) continue;
+      acceptedRivalDomains.add(rivalDomain);
       seenPairs.add(pairKey);
       rivalConstraints.forEach((constraint) => seenRivalConstraints.add(constraint));
       matches.push({

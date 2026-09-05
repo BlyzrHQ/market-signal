@@ -1005,7 +1005,7 @@ function validEnrichmentPlanCheckpoint(value: unknown, expectedPlan: EnrichmentP
 
 type RunStatus = "queued" | "running" | "complete" | "limited" | "failed" | "interrupted";
 type ReportEvent = { idempotencyKey: string; phase: string; status: RunStatus; message: string; metadata?: Record<string, unknown> };
-type StoredReport = {
+export type StoredReport = {
   run: { publicId: string; primaryDomain: string; locale: "en" | "ar"; status: RunStatus; attemptCount: number; createdAt: string; updatedAt: string; productPlan?: "starter" | "solo" | "growth" | "agency"; productLimit?: number };
   events: Array<{ idempotencyKey?: string; phase: string; status: RunStatus; metadata?: Record<string, unknown> }>;
   factManifest?: { manifestId: string; attemptNumber: number; manifestHash: string; counts: Record<"companies" | "products" | "matches" | "ads", number>; status: string; completedAt: string } | null;
@@ -1325,6 +1325,7 @@ export type ReportAttemptContext = { attemptNumber: number; taskAttemptNumber?: 
 type CrawlPortInput = { primary: string; domains: string[]; productLimit: number; comparisonPairsNeeded: number; catalogProductLimit: number; discoverySearchOffset: number; discoveryPriorCoverageComplete: boolean; discoveryExpectedAnchorSetHash: string; discoverySearchLedger?: unknown; directProductSearch?: boolean; benchmarkOnly?: boolean };
 
 export interface ReportOrchestrationPort {
+  constrainPublishedComparison?: (comparison: ProductComparison) => ProductComparison;
   preflight(): Promise<void>;
   loadReport(publicId: string): Promise<StoredReport | null>;
   appendEvent(publicId: string, event: ReportEvent & { attemptNumber?: number }): Promise<void>;
@@ -1574,6 +1575,22 @@ export async function orchestrateReport(
   now: () => Date = () => new Date(),
 ): Promise<ReportOrchestrationSummary> {
   const payload: ReportOrchestrationPayload = parseReportOrchestrationPayload(rawPayload);
+  return orchestrateValidatedReport(payload, attempt, port, now);
+}
+
+// Internal callers validate their own bounded request contract before entering
+// this engine. The website entry point above still enforces persisted plans.
+export async function orchestrateValidatedReport(
+  payload: ReportOrchestrationPayload,
+  attempt: ReportAttemptContext,
+  port: ReportOrchestrationPort,
+  now: () => Date = () => new Date(),
+): Promise<ReportOrchestrationSummary> {
+  const constrainPublishedState = (state: ReturnType<typeof mergePublishedProductComparisonState>) => {
+    if (!port.constrainPublishedComparison) return state;
+    const constrained = port.constrainPublishedComparison(state.comparison);
+    return { comparison: constrained, evidence: constrained };
+  };
   const publishedResultTargetKind = payload.contractVersion === "5" || payload.contractVersion === REPORT_ORCHESTRATION_CONTRACT_VERSION ? "pairs" as const : "primary-products" as const;
   const directProductSearch = payload.contractVersion === REPORT_ORCHESTRATION_CONTRACT_VERSION;
   if (payload.reportAttempt !== attempt.attemptNumber) throw new PermanentOrchestrationError("Dispatch payload attempt does not match the active report attempt.");
@@ -1858,6 +1875,7 @@ export async function orchestrateReport(
       if (!validated) throw new Error("The durable published-result checkpoint is invalid.");
       accumulatedPublished = mergePublishedProductComparisonState(validated.evidence, accumulatedPublished, payload.productLimit, reportReferenceTimeMs, publishedResultTargetKind).evidence;
     }
+    if (accumulatedPublished && port.constrainPublishedComparison) accumulatedPublished = port.constrainPublishedComparison(accumulatedPublished);
     const recoveredPublishedMatcherResult = accumulatedPublished !== null;
     const recoveredPublishedTargetComplete = publishedResultTargetKind === "pairs"
       && publishedTargetCount(accumulatedPublished, publishedResultTargetKind) >= payload.productLimit;
@@ -2191,7 +2209,7 @@ export async function orchestrateReport(
       ), primary.products), primary.products);
       screenedComparison = mergeAccumulatedPublishedIntoScreenedComparison(comparison, judgeEvidence);
       screenedComparison = mergeAccumulatedPublishedIntoScreenedComparison(screenedComparison, accumulatedPublished);
-      let publishedState = mergePublishedProductComparisonState(comparison, accumulatedPublished, payload.productLimit, reportReferenceTimeMs, publishedResultTargetKind);
+      let publishedState = constrainPublishedState(mergePublishedProductComparisonState(comparison, accumulatedPublished, payload.productLimit, reportReferenceTimeMs, publishedResultTargetKind));
       comparison = publishedState.comparison;
 
       // Discovery can intentionally advance across several bounded crawl/task
@@ -2212,7 +2230,7 @@ export async function orchestrateReport(
             primaryDomain: crawl.primaryDomain,
             referenceTimeMs: reportReferenceTimeMs,
           });
-          publishedState = mergePublishedProductComparisonState(sanitized.comparison, null, payload.productLimit, reportReferenceTimeMs, publishedResultTargetKind);
+          publishedState = constrainPublishedState(mergePublishedProductComparisonState(sanitized.comparison, null, payload.productLimit, reportReferenceTimeMs, publishedResultTargetKind));
           comparison = publishedState.comparison;
           screenedComparison = mergeAccumulatedPublishedIntoScreenedComparison(screenedComparison, publishedState.evidence);
           await port.appendEvent(payload.publicId, event(progressEventKey(attempt, `quality-filtered-${stage}`), "quality", "The quality gate removed invalid comparison rows and retained the valid paid-report evidence.", {
@@ -2362,7 +2380,7 @@ export async function orchestrateReport(
             }
           }
           if (repairOutcome.published) {
-            publishedState = mergePublishedProductComparisonState(repairOutcome.published.evidence, comparison, payload.productLimit, reportReferenceTimeMs, publishedResultTargetKind);
+            publishedState = constrainPublishedState(mergePublishedProductComparisonState(repairOutcome.published.evidence, comparison, payload.productLimit, reportReferenceTimeMs, publishedResultTargetKind));
             comparison = publishedState.comparison;
             screenedComparison = mergeAccumulatedPublishedIntoScreenedComparison(screenedComparison, publishedState.evidence);
           }
@@ -2408,7 +2426,7 @@ export async function orchestrateReport(
           limitedPhases.push("quality");
           await port.appendEvent(payload.publicId, limitedEvent(progressEventKey(attempt, "quality-limited"), "quality", "The report exhausted its bounded quality-repair loop and retained only valid, priced comparisons.", { repairs: qualityRepairRounds, comparisons: qualityVerdict.validComparisonCount, target: qualityVerdict.comparisonTarget, missing: qualityVerdict.missingComparisonCount }));
         }
-        publishedState = mergePublishedProductComparisonState(comparison, publishedState.evidence, payload.productLimit, reportReferenceTimeMs, publishedResultTargetKind);
+        publishedState = constrainPublishedState(mergePublishedProductComparisonState(comparison, publishedState.evidence, payload.productLimit, reportReferenceTimeMs, publishedResultTargetKind));
         comparison = publishedState.comparison;
       }
       const publishedCheckpointIndex = publishedResultCheckpointIndex(taskAttemptNumber);
@@ -2565,7 +2583,7 @@ export async function orchestrateReport(
       }
     }
     const factReferenceTime = new Date(productEvidenceReferenceTimeMs(crawl.results.map((result) => ({ products: result.products })), stored.run.createdAt, Date.now())).toISOString();
-    const facts = await buildReportFactBundle({ publicId: payload.publicId, crawlResults: crawl.results, comparison: screenedComparison || comparison, adBlock: null, observedAt: factReferenceTime, attemptNumber: attempt.attemptNumber });
+    const facts = await buildReportFactBundle({ publicId: payload.publicId, crawlResults: crawl.results, comparison: port.constrainPublishedComparison ? comparison : screenedComparison || comparison, adBlock: null, observedAt: factReferenceTime, attemptNumber: attempt.attemptNumber });
     terminalDocument = compactTerminalReportDocument({ primaryDomain: crawl.primaryDomain, document, marketBrief: null }, 430_000, { factsAuthoritative: true, factCounts: facts.manifest.counts });
     const presentationCheckpoint = { version: 2, taskAttemptNumber: attempt.taskAttemptNumber || 1, manifestHash: facts.manifest.manifestHash, status: reportStatus, observedAt: finishedAt, document: terminalDocument };
     const presentationInputHash = createHash("sha256").update(JSON.stringify(presentationCheckpoint)).digest("hex");
