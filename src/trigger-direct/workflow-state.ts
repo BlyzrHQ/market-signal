@@ -21,6 +21,16 @@ export type WorkflowState = {
   operations: Record<string, { status: "started" | "complete"; result?: unknown }>;
 };
 export type StatePacket = { version: 1; ownerRunId: string; revision: number; hash: string; gzip: string };
+export type StatePointer = { runId: string; ownerRunId: string; revision: number; hash: string };
+export async function commitStatePointer(pointer: StatePointer, transport: {
+  set: (pointer: StatePointer) => void; flush: () => Promise<void>; read: () => Promise<unknown>;
+}) {
+  transport.set(pointer);
+  await transport.flush();
+  const confirmed = await transport.read() as StatePointer | undefined;
+  if (!confirmed || confirmed.runId !== pointer.runId || confirmed.ownerRunId !== pointer.ownerRunId
+    || confirmed.revision !== pointer.revision || confirmed.hash !== pointer.hash) throw new Error("STATE_POINTER_NOT_CONFIRMED");
+}
 export function encodeState(state: WorkflowState): StatePacket {
   const raw = Buffer.from(JSON.stringify(state));
   if (raw.length > MAX_STATE_BYTES) throw new Error("STATE_TOO_LARGE: automatic continuation stopped");
@@ -77,7 +87,8 @@ export class WorkflowStore {
     if (prior?.status === "complete") return plain(prior.result) as T;
     if (prior) { this.broken = true; throw new Error("AMBIGUOUS_PROVIDER_OPERATION: automatic paid replay stopped"); }
     await this.update((state) => { if (state.operations[id]) throw new Error("DUPLICATE_PROVIDER_OPERATION"); state.operations[id] = { status: "started" }; });
-    const result = plain(await run());
+    let result: T;
+    try { result = plain(await run()); } catch (error) { this.broken = true; throw error; }
     await this.update((state) => { state.operations[id] = { status: "complete", result }; });
     return result;
   }
@@ -144,7 +155,13 @@ export class WorkflowStore {
   saveDocument: ReportOrchestrationPort["saveDocument"] = async (publicId, input) => {
     this.identity(publicId, input.attemptNumber);
     await this.update((state) => {
-      if (state.report.factManifest?.status !== "complete" || state.report.factManifest.manifestHash !== input.expectedFactManifestHash) throw new Error("DOCUMENT_MANIFEST_CONFLICT");
+      if (input.expectedFactManifestHash === "") {
+        const envelope = input.document as { primaryDomain?: string; document?: { blocks?: Array<Record<string, unknown>> } };
+        const blocks = envelope?.document?.blocks;
+        const domainStatus = blocks?.find((block) => block.type === "domain-status" && block.domain === state.request.domain && ["parked", "unavailable"].includes(String(block.status)));
+        if (input.status !== "limited" || state.chunks.length || state.report.factManifest || envelope.primaryDomain !== state.request.domain
+          || !domainStatus || !state.report.events.some((event) => event.idempotencyKey === "crawl-limited")) throw new Error("DOCUMENT_MANIFEST_CONFLICT");
+      } else if (state.report.factManifest?.status !== "complete" || state.report.factManifest.manifestHash !== input.expectedFactManifestHash) throw new Error("DOCUMENT_MANIFEST_CONFLICT");
       state.document = input.document;
       state.report.run.status = input.status;
       state.report.run.updatedAt = input.observedAt;

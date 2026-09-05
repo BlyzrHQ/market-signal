@@ -38,3 +38,28 @@ Initial local checks: 8 native adapter/state tests pass, full Node suite passes,
 Go tests/vet pass, standalone Trigger TypeScript check passes, and the website
 build passes. Lint has no errors and one pre-existing image warning. Trigger
 bundle validation and strict code review remain pending.
+
+## Review fallback and deployment checkpoint
+At 2026-09-04T23:51:50Z the strict Fable review command exited 1 with the
+observable platform response: `You've hit your session limit · resets 4am
+(Africa/Cairo)`. Category: session usage limit. The Fable architecture review
+above succeeded, but Fable did **not** approve the code. Two fresh independent
+Codex reviewers are required for the high-risk state/data change and were
+dispatched against `83a08f83580cdf502e5f89c1fc4866f9b5f0a1d8`.
+
+The exact implementation commit was deployed **without promotion** as Trigger
+`20260904.5`, 12 detected tasks, deployment `v1ia6r1u`, image
+`sha256:1e683641f54be344221275b759718afcb919ed6f2c6eba4d000d39b620b0a217`.
+CLI doctor completed at that version in `run_06g6tle0u3hni93ia7veqeeu01` and
+reported the shared engine plus configured provider. No paid report has been
+launched for this change yet. GitHub CI run `33930840011` passed at this commit.
+
+Both independent reviewers reported blockers on that first implementation:
+unconfirmed SDK metadata flush, incomplete provider responses allowing more
+spend, seller caps resetting across quality repairs, missing final action text
+in fact projections, and factless parked/unavailable reports being rejected.
+These are corrected with management-API pointer read-back, immediate uncertain
+operation stop, report-wide publication constraints seeded into repair searches,
+final-decision fact projection, and narrow factless terminal-limit validation.
+Thirteen native regression tests pass. The first deployed version `.5` is not
+approved for acceptance; revised exact-head reviews and deployment are required.

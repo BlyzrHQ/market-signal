@@ -7,6 +7,8 @@ import { parseActionInputs } from "../../app/api/actions/route.ts";
 import { buildDirectProductSearchComparison } from "../../app/lib/direct-product-search.ts";
 import { searchDirectProductPages } from "../../app/lib/competitor-discovery.ts";
 import { enrichProductTargets } from "../../app/lib/storefront-product-enrichment.ts";
+import { limitPublishedProductComparison } from "../../app/lib/product-match-lifecycle.ts";
+import { canonicalDomain } from "../../app/lib/domain.ts";
 import type { ReportOrchestrationPort } from "../trigger/report-orchestration-core.ts";
 import { acceptedParkedDomainResponse, acceptedUnavailableDomainResponse, acceptedCrawlFailureError } from "../trigger/report-orchestration-http.ts";
 import { WorkflowStore, hash } from "./workflow-state.ts";
@@ -42,6 +44,7 @@ export function createWorkflowPort(store: WorkflowStore, research: {
 } = {}): ReportOrchestrationPort {
   const token = randomBytes(32).toString("hex");
   let leaseOwner = "";
+  let retainedRivalDomains: string[] = [];
   const handler = createMatchHandler({
     loadEntitlement: async (id, attempt) => { store.identity(id, attempt); const run = store.read().report.run; return { plan: "starter", productLimit: run.productLimit!, reportObservedAt: run.createdAt }; },
     loadCheckpoints: async (id, input) => await store.loadCheckpoints(id, input) as ReturnType<WorkflowStore["read"]>["checkpoints"],
@@ -51,7 +54,12 @@ export function createWorkflowPort(store: WorkflowStore, research: {
     releaseLease: async (id, input) => { store.identity(id, input.attemptNumber); if (leaseOwner === input.owner) leaseOwner = ""; },
     buildDirect: (domain, catalogs, options) => buildDirectProductSearchComparison(domain, catalogs, { ...options,
       maxRivalDomains: store.read().request.rivals,
-      search: (...args) => store.operation(`search:${hash(args)}`, () => (research.search || searchDirectProductPages)(...args)),
+      admittedRivalDomains: retainedRivalDomains,
+      search: (...args) => store.operation(`search:${hash(args)}`, async () => {
+        const result = await (research.search || searchDirectProductPages)(...args);
+        if (!result.completed) throw new Error("PROVIDER_SEARCH_INCOMPLETE: uncertain result; further paid work stopped");
+        return result;
+      }),
       enrich: research.enrich,
     }),
   }, token);
@@ -60,6 +68,15 @@ export function createWorkflowPort(store: WorkflowStore, research: {
     return store.operation(`crawl:${hash(input)}`, async () => research.crawl ? research.crawl(input) : crawlResponse(await handleCrawlRequest(localRequest(input), { rememberedCompetitors: false }), input.primary));
   };
   return {
+    constrainPublishedComparison: (comparison) => {
+      const counts = new Map<string, number>();
+      for (const row of comparison.rows) for (const match of row.matches) if (match.product && match.publication?.priceEligible === true) {
+        const domain = canonicalDomain(match.product.domain); counts.set(domain, (counts.get(domain) || 0) + 1);
+      }
+      retainedRivalDomains = [...counts].sort(([a, ac], [b, bc]) => bc - ac || a.localeCompare(b)).slice(0, store.read().request.rivals).map(([domain]) => domain);
+      const rows = comparison.rows.map((row) => ({ ...row, matches: row.matches.filter((match) => match.product && retainedRivalDomains.includes(canonicalDomain(match.product.domain))) })).filter((row) => row.matches.length);
+      return limitPublishedProductComparison({ ...comparison, rows, comparisonDomains: retainedRivalDomains }, store.read().request.comparisons, "pairs");
+    },
     preflight: async () => { store.assertHealthy(); if (!process.env.OPENAI_API_KEY?.trim()) throw new Error("SEARCH_NOT_CONFIGURED"); },
     loadReport: async (id) => { store.identity(id); return store.read().report; },
     appendEvent: store.appendEvent,

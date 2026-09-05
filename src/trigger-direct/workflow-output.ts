@@ -21,6 +21,7 @@ export function workflowOutput(store: WorkflowStore) {
     return [{ primaryProduct: productRecord(primary), rivalProduct: productRecord(rival), assessment: { verdict: match.verdict, confidence: match.confidence, claimType: match.claimType, model: match.model, ...evidence }, recommendation: record(evidence.decision).actionPlan || null }];
   });
   const domains = [...new Set(comparisons.map((pair) => String(pair.rivalProduct.domain)))];
+  if (domains.length > state.request.rivals || comparisons.length > state.request.comparisons) throw new Error("PUBLICATION_LIMIT_CONFLICT");
   const document = record(record(state.document).document);
   const blocks = Array.isArray(document.blocks) ? document.blocks.map(record) : [];
   const qualityEvents = state.report.events.filter((event) => event.phase === "quality");

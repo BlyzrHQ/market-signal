@@ -52,6 +52,7 @@ export type DirectProductSearchOptions = {
   maxNewPrimaryProducts?: number;
   maxWorkMs?: number;
   maxRivalDomains?: number;
+  admittedRivalDomains?: string[];
   marketCountryCode?: string;
   referenceTimeMs?: number;
   repairFeedback?: ReportQualityRepairFeedback;
@@ -271,7 +272,7 @@ export async function buildDirectProductSearchComparison(primaryDomainValue: str
   const gaps: string[] = [];
   const seenPairs = new Set<string>();
   const seenRivalConstraints = new Set<string>();
-  const acceptedRivalDomains = new Set<string>();
+  const acceptedRivalDomains = new Set((options.admittedRivalDomains || []).map(canonicalDomain));
   let candidatePages = 0;
   let pagesRequested = 0;
   let pagesFetched = 0;

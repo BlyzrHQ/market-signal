@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { WorkflowStore, initialState, encodeState, decodeState, hash } from "../src/trigger-direct/workflow-state.ts";
+import { WorkflowStore, initialState, encodeState, decodeState, hash, commitStatePointer } from "../src/trigger-direct/workflow-state.ts";
 import { createWorkflowPort } from "../src/trigger-direct/workflow-port.ts";
 import { workflowOutput } from "../src/trigger-direct/workflow-output.ts";
 import { orchestrateValidatedReport, orchestrateReport } from "../src/trigger/report-orchestration-core.ts";
@@ -86,6 +86,7 @@ test("real orchestration and native match handler produce full facts and replay 
     assert.ok(output.facts.manifest.manifestHash);
     assert.ok(output.progress.some((event) => event.phase === "quality"));
     assert.ok(actions > 0);
+    assert.ok(output.comparisons[0].recommendation.actionEn.trim(), "Final action must reach authoritative facts and comparison output");
     const counts = { searches, crawls, actions };
     await orchestrateValidatedReport(payload, attempt, createWorkflowPort(memory.store, research));
     assert.deepEqual({ searches, crawls, actions }, counts);
@@ -119,4 +120,55 @@ test("a lost match-checkpoint commit reuses the already durable paid search resu
   const result = await createWorkflowPort(new WorkflowStore(decodeState(saved, "run_fixture", request), persist), research).match({ ...input, taskAttemptNumber: 2 });
   assert.equal(result.comparison.coverage.assignedPairCount, 1);
   assert.equal(searches, 1);
+});
+
+test("swallowed metadata flush failure cannot acknowledge a checkpoint or start paid work", async () => {
+  const pointer = { runId: "run_snapshot", ownerRunId: "run_fixture", revision: 1, hash: "a".repeat(64) };
+  let calls = 0;
+  const store = new WorkflowStore(initialState("run_fixture", request), async () => commitStatePointer(pointer, {
+    set: () => {}, flush: async () => {}, read: async () => undefined,
+  }));
+  await assert.rejects(store.operation("paid", async () => { calls++; }), /DURABLE_STATE/);
+  assert.equal(calls, 0);
+  await assert.rejects(commitStatePointer(pointer, { set: () => {}, flush: async () => {}, read: async () => ({ ...pointer, revision: 0 }) }), /NOT_CONFIRMED/);
+  await commitStatePointer(pointer, { set: () => {}, flush: async () => {}, read: async () => pointer });
+});
+
+test("an incomplete provider response stops before the next product search", async () => {
+  const store = memoryStore().store, run = store.read().report.run;
+  let calls = 0;
+  const port = createWorkflowPort(store, { search: async () => { calls++; return { completed: false, queries: [], candidates: [], gap: "Synthetic response loss" }; } });
+  await assert.rejects(port.match({ publicId: run.publicId, reportAttempt: 1, taskAttemptNumber: 1, reportObservedAt: run.createdAt, primaryDomain: request.domain, marketCountryCode: "GB", productLimit: 1,
+    catalogs: [{ domain: request.domain, products: [product(request.domain, "a"), product(request.domain, "b")] }], matchingMode: "direct-product-search" }), /RESEARCH_STAGE/);
+  assert.equal(calls, 1);
+  await assert.rejects(store.operation("another-paid-operation", async () => { calls++; }), /DURABLE_STATE/);
+  assert.equal(calls, 1);
+});
+
+async function executeFixture(research, input = { ...request, comparisons: 2 }) {
+  const store = new WorkflowStore(initialState("run_fixture", input), async () => {});
+  const port = createWorkflowPort(store, research); port.preflight = async () => {};
+  await orchestrateValidatedReport({ contractVersion: "6", publicId: store.read().report.run.publicId, primaryDomain: input.domain, locale: "en", reportAttempt: 1, productPlan: "starter", productLimit: input.comparisons },
+    { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: true }, port);
+  return workflowOutput(store);
+}
+
+test("quality repairs and merged facts retain a report-wide seller limit", async () => {
+  const primary = product(request.domain, "p"); let repairs = 0;
+  const result = await executeFixture({
+    crawl: async (input) => ({ ok: true, primaryDomain: input.primary, results: [{ domain: input.primary, products: [input.primary === request.domain ? primary : product(input.primary, "r")], homepage: { regionCountryCode: "GB" }, fetchedAt: primary.observedAt }], discovery: { productSearchCoverage: { complete: true } }, document: { version: "1", blocks: [] } }),
+    search: async (_domain, _primary, _region, feedback) => { if (feedback) repairs++; const rival = product(feedback ? "second.example" : "first.example", feedback ? "r2" : "r1"); return { completed: true, queries: ["fixture"], candidates: [{ domain: rival.domain, sourceUrl: rival.sourceUrl, title: rival.name }] }; },
+    enrich: async (targets) => ({ products: targets.map((target) => ({ ...product(target.domain, target.productId), sourceUrl: target.sourceUrl })), coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: targets.length, gaps: [] } }),
+    actions: async (inputs) => deterministicProductActionResult(inputs),
+  });
+  assert.ok(repairs > 0);
+  assert.equal(result.competitors.length, 1);
+  assert.equal(result.comparisons.length, 1);
+  assert.equal(result.status, "limited");
+  assert.equal(new Set(result.facts.matches.map((match) => match.rivalDomain)).size, 1);
+});
+
+for (const status of ["parked", "unavailable"]) test(`${status} primary keeps its factless terminal limitation`, async () => {
+  const output = await executeFixture({ crawl: async () => ({ ok: false, code: `${status}-domain`, primaryDomain: request.domain, error: "Synthetic source limitation", document: { version: "1", blocks: [{ type: "domain-status", id: "primary-domain-status", domain: request.domain, status, evidenceUrl: `https://${request.domain}/`, attemptedUrl: `https://${request.domain}/` }] } }) });
+  assert.equal(output.status, "limited"); assert.equal(output.comparisons.length, 0); assert.ok(output.report);
 });

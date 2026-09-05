@@ -2,7 +2,7 @@ import { AbortTaskRunError, metadata, runs, task } from "@trigger.dev/sdk";
 import { orchestrateValidatedReport } from "../trigger/report-orchestration-core.ts";
 import { PermanentOrchestrationError } from "../shared/report-orchestration-contract.ts";
 import { requestSchema, type DirectRequest } from "./core.ts";
-import { decodeState, encodeState, initialState, WorkflowStore, type StatePacket } from "./workflow-state.ts";
+import { commitStatePointer, decodeState, encodeState, initialState, WorkflowStore, type StatePacket, type StatePointer } from "./workflow-state.ts";
 import { createWorkflowPort } from "./workflow-port.ts";
 import { workflowOutput } from "./workflow-output.ts";
 
@@ -18,12 +18,11 @@ export const directWorkflowSnapshot = task({
   },
 });
 
-type Pointer = { runId: string; ownerRunId: string; revision: number; hash: string };
 const STATE_KEY = "marketSignalWorkflowStateV1";
 async function openStore(ownerRunId: string, request: DirectRequest, workerVersion: string, attemptNumber: number) {
   if (!workerVersion) throw new AbortTaskRunError("DEPLOYED_WORKER_VERSION_REQUIRED");
-  await metadata.refresh();
-  const pointer = metadata.get(STATE_KEY) as Pointer | undefined;
+  const current = await runs.retrieve(ownerRunId);
+  const pointer = current.metadata?.[STATE_KEY] as StatePointer | undefined;
   let state;
   if (pointer) {
     if (pointer.ownerRunId !== ownerRunId || !/^run_[A-Za-z0-9_-]+$/.test(pointer.runId)) throw new AbortTaskRunError("INVALID_STATE_POINTER");
@@ -42,8 +41,12 @@ async function openStore(ownerRunId: string, request: DirectRequest, workerVersi
       idempotencyKey: `${ownerRunId}:state:${packet.revision}:${packet.hash}`, idempotencyKeyTTL: "7d",
     });
     if (!saved.ok || saved.output.hash !== packet.hash || saved.output.ownerRunId !== ownerRunId) throw new Error("SNAPSHOT_SAVE_FAILED");
-    metadata.set(STATE_KEY, { runId: saved.id, ownerRunId, revision: packet.revision, hash: packet.hash });
-    await metadata.flush();
+    // SDK flush can swallow transport failures or return while another flush
+    // is active. Only the management API read-back is our commit receipt.
+    await commitStatePointer({ runId: saved.id, ownerRunId, revision: packet.revision, hash: packet.hash }, {
+      set: (pointer) => { metadata.set(STATE_KEY, pointer); }, flush: () => metadata.flush(),
+      read: async () => (await runs.retrieve(ownerRunId)).metadata?.[STATE_KEY],
+    });
   };
   if (!pointer) await persist(encodeState(state));
   return new WorkflowStore(state, persist);
