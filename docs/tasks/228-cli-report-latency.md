@@ -147,3 +147,34 @@ quality loop repair terminal/unschedulable gaps rather than retry the identical
 whole task. Undefined legacy retryability and transient failures keep existing
 retry semantics. Regression coverage includes a real orchestrator fixture that
 repairs an unschedulable gap to 20 priced pairs within the same task attempt.
+
+## Handoff / review blocker — 2026-09-05 15:18:49 UTC
+
+Latest implementation head: `ecd5932c757d550e8bbfa485f5c61999b977d6a0`.
+Independent full npm build/typechecks and 1,378 tests passed; explicit direct
+worker TypeScript check and source lint passed. PR #228 Contributor validation
+passed at this code head. Go tests/vet had passed after the last CLI changes.
+
+Final Claude review failed before model execution: category authentication,
+exact sanitized message `Failed to authenticate: OAuth session expired and could
+not be refreshed`, session `d093a6da-f55a-4c2f-abbe-b849419e8990`. Read-only
+`claude auth status --json` confirmed `loggedIn: false`, `authMethod: none`.
+This is not a capacity/quota error, so the configured Codex review fallback does
+not apply. The claude-delegate skill/repository gate blocks rollout until login
+and exact-head review. No API credential substitution or silent model fallback.
+
+PR #228 remains draft, unmerged. Latest deployed test version is `20260905.4`
+at `7e87ca3814ac49a91b98ee6692b6d34bebb1acce`, deployment `alxzeqyh` (unpromoted).
+The latest self-domain/retry fixes are NOT deployed. No VPS/Sites deployment,
+default worker promotion, or replacement of the user's installed CLI occurred.
+Updated tested CLI binary is `C:/tmp/marketsignal-trigger-latency.exe`, version
+`ecd5932c757d550e8bbfa485f5c61999b977d6a0`, with automatic progress and default
+waiting; its backend changes are not ready for user acceptance yet.
+
+All live work launched in this task is terminal: first pilot completed limited,
+second was explicitly canceled. Do not resubmit their request IDs or present
+them as 20-pair successes. The two-minute/20-useful-pair target is NOT achieved.
+Next: restore Claude subscription login, strict exact-head review, pinned
+unpromoted deployment, one same-domain 20-pair/5-rival test with timing/receipt
+inspection, then representative domains within the authorized ten-domain bound
+only if that acceptance improves. Keep broad rollout blocked until proven.
