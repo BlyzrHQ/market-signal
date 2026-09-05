@@ -371,7 +371,10 @@ function isExplicitProductDetailSource(url: string) {
     const detail = productDetailPath(url);
     const path = detail.path;
     if (!path || path === "/" || isListingRoute(url) || PUBLISHER_PATH.test(path) || !isCrawlableProductLead(url)) return false;
-    if (!detail.containerDetail && !detail.htmlDetail) return false;
+    // Salla product routes commonly end in /<product-slug>/p<digits>.
+    // This is a lead shape only; the exact page must still expose Product/price.
+    const idDetail = /^\/(?:[a-z]{2}\/)?[^/]+\/p\d{4,}\/?$/i.test(path);
+    if (!detail.containerDetail && !detail.htmlDetail && !idDetail) return false;
     return true;
   } catch {
     return false;
@@ -897,7 +900,9 @@ async function runLane(endpoint: string, apiKey: string, model: string, lane: Se
         input: [
           { role: "system", content: `${prompt.system}${retainDistinctProductUrls ? " Find up to six distinct relevant product-detail URLs, not just one seller. Several relevant products from one seller are welcome; include other sellers when available. For an opaque brand/collection name, use the observed description, category and attributes to search for the actual product type, material, contents and size rather than searching only the decorative name. Do not infer unobserved contents or pretend a packaging-only product is a filled gift. Return concise page titles and URLs; live price verification is a separate step." : ""}${repairFeedback ? " This is a bounded quality-repair search. Use different faithful query wording and return additional distinct exact seller product pages; do not lower the evidence or product-page requirements." : ""}` },
           { role: "user", content: JSON.stringify({
-            task: prompt.task,
+            task: retainDistinctProductUrls
+              ? `Find up to six distinct comparable product pages sold by OTHER businesses in ${business.region}. Exclude ${business.domain}, its subdomains, and all its language/locale pages from every query and result; use -site:${business.domain} in search queries. Use the observed product description and category to identify the actual contents/type/size. Search that product type and important attributes, not only the subject's proprietary collection name. Return multiple relevant priced-page candidates from a seller when available. Never return the subject's own pages as rivals.`
+              : prompt.task,
             lane,
             ...(repairFeedback ? { repair: { round: repairFeedback.round, reasonCodes: repairFeedback.reasonCodes, previouslyAcceptedSourceCount: repairFeedback.excludedRivalSourceUrls.length,
               excludedSourceUrls: repairFeedback.excludedRivalSourceUrls.slice(0, 100),

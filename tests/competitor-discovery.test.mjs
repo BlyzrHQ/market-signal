@@ -62,6 +62,8 @@ test("direct search keeps every bounded source-backed structured URL, not only t
     const body = JSON.parse(init.body);
     assert.deepEqual(body.text.format.schema.properties.candidates.items.required,["url","title"]);
     assert.match(body.input[0].content,/six distinct relevant product-detail URLs/);
+    assert.match(JSON.parse(body.input[1].content).task,/-site:myjam.co.uk/);
+    assert.match(JSON.parse(body.input[1].content).task,/OTHER businesses/);
     return Response.json({status:"completed",output:[
     {type:"web_search_call",status:"completed",action:{query:"Saudi date gifts",sources:candidates.map(c=>({url:c.matchedProductUrl,title:c.evidenceTitle}))}},
     {type:"message",content:[{type:"output_text",text:JSON.stringify({queries:["Saudi date gifts"],candidates:candidates.map(c=>({url:c.matchedProductUrl,title:c.evidenceTitle}))})}]},
@@ -72,6 +74,15 @@ test("direct search keeps every bounded source-backed structured URL, not only t
     assert.equal(result.candidates.length,6);
     assert.deepEqual(result.candidates.map(c=>c.title),candidates.map(c=>c.evidenceTitle));
   } finally {globalThis.fetch=previousFetch;if(previousKey)process.env.OPENAI_API_KEY=previousKey;else delete process.env.OPENAI_API_KEY;}
+});
+
+test("Salla exact item routes remain private leads and listing routes remain excluded", () => {
+  const profile={domain:"primary.example",title:"Primary",description:"",region:"SA",language:"ar",products:[product("تمر محشي","https://primary.example/products/dates")]};
+  const lead=url=>structuredProductLeadCandidate({domain:"seller.example",websiteUrl:"https://seller.example/",matchedProductUrl:url,evidenceUrl:url,evidenceTitle:"Stuffed date gift"},profile.domain,profile);
+  assert.equal(lead("https://seller.example/date-gift/p1234567")?.observedAdmission,false);
+  assert.equal(lead("https://seller.example/en/date-gift/p1234567")?.inferredProductLeads.length,1);
+  assert.equal(lead("https://seller.example/categories/p1234567"),null);
+  assert.equal(lead("https://seller.example/search/p1234567"),null);
 });
 
 const profile = {

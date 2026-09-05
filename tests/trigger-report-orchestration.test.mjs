@@ -660,6 +660,26 @@ test("an invalid direct-search price pair is removed and the paid report publish
   assert.equal(port.events.some((item) => item.status === "failed"), false);
 });
 
+test("direct reports repair an unschedulable price gap without retrying the unchanged whole task", async () => {
+  const source=comparison({withPair:true,count:20});
+  const initial=directComparisonSlice(source,0,19);
+  initial.rows[0].matches[0].product.jsonLdType="PageSignal";
+  initial.rows[0].matches[0].product.priceSignals=[];
+  const plan=planFinalProductEnrichmentTargets(initial,7000);
+  assert.equal(plan.truncated,true);
+  let repairs=0;
+  const port=mockPort({
+    async match(input){if(input.repairFeedback){repairs++;return {ok:true,comparison:directComparisonSlice(source,0,20)};}return {ok:true,comparison:structuredClone(initial)};},
+    async enrich(){throw Error("No safe missing page to fetch");},
+  });
+  const result=await orchestrateReport({...payload,contractVersion:"6"},{attemptNumber:1,taskAttemptNumber:1,isFinalAttempt:false},port);
+  assert.ok(["complete","limited"].includes(result.reportStatus));
+  assert.ok(port.events.some(e=>e.phase==="quality"&&e.metadata?.status==="pass"));
+  assert.ok(repairs>0);
+  assert.equal(port.events.some(e=>e.idempotencyKey.endsWith("matching-task-retry")),false);
+  assert.equal(port.factChunks.filter(c=>c.kind==="matches").flatMap(c=>c.items).length,20);
+});
+
 test("the report quality loop checkpoints feedback before a focused repair reaches the comparison target", async () => {
   const source = comparison({ withPair: true, count: 20 });
   const initial = directComparisonSlice(source, 0, 19);

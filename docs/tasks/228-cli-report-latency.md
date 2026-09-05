@@ -117,3 +117,33 @@ Inline-state review: verified `claude-fable-5-1`, session
 Its key-order robustness observation was applied: compare canonical hashes of
 the complete inline packet, with reordered-key and corruption regression tests.
 Full suite at inline-state head: 1,375 passing; direct-worker TypeScript passed.
+
+## Second pinned acceptance run (stopped; target failed)
+
+Worker `20260905.4`, source `7e87ca3814ac49a91b98ee6692b6d34bebb1acce`,
+deployment `alxzeqyh`, reviewed PASS by verified Fable session
+`aa358ca8-b463-4d87-be67-fbbce67c9b61`. CI passed. Run
+`run_06g743dvi8omvo72sb1f0ana01` started after 255 ms. Crawl completed after
+42 seconds; 25 searches and first enrichment finished by about 100 seconds.
+Inline state read-back worked. It then retried identical enrichment because
+the plan marked 9 eligible records, 8 schedulable, as processing-incomplete.
+This was not a simple eight-page budget: an unschedulable record made the plan
+truncated. Repeating it cannot make progress. The owned pilot was canceled and
+confirmed CANCELED, with zero in-flight paid operations. Search receipts stayed
+at 25 across retries; usage-derived OpenAI estimate USD 0.83140820. No new paid
+searches were launched by those task retries. Total known estimate across both
+fresh pilots: USD 2.56709435, not settled billing.
+
+Read-only retrieval of three already-paid OpenAI responses showed the returned
+URLs were the primary domain's own pages. They were correctly rejected, but the
+search prompt did not explicitly exclude the primary and insisted on proprietary
+names. Correct the direct query instructions to exclude the domain, use observed
+contents/type/size, and request other businesses. Recognize bounded Salla
+`/<slug>/p<digits>` item routes as private leads, still requiring page checks.
+
+For direct research, distinguish nonretryable coverage gaps from transient
+enrichment failure. Retain the visible truncated-coverage flag, but let the
+quality loop repair terminal/unschedulable gaps rather than retry the identical
+whole task. Undefined legacy retryability and transient failures keep existing
+retry semantics. Regression coverage includes a real orchestrator fixture that
+repairs an unschedulable gap to 20 priced pairs within the same task attempt.
