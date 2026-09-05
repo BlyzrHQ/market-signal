@@ -1,8 +1,8 @@
 import { cimd } from "@better-auth/cimd";
-import { fetchClientMetadataResource } from "@better-auth/cimd/node";
 import { mcp } from "@better-auth/mcp";
 import { jwt } from "better-auth/plugins";
 import { BILLING_PLANS, configuredPriceId, hostedBillingEnabled } from "./billing-plans.ts";
+import { fetchPinnedClientMetadataResource } from "./cimd-node-transport.ts";
 import {
   CLI_AUTHORIZATION_SCOPES,
   CLI_ACCESS_TOKEN_TTL_SECONDS,
@@ -72,7 +72,7 @@ export function createHostedMcpAuthPlugins(baseURL: string) {
       enforcePerClientResources: true,
     }),
     cimd({
-      fetchClientMetadataResource,
+      fetchClientMetadataResource: fetchPinnedClientMetadataResource,
       metadataProfile: "mcp-2026-07-28",
       metadataRevalidationInterval: "60m",
       maxCacheEntries: 500,

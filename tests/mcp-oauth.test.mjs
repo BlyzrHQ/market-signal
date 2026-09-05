@@ -37,6 +37,7 @@ import { ReportApiAuthorizationError, reportApiAccountContext } from "../app/lib
 
 const BASE_URL = "https://signal.blyzr.com";
 const CALLBACK_URL = "http://127.0.0.1:45891/callback";
+const CODEX_CLIENT_ID = "https://chatgpt.com/oauth/codex/client.json";
 const TEST_CLIENT_ID = "market-signal-standards-harness";
 
 async function fixture() {
@@ -277,6 +278,43 @@ test("OAuth metadata advertises CIMD, exact resource scopes, PKCE, and no DCR", 
         signingAlgorithm: "EdDSA",
         allowedScopes: JSON.stringify(MCP_AUTHORIZATION_SCOPES),
       },
+    );
+  } finally {
+    database.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("official Codex CIMD client reaches consent with a dynamic loopback port", {
+  skip: process.env.MARKET_SIGNAL_TEST_CIMD_NETWORK !== "1",
+}, async () => {
+  const { auth, database, directory } = await fixture();
+  try {
+    const cookie = await signUp(auth);
+    const verifier = "codex-client-compatibility-verifier-with-more-than-forty-three-characters";
+    const challenge = createHash("sha256").update(verifier).digest("base64url");
+    const authorize = new URL(`${BASE_URL}/api/auth/oauth2/authorize`);
+    authorize.searchParams.set("client_id", CODEX_CLIENT_ID);
+    authorize.searchParams.set("redirect_uri", CALLBACK_URL);
+    authorize.searchParams.set("response_type", "code");
+    authorize.searchParams.set("scope", "reports:read");
+    authorize.searchParams.set("state", "codex-client-compatibility");
+    authorize.searchParams.set("code_challenge", challenge);
+    authorize.searchParams.set("code_challenge_method", "S256");
+    authorize.searchParams.set("resource", MCP_RESOURCE);
+    authorize.searchParams.set("prompt", "consent");
+
+    const response = await auth.handler(new Request(authorize, {
+      headers: { cookie, accept: "text/html", "sec-fetch-mode": "navigate" },
+    }));
+    assert.equal(response.status, 302, await response.text());
+    const location = response.headers.get("location");
+    assert.ok(location);
+    const consentURL = new URL(location, BASE_URL);
+    assert.equal(consentURL.origin + consentURL.pathname, `${BASE_URL}/oauth/consent`);
+    assert.equal(
+      database.prepare("SELECT clientDiscoveryId FROM oauthClient WHERE clientId = ?").get(CODEX_CLIENT_ID)?.clientDiscoveryId,
+      "cimd",
     );
   } finally {
     database.close();
