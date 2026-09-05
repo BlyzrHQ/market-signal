@@ -268,7 +268,7 @@ export async function buildDirectProductSearchComparison(primaryDomainValue: str
   const excludedRivalSourceUrls = new Set(options.repairFeedback?.excludedRivalSourceUrls || []);
   const searchProducts = primaryProducts
     .map((primary, primaryIndex) => ({ primary, primaryIndex }))
-    .filter(({ primary }) => !repairPrimaryIds || repairPrimaryIds.has(primary.id));
+    .filter(({ primary }) => (!repairPrimaryIds || repairPrimaryIds.has(primary.id)) && searchablePrimaryProduct(primary, referenceTimeMs));
   const rows: ProductComparison["rows"] = [];
   const outcomes: Array<{ primary: ProductRecord; checkpoint: Extract<DirectProductSearchCheckpoint, { version: 2 }> }> = [];
   const processedPrimaryIds: string[] = [];

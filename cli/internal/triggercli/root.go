@@ -184,7 +184,7 @@ func newRoot(version string, o options) *cobra.Command {
 		command.Flags().IntVar(&rivals, "rivals", 10, "maximum distinct rival domains in delivered comparisons")
 		command.Flags().StringVar(&id, "request-id", "", "required unique logical request ID; Trigger deduplication expires after 24h")
 		command.Flags().DurationVar(&maxWait, "max-wait", time.Hour, "wait budget; does not cancel the Trigger run")
-		command.Flags().DurationVar(&poll, "poll", 15*time.Second, "status poll interval")
+		command.Flags().DurationVar(&poll, "poll", 5*time.Second, "status poll interval")
 		command.Flags().BoolVar(&noWait, "no-wait", false, "return the Trigger run ID immediately")
 		root.AddCommand(command)
 	}
@@ -212,7 +212,7 @@ func newRoot(version string, o options) *cobra.Command {
 			return displayRun(c, r)
 		}}
 		command.Flags().DurationVar(&maxWait, "max-wait", time.Hour, "wait budget")
-		command.Flags().DurationVar(&poll, "poll", 15*time.Second, "poll interval")
+		command.Flags().DurationVar(&poll, "poll", 5*time.Second, "poll interval")
 		root.AddCommand(command)
 	}
 	for _, name := range []string{"doctor", "tools"} {

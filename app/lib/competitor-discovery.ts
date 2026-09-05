@@ -895,9 +895,7 @@ async function runLane(endpoint: string, apiKey: string, model: string, lane: Se
         include: ["web_search_call.action.sources"],
         reasoning: { effort: "low" },
         input: [
-          { role: "system", content: repairFeedback
-            ? `${prompt.system} This is a bounded quality-repair search. Use different faithful query wording and return additional distinct exact seller product pages; do not lower the evidence or product-page requirements.`
-            : prompt.system },
+          { role: "system", content: `${prompt.system}${retainDistinctProductUrls ? " Find up to six distinct relevant product-detail URLs, not just one seller. Several relevant products from one seller are welcome; include other sellers when available. For an opaque brand/collection name, use the observed description, category and attributes to search for the actual product type, material, contents and size rather than searching only the decorative name. Do not infer unobserved contents or pretend a packaging-only product is a filled gift. Return concise page titles and URLs; live price verification is a separate step." : ""}${repairFeedback ? " This is a bounded quality-repair search. Use different faithful query wording and return additional distinct exact seller product pages; do not lower the evidence or product-page requirements." : ""}` },
           { role: "user", content: JSON.stringify({
             task: prompt.task,
             lane,
@@ -907,7 +905,16 @@ async function runLane(endpoint: string, apiKey: string, model: string, lane: Se
             profile: { domain: business.domain, brandName: business.brandName, businessType: business.businessType, category: business.category, categoryTerms: business.categoryTerms, region: business.region, language: business.language, offerings: representativeProducts(business.offerings).map((product) => ({ name: productSearchLabel(product), observedAliases: (product.aliases || []).map((alias) => ({ name: alias.name, locale: alias.locale, sourceUrl: alias.sourceUrl })), category: product.category, description: product.description, sourceUrl: product.sourceUrl })) },
           }) },
         ],
-        text: { format: { type: "json_schema", name: "market_entity_discovery", strict: true, schema: {
+        text: { format: { type: "json_schema", name: "market_entity_discovery", strict: true, schema: retainDistinctProductUrls ? {
+          type: "object", additionalProperties: false,
+          properties: {
+            queries: { type: "array", items: { type: "string" } },
+            candidates: { type: "array", maxItems: 6, items: {
+              type: "object", additionalProperties: false,
+              properties: { url: { type: "string" }, title: { type: "string" } }, required: ["url", "title"],
+            } },
+          }, required: ["queries", "candidates"],
+        } : {
           type: "object", additionalProperties: false,
           properties: {
             category: { type: "string" },
@@ -953,19 +960,47 @@ async function runLane(endpoint: string, apiKey: string, model: string, lane: Se
           && Array.isArray((value as Record<string, unknown>).candidates)) parsed = value as Record<string, unknown>;
       } catch { parsed = null; }
     }
+    if (retainDistinctProductUrls && parsed && Array.isArray(parsed.candidates)
+      && parsed.candidates.every((item) => item && typeof item === "object" && typeof item.url === "string" && typeof item.title === "string")) {
+      // Adapt the small direct-search response into the existing validated lead
+      // contract. Company descriptions/reasons are not needed for URL retrieval.
+      parsed = { category: business.category || "Product comparisons", region: business.region || "Requested market", queries: parsed.queries,
+        candidates: parsed.candidates.flatMap((item: { url: string; title: string }) => {
+          const url = cleanSearchUrl(item.url), domain = canonicalDomain(url);
+          if (!url || !domain) return [];
+          return [{ domain, companyName: domain, reason: "Possible product comparison; exact page requires verification.", searchQuery: "product search",
+            websiteUrl: new URL("/", url).toString(), evidenceUrl: url, evidenceTitle: item.title.slice(0, 180), marketCategory: "",
+            relationship: "adjacent", sharedOfferings: [], matchedPrimaryProductName: profile.products[0]?.name || "", matchedProductUrl: url }];
+        }),
+      };
+    }
     if (!completedWebSearch(payload)) return { lane, category: business.category, region: business.region, queries: [], candidates: [], completed: false, failureCategory: "incomplete-search", gap: `${lane} search returned no completed web-search call; it cannot count as an exhausted search.` };
     const structuredComplete = Boolean(parsed && structurallyValidDiscovery(parsed));
     const queries = structuredComplete
       ? (Array.isArray(parsed!.queries) ? parsed!.queries : []).map(String).filter(Boolean).slice(0, 8)
       : completedWebSearchQueries(payload);
     const rawCandidates = structuredComplete && Array.isArray(parsed!.candidates) ? parsed!.candidates : [];
+    const attributedSources = new Map(searchSources(payload).map((source) => [cleanSearchUrl(source.url), source]));
     let privateStructuredLeads = 0;
     const modelCandidates = rawCandidates.flatMap((item) => {
       const candidate = lane === "product" ? null : sanitizeCandidate(item, business.domain, lane, profile);
       if (candidate) return [candidate];
-      if (lane !== "product" || privateStructuredLeads >= MAX_MODEL_STRUCTURED_LEADS_PER_LANE) return [];
+      if (lane !== "product") return [];
       const privateLead = structuredProductLeadCandidate(item, business.domain, profile);
       if (!privateLead) return [];
+      const exactUrl = privateLead.inferredProductLeads?.[0]?.candidateSourceUrl || "";
+      const source = attributedSources.get(cleanSearchUrl(exactUrl));
+      // Direct research must not throw away source-backed structured results
+      // just because Arabic/opaque product URLs fail lexical title matching.
+      // These remain investigation leads, not verified facts: enrichment still
+      // checks the exact live page, identity, currency and non-empty price.
+      if (retainDistinctProductUrls && source) return [{
+        ...privateLead,
+        sourceUrl: exactUrl,
+        matchedProductUrl: exactUrl,
+        evidence: [{ url: exactUrl, title: String(source.title || (item as Record<string, unknown>).evidenceTitle || "").slice(0, 180), method: "product-search" as const }],
+      }];
+      if (privateStructuredLeads >= MAX_MODEL_STRUCTURED_LEADS_PER_LANE) return [];
       privateStructuredLeads += 1;
       return [privateLead];
     });
@@ -1057,7 +1092,7 @@ export async function searchDirectProductPages(primaryDomainValue: string, prima
         .replace(/\s+/g, " ")
         .trim();
       const tokens = normalizedTokens(segment);
-      const descriptiveTokens = tokens.filter((token) => /\p{L}/u.test(token) && !/^(?:id|item|p|pid|product|products|sku|variant)$/i.test(token));
+      const descriptiveTokens = tokens.filter((token) => /\p{L}/u.test(token) && !/^[a-f0-9]{4,}$/i.test(token) && !/^(?:id|item|p|pid|product|products|sku|variant)$/i.test(token));
       return tokens.length >= 2 && descriptiveTokens.length ? segment : "";
     } catch {
       return "";

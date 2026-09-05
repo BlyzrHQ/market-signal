@@ -70,3 +70,30 @@ source lint with `--ignore-pattern .trigger` passes with one existing UI image
 warning. Final exact-head review and live timing/coverage acceptance are pending.
 The 120-second target is **not yet proven**. Do not call this task complete until
 the pinned worker is measured on real public domains.
+
+## First pinned acceptance run (failed target)
+
+Head `c7eaa9bd8c7cb4407d5464c02ac1cda3abdaa332`, unpromoted worker
+`20260905.3`, deployment `0g3xcvy3`, Fable code-safety PASS from verified
+`claude-fable-5-1` session `b9e51a41-9d82-4eb4-975c-86a52a305746`.
+Independent full suite: 1,370 passing tests; Go tests/vet/build and source lint
+passed. PR #228 Contributor validation passed. No promotion or merge.
+
+Musa run `run_06g73mf7f8kilqcue4ihhh1q01` completed limited: 6/20 pairs,
+5 sellers, 47 catalog items (25 priced). CLI wall time 353.700 seconds,
+internal report time 319.890 seconds. Trigger started after 250 ms. There were
+49 searches and 51 recorded provider receipts. Usage-derived OpenAI standard
+price estimate: USD 1.73568615 (not settled billing); Trigger compute reported
+0.479773125 cents. The older report's AI bill is unknown, so no cost-saving
+percentage is claimed. Only one fresh paid domain run has been started so far.
+
+All three repair passes returned transport-failed. Code inspection found a race
+introduced by concurrent searches: fallback checkpoint allocation selected the
+same first-free slot while earlier writes were pending. Reserve the slot before
+awaiting persistence; retain all paid-operation intent/replay protection.
+Additional corrections filter unpriced primaries before forming search waves,
+retain up to six source-backed structured leads instead of clipping them to one,
+and use a compact URL/title response schema with an explicit multi-result prompt.
+No unpublished source URL becomes a verified fact without live page/price checks.
+The automatic CLI polling interval is reduced from 15 to 5 seconds; progress
+messages remain throttled and stdout remains a single final JSON object.

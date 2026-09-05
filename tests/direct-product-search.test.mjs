@@ -26,6 +26,19 @@ test("bounded parallel waves retain deterministic output and stop after the targ
   assert.deepEqual(result.rows.map(r => r.primary.name), ["Product 0", "Product 1", "Product 10", "Product 11"]);
 });
 
+test("unpriced primaries do not occupy parallel slots and checkpoint indices stay stable", async () => {
+  const primaries = Array.from({length:8}, (_,i)=>product("shop.test",`p${i}`,`Product ${i}`,i%2 ? 10 : undefined));
+  const savedIndices = [];
+  let active=0, peak=0;
+  await buildDirectProductSearchComparison("shop.test",[{domain:"shop.test",products:primaries}],{
+    resultTarget:20,concurrency:4,referenceTimeMs:Date.parse(observedAt),
+    search:async()=>{active++;peak=Math.max(peak,active);await new Promise(r=>setTimeout(r,5));active--;return {completed:true,queries:[],candidates:[]};},
+    loadSearchCheckpoint:async key=>{savedIndices.push(key.primaryIndex);return null;},
+  });
+  assert.equal(peak,4);
+  assert.deepEqual(savedIndices,[1,3,5,7]);
+});
+
 test("wrong-currency sellers never consume the target or rival cap", async () => {
   const p = product("shop.test", "p", "Honey 500g", 10);
   const wrong = product("aaa.test", "wrong", "Honey 500g", 12, "USD");

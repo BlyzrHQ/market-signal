@@ -54,6 +54,26 @@ function product(name, sourceUrl) {
   };
 }
 
+test("direct search keeps every bounded source-backed structured URL, not only the first private lead", async () => {
+  const previousKey = process.env.OPENAI_API_KEY, previousFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "synthetic-fixture-only";
+  const candidates = Array.from({length:6}, (_,i) => ({domain:"seller.example", companyName:"Seller", reason:"Possible gift alternative",searchQuery:"Saudi date gifts",websiteUrl:"https://seller.example/",evidenceUrl:`https://seller.example/products/sku-${i}`,evidenceTitle:`Gift assortment ${i}`,marketCategory:"Gifts",relationship:"adjacent",sharedOfferings:["Gift"],matchedPrimaryProductName:"الواحة",matchedProductUrl:`https://seller.example/products/sku-${i}`}));
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    assert.deepEqual(body.text.format.schema.properties.candidates.items.required,["url","title"]);
+    assert.match(body.input[0].content,/six distinct relevant product-detail URLs/);
+    return Response.json({status:"completed",output:[
+    {type:"web_search_call",status:"completed",action:{query:"Saudi date gifts",sources:candidates.map(c=>({url:c.matchedProductUrl,title:c.evidenceTitle}))}},
+    {type:"message",content:[{type:"output_text",text:JSON.stringify({queries:["Saudi date gifts"],candidates:candidates.map(c=>({url:c.matchedProductUrl,title:c.evidenceTitle}))})}]},
+  ]});};
+  try {
+    const result = await searchDirectProductPages("myjam.co.uk",product("الواحة","https://myjam.co.uk/products/gift"),"SA");
+    assert.equal(result.completed,true);
+    assert.equal(result.candidates.length,6);
+    assert.deepEqual(result.candidates.map(c=>c.title),candidates.map(c=>c.evidenceTitle));
+  } finally {globalThis.fetch=previousFetch;if(previousKey)process.env.OPENAI_API_KEY=previousKey;else delete process.env.OPENAI_API_KEY;}
+});
+
 const profile = {
   domain: "myjam.co.uk",
   title: "MyJam",
