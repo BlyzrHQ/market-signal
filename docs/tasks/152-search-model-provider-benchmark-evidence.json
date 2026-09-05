@@ -1,0 +1,163 @@
+{
+  "task": 152,
+  "recorded_at": "2026-08-25",
+  "currency": "USD",
+  "paid_api_spend_usd": 0,
+  "production_mutated": false,
+  "corpus": [
+    {
+      "source_sku": "B118WL",
+      "title": "Allie Custom Tote Bag",
+      "brand": "Port Authority",
+      "source_url": "https://wearform.com/products/port-authority-allie-custom-tote-bag-b118wl",
+      "source_price": 31.6,
+      "description": "11 oz garment-washed cotton canvas, lined tote, interior zip pocket, webbing handles, 15.75 x 13.25 x 3.5 inches"
+    },
+    {
+      "source_sku": "A515WL",
+      "title": "3-Pocket Waist Custom Apron",
+      "brand": "Port Authority",
+      "source_url": "https://wearform.com/products/port-authority-3-pocket-waist-custom-apron-a515wl",
+      "source_price": 18.54,
+      "description": "7 oz cotton twill, stain release, three pouch pockets plus pen pocket, 23 x 11 inches"
+    },
+    {
+      "source_sku": "TM1MU423WL",
+      "title": "Cruz Trucker Custom Cap",
+      "brand": "TravisMathew",
+      "source_url": "https://wearform.com/products/travismathew-cruz-trucker-custom-cap-tm1mu423wl",
+      "source_price": 42.88,
+      "description": "structured mid-profile mesh-back trucker cap, Flexfit 110, adjustable snapback"
+    },
+    {
+      "source_sku": "C938WL",
+      "title": "FlexFit Delta Custom Cap",
+      "brand": "Port Authority",
+      "source_url": "https://wearform.com/products/port-authority-flexfit-delta-custom-cap-c938wl",
+      "source_price": 30.88,
+      "description": "structured mid-profile poly/spandex stretch-fit cap, moisture-wicking, water-repellent, Permacurv bill"
+    },
+    {
+      "source_sku": "13171",
+      "title": "Hi-Visibility Sun Neck Gaiter",
+      "brand": "Paragon",
+      "source_url": "https://wearform.com/products/paragon-hi-visibility-sun-neck-gaiter-13171",
+      "source_price": 8.98,
+      "description": "3.5 oz microfiber polyester, Safety Green ANSI background, moisture/odor management, UPF 50+"
+    }
+  ],
+  "frozen_prompt": "Search the live web for first-party merchant product-detail pages that can serve as rival price comparisons for these five products from a US custom-workwear store. Rules:\n- Return up to 5 rival pages for each source product.\n- Each result must be a direct product-detail page on the merchant's own domain.\n- The page must currently show a finite positive per-item or per-unit price in USD.\n- Exclude wearform.com, marketplaces, directories, search/listing/category pages, articles, PDFs, social media, quote-only pages, and pages where the only number is a cart, setup, order, or quantity total.\n- Exact branded items and close functional substitutes are allowed, but label each exact, close, weak, or wrong.\n- Multiple distinct rivals for one source product are welcome.\n- Do not invent URLs or prices.\nSource products:\n1. Allie Custom Tote Bag; Port Authority; SKU B118WL; 11 oz garment-washed cotton canvas, lined tote, interior zip pocket, webbing handles, 15.75 x 13.25 x 3.5 inches; source price USD 31.60.\n2. 3-Pocket Waist Custom Apron; Port Authority; SKU A515WL; 7 oz cotton twill, stain release, three pouch pockets plus pen pocket, 23 x 11 inches; source price USD 18.54.\n3. Cruz Trucker Custom Cap; TravisMathew; SKU TM1MU423WL; structured mid-profile mesh-back trucker cap, Flexfit 110, adjustable snapback; source price USD 42.88.\n4. FlexFit Delta Custom Cap; Port Authority; SKU C938WL; structured mid-profile poly/spandex stretch-fit cap, moisture-wicking, water-repellent, Permacurv bill; source price USD 30.88.\n5. Hi-Visibility Sun Neck Gaiter; Paragon; SKU 13171; 3.5 oz microfiber polyester, Safety Green ANSI background, moisture/odor management, UPF 50+; source price USD 8.98.\nReturn JSON only in this shape:\n{\"provider\":\"...\",\"products\":[{\"source_sku\":\"...\",\"results\":[{\"url\":\"https://...\",\"merchant\":\"...\",\"visible_title\":\"...\",\"visible_unit_price\":0.00,\"currency\":\"USD\",\"semantic_grade\":\"exact|close|weak|wrong\",\"short_reason\":\"...\"}]}]}\nUse an empty results array if you cannot verify a result.",
+  "providers": [
+    {
+      "provider": "codex_openai_assisted_web_search",
+      "surface": "iterative targeted web queries plus first-party page validation",
+      "status": "completed",
+      "model_id": null,
+      "model_id_note": "Operational Codex workflow baseline; not represented as a paid GPT API model run.",
+      "products_with_publishable_rows": 5,
+      "returned_rows": 10,
+      "publishable_rows": 10,
+      "results": [
+        {"source_sku":"B118WL","url":"https://www.shirtmax.com/bags/port-authority/b118-allie-tote.html","merchant":"ShirtMax","observed_title":"Port Authority B118 Allie Tote","observed_unit_price":20.37,"semantic_grade":"exact","validation":"pass","note":"Direct product page; exact B118; visible starting price."},
+        {"source_sku":"B118WL","url":"https://sanmarsports.com/products/b118","merchant":"SanMar Sports","observed_title":"Port Authority B118 Allie Tote","observed_unit_price":21.22,"semantic_grade":"exact","validation":"pass","note":"Direct product page; exact B118; visible starting price."},
+        {"source_sku":"A515WL","url":"https://www.boltprinting.com/product/a515-restaurant-waist-apron","merchant":"Bolt Printing","observed_title":"Port Authority A515 Waist Apron with Pockets","observed_unit_price":8.61,"semantic_grade":"exact","validation":"pass","note":"Direct product page; exact A515; visible per-item price."},
+        {"source_sku":"A515WL","url":"https://www.deluxe.com/products/promotional/port-authority-waist-apron-pockets-dark-all/22305/","merchant":"Deluxe","observed_title":"Port Authority Waist Apron with Pockets","observed_unit_price":15.59,"semantic_grade":"exact","validation":"pass","note":"Direct product page; exact item; used the visible per-unit quantity-table price, not the order total."},
+        {"source_sku":"TM1MU423WL","url":"https://makemycap.com/products/travismathew-cruz-trucker-cap-tm1mu423","merchant":"Make My Cap","observed_title":"TravisMathew Cruz Trucker Cap TM1MU423","observed_unit_price":29.95,"semantic_grade":"exact","validation":"pass","note":"Direct product page; exact TM1MU423; visible price."},
+        {"source_sku":"TM1MU423WL","url":"https://sanmarsports.com/products/tm1mu423","merchant":"SanMar Sports","observed_title":"TravisMathew TM1MU423 Cruz Trucker Cap","observed_unit_price":27.5,"semantic_grade":"exact","validation":"pass","note":"Direct product page; exact TM1MU423; visible starting price."},
+        {"source_sku":"C938WL","url":"https://www.jiffy.com/portauthority-C938.html","merchant":"Jiffy","observed_title":"Port Authority C938 Flexfit Delta Cap","observed_unit_price":15.88,"semantic_grade":"exact","validation":"pass","note":"Direct product page; exact C938; visible price tier."},
+        {"source_sku":"C938WL","url":"https://www.dtlaprint.com/products/flexfit-delta-seamless-cap-180/","merchant":"DTLA Print","observed_title":"Flexfit Delta Seamless Cap 180","observed_unit_price":28.84,"semantic_grade":"close","validation":"pass","note":"Direct product page for the same Flexfit Delta 180 construction, but not the identical Port Authority C938 SKU; visible default per-piece price."},
+        {"source_sku":"13171","url":"https://www.ssactivewear.com/p/paragon/290","merchant":"S&S Activewear","observed_title":"Paragon 290 Hi-Visibility Sun Neck Gaiter","observed_unit_price":7.72,"semantic_grade":"exact","validation":"pass","note":"Direct product page; exact Paragon 290/item 13171; visible starting price."},
+        {"source_sku":"13171","url":"https://designappeal.com/products/c72/paragon/290","merchant":"Design Appeal","observed_title":"Paragon 290 Hi-Visibility Sun Neck Gaiter","observed_unit_price":4.83,"semantic_grade":"exact","validation":"pass","note":"Direct product page; exact Paragon 290/item 13171; visible price."}
+      ]
+    },
+    {
+      "provider": "perplexity_consumer_search",
+      "surface": "anonymous consumer Search UI",
+      "status": "completed",
+      "result_url": "https://www.perplexity.ai/search/b879da06-fc66-4a46-9d7a-3f11e990f413",
+      "model_id": null,
+      "model_id_note": "The consumer surface did not disclose an exact API model; do not relabel this run as Sonar.",
+      "products_with_returned_rows": 4,
+      "returned_rows": 6,
+      "publishable_rows": 0,
+      "results": [
+        {"source_sku":"B118WL","url":"https://www.4imprint.com/product/109781/Select-Zippered-Tote","merchant":"4imprint","returned_visible_title":"Select Zippered Tote","returned_unit_price":8.25,"returned_currency":"USD","returned_semantic_grade":"close","returned_short_reason":"Direct product page showing $8.25 each at the minimum quantity of 50; zippered main compartment, but polyester rather than lined garment-washed cotton canvas and no interior zip pocket.","validation":"reject_stale_price","observed_unit_price":8.69,"note":"Direct close-substitute page, but the current visible MOQ price differed; polyester construction and dimensions also differ."},
+        {"source_sku":"A515WL","url":"https://www.4imprint.com/product/122014/Three-Pocket-Waist-Apron","merchant":"4imprint","returned_visible_title":"Three-Pocket Waist Apron","returned_unit_price":23.75,"returned_currency":"USD","returned_semantic_grade":"exact","returned_short_reason":"Direct product page showing $23.75 each at 6 units; 7-ounce twill, waist style, three-pocket front, and 11 x 23-inch dimensions closely match the source product. Fabric is 65/35 polyester/cotton and includes embroidery.","validation":"reject_stale_price","observed_unit_price":24.25,"note":"Direct close/exact-function page, but current visible MOQ price differed; fabric blend differs from source."},
+        {"source_sku":"C938WL","url":"https://www.floodwayprintco.com/products/headwear/flexfit/delta-seamless-cap-180/","merchant":"Floodway Print Company","returned_visible_title":"Delta Seamless Cap - Custom Flexfit 180","returned_unit_price":24.75,"returned_currency":"USD","returned_semantic_grade":"exact","returned_short_reason":"Direct product page showing a $24.75 each base price; Flexfit Delta 180 performance cap with water-repellent technology, closely matching the source style.","validation":"reject_wrong_currency","observed_unit_price":24.75,"note":"Exact direct page, but merchant is in Winnipeg and page price is CAD/unlabeled, not verified USD."},
+        {"source_sku":"C938WL","url":"https://www.dtlaprint.com/brand/flexfit/","merchant":"DTLA Print","returned_visible_title":"Flexfit Delta Seamless Cap","returned_unit_price":12.31,"returned_currency":"USD","returned_semantic_grade":"exact","returned_short_reason":"Merchant product page showing a $12.31–$29.36 per-unit range; exact Flexfit Delta style, though the displayed price is quantity-dependent.","validation":"reject_listing_page","observed_unit_price":null,"note":"Forbidden brand/listing page. A separate valid direct Delta 180 page exists but was not returned."},
+        {"source_sku":"C938WL","url":"https://www.logosoftwear.com/capsflexfit.php","merchant":"LogoSportswear","returned_visible_title":"Flexfit Delta Snapback","returned_unit_price":30.99,"returned_currency":"USD","returned_semantic_grade":"close","returned_short_reason":"Direct merchant page showing customization from $30.99; Flexfit Delta family product, but the listed snapback variant differs from the source stretch-fit cap.","validation":"reject_unverifiable_403","observed_unit_price":null,"note":"Returned HTTP 403 and could not be independently verified."},
+        {"source_sku":"13171","url":"https://freesunshields.com/products/hi-vis-yellow-safety-green","merchant":"Free Sunshields","returned_visible_title":"Hi-Vis Yellow / Safety Green Neck Gaiter","returned_unit_price":9.99,"returned_currency":"USD","returned_semantic_grade":"close","returned_short_reason":"Direct product page with a $9.99 regular price; safety-green high-visibility neck gaiter, but the available evidence does not verify ANSI compliance, UPF 50+, or custom decoration.","validation":"reject_stale_regular_price","observed_unit_price":4.99,"note":"Direct close-substitute page, but current sale price is USD 4.99; USD 9.99 is the crossed-out regular price. Product is UPF 30 rather than UPF 50+ ANSI."}
+      ]
+    },
+    {
+      "provider": "kimi_consumer_ui",
+      "surface": "kimi.ai consumer UI",
+      "status": "completed",
+      "result_url": "https://www.kimi.ai/chat/1a0395bd-c122-8a12-8000-096a88aeaa5e?chat_enter_method=home",
+      "model_id": null,
+      "consumer_model_label": "K2.6 Instant (automatic fallback from K2.6 Thinking)",
+      "model_id_note": "The consumer UI visibly attempted K2.6 Thinking, then reported a high-demand fallback to K2.6 Instant. No API model identifier or usage telemetry was exposed.",
+      "products_with_returned_rows": 5,
+      "products_with_literal_rule_rows": 5,
+      "returned_rows": 16,
+      "literal_rule_rows": 11,
+      "active_publishable_rows": 10,
+      "operational_note": "The first attempt and retry encountered repeated search-service timeouts. The retry completed after exhausting the UI's tool-call budget and relied substantially on search snippets, so every row below was opened independently.",
+      "results": [
+        {"source_sku":"B118WL","url":"https://www.blankstyle.com/port-authority-b118-allie-tote","merchant":"Blankstyle","returned_visible_title":"Port Authority B118 Allie Tote","returned_unit_price":16.98,"returned_currency":"USD","returned_semantic_grade":"close","returned_short_reason":"Base SKU B118; same 11 oz garment-washed cotton canvas, dimensions, and features. Price visible in page snippet.","observed_unit_price":16.98,"observed_semantic_grade":"exact","validation":"pass_active","note":"Direct exact B118 page; the WL suffix is Wearform-specific, not a different manufacturer style; visible current USD price and purchasable offer."},
+        {"source_sku":"B118WL","url":"https://www.a2zclothing.com/port-authority-b118-allie-tote.html","merchant":"A2Z Clothing","returned_visible_title":"Port Authority B118 Allie Tote","returned_unit_price":16.98,"returned_currency":"USD","returned_semantic_grade":"close","returned_short_reason":"Base SKU B118; same specs as source. Price visible in page snippet.","observed_unit_price":16.98,"observed_semantic_grade":"exact","validation":"pass_active","note":"Direct exact B118 page with visible current USD starting price and Add to Cart."},
+        {"source_sku":"A515WL","url":"https://4yourlogos.com/shop/product/port-authority-waist-apron-with-pockets-a515/","merchant":"4 Your Logos","returned_visible_title":"Port Authority Waist Apron with Pockets A515","returned_unit_price":9.44,"returned_currency":"USD","returned_semantic_grade":"close","returned_short_reason":"Base SKU A515; same 7 oz cotton twill, stain release, three pouch pockets plus pen pocket, 23x11 in. Verified visible price on product page.","observed_unit_price":9.44,"observed_semantic_grade":"exact","validation":"pass_active","note":"Direct exact A515 page with visible USD starting price, six-piece minimum, and Add to cart."},
+        {"source_sku":"A515WL","url":"https://www.fullsource.com/port-authority-aprons/","merchant":"Full Source","returned_visible_title":"Port Authority Full Length Apron with Pockets","returned_unit_price":11.18,"returned_currency":"USD","returned_semantic_grade":"weak","returned_short_reason":"Category page showing $11.18 per apron; exact style match uncertain from snippet.","observed_unit_price":7.14,"observed_semantic_grade":"exact","validation":"reject_listing_page_wrong_item_price","note":"Forbidden category page. The returned USD 11.18 belongs to A500/A510 rows; the same page lists A515 at USD 7.14."},
+        {"source_sku":"TM1MU423WL","url":"https://makemycap.com/products/travismathew-cruz-trucker-cap-tm1mu423","merchant":"Make My Cap","returned_visible_title":"Travis Mathew Cruz Trucker Cap TM1MU423","returned_unit_price":29.95,"returned_currency":"USD","returned_semantic_grade":"exact","returned_short_reason":"Exact SKU TM1MU423; structured mid-profile mesh-back trucker, Flexfit 110, adjustable snapback. Verified visible base price on product page.","observed_unit_price":29.95,"observed_semantic_grade":"exact","validation":"pass_active","note":"Direct exact TM1MU423 page with visible USD price and Add to Cart."},
+        {"source_sku":"TM1MU423WL","url":"https://sanmar-catalog.myshopify.com/products/tm1mu423","merchant":"Apparel by HAAS Printing","returned_visible_title":"TravisMathew Cruz Trucker Cap TM1MU423","returned_unit_price":38.0,"returned_currency":"USD","returned_semantic_grade":"exact","returned_short_reason":"Exact SKU TM1MU423; same product. Verified visible price on product page.","observed_unit_price":38.0,"observed_semantic_grade":"exact","validation":"pass_active","note":"Direct exact TM1MU423 page with visible USD price and Add to cart."},
+        {"source_sku":"TM1MU423WL","url":"https://inkdstores.com/products/travismathew-cruz-trucker-cap-tm1mu423","merchant":"Ink'd Stores","returned_visible_title":"TravisMathew Cruz Trucker Cap TM1MU423","returned_unit_price":53.45,"returned_currency":"USD","returned_semantic_grade":"exact","returned_short_reason":"Exact SKU TM1MU423; same product. Verified visible price on product page.","observed_unit_price":53.45,"observed_semantic_grade":"exact","validation":"pass_unavailable","note":"Direct exact TM1MU423 page and visible USD price, but the page is marked Sold out; literal prompt pass, not an active offer."},
+        {"source_sku":"TM1MU423WL","url":"https://www.sanmar.com/p/11132_VintageIdg","merchant":"SanMar","returned_visible_title":"TravisMathew Cruz Trucker Cap","returned_unit_price":27.5,"returned_currency":"USD","returned_semantic_grade":"exact","returned_short_reason":"Exact SKU TM1MU423; same product. Price visible in page snippet.","observed_unit_price":null,"observed_semantic_grade":"exact","validation":"reject_price_not_publicly_visible","note":"Direct exact Cruz Trucker Cap page, but no public finite USD price was visible and the returned USD 27.50 could not be independently verified."},
+        {"source_sku":"TM1MU423WL","url":"https://theparkwholesale.com/products/travismathew-cruz-trucker-cap-tm1mu423","merchant":"The Park Wholesale","returned_visible_title":"TravisMathew TM1MU423 Cruz Trucker Cap","returned_unit_price":24.75,"returned_currency":"USD","returned_semantic_grade":"exact","returned_short_reason":"Exact SKU TM1MU423; same product. Price visible in page snippet.","observed_unit_price":24.75,"observed_semantic_grade":"exact","validation":"pass_active","note":"Direct exact TM1MU423 page with visible USD price and Add to Cart; manufacturer requires decoration."},
+        {"source_sku":"C938WL","url":"https://www.fullsource.com/port-authority-c938-silver/","merchant":"Full Source","returned_visible_title":"Port Authority C938 Flexfit Delta Cap - Silver","returned_unit_price":15.54,"returned_currency":"USD","returned_semantic_grade":"close","returned_short_reason":"Base SKU C938; same structured mid-profile poly/spandex stretch-fit cap with Permacurv bill. Price visible in snippet.","observed_unit_price":15.54,"observed_semantic_grade":"exact","validation":"pass_active","note":"Direct exact C938 page with visible USD per-cap price and Add to Cart."},
+        {"source_sku":"C938WL","url":"https://www.sanmar.com/p/9434_DarkGrey","merchant":"SanMar","returned_visible_title":"Port Authority Flexfit Delta Cap","returned_unit_price":19.42,"returned_currency":"USD","returned_semantic_grade":"close","returned_short_reason":"Base SKU C938; same product specs. Price visible in page snippet.","observed_unit_price":null,"observed_semantic_grade":"exact","validation":"reject_price_not_publicly_visible","note":"Direct exact Flexfit Delta Cap page, but no public finite USD price was visible and the returned USD 19.42 could not be independently verified."},
+        {"source_sku":"C938WL","url":"https://threadlogic.com/products/port-authority-flexfit-delta-cap","merchant":"Thread Logic","returned_visible_title":"Port Authority Flexfit Delta Cap with your logo","returned_unit_price":26.95,"returned_currency":"USD","returned_semantic_grade":"close","returned_short_reason":"Base SKU C938; same product. Price visible in page snippet.","observed_unit_price":26.95,"observed_semantic_grade":"exact","validation":"pass_active","note":"Direct exact C938 page with visible USD price including a logo and Add to cart."},
+        {"source_sku":"C938WL","url":"https://www.a2zclothing.com/port-authority-c938-flexfit-delta-cap.html","merchant":"A2Z Clothing","returned_visible_title":"Port Authority C938 Flexfit Delta Cap","returned_unit_price":15.54,"returned_currency":"USD","returned_semantic_grade":"close","returned_short_reason":"Base SKU C938; same product. Price visible in page snippet.","observed_unit_price":15.54,"observed_semantic_grade":"exact","validation":"pass_active","note":"Direct exact C938 page with visible USD starting price and Add to Cart."},
+        {"source_sku":"C938WL","url":"https://www.alldayshirts.com/port-authority-c938-flexfit-delta-cap","merchant":"AllDayShirts","returned_visible_title":"Port Authority Flexfit Delta Cap","returned_unit_price":19.42,"returned_currency":"USD","returned_semantic_grade":"close","returned_short_reason":"Base SKU C938; same product. Price visible in page snippet.","observed_unit_price":null,"observed_semantic_grade":null,"validation":"reject_unverifiable_403","note":"Direct URL returned HTTP 403 in an independent signed-in browser and could not be validated."},
+        {"source_sku":"13171","url":"https://www.opentip.com/Paragon-290-Sun-Neck-Gaiter-p-13922690.html","merchant":"OpenTip","returned_visible_title":"Paragon 290 Sun Neck Gaiter Wholesale","returned_unit_price":4.36,"returned_currency":"USD","returned_semantic_grade":"close","returned_short_reason":"Page lists SKU SSA-13171 and shows $4.36 visible price. Same 3.5 oz microfiber polyester, UPF 50+ specs as source.","observed_unit_price":null,"observed_semantic_grade":null,"validation":"reject_unverifiable_403","note":"Direct URL returned a CloudFront HTTP 403 in an independent signed-in browser and could not be validated."},
+        {"source_sku":"13171","url":"https://innovativeuniformsolutions.com/products/gaiter-black-paragon-sun-neck-osfa","merchant":"Innovative Uniform Solutions","returned_visible_title":"Gaiter Black Paragon Sun Neck OSFA","returned_unit_price":6.99,"returned_currency":"USD","returned_semantic_grade":"close","returned_short_reason":"Same Paragon sun neck gaiter product line with visible $6.99 price. Exact SKU match not confirmed from snippet.","observed_unit_price":6.99,"observed_semantic_grade":"close","validation":"pass_active","note":"Direct Paragon Sun Neck Gaiter page with matching UPF 50+ and moisture-wicking attributes, visible USD price, 36 in stock, and Add to cart."}
+      ]
+    },
+    {
+      "provider": "grok_consumer_ui",
+      "surface": "grok.com consumer UI",
+      "status": "completed",
+      "result_url": "https://grok.com/c/b3826216-de2c-4fb7-b986-c85583209592?rid=c86743e7-1222-4a9c-b7dc-083515ffd04a",
+      "model_id": null,
+      "consumer_model_label": "Fast",
+      "model_id_note": "The consumer UI exposed only the label Fast, not an exact xAI API model identifier or usage telemetry.",
+      "products_with_returned_rows": 5,
+      "products_with_literal_rule_rows": 5,
+      "returned_rows": 14,
+      "literal_rule_rows": 11,
+      "active_publishable_rows": 9,
+      "results": [
+        {"source_sku":"B118WL","url":"https://joesusa.com/products/port-authority-allie-tote-b118-port-authority-b118","merchant":"Joe's USA","returned_visible_title":"Port Authority B118 Allie Tote","returned_unit_price":16.98,"returned_currency":"USD","returned_semantic_grade":"exact","returned_short_reason":"Identical Port Authority B118 Allie Tote specs and style","observed_unit_price":16.98,"observed_semantic_grade":"exact","validation":"pass_unavailable","note":"Direct exact B118 page and visible USD price, but marked Unavailable/backordered; literal prompt pass, not an active offer."},
+        {"source_sku":"B118WL","url":"https://sunrisewear.com/products/b118","merchant":"Sunrise Wear","returned_visible_title":"Port Authority® Allie Tote. B118","returned_unit_price":26.99,"returned_currency":"USD","returned_semantic_grade":"exact","returned_short_reason":"Identical Port Authority B118 Allie Tote product","observed_unit_price":26.99,"observed_semantic_grade":"exact","validation":"pass_active","note":"Direct exact B118 page with visible current USD price."},
+        {"source_sku":"B118WL","url":"https://outletshirts.com/port-authority-allie-tote-b118.html","merchant":"OutletShirts","returned_visible_title":"Port Authority Allie Tote. B118","returned_unit_price":16.98,"returned_currency":"USD","returned_semantic_grade":"exact","returned_short_reason":"Identical Port Authority B118 Allie Tote","observed_unit_price":16.98,"observed_semantic_grade":"exact","validation":"pass_active","note":"Direct exact B118 page with visible current USD price."},
+        {"source_sku":"B118WL","url":"https://theparkwholesale.com/products/port-authority-b118-allie-tote","merchant":"The Park Wholesale","returned_visible_title":"Port Authority B118 Allie Tote","returned_unit_price":16.98,"returned_currency":"USD","returned_semantic_grade":"exact","returned_short_reason":"Identical Port Authority B118 Allie Tote","observed_unit_price":16.98,"observed_semantic_grade":"exact","validation":"pass_active","note":"Direct exact B118 page with visible current USD price."},
+        {"source_sku":"B118WL","url":"https://www.bagzdepot.com/products/port-authority-allie-tote-b118","merchant":"BagzDepot","returned_visible_title":"Port Authority Allie Tote. B118","returned_unit_price":21.22,"returned_currency":"USD","returned_semantic_grade":"exact","returned_short_reason":"Identical Port Authority B118 Allie Tote","observed_unit_price":21.22,"observed_semantic_grade":"exact","validation":"pass_active","note":"Direct exact B118 page with visible current USD price and in-stock state."},
+        {"source_sku":"A515WL","url":"https://www.shirtmax.com/accessories/port-authority/a515-waist-apron-with-pockets.html","merchant":"ShirtMax","returned_visible_title":"Port Authority A515 Waist Apron with Pockets","returned_unit_price":7.94,"returned_currency":"USD","returned_semantic_grade":"exact","returned_short_reason":"Identical Port Authority A515 waist apron with matching specs","observed_unit_price":7.94,"observed_semantic_grade":"exact","validation":"pass_active","note":"Direct exact A515 page with visible USD price and inventory."},
+        {"source_sku":"A515WL","url":"https://joesusa.com/products/port-authority-waist-apron-with-pockets-a515-port-authority-a515","merchant":"Joe's USA","returned_visible_title":"Port Authority A515 Waist Apron with Pockets","returned_unit_price":7.14,"returned_currency":"USD","returned_semantic_grade":"exact","returned_short_reason":"Identical Port Authority A515 waist apron","observed_unit_price":7.14,"observed_semantic_grade":"exact","validation":"pass_unavailable","note":"Direct exact A515 page and visible USD price, but marked Unavailable/backordered; literal prompt pass, not an active offer."},
+        {"source_sku":"TM1MU423WL","url":"https://makemycap.com/products/travismathew-cruz-trucker-cap-tm1mu423","merchant":"Make My Cap","returned_visible_title":"Travis Mathew Cruz Trucker Cap TM1MU423","returned_unit_price":29.95,"returned_currency":"USD","returned_semantic_grade":"exact","returned_short_reason":"Identical TravisMathew TM1MU423 Cruz trucker cap","observed_unit_price":29.95,"observed_semantic_grade":"exact","validation":"pass_active","note":"Direct exact TM1MU423 page with visible USD price and Add to Cart."},
+        {"source_sku":"C938WL","url":"https://www.shirtspace.com/port-authority/hats-beanies/11417-port-authority-c938-flexfit-delta-cap","merchant":"ShirtSpace","returned_visible_title":"Port Authority C938 Flexfit Delta Cap","returned_unit_price":15.54,"returned_currency":"USD","returned_semantic_grade":"exact","returned_short_reason":"Identical Port Authority C938 Flexfit Delta Cap","observed_unit_price":15.54,"observed_semantic_grade":"exact","validation":"pass_active","note":"Direct exact C938 page with visible USD starting price."},
+        {"source_sku":"13171","url":"https://www.alldayshirts.com/paragon-290-sun-neck-gaiter","merchant":"AllDayShirts","returned_visible_title":"Paragon 290 Sun Neck Gaiter","returned_unit_price":4.48,"returned_currency":"USD","returned_semantic_grade":"exact","returned_short_reason":"Paragon 290/13171 matching hi-vis sun neck gaiter specs","observed_unit_price":null,"observed_semantic_grade":null,"validation":"reject_unverifiable_403","note":"Direct URL returned HTTP 403 and could not be independently validated."},
+        {"source_sku":"13171","url":"https://www.leadoutfit.com/42473-blank-paragon-290-sun-neck-gaiter.html","merchant":"LeadOutfit","returned_visible_title":"Paragon 290 Sun Neck Gaiter","returned_unit_price":4.54,"returned_currency":"USD","returned_semantic_grade":"exact","returned_short_reason":"Identical Paragon 290 sun neck gaiter","observed_unit_price":4.54,"observed_semantic_grade":"exact","validation":"pass_active","note":"Direct exact Paragon 290 page with visible USD price and Safety Green stock."},
+        {"source_sku":"13171","url":"https://imprint.com/shop/products/paragon-sun-neck-gaiter-290","merchant":"Imprint","returned_visible_title":"Paragon Sun Neck Gaiter - 290","returned_unit_price":4.83,"returned_currency":"USD","returned_semantic_grade":"exact","returned_short_reason":"Paragon 290 matching product with visible blank unit price","observed_unit_price":4.83,"observed_semantic_grade":"exact","validation":"pass_active","note":"Direct exact Paragon 290 page with visible USD blank price and matching ANSI Safety Green/UPF 50+ specifications."},
+        {"source_sku":"13171","url":"https://www.shirtspace.com/paragon/accessories/19543-paragon-290-sun-neck-gaiter","merchant":"ShirtSpace","returned_visible_title":"Paragon 290 Sun Neck Gaiter","returned_unit_price":3.03,"returned_currency":"USD","returned_semantic_grade":"exact","returned_short_reason":"Identical Paragon 290 sun neck gaiter","observed_unit_price":5.06,"observed_semantic_grade":"exact","validation":"reject_stale_price","note":"Direct exact Paragon 290 page, but the current visible starting price was USD 5.06, not the returned USD 3.03."},
+        {"source_sku":"13171","url":"https://wholesaleapparelandsupplies.com/apparel/products/paragon/290/sun-neck-gaiter/aluminum","merchant":"Wholesale Apparel and Supplies","returned_visible_title":"Paragon® 290 Sun Neck Gaiter","returned_unit_price":3.88,"returned_currency":"USD","returned_semantic_grade":"exact","returned_short_reason":"Identical Paragon 290 sun neck gaiter","observed_unit_price":null,"observed_semantic_grade":null,"validation":"reject_unverifiable_403","note":"Direct URL was blocked by Cloudflare/HTTP 403 in independent fetches and could not be validated."}
+      ]
+    }
+  ],
+  "decision": {
+    "current_best_workflow": "model_or_search_api_candidate_generation_then_first_party_fetch_and_deterministic_validation",
+    "perplexity_production_adoption": "not_supported_by_this_screen",
+    "consumer_screen": "Grok Fast had the highest literal one-shot precision at 11/14; Kimi K2.6 Instant produced the most active one-shot offers at 10/16 but suffered repeated timeouts and lower precision; the iterative baseline selected 10/10 active validated offers.",
+    "api_provider_ranking": "pending controlled API runs with exact model IDs, usage, latency, and cost capture",
+    "fairness_note": "The baseline used iterative targeted queries and validation while Perplexity, Kimi, and Grok each received one combined consumer prompt. This is an operational workflow screen, not a pure model-only experiment or an equal-budget API benchmark."
+  }
+}
