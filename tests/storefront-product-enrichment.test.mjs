@@ -1859,6 +1859,24 @@ test("preserves a transient adapter network failure for bounded orchestration re
   }
 });
 
+test("currency-selected Shopify recovery requires page amount agreement", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const pageAmount of ["11.99", "", "19.99"]) {
+      globalThis.fetch = async input => {
+        const url = String(input);
+        if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /products/", { headers: { "content-type": "text/plain" } });
+        if (url.includes(".js")) return Response.json({ title: "Maamoul Pistachio", handle: "maamoul-pistachio", variants: [{ title: "Default Title", price: 1199 }] });
+        return new Response(`<html><head><title>Maamoul Pistachio</title>${pageAmount ? `<meta property="product:price:amount" content="${pageAmount}"><meta property="product:price:currency" content="GBP">` : ""}</head><body><h1>Maamoul Pistachio</h1><script>var Shopify = Shopify || {}; Shopify.shop = "shop-test.myshopify.com"; Shopify.currency = {"active":"GBP"}; Shopify.country = "GB";</script></body></html>`, { headers: { "content-type": "text/html" } });
+      };
+      resetSharedRobotsPolicyResolverForTests();
+      const result = await enrichProductTargets([target({ sourceUrl: "https://shop.test/products/maamoul-pistachio?currency=GBP", marketCountryCode: "GB" })], 1);
+      if (pageAmount === "11.99") assert.ok(result.products[0].priceSignals.some(p => p.currency === "GBP" && p.amount === 11.99));
+      else assert.ok(!result.products.some(p => p.priceSignals.some(s => s.amount === 11.99)));
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test("recovers a Shopify product price from the active first-party runtime market", async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];

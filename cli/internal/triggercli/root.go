@@ -148,8 +148,12 @@ func newRoot(version string, o options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if count < 1 || count > 1000 || rivals < 1 || rivals > 50 {
-				return fmt.Errorf("comparisons must be 1..1000 and rivals 1..50 (per-run safety bounds, not daily quotas)")
+			if count < 1 || count > 1000 || rivals < 0 || rivals > 1000 {
+				return fmt.Errorf("comparisons must be 1..1000 and rivals 0..1000 (0: no separate seller cap)")
+			}
+			resolvedRivals := rivals
+			if resolvedRivals == 0 {
+				resolvedRivals = count
 			}
 			if !requestPattern.MatchString(id) {
 				return fmt.Errorf("provide --request-id for one logical request; reuse it only for the same input")
@@ -161,7 +165,7 @@ func newRoot(version string, o options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			payload := map[string]any{"contractVersion": "1", "domain": domain, "comparisons": count, "rivals": rivals, "requestId": id}
+			payload := map[string]any{"contractVersion": "1", "domain": domain, "comparisons": count, "rivals": resolvedRivals, "requestId": id}
 			if tool != "crawl" {
 				payload["includeAnalysis"] = includeAnalysis
 			}
@@ -175,7 +179,7 @@ func newRoot(version string, o options) *cobra.Command {
 				return err
 			}
 			p := receipt.Payload
-			if receipt.Task != "market-signal-direct-"+tool || p["domain"] != domain || p["requestId"] != id || p["comparisons"] != float64(count) || p["rivals"] != float64(rivals) || p["contractVersion"] != "1" || (tool != "crawl" && p["includeAnalysis"] != includeAnalysis) {
+			if receipt.Task != "market-signal-direct-"+tool || p["domain"] != domain || p["requestId"] != id || p["comparisons"] != float64(count) || p["rivals"] != float64(resolvedRivals) || p["contractVersion"] != "1" || (tool != "crawl" && p["includeAnalysis"] != includeAnalysis) {
 				return &exitError{9, "request ID is bound to different input or the run payload cannot be verified; inspect Trigger, do not resubmit"}
 			}
 			if noWait {
@@ -185,7 +189,7 @@ func newRoot(version string, o options) *cobra.Command {
 			return waitRun(c, cl, run, maxWait, poll)
 		}}
 		command.Flags().IntVar(&count, "comparisons", 20, "priced comparison-pair target (crawl: catalog output limit)")
-		command.Flags().IntVar(&rivals, "rivals", 10, "maximum distinct rival domains in delivered comparisons")
+		command.Flags().IntVar(&rivals, "rivals", 0, "optional seller cap; 0 (default) allows a different seller for every comparison")
 		command.Flags().StringVar(&id, "request-id", "", "required unique logical request ID; Trigger deduplication expires after 24h")
 		command.Flags().DurationVar(&maxWait, "max-wait", time.Hour, "wait budget; does not cancel the Trigger run")
 		command.Flags().DurationVar(&poll, "poll", 5*time.Second, "status poll interval")

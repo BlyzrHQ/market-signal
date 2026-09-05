@@ -57,7 +57,8 @@ test("crawl task does not need a research provider", async () => {
 });
 test("missing domains, invalid targets, private hosts and extra auth/endpoint flags fail closed", () => {
   for (const value of ["", "<domain>", "127.0.0.1", "localhost", "https://user:pass@primary.example/"]) assert.equal(requestSchema.safeParse({ ...request, domain: value }).success, false);
-  for (const extra of [{ comparisons: 0 }, { rivals: 0 }, { comparisons: 1001 }, { apiKey: "fixture" }, { appOrigin: "https://primary.example" }]) assert.equal(requestSchema.safeParse({ ...request, ...extra }).success, false);
+  for (const extra of [{ comparisons: 0 }, { rivals: 0 }, { rivals: 1001 }, { comparisons: 1001 }, { apiKey: "fixture" }, { appOrigin: "https://primary.example" }]) assert.equal(requestSchema.safeParse({ ...request, ...extra }).success, false);
+  assert.equal(requestSchema.safeParse({ ...request, comparisons: 1000, rivals: 1000 }).success, true);
   assert.equal(capabilities(false).providerConfigured, false);
   assert.equal(capabilities(true).websiteRequired, false);
 });

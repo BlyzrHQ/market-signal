@@ -230,6 +230,25 @@ test("explicit core-only reports preserve facts without optional paid actions or
   assert.throws(()=>decodeState(packet,"run_fixture",{...input,includeAnalysis:true}),/INTEGRITY/);
 });
 
+test("comparison-target seller allowance publishes twenty distinct sellers", async () => {
+  const input = { ...request, comparisons: 20, rivals: 20, includeAnalysis: false, requestId: "twenty-sellers-fixture" };
+  const store = new WorkflowStore(initialState("run_twenty_sellers", input), async () => {});
+  const primaries = Array.from({ length: 5 }, (_, i) => product(input.domain, `p${i}`));
+  const port = createWorkflowPort(store, {
+    crawl: async () => ({ ok: true, primaryDomain: input.domain, results: [{ domain: input.domain, products: primaries, homepage: { regionCountryCode: "GB" }, fetchedAt: primaries[0].observedAt }], discovery: { productSearchCoverage: { complete: true } }, document: { version: "1", blocks: [] } }),
+    search: async (_domain, primary) => ({ completed: true, queries: ["synthetic fixture"], candidates: Array.from({ length: 4 }, (_, j) => {
+      const host = `seller-${primary.id}-${j}.example`; return { domain: host, sourceUrl: `https://${host}/products/honey?country=GB`, title: "Honey 500g" };
+    }) }),
+    enrich: async targets => ({ products: targets.map(t => ({ ...product(t.domain, t.productId), sourceUrl: t.sourceUrl })), coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: targets.length, gaps: [] } }),
+  });
+  port.preflight = async () => {};
+  await orchestrateValidatedReport({ contractVersion: "6", publicId: store.read().report.run.publicId, primaryDomain: input.domain, locale: "en", reportAttempt: 1, productPlan: "starter", productLimit: 20 }, { attemptNumber: 1, taskAttemptNumber: 1, isFinalAttempt: true }, port);
+  const result = workflowOutput(store);
+  assert.equal(result.comparisons.length, 20);
+  assert.equal(result.competitors.length, 20);
+  assert.equal(new Set(result.facts.matches.map(m => m.rivalDomain)).size, 20);
+});
+
 test("quality repairs and merged facts retain a report-wide seller limit", async () => {
   const primary = product(request.domain, "p"); let repairs = 0;
   const result = await executeFixture({
