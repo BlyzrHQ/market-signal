@@ -94,10 +94,14 @@ Deploy the matching worker before distributing this executable.
 
 Replace **every** angle-bracket placeholder with your own input. No store domain
 or sample report is prefilled. Counts mean priced comparison pairs, not catalog
-size; the rival count is a maximum of distinct sellers in the returned pairs.
+size. By default the seller allowance equals the comparison target (up to 1000),
+so there is no separate five- or ten-seller cap. Optional `--rivals N` explicitly
+limits distinct sellers; `--rivals 0` is the default. Install the matching worker
+and CLI. Use a new request ID when changing counts; existing IDs keep their
+original payload and cannot be repurposed.
 
 ```powershell
-marketsignal-trigger report "<domain>" --comparisons 20 --rivals 5 --request-id "<unique-request-id>"
+marketsignal-trigger report "<domain>" --comparisons 20 --request-id "<unique-request-id>"
 ```
 
 The command submits to Trigger, immediately says **Report incoming**, prints
@@ -115,7 +119,7 @@ Other research commands:
 
 ```powershell
 marketsignal-trigger crawl "<domain>" --comparisons 20 --request-id "<unique-request-id>"
-marketsignal-trigger compare "<domain>" --comparisons 20 --rivals 5 --request-id "<unique-request-id>"
+marketsignal-trigger compare "<domain>" --comparisons 20 --request-id "<unique-request-id>"
 ```
 
 `crawl` returns public catalog data; its count limits returned catalog products.
@@ -126,7 +130,7 @@ These are independent new runs; calling all three repeats research work.
 ## Optional background mode and interrupted-session recovery
 
 ```powershell
-marketsignal-trigger report "<domain>" --comparisons 20 --rivals 5 --request-id "<unique-request-id>" --no-wait
+marketsignal-trigger report "<domain>" --comparisons 20 --request-id "<unique-request-id>" --no-wait
 marketsignal-trigger wait "<run-id>"
 marketsignal-trigger result "<run-id>"
 ```

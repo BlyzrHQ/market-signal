@@ -2,6 +2,7 @@ import { canonicalDomain } from "./domain.ts";
 import { bilingualNormalize, bilingualTokens, parseCanonicalQuantity, quantitiesConflict } from "./product-normalization.ts";
 import { CATALOG_REPLACEMENT_ATTRIBUTE_PREFIX, catalogReplacementAuditAttribute, directProductMetadataOffer, directProductScopedMetadataOffer, extractProductsFromHtml, isSupportedCurrency, publicSourceMarketContext, publicSourceMarketEvidence, validateProductPageIdentity, type ProductEnrichmentTarget, type ProductPriceSignal, type ProductRecord } from "./product-intelligence.ts";
 import { redirectedMarketRetryUrl } from "./market-localization.ts";
+import { soleProductCurrencySelector } from "./product-currency-context.ts";
 import { confirmedProductCurrency, confirmedShopifyCartCurrency, confirmedShopifyRuntimeMarket, hasConflictingDirectProductCurrency, parseShopifyProduct, parseWooCommerceProduct, shopifyCartRequest, storefrontAdapterRequest } from "./product-page-adapters.ts";
 import { fetchPublicText } from "./public-fetch.ts";
 import { sharedRobotsPolicyResolver } from "./robots-policy.ts";
@@ -801,7 +802,7 @@ function rejectContradictoryPageCurrencies(document: string, products: ProductRe
   const selectedId = identity.products[0].id;
   const directConflict = hasConflictingDirectProductCurrency(document);
   const directCurrency = confirmedProductCurrency(document, { allowStructured: false });
-  const shopifyRuntime = storefrontAdapterRequest(sourceUrl)?.kind === "shopify" && !hasUrlMarketSelector(sourceUrl)
+  const shopifyRuntime = storefrontAdapterRequest(sourceUrl)?.kind === "shopify" && (!hasUrlMarketSelector(sourceUrl) || Boolean(soleProductCurrencySelector(sourceUrl)))
     ? confirmedShopifyRuntimeMarket(document)
     : null;
   const expectedCountry = /^[A-Za-z]{2}$/.test(expectedCountryCode) ? expectedCountryCode.toUpperCase() : "";
@@ -1210,7 +1211,14 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
               // Shopify's legacy .js payload has no currency field. A page
               // currency cannot qualify its amount when the selected market is
               // carried only by URL query state that the endpoint may ignore.
-              let directPageCurrency = selectedMarket ? "" : confirmedAdapterCurrency(fetched.text, rawMatchedProduct, item.marketCountryCode);
+              const selectedCurrency = soleProductCurrencySelector(fetched.url);
+              const selectedRuntime = confirmedShopifyRuntimeMarket(fetched.text);
+              const qualifiedSelectedCurrency = adapter.kind === "shopify" && selectedCurrency
+                && soleProductCurrencySelector(adapterResponse.url) === selectedCurrency
+                && selectedRuntime?.currency === selectedCurrency
+                && confirmedAdapterCurrency(fetched.text, rawMatchedProduct, item.marketCountryCode) === selectedCurrency
+                ? selectedCurrency : "";
+              let directPageCurrency = selectedMarket ? qualifiedSelectedCurrency : confirmedAdapterCurrency(fetched.text, rawMatchedProduct, item.marketCountryCode);
               const currencylessShopify = adapter.kind === "shopify" && !directPageCurrency
                 ? parseShopifyProduct({ payload, requestedKey: adapter.requestedKey, sourceUrl: fetched.url, domain: item.domain, observedAt, currency: "", expectedQuantity: expected.quantity })
                 : null;
@@ -1250,7 +1258,12 @@ export async function enrichProductTargets(targets: ProductEnrichmentTarget[], m
               const adapterAmountConflictMessage = adapterAmountConflict
                 ? [`Price evidence conflict: page amounts contradict ${adapterLabel} amounts.`]
                 : [];
-              const adapterConflicts = [...new Set([...pagePriceConflicts, ...adapterCurrencyConflict, ...adapterAmountConflictMessage])];
+              // A matching query is not proof that a currency-less .js amount
+              // used that currency. Require independent product-page agreement.
+              const selectedAmountUnconfirmed = Boolean(qualifiedSelectedCurrency && ![directPageSignals, visiblePageSignals, selectedPageSignals]
+                .some(signals => signals.length > 0 && priceSignalsAgree(adapterPriceSignals, signals)));
+              const adapterConflicts = [...new Set([...pagePriceConflicts, ...adapterCurrencyConflict, ...adapterAmountConflictMessage,
+                ...(selectedAmountUnconfirmed ? ["Price evidence conflict: currency-selected adapter amount lacks matching product-page price evidence"] : [])])];
               if (adapterResult.product) {
                 adapterEvidenceProduct = {
                   ...positiveAdapterProduct!,

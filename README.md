@@ -9,11 +9,14 @@ credential, or customer quota is involved.
 ```powershell
 marketsignal-trigger configure
 marketsignal-trigger doctor
-marketsignal-trigger report "<domain>" --comparisons 20 --rivals 5 --request-id "<unique-request-id>"
+marketsignal-trigger report "<domain>" --comparisons 20 --request-id "<unique-request-id>"
 ```
 
 Replace every placeholder with your own input. No test store is prefilled.
 The comparison count means priced product/rival pairs, not catalog size.
+There is no separate seller cap by default: twenty pairs may span twenty sellers.
+Use `--rivals` only to request a smaller seller allocation. Older request IDs
+remain bound to their original counts; use a new ID for a changed request.
 JSON includes comparisons, rivals, evidence, quality checks, and limitations.
 The CLI defaults to core comparisons plus deterministic guidance. Optional AI
 recommendations and rival website scoring require `--include-analysis`; they

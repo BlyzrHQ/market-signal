@@ -70,6 +70,7 @@ export function createWorkflowPort(store: WorkflowStore, research: {
     buildDirect: (domain, catalogs, options) => buildDirectProductSearchComparison(domain, catalogs, { ...options,
       concurrency: 8,
       enforceCompatibility: true,
+      requestPrimaryCurrency: true,
       maxRivalDomains: store.read().request.rivals,
       admittedRivalDomains: retainedRivalDomains,
       search: (...args) => {

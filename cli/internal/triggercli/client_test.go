@@ -237,6 +237,34 @@ func TestMissingDomainAndPlaceholderNeverConnect(t *testing.T) {
 	}
 }
 
+func TestDefaultSellerAllowanceFollowsComparisonTarget(t *testing.T) {
+	for _, count := range []int{20, 1000} {
+		var payload map[string]any
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == "POST" {
+				var body map[string]any
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				payload = body["payload"].(map[string]any)
+				if payload["rivals"] != float64(count) {
+					t.Error("default introduced a separate seller cap")
+				}
+				_, _ = w.Write([]byte(`{"id":"run_fixture"}`))
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "run_fixture", "status": "QUEUED", "taskIdentifier": "market-signal-direct-report", "payload": payload})
+		}))
+		root := newRoot("test", testOptions(server, &memoryStore{fixtureKey}))
+		var out bytes.Buffer
+		root.SetOut(&out)
+		root.SetErr(&out)
+		root.SetArgs([]string{"report", "primary.example", "--comparisons", fmt.Sprint(count), "--request-id", "fixture:default-sellers", "--no-wait"})
+		if err := root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		server.Close()
+	}
+}
+
 func TestOptionalAnalysisIsExplicitAndBoundToRequestIdentity(t *testing.T) {
 	for _, mismatch := range []bool{false, true} {
 		var requested map[string]any
@@ -335,7 +363,7 @@ func TestReportWaitsAutomaticallyWithProgressOnlyOnStderr(t *testing.T) {
 		if gets > 2 {
 			status, output = "COMPLETED", `{"contractVersion":"1","status":"complete"}`
 		}
-		_, _ = fmt.Fprintf(w, `{"id":"run_fixture","status":%q,"taskIdentifier":"market-signal-direct-report","payload":{"contractVersion":"1","domain":"primary.example","comparisons":20,"rivals":10,"requestId":"fixture:1","includeAnalysis":false},"output":%s}`, status, output)
+		_, _ = fmt.Fprintf(w, `{"id":"run_fixture","status":%q,"taskIdentifier":"market-signal-direct-report","payload":{"contractVersion":"1","domain":"primary.example","comparisons":20,"rivals":20,"requestId":"fixture:1","includeAnalysis":false},"output":%s}`, status, output)
 	}))
 	defer server.Close()
 	root := newRoot("test", testOptions(server, &memoryStore{fixtureKey}))

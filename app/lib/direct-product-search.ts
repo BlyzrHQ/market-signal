@@ -7,6 +7,7 @@ import { publicHttpUrl } from "./public-url.ts";
 import { enrichProductTargets, type ProductEnrichmentCoverage } from "./storefront-product-enrichment.ts";
 import type { ReportQualityRepairFeedback } from "../../src/shared/report-quality-gate.ts";
 import { directProductContradictions } from "./direct-product-compatibility.ts";
+import { productCurrencyRequestUrl } from "./product-currency-context.ts";
 
 export type DirectProductSearchCheckpointKey = {
   primaryIndex: number;
@@ -56,6 +57,7 @@ export type DirectProductSearchOptions = {
   concurrency?: number;
   /** Internal readiness mode; legacy website calls remain unchanged. */
   enforceCompatibility?: boolean;
+  requestPrimaryCurrency?: boolean;
   maxRivalDomains?: number;
   admittedRivalDomains?: string[];
   marketCountryCode?: string;
@@ -391,7 +393,9 @@ export async function buildDirectProductSearchComparison(primaryDomainValue: str
     }
     const targets: ProductEnrichmentTarget[] = checkpoint.candidates.map((candidate) => ({
       domain: candidate.domain,
-      sourceUrl: candidate.sourceUrl,
+      sourceUrl: options.requestPrimaryCurrency
+        ? productCurrencyRequestUrl(candidate.sourceUrl, primary.priceSignals[0]?.currency || "")
+        : candidate.sourceUrl,
       productId: resultProductId(primary, candidate.sourceUrl),
       expectedName: candidate.title,
       expectedType: "Product",

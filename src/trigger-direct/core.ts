@@ -16,7 +16,7 @@ export const requestSchema = z.object({
     } catch { ctx.addIssue({ code: "custom", message: "A public domain is required" }); return z.NEVER; }
   }),
   comparisons: z.number().int().min(1).max(1000),
-  rivals: z.number().int().min(1).max(50),
+  rivals: z.number().int().min(1).max(1000),
   requestId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9:_-]{0,119}$/),
   // Optional rather than defaulted: old persisted requests keep their identity.
   includeAnalysis: z.boolean().optional(),
@@ -35,7 +35,8 @@ export function capabilities(searchConfigured: boolean) {
     tasks: ["market-signal-direct-report", "market-signal-direct-crawl", "market-signal-direct-compare", "market-signal-direct-capabilities"],
     providerConfigured: searchConfigured,
     comparisonMeaning: "priced primary/rival pairs, not catalog size", rivalMeaning: "maximum distinct sellers among delivered comparisons",
-    dailyQuota: null, retries: 10, limits: { comparisons: 1000, rivals: 50, newSearchesPerPass: 100, searchWorkMinutesPerPass: 8, qualityRepairRoundsPerAttempt: 3 },
+    dailyQuota: null, retries: 10, limits: { comparisons: 1000, rivals: 1000, newSearchesPerPass: 100, searchWorkMinutesPerPass: 8, qualityRepairRoundsPerAttempt: 3 },
+    sellerPolicy: { cliDefault: "comparison-target", separateCapByDefault: false, explicitCapsSupported: true },
     workflow: "shared-website-report-engine", checkpoints: "Trigger-owned snapshots",
     optionalAnalysis: { supported: true, requestField: "includeAnalysis", cliDefault: false, omittedLegacyDefault: true },
     limitations: ["The Trigger key authorizes this environment; provider credentials are configured by the operator on Trigger.", "Independent post-publication AI recall evaluation is not automatically launched.", "Cross-report competitor memory is not shared with the website."] };
