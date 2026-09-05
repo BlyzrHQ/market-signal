@@ -178,3 +178,92 @@ Next: restore Claude subscription login, strict exact-head review, pinned
 unpromoted deployment, one same-domain 20-pair/5-rival test with timing/receipt
 inspection, then representative domains within the authorized ten-domain bound
 only if that acceptance improves. Keep broad rollout blocked until proven.
+
+## Resumed five-domain acceptance — 2026-09-05
+
+The user restored the Claude subscription login and explicitly requested five
+additional domains. No source changes were made for this batch. The initial
+review session `75b565db-b594-4bda-a313-c91c5866a33e` reached its local turn limit
+without a verdict; it is not counted as approval. A fresh, bounded review by
+verified `claude-fable-5-1`, session `9bdf3679-8659-4a23-8a4a-14154b307085`,
+returned strict PASS on exact head `60ba80ccda59fda15aec848f1a7cc43775794152`
+for an unpromoted deployment and five 20-comparison live tests only. It did not
+approve merge, promotion, or the two-minute SLO. Its nonblocking observation was
+that prompt-level subdomain exclusion is stricter than the existing canonical
+domain-equality publication check; that pre-existing limitation is retained.
+
+Independent current-head CI passed; 272 focused regression tests passed again.
+The earlier full build/typechecks and 1,378-test suite remain valid because the
+only subsequent commit was documentation. No model API credentials were used for
+the subscription-backed Claude review; its displayed list-equivalent cost is
+not included in report-provider estimates.
+
+Unpromoted deployment `20260905.5`, deployment ID `xet38ckn`, source above,
+image digest `sha256:3f520652b798f6475e2a802464962a0c873e2fa8156b0f248e4e01c74d534dab`.
+Deployment URL: https://cloud.trigger.dev/projects/v3/proj_ywbhdpqswzbwqoudftcf/deployments/xet38ckn
+Pinned capabilities run `run_06g74g3gm6h2sci9a7lg78cf01` completed and returned
+ready, providerConfigured true, the expected direct tasks, and version 20260905.5.
+No website/VPS deployment, default-worker promotion, or installed-CLI replacement.
+
+Batch: Huel, Native, Blueland, Stanley, and Teapigs. Each gets one logical CLI
+report request for 20 priced comparison pairs and a maximum of five rival sellers.
+Run sequentially, retain original output, inspect usage, and do not automatically
+resubmit failures. The report command waits and prints progress by default.
+Results and data-quality observations follow below when terminal.
+
+## Five-domain outcome
+
+All five original requests are terminal, with no duplicate submissions and no
+in-flight paid operations in their final receipts. The full comparison tables
+and original-output locations are in [the acceptance results](228-five-domain-results.md).
+
+| Domain | Trigger run | Priced pairs | CLI seconds | OpenAI standard-price estimate |
+| --- | --- | ---: | ---: | ---: |
+| huel.com | run_06g74g5fet272sg5hj89f69m01 | 0/20 | 6.416 | $0.00000000 |
+| nativecos.com | run_06g74g8p4jpfmj1d1r59oe1m01 | 20/20 | 427.518 | $2.24701790 |
+| blueland.com | run_06g74i1pk5e533tn5nuck65c01 | 13/20 | 100.577 | $0.27193355 |
+| stanley1913.com | run_06g74imm4c4pqjdmcf58tuif01 | 12/20 | 351.879 | $1.13940125 |
+| teapigs.co.uk | run_06g74k8mf4fffubvprja06fb01 | 0/20 | 11.614 | $0.00000000 |
+
+Total recorded OpenAI estimate for this five-domain batch: **$3.65835270**,
+derived from 129 completed model-call receipts (117 product-search operations
+and 12 action-provider operations), with zero unknown receipts. This is not a
+settled invoice. The five report runs separately recorded **2.637252 cents** of
+Trigger compute ($0.02637252); this excludes the capabilities check and build.
+Huel and Teapigs did not start any paid AI searches. No independent evaluation
+pilot was launched. These report tests are separate from the daily feedback
+monitor's evaluation-cost ledger and its $0.10 pilot limit.
+
+All 45 returned pairs have finite positive prices on both sides, matching
+currencies, and no self-domain pairs. That is an integrity check, not proof of
+semantic equivalence. Native's 20 rows represent eight distinct primary
+products. Blueland's 13 rows represent two; Stanley's 12 represent seven.
+
+Acceptance is **NOT met**: zero of five runs delivered 20 useful pairs within
+120 seconds. Native reached the numeric target after one repair round, but
+its sunscreen-to-shower-oil/body-wash/face-set rows are clear semantic concerns.
+Blueland pairs multi-item kits with individual cleaners/refills without unit or
+contents normalization. Stanley has useful same-capacity alternatives but also
+36 oz versus 32 oz comparisons; seller authenticity is not independently proven.
+
+Observed remaining failures:
+
+- Huel's crawl returned five unpriced collection/category entries; Teapigs
+  returned one unpriced subscription/category entry. Neither reached product
+  search. They are zero-result failures, not fast successes.
+- Stanley's three quality-repair rounds all logged `transport-failed` and
+  added no comparisons. The exact underlying transport failure is not yet
+  diagnosed. Blueland's three repairs completed but still ended at 13 pairs.
+- Native spent about 73 seconds on crawl, 193 seconds on initial matching,
+  30 seconds on repair, 16 seconds on actions, and 61 seconds on rival website
+  scoring. Stanley's rival scoring alone took about 69 seconds. These optional
+  scoring stages remain on the critical path before CLI delivery.
+- Native's initial priced candidates spread across many sellers; the five-seller
+  constraint left 13 initial pairs despite a much larger overall candidate pool.
+  The test cap was intentionally unchanged across all five reports.
+
+Next engineering work should address primary product-page recovery, the remaining
+repair transport failure, and product-type/bundle/size compatibility, then move
+nonessential scoring off the initial-result critical path. These are findings,
+not changes implemented in this acceptance batch. Keep PR #228 draft/unmerged
+and worker 20260905.5 unpromoted; do not claim the speed/quality task is complete.
