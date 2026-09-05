@@ -111,3 +111,9 @@ threshold including unrelated metadata, with the unchanged child snapshot
 path for larger state. Never fall back after an ambiguous inline commit.
 Legacy child pointers remain readable; every paid start stays durable before
 the provider is called. Reference: https://trigger.dev/docs/runs/metadata.
+
+Inline-state review: verified `claude-fable-5-1`, session
+`bef8a868-6bf2-4858-af1a-dd7f07155ecb`, PASS for pinned unpromoted acceptance.
+Its key-order robustness observation was applied: compare canonical hashes of
+the complete inline packet, with reordered-key and corruption regression tests.
+Full suite at inline-state head: 1,375 passing; direct-worker TypeScript passed.

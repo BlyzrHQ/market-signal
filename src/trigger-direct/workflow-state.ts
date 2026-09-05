@@ -36,7 +36,7 @@ export async function commitStatePointer(pointer: StatePointer, transport: {
   const confirmed = await transport.read() as StatePointer | undefined;
   if (!confirmed || confirmed.runId !== pointer.runId || confirmed.ownerRunId !== pointer.ownerRunId
     || confirmed.revision !== pointer.revision || confirmed.hash !== pointer.hash
-    || JSON.stringify(confirmed.inline || null) !== JSON.stringify(pointer.inline || null)) throw new Error("STATE_POINTER_NOT_CONFIRMED");
+    || hash(confirmed.inline || null) !== hash(pointer.inline || null)) throw new Error("STATE_POINTER_NOT_CONFIRMED");
 }
 export function encodeState(state: WorkflowState): StatePacket {
   const raw = Buffer.from(JSON.stringify(state));

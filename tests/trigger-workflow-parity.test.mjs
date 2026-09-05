@@ -50,6 +50,8 @@ test("inline read-back must confirm the full packet before any paid operation", 
   assert.deepEqual(await restored.operation("search:inline",async()=>{calls++;}),{fixture:true});
   assert.equal(calls,1);
   const pointer=inlineStatePointer(encodeState(initialState("run_fixture",request)),{});
+  const reordered=Object.fromEntries(Object.entries(pointer.inline).reverse());
+  await commitStatePointer(pointer,{set:()=>{},flush:async()=>{},read:async()=>({...pointer,inline:reordered})});
   await assert.rejects(commitStatePointer(pointer,{set:()=>{},flush:async()=>{},read:async()=>({...pointer,inline:{...pointer.inline,gzip:"corrupted"}})}),/NOT_CONFIRMED/);
 });
 test("concurrent writes serialize and checkpoints enforce compare-and-swap", async () => {
