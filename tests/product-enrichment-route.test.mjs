@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { exclusiveDurableEnrichmentResult } from "../app/api/enrich-products/route.ts";
+import { exclusiveDurableEnrichmentResult, handleProductEnrichmentRequest } from "../app/api/enrich-products/route.ts";
+import { publicProductTarget } from "../app/lib/storefront-product-enrichment.ts";
+import { createRobotsPolicyResolver } from "../app/lib/robots-policy.ts";
 import { validEnrichmentCheckpoint } from "../src/trigger/report-orchestration-core.ts";
 
 function product(id, priceSignals = []) {
@@ -28,6 +30,40 @@ function product(id, priceSignals = []) {
 function target(id) {
   return { domain: "shop.test", sourceUrl: `https://shop.test/products/${id}`, productId: id, expectedName: id, expectedType: "Product", pairScore: 1, role: "rival" };
 }
+
+for (const mixed of [false, true]) test(`short product routes survive ${mixed ? "mixed" : "single"} handler batches and durable enrichment validation`, async () => {
+  const selected = { ...target("glass-cup"), expectedName: "Glass Cup", sourceUrl: "https://shop.test/p/glass-cup/12345/", role: "primary" };
+  const selectedTargets = mixed ? [selected, { ...target("glass-cup-rival"), expectedName: "Glass Cup" }] : [selected];
+  const calls = [];
+  const fetchImpl = async (input) => {
+    calls.push(String(input));
+    if (mixed && String(input) === selectedTargets[1].sourceUrl + ".js") return new Response("Not found", { status: 404 });
+    assert.ok(selectedTargets.some(item => item.sourceUrl === String(input)));
+    return new Response(`<html><head><script type="application/ld+json">${JSON.stringify({
+      "@type": "Product", name: "Glass Cup", url: String(input),
+      offers: { "@type": "Offer", price: "12.99", priceCurrency: "GBP" },
+    })}</script></head><body><h1>Glass Cup</h1></body></html>`, { headers: { "content-type": "text/html" } });
+  };
+  const robotsResolver = createRobotsPolicyResolver({ fetchText: async () => ({ ok: true, status: 200, text: "User-agent: *\nAllow: /", url: "https://shop.test/robots.txt" }) });
+  const response = await handleProductEnrichmentRequest(new Request("http://internal.invalid/", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ targets: selectedTargets }),
+  }), { fetchImpl, robotsResolver });
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.coverage.pagesFetched, selectedTargets.length);
+  assert.equal(result.products[0].sourceUrl, selected.sourceUrl);
+  assert.equal(result.products[0].priceSignals[0].amount, 12.99);
+  assert.ok(validEnrichmentCheckpoint(result, selectedTargets));
+  assert.deepEqual(calls.sort(), [...selectedTargets.map(item => item.sourceUrl), ...(mixed ? [selectedTargets[1].sourceUrl + ".js"] : [])].sort());
+});
+
+test("short-route admission retains source-domain, scheme, and product-path boundaries", () => {
+  const selected = { ...target("glass-cup"), sourceUrl: "https://shop.test/p/glass-cup/12345/" };
+  assert.ok(publicProductTarget(selected));
+  for (const sourceUrl of ["https://other.test/p/glass-cup/12345/", "ftp://shop.test/p/glass-cup/12345/", "https://shop.test/account/glass-cup", "https://shop.test/c/tea"]) {
+    assert.equal(publicProductTarget({ ...selected, sourceUrl }), null);
+  }
+});
 
 test("the worker endpoint makes product and gap outcomes exclusive before durable validation", () => {
   const result = exclusiveDurableEnrichmentResult({

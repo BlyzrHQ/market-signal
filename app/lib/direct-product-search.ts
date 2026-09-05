@@ -6,6 +6,7 @@ import { publishedRivalConstraintKeys } from "./product-match-lifecycle.ts";
 import { publicHttpUrl } from "./public-url.ts";
 import { enrichProductTargets, type ProductEnrichmentCoverage } from "./storefront-product-enrichment.ts";
 import type { ReportQualityRepairFeedback } from "../../src/shared/report-quality-gate.ts";
+import { directProductContradictions } from "./direct-product-compatibility.ts";
 
 export type DirectProductSearchCheckpointKey = {
   primaryIndex: number;
@@ -53,6 +54,8 @@ export type DirectProductSearchOptions = {
   maxWorkMs?: number;
   /** Bounded parallel lookahead; website callers retain serial behavior. */
   concurrency?: number;
+  /** Internal readiness mode; legacy website calls remain unchanged. */
+  enforceCompatibility?: boolean;
   maxRivalDomains?: number;
   admittedRivalDomains?: string[];
   marketCountryCode?: string;
@@ -296,9 +299,18 @@ export async function buildDirectProductSearchComparison(primaryDomainValue: str
     seenRivalConstraints.clear();
     // Rank sellers by usable evidence, not arrival order. Invalid-currency
     // candidates must never consume a slot and starve later valid sellers.
-    const compatible = (primary: ProductRecord, rival: ProductRecord) =>
-      canonicalDomain(rival.domain) !== primaryDomain &&
-      primary.priceSignals[0]?.currency.toUpperCase() === rival.priceSignals[0]?.currency.toUpperCase();
+    const compatible = (primary: ProductRecord, rival: ProductRecord) => {
+      const domain = canonicalDomain(rival.domain);
+      if (domain === primaryDomain || (options.enforceCompatibility && domain.endsWith(`.${primaryDomain}`))
+        || primary.priceSignals[0]?.currency.toUpperCase() !== rival.priceSignals[0]?.currency.toUpperCase()) return false;
+      const contradictions = options.enforceCompatibility ? directProductContradictions(primary, rival) : [];
+      if (contradictions.length) {
+        const gap = `${primary.name}: excluded ${rival.sourceUrl} (${contradictions.join(", ")}).`;
+        if (!gaps.includes(gap)) gaps.push(gap);
+        return false;
+      }
+      return true;
+    };
     const sourcesByDomain = new Map<string, Set<string>>();
     for (const { primary, checkpoint } of outcomes) for (const rival of checkpoint.outcome.products) {
       if (!compatible(primary, rival)) continue;

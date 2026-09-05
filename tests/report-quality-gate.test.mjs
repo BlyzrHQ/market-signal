@@ -94,6 +94,27 @@ function comparison(pairCount = 2) {
   };
 }
 
+test("repair feedback deduplicates repeated catalog identities before rotating rounds", () => {
+  const draft = comparison(0);
+  const a = product("shop.test", "a");
+  const b = product("shop.test", "b");
+  for (let repairRound = 0; repairRound < 3; repairRound++) {
+    const verdict = evaluateReportDraftQuality({ comparison: draft, comparisonTarget: 20,
+      primaryDomain: "shop.test", primaryProducts: [a, { ...a }, b], referenceTimeMs, repairRound });
+    assert.equal(verdict.status, "repair");
+    assert.equal(new Set(verdict.feedback.primaryProductIds).size, verdict.feedback.primaryProductIds.length);
+    assert.deepEqual(parseReportQualityRepairFeedback(verdict.feedback), verdict.feedback);
+  }
+});
+
+test("repair feedback excludes an ID that names conflicting source pages", () => {
+  const a = product("shop.test", "a");
+  const b = product("shop.test", "b");
+  const verdict = evaluateReportDraftQuality({ comparison: comparison(0), comparisonTarget: 20,
+    primaryDomain: "shop.test", primaryProducts: [a, { ...a, sourceUrl: "https://shop.test/products/different" }, b], referenceTimeMs });
+  assert.deepEqual(verdict.feedback.primaryProductIds, [b.id]);
+});
+
 test("a full priced draft passes the report quality gate", () => {
   const draft = comparison(2);
   const verdict = evaluateReportDraftQuality({

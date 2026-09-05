@@ -127,7 +127,7 @@ const MAX_COMPETITOR_INVESTIGATIONS = 1_712;
 const REQUEST_TIMEOUT_MS = 6_000;
 const USER_AGENT = MARKET_SIGNAL_USER_AGENT;
 const PRIORITY_PATHS = ["/pricing", "/plans", "/products", "/features", "/compare", "/integrations", "/about", "/customers", "/blog"];
-const PRODUCT_ROUTE_PATH = /\/(?:products?|shop|store|collections?|catalog|pricing|plans?)(?:\/|$)|\/(?:-\/)?p\d+(?:\/|$)/i;
+const PRODUCT_ROUTE_PATH = /\/(?:products?|p|shop|store|collections?|catalog|pricing|plans?)(?:\/|$)|\/(?:-\/)?p\d+(?:\/|$)/i;
 const SOCIAL_HOSTS = ["facebook.com", "instagram.com", "linkedin.com", "tiktok.com", "youtube.com", "x.com", "twitter.com"];
 
 export function primaryProductPricePageBudget(directProductSearch: boolean) {
@@ -543,8 +543,10 @@ export function selectComparisonTarget(primaryProducts: ProductRecord[], confirm
 }
 
 function productPathPriority(path: string) {
+  if (/\/(?:account|basket|cart|checkout|login|register|sign-?up|email-sign-up|wishlist)(?:\/|$)/i.test(path)) return 1000;
   if (/\/(?:pricing|plans?)(?:\/|$)/i.test(path)) return -10;
-  if (/\/(?:products?)\/[^/]+/i.test(path) || /\/(?:-\/)?p\d+(?:\/|$)/i.test(path)) return -5;
+  if (/\/(?:products?|p)\/[^/]+/i.test(path) || /\/(?:-\/)?p\d+(?:\/|$)/i.test(path)) return -5;
+  if (/^\/(?:[a-z]{2}\/)?c\/[^/]+/i.test(path)) return 0;
   if (/\/(?:boxes?|bundles?|subscriptions?|products?|shop|store|collections?|catalog|solutions?|services?|capabilities|expertise|platform|features?)(?:\/|$)/i.test(path)) return 0;
   if (/^\/[^/]+\/?$/.test(path) && !/\/(?:about|blog|careers?|contact|customers?|docs?|help|login|news|press|privacy|resources?|support|terms)(?:\/|$)/i.test(path)) return 30;
   const exact = PRIORITY_PATHS.indexOf(path);
@@ -646,7 +648,8 @@ function extractLinks(document: string, baseUrl: URL, domain: string) {
       continue;
     }
   }
-  return { paths: unique(paths, 60), candidates: [...candidates.values()] };
+  // Header account/category navigation must not evict later product anchors.
+  return { paths: unique(paths, 500).sort((a, b) => productPathPriority(a) - productPathPriority(b) || a.localeCompare(b)).slice(0, 60), candidates: [...candidates.values()] };
 }
 
 function parseSitemapUrls(text: string, domain: string) {
@@ -863,9 +866,11 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
     return productPathPriority(left) - productPathPriority(right) || left.localeCompare(right);
   });
   const expandablePaths = unique([...seededPaths, ...sortedObservedPaths], maxHtmlPages - 1);
-  const paths = expandablePaths.filter((path) => robots.allows(new URL(path, base).pathname));
+  const allowedPaths = expandablePaths.filter((path) => robots.allows(new URL(path, base).pathname));
+  const followProductLinks = role === "primary" && robotsState !== "unreachable" && !allowedPaths.some((path) => productPathPriority(path) === -5);
+  const paths = followProductLinks ? allowedPaths.slice(0, 2) : allowedPaths;
   for (const path of expandablePaths) if (!robots.allows(new URL(path, base).pathname)) gaps.push({ url: new URL(path, base).toString(), reason: "robots.txt disallows this crawl path.", observedAt: startedAt });
-  const fetchedPageResults = await settleWithConcurrency(paths, COMPETITOR_PAGE_CONCURRENCY, async (path) => {
+  const fetchCrawlPage = async (path: string) => {
     const url = new URL(path, base).toString();
     const result = await fetchPage(url, "text/html,application/xhtml+xml", domain);
     if (!result.ok || !/text\/html|application\/xhtml\+xml/i.test(result.contentType)) { gaps.push({ url, reason: result.error || `page returned HTTP ${result.status} or non-HTML content.`, observedAt: startedAt }); return null; }
@@ -873,12 +878,21 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
     if (finalHost !== domain.replace(/^www\./, "")) { gaps.push({ url, reason: "redirected off the submitted domain.", observedAt: startedAt }); return null; }
     const page = await parsePage(result.text, result.url, new Date().toISOString(), domain, result.truncated, result);
     return { ...page, requestedSourceUrl: url };
-  });
-  const fetchedPages = fetchedPageResults.map((result, index) => {
+  };
+  const collectPages = async (wave: string[]) => (await settleWithConcurrency(wave, COMPETITOR_PAGE_CONCURRENCY, fetchCrawlPage)).map((result, index) => {
     if (result.status === "fulfilled") return result.value;
-    gaps.push({ url: new URL(paths[index], base).toString(), reason: "page processing failed before verification completed.", observedAt: startedAt });
+    gaps.push({ url: new URL(wave[index], base).toString(), reason: "page processing failed before verification completed.", observedAt: startedAt });
     return null;
   });
+  const fetchedPages = await collectPages(paths);
+  if (followProductLinks) {
+    const discoveredProducts = fetchedPages.flatMap((page) => page?.internalLinks || []).filter((path) => productPathPriority(path) === -5);
+    const nextPaths = unique([...discoveredProducts.sort(), ...allowedPaths], 500)
+      .filter((path) => !paths.includes(path) && robots.allows(new URL(path, base).pathname))
+      .slice(0, Math.max(0, maxHtmlPages - 1 - paths.length));
+    paths.push(...nextPaths);
+    fetchedPages.push(...await collectPages(nextPaths));
+  }
   const seenUrls = new Set<string>();
   const seenHashes = new Set<string>();
   const pages: CrawlPage[] = [homepage, ...(fetchedPages.filter(Boolean) as CrawlPage[])].filter((page) => {
@@ -896,7 +910,19 @@ export async function crawlDomain(input: string, role: DomainCrawl["role"], seed
     homepage.regionSignals = combinedRegion.signals;
   }
   for (const page of pages) for (const reason of page.productGaps) gaps.push({ url: page.sourceUrl, reason, observedAt: page.fetchedAt });
-  const observedProducts = selectPreferredProducts([...sitemapProducts, ...pages.flatMap((page) => page.products)]);
+  // Product-page links are unpriced leads, not verified product facts. Keep
+  // them available for the existing bounded primary-price verification pass
+  // when a sitemap is missing. Never fetch category/account URLs as products.
+  const linkedPaths = role === "primary" && robotsState !== "unreachable"
+    ? unique([...discovered.paths, ...pages.flatMap((page) => page.internalLinks)], 500)
+      .filter((path) => /\/(?:products?|p)\/[^/]+/i.test(path) && productPathPriority(path) === -5 && robots.allows(new URL(path, base).pathname))
+    : [];
+  const linkedXml = `<urlset>${linkedPaths.map((path) => `<url><loc>${new URL(path, base).toString().replace(/&/g, "&amp;").replace(/</g, "&lt;")}</loc></url>`).join("")}</urlset>`;
+  const linkedProducts = extractProductsFromSitemapWithCoverage(linkedXml, domain, startedAt).products.map((product) => ({ ...product,
+    extraction: "page-signal" as const, jsonLdType: "PageSignal" as const,
+    claimIds: [`${product.id}-public-product-link-observed`],
+  }));
+  const observedProducts = selectPreferredProducts([...sitemapProducts, ...pages.flatMap((page) => page.products), ...linkedProducts]);
   const business = inferBusinessProfile({
     domain,
     title: homepage.title,

@@ -142,7 +142,7 @@ func newRoot(version string, o options) *cobra.Command {
 		var count, rivals int
 		var id string
 		var maxWait, poll time.Duration
-		var noWait bool
+		var noWait, includeAnalysis bool
 		command := &cobra.Command{Use: tool + " <domain>", Short: "Run the direct " + tool + " task in Trigger", Args: cobra.ExactArgs(1), RunE: func(c *cobra.Command, args []string) error {
 			domain, err := domainInput(args[0])
 			if err != nil {
@@ -161,7 +161,11 @@ func newRoot(version string, o options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			run, err := cl.trigger(c.Context(), "market-signal-direct-"+tool, id, map[string]any{"contractVersion": "1", "domain": domain, "comparisons": count, "rivals": rivals, "requestId": id})
+			payload := map[string]any{"contractVersion": "1", "domain": domain, "comparisons": count, "rivals": rivals, "requestId": id}
+			if tool != "crawl" {
+				payload["includeAnalysis"] = includeAnalysis
+			}
+			run, err := cl.trigger(c.Context(), "market-signal-direct-"+tool, id, payload)
 			if err != nil {
 				return err
 			}
@@ -171,7 +175,7 @@ func newRoot(version string, o options) *cobra.Command {
 				return err
 			}
 			p := receipt.Payload
-			if receipt.Task != "market-signal-direct-"+tool || p["domain"] != domain || p["requestId"] != id || p["comparisons"] != float64(count) || p["rivals"] != float64(rivals) || p["contractVersion"] != "1" {
+			if receipt.Task != "market-signal-direct-"+tool || p["domain"] != domain || p["requestId"] != id || p["comparisons"] != float64(count) || p["rivals"] != float64(rivals) || p["contractVersion"] != "1" || (tool != "crawl" && p["includeAnalysis"] != includeAnalysis) {
 				return &exitError{9, "request ID is bound to different input or the run payload cannot be verified; inspect Trigger, do not resubmit"}
 			}
 			if noWait {
@@ -186,6 +190,9 @@ func newRoot(version string, o options) *cobra.Command {
 		command.Flags().DurationVar(&maxWait, "max-wait", time.Hour, "wait budget; does not cancel the Trigger run")
 		command.Flags().DurationVar(&poll, "poll", 5*time.Second, "status poll interval")
 		command.Flags().BoolVar(&noWait, "no-wait", false, "return the Trigger run ID immediately")
+		if tool != "crawl" {
+			command.Flags().BoolVar(&includeAnalysis, "include-analysis", false, "also run optional AI recommendations and rival website scoring (slower and may cost more)")
+		}
 		root.AddCommand(command)
 	}
 	for _, name := range []string{"result", "wait"} {

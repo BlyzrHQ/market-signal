@@ -250,7 +250,7 @@ export function isCatalogReplacementProduct(product: ProductRecord) {
 type JsonRecord = Record<string, unknown>;
 
 const PRODUCT_TYPES = new Set(["Product", "SoftwareApplication", "Service"]);
-const PRODUCT_PATH = /\/(?:billing|checkout|invoices?|payments?|subscriptions?|products?|shop|store|collections?|catalog|pricing|plans?|solutions?|services?|platform|features?)(?:\/|$)|\/(?:-\/)?p\d+(?:\/|$)/i;
+const PRODUCT_PATH = /\/(?:billing|checkout|invoices?|payments?|subscriptions?|products?|p|shop|store|collections?|catalog|pricing|plans?|solutions?|services?|platform|features?)(?:\/|$)|\/(?:-\/)?p\d+(?:\/|$)/i;
 const EXCLUDED_PATH = /\/(?:about|articles?|blog|careers?|case-studies|company|contact|customers?|docs?|events?|guides?|help|jobs?|legal|news|partners?|press|privacy|resources?|security|stories|support|terms)(?:\/|$)/i;
 const PRODUCT_HEADING = /\b(?:billing|checkout|invoices?|payments?|plan|pricing|subscriptions?|tier|package|product|service|solution|feature|includes?|built for)\b/i;
 const PRICING_PATH = /\/(?:pricing|plans?)(?:\/|$)/i;
@@ -264,7 +264,7 @@ const GENERIC_PRODUCT_IDENTITY_TOKENS = new Set([
   "collection", "collections", "product", "products", "item", "items",
   "\u0645\u062c\u0645\u0648\u0639\u0629", "\u062d\u0632\u0645\u0629", "\u0639\u0644\u0628\u0629", "\u0628\u0627\u0642\u0629", "\u0637\u0642\u0645", "\u0639\u0628\u0648\u0629",
 ].map((token) => bilingualNormalize(token)));
-const PRODUCT_ROUTE_SEGMENTS = new Set(["product", "products"]);
+const PRODUCT_ROUTE_SEGMENTS = new Set(["product", "products", "p"]);
 const PRODUCT_SOURCE_ROUTE_SEGMENTS = new Set([...PRODUCT_ROUTE_SEGMENTS, "shop", "store"]);
 const LOCALE_PATH_PREFIX = /^[a-z]{2}(?:-[a-z]{2})?$/i;
 const BUSINESS_TYPE_ONLY_OFFERING = /^(?:content creation|mobile app|social media)$/i;
@@ -808,6 +808,23 @@ export function extractProductsFromHtml(input: ProductExtractionInput): ProductE
     try {
       const parsed = JSON.parse((script[1] || "").trim());
       for (const node of jsonLdNodes(parsed)) {
+        // ProductGroup itself is not a priced SKU. Read each explicitly named
+        // Product variant with its own offer; never copy a group's/neighbor's
+        // price or a price range onto an individual variant.
+        const types = Array.isArray(node["@type"]) ? node["@type"] : [node["@type"]];
+        if (types.includes("ProductGroup")) {
+          for (const variant of records(node.hasVariant).slice(0, 100)) {
+            if (nodeType(variant) !== "Product") continue;
+            const variantUrl = text(variant.url || records(variant.offers)[0]?.url);
+            let sameHost = false;
+            try { const url = new URL(variantUrl, input.sourceUrl); sameHost = /^https?:$/.test(url.protocol) && !url.username && !url.password && canonicalHost(url.hostname) === canonicalHost(input.domain); } catch { /* Unverifiable variant. */ }
+            if (!variantUrl || !sameHost) continue;
+            const product = productFromNode({ brand: node.brand, category: node.category, description: node.description, ...variant }, input);
+            if (product && product.ownership !== "third-party-referenced") products.push({ ...product,
+              attributes: [...product.attributes, `Variant product URL: ${new URL(variantUrl, input.sourceUrl).toString()}`].slice(0, 12),
+            });
+          }
+        }
         const record = productFromNode(node, input);
         if (!record) continue;
         if (record.ownership === "third-party-referenced") thirdPartyReferenced.push(record);
@@ -1046,10 +1063,12 @@ export function extractProductsFromSitemapWithCoverage(document: string, domain:
     if (!sourceUrl) continue;
     let url: URL;
     try { url = new URL(sourceUrl); } catch { continue; }
-    const catalogPath = /\/(?:products?|shop|store)\//i.test(url.pathname);
+    const catalogPath = /\/(?:products?|p|shop|store)\//i.test(url.pathname);
     if (canonicalHost(url.hostname) !== canonicalHost(domain) || !catalogPath) continue;
     const sitemapTitle = clean(entry.match(/<(?:image:)?title>\s*([\s\S]*?)\s*<\/(?:image:)?title>/i)?.[1] || "");
-    const rawPathName = url.pathname.split("/").filter(Boolean).at(-1) || "";
+    const segments = url.pathname.split("/").filter(Boolean);
+    // Short storefront routes often end in a numeric ID, not the item title.
+    const rawPathName = /\/p\/[^/]+\/\d+\/?$/i.test(url.pathname) ? segments.at(-2) || "" : segments.at(-1) || "";
     let decodedPathName = rawPathName;
     try { decodedPathName = decodeURIComponent(rawPathName); } catch { /* Preserve malformed public path evidence verbatim. */ }
     const name = sitemapTitle || clean(decodedPathName.replace(/[-_]+/g, " "));
@@ -1903,7 +1922,7 @@ function compatibleFinalEnrichmentMarket(left: ProductRecord, right: ProductReco
 function safeProductSource(product: ProductRecord) {
   try {
     const url = new URL(product.sourceUrl);
-    return /^https?:$/.test(url.protocol) && canonicalHost(url.hostname) === canonicalHost(product.domain) && /\/(?:products?|shop|store)\//i.test(url.pathname)
+    return /^https?:$/.test(url.protocol) && canonicalHost(url.hostname) === canonicalHost(product.domain) && /\/(?:products?|p|shop|store)\//i.test(url.pathname)
       ? url.toString()
       : "";
   } catch {

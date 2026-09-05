@@ -15,6 +15,10 @@ marketsignal-trigger report "<domain>" --comparisons 20 --rivals 5 --request-id 
 Replace every placeholder with your own input. No test store is prefilled.
 The comparison count means priced product/rival pairs, not catalog size.
 JSON includes comparisons, rivals, evidence, quality checks, and limitations.
+The CLI defaults to core comparisons plus deterministic guidance. Optional AI
+recommendations and rival website scoring require `--include-analysis`; they
+increase latency and may add provider cost. The output explicitly marks these
+extras as not requested when omitted. Use the matching worker from this branch.
 The report command shows progress and returns its result automatically. Keep it
 open; `wait` is only for recovering an interrupted session or explicit background
 mode. The two-minute completed-report target is under validation, not guaranteed.
@@ -56,7 +60,7 @@ flowchart TD
         REPAIR -- Yes --> FEEDBACK["Save targeted repair feedback<br/>Name products and exclude accepted rival URLs"]
         FEEDBACK --> SEARCH
         REPAIR -- No --> LIMITED["Retain valid comparisons only<br/>Mark limited and record exact shortfall"]
-        READY --> COMPLETE["Build recommendations and competitor scores<br/>Record any other coverage limitations"]
+        READY --> COMPLETE["Retain deterministic guidance<br/>Optional AI recommendations and rival scores only when requested"]
         LIMITED --> COMPLETE
         COMPLETE --> SAVE["Persist immutable report facts<br/>Comparisons, rivals, evidence and limitations"]
     end

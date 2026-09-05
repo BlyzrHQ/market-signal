@@ -197,7 +197,7 @@ func TestReportCallsOnlyTriggerAndReturnsStructuredOutput(t *testing.T) {
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			payload := body["payload"].(map[string]any)
-			if payload["domain"] != "primary.example" || payload["comparisons"] != float64(20) || payload["rivals"] != float64(3) {
+			if payload["domain"] != "primary.example" || payload["comparisons"] != float64(20) || payload["rivals"] != float64(3) || payload["includeAnalysis"] != false {
 				t.Error("wrong inputs")
 			}
 			if body["options"].(map[string]any)["idempotencyKey"] != "fixture:1" {
@@ -205,7 +205,7 @@ func TestReportCallsOnlyTriggerAndReturnsStructuredOutput(t *testing.T) {
 			}
 			_, _ = w.Write([]byte(`{"id":"run_fixture"}`))
 		case "/api/v3/runs/run_fixture":
-			_, _ = w.Write([]byte(`{"id":"run_fixture","status":"COMPLETED","taskIdentifier":"market-signal-direct-report","payload":{"contractVersion":"1","domain":"primary.example","comparisons":20,"rivals":3,"requestId":"fixture:1"},"output":{"contractVersion":"1","status":"complete","comparisons":[],"competitors":[]}}`))
+			_, _ = w.Write([]byte(`{"id":"run_fixture","status":"COMPLETED","taskIdentifier":"market-signal-direct-report","payload":{"contractVersion":"1","domain":"primary.example","comparisons":20,"rivals":3,"requestId":"fixture:1","includeAnalysis":false},"output":{"contractVersion":"1","status":"complete","comparisons":[],"competitors":[]}}`))
 		default:
 			t.Errorf("unexpected endpoint %s", r.URL.Path)
 			http.NotFound(w, r)
@@ -233,6 +233,44 @@ func TestMissingDomainAndPlaceholderNeverConnect(t *testing.T) {
 		root.SetArgs(args)
 		if root.Execute() == nil {
 			t.Fatal("invalid args accepted")
+		}
+	}
+}
+
+func TestOptionalAnalysisIsExplicitAndBoundToRequestIdentity(t *testing.T) {
+	for _, mismatch := range []bool{false, true} {
+		var requested map[string]any
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == "POST" {
+				var body map[string]any
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				requested = body["payload"].(map[string]any)
+				if requested["includeAnalysis"] != true {
+					t.Error("explicit analysis was not sent")
+				}
+				_, _ = w.Write([]byte(`{"id":"run_fixture"}`))
+				return
+			}
+			payload := make(map[string]any)
+			for k, v := range requested {
+				payload[k] = v
+			}
+			if mismatch {
+				payload["includeAnalysis"] = false
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "run_fixture", "status": "COMPLETED", "taskIdentifier": "market-signal-direct-report", "payload": payload, "output": map[string]any{"contractVersion": "1", "status": "complete"}})
+		}))
+		root := newRoot("test", testOptions(server, &memoryStore{fixtureKey}))
+		root.SetOut(io.Discard)
+		root.SetErr(io.Discard)
+		root.SetArgs([]string{"report", "primary.example", "--request-id", "fixture:analysis", "--include-analysis"})
+		err := root.Execute()
+		server.Close()
+		if mismatch && ExitCode(err) != 9 {
+			t.Fatalf("analysis mismatch must fail identity verification: %v", err)
+		}
+		if !mismatch && err != nil {
+			t.Fatal(err)
 		}
 	}
 }
@@ -297,7 +335,7 @@ func TestReportWaitsAutomaticallyWithProgressOnlyOnStderr(t *testing.T) {
 		if gets > 2 {
 			status, output = "COMPLETED", `{"contractVersion":"1","status":"complete"}`
 		}
-		_, _ = fmt.Fprintf(w, `{"id":"run_fixture","status":%q,"taskIdentifier":"market-signal-direct-report","payload":{"contractVersion":"1","domain":"primary.example","comparisons":20,"rivals":10,"requestId":"fixture:1"},"output":%s}`, status, output)
+		_, _ = fmt.Fprintf(w, `{"id":"run_fixture","status":%q,"taskIdentifier":"market-signal-direct-report","payload":{"contractVersion":"1","domain":"primary.example","comparisons":20,"rivals":10,"requestId":"fixture:1","includeAnalysis":false},"output":%s}`, status, output)
 	}))
 	defer server.Close()
 	root := newRoot("test", testOptions(server, &memoryStore{fixtureKey}))

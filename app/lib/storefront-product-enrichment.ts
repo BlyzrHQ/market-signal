@@ -998,7 +998,7 @@ function safeProductUrl(product: ProductRecord, domain: string) {
     const url = new URL(product.sourceUrl);
     return /^https?:$/.test(url.protocol)
       && canonicalDomain(url.hostname) === canonicalDomain(domain)
-      && Boolean(storefrontAdapterRequest(url.toString()))
+      && (Boolean(storefrontAdapterRequest(url.toString())) || /\/(?:products?|p)\/[^/]+/i.test(url.pathname))
       ? url.toString()
       : "";
   } catch {
@@ -1010,7 +1010,7 @@ export function selectPrimaryProductPriceTargets(products: ProductRecord[], doma
   const limit = Math.max(0, Math.min(MAX_ENRICHMENT_TARGETS, Math.floor(maxPages)));
   const seen = new Set<string>();
   const candidates = products
-    .filter((product) => product.jsonLdType === "Product" && !comparablePrice(product))
+    .filter((product) => (product.jsonLdType === "Product" || (product.jsonLdType === "PageSignal" && product.claimIds.some((id) => id.endsWith("-public-product-link-observed")))) && !comparablePrice(product))
     .map((product) => ({ product, sourceUrl: safeProductUrl(product, domain) }))
     .filter((entry) => Boolean(entry.sourceUrl) && !seen.has(entry.sourceUrl) && Boolean(seen.add(entry.sourceUrl)))
     .sort((left, right) => Number(Boolean(right.product.quantity || parseCanonicalQuantity(right.product.name))) - Number(Boolean(left.product.quantity || parseCanonicalQuantity(left.product.name))) || left.product.name.localeCompare(right.product.name));
@@ -1352,7 +1352,7 @@ export function publicProductTarget(value: unknown): ProductEnrichmentTarget | n
     const url = new URL(text(item.sourceUrl, 1_000));
     sourceUrl = /^https?:$/.test(url.protocol)
       && canonicalDomain(url.hostname) === domain
-      && /\/(?:products?|shop|store)\//i.test(url.pathname)
+      && /\/(?:products?|p|shop|store)\//i.test(url.pathname)
       ? url.toString()
       : "";
   } catch {

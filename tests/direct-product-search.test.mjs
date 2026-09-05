@@ -51,6 +51,25 @@ test("wrong-currency sellers never consume the target or rival cap", async () =>
   assert.equal(result.rows[0].matches[0].domain, "zzz.test");
 });
 
+test("CLI compatibility screening runs before seller allocation and also on saved outcomes", async () => {
+  const primary = product("shop.test", "p", "Body Sunscreen", 10);
+  const bad = product("aaa.test", "bad", "Body Wash", 9);
+  const good = product("zzz.test", "good", "Body Sunscreen", 12);
+  const saved = new Map(); let calls = 0;
+  const options = { resultTarget: 1, maxRivalDomains: 1, enforceCompatibility: true, referenceTimeMs: Date.parse(observedAt),
+    search: async () => { calls++; return {completed:true, queries:[], candidates:[bad,good].map(p=>({domain:p.domain,sourceUrl:p.sourceUrl,title:p.name}))}; },
+    enrich: async () => ({products:[bad,good],coverage:{pagesRequested:2,pagesFetched:2,maxPages:2,gaps:[]}}),
+    loadSearchCheckpoint: async key => saved.get(key.inputHash) || null,
+    saveSearchCheckpoint: async (key, result) => { const record={result,resultHash:createHash("sha256").update(JSON.stringify(result)).digest("hex")}; saved.set(key.inputHash,record);return record; },
+  };
+  for (let i=0;i<2;i++) {
+    const result = await buildDirectProductSearchComparison("shop.test",[{domain:"shop.test",products:[primary]}],options);
+    assert.equal(result.rows[0].matches[0].domain,"zzz.test");
+    assert.ok(result.matching.gaps.some(gap=>gap.includes("different-product-functions")));
+  }
+  assert.equal(calls,1);
+});
+
 test("seller allocation can replace an early low-yield seller with later coverage", async () => {
   const primaries = [product("shop.test", "p1", "A", 10), product("shop.test", "p2", "B", 10)];
   const result = await buildDirectProductSearchComparison("shop.test", [{ domain: "shop.test", products: primaries }], {

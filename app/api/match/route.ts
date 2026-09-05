@@ -311,7 +311,9 @@ export function createMatchHandler(serviceOverrides: Partial<MatchServices> = {}
       const directProductSearch = body.matchingMode === "direct-product-search";
       if (body.matchingMode !== undefined && !directProductSearch) return Response.json({ ok: false, error: "Unsupported product matching mode." }, { status: 400 });
       if (body.repairFeedback !== undefined && !directProductSearch) return Response.json({ ok: false, error: "Report quality repair feedback is supported only for direct product search." }, { status: 400 });
-      const repairFeedback = body.repairFeedback === undefined ? undefined : parseReportQualityRepairFeedback(body.repairFeedback);
+      let repairFeedback: ReturnType<typeof parseReportQualityRepairFeedback> | undefined;
+      try { repairFeedback = body.repairFeedback === undefined ? undefined : parseReportQualityRepairFeedback(body.repairFeedback); }
+      catch { return Response.json({ ok: false, code: "invalid-repair-feedback", error: "The quality repair request failed deterministic validation." }, { status: 400 }); }
       if (body.pinnedPairs !== undefined && !Array.isArray(body.pinnedPairs)) return Response.json({ ok: false, error: "Pinned product pairs must be an array." }, { status: 400 });
       const catalogs = parseCatalogs(body.catalogs, primaryDomain, body.pinnedPairs);
       const pinnedPairs = parsePinnedPairs(body.pinnedPairs, catalogs, primaryDomain);

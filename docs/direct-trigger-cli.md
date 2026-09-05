@@ -83,6 +83,15 @@ successful key check alone does not prove task deployment.
 
 ## Generate a report
 
+With this branch's CLI and worker, the default returns core comparisons,
+competitors, evidence and deterministic guidance. Add `--include-analysis` to
+also request AI recommendations and rival website scores. That optional work
+adds latency and may add provider cost; it is not silently queued in background.
+JSON `optionalAnalysis` reports what was requested. Requests from older clients
+that omit the `includeAnalysis` field keep legacy behavior; they do not acquire
+the faster default automatically. Use a new request ID when changing this flag.
+Deploy the matching worker before distributing this executable.
+
 Replace **every** angle-bracket placeholder with your own input. No store domain
 or sample report is prefilled. Counts mean priced comparison pairs, not catalog
 size; the rival count is a maximum of distinct sellers in the returned pairs.

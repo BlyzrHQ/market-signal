@@ -20,6 +20,19 @@ function extraction(overrides = {}) {
   });
 }
 
+test("ProductGroup variants keep their own named prices and the actually observed source page", () => {
+  const sourceUrl = "https://acme.com/products/nutrition-bar";
+  const result = extraction({sourceUrl,pageTitle:"Nutrition Bar",headings:["Nutrition Bar"],document:`<script type="application/ld+json">${JSON.stringify({"@type":"ProductGroup",name:"Nutrition Bar",brand:{name:"Acme"},offers:{price:1,priceCurrency:"GBP"},hasVariant:[
+    {"@type":"Product",name:"Chocolate Nutrition Bar",url:sourceUrl+"/chocolate",offers:{price:44.8,priceCurrency:"USD"}},
+    {"@type":"Product",name:"Variety Box Nutrition Bar",url:sourceUrl+"/variety",offers:{price:59.6,priceCurrency:"USD"}},
+    {"@type":"Product",name:"Unpriced Bar",url:sourceUrl+"/unknown"},
+    {"@type":"Product",name:"Foreign Bar",url:"https://unrelated.test/products/bar",offers:{price:2,priceCurrency:"USD"}},
+  ]})}</script>`});
+  assert.deepEqual(result.products.map(p=>[p.name,p.priceSignals[0]?.amount]),[["Chocolate Nutrition Bar",44.8],["Variety Box Nutrition Bar",59.6],["Unpriced Bar",undefined]]);
+  assert.ok(result.products.every(p=>p.sourceUrl===sourceUrl));
+  assert.ok(result.products[0].attributes.some(v=>v.includes("/chocolate")));
+});
+
 function product(id, domain, name, category = "inventory", description = "inventory operations") {
   return {
     id,
