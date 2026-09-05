@@ -36,6 +36,21 @@ export async function crawlResponse(response: Response, domain: string): Promise
   if (result.ok !== true || result.primaryDomain !== domain) throw new Error("INVALID_CRAWL_RESULT");
   return result;
 }
+export function durableActionFetch(store: WorkflowStore, fetcher: typeof fetch = fetch): typeof fetch {
+  return async (url, init) => {
+    // Persist each provider request, not only the outer planner. The planner
+    // has its own retry loop, which must never rebill an uncertain response.
+    const receipt = await store.operation(`action-provider:${hash({ url: String(url), body: String(init?.body || "") })}`, async () => {
+      const response = await fetcher(url, init);
+      if (!response.ok) throw new Error("ACTION_PROVIDER_RESPONSE_UNCERTAIN");
+      const body = await response.text();
+      if (Buffer.byteLength(body) > 2 * 1024 * 1024) throw new Error("ACTION_PROVIDER_RESPONSE_TOO_LARGE");
+      JSON.parse(body);
+      return { status: response.status, body };
+    });
+    return new Response(receipt.body, { status: receipt.status, headers: { "content-type": "application/json" } });
+  };
+}
 export function createWorkflowPort(store: WorkflowStore, research: {
   crawl?: ReportOrchestrationPort["crawl"];
   search?: typeof searchDirectProductPages;
@@ -84,7 +99,12 @@ export function createWorkflowPort(store: WorkflowStore, research: {
     brief: async () => { throw new Error("Legacy brief is not part of the current website report workflow"); },
     match: async (input) => { store.assertHealthy(); return json(await handler(localRequest(input, token))); },
     enrich: async (input) => { store.assertHealthy(); return research.enrich ? { ok: true, ...await research.enrich(input.targets as Parameters<typeof enrichProductTargets>[0], 64) } : json(await handleProductEnrichmentRequest(localRequest(input))); },
-    actions: async (input) => ({ ok: true, result: await store.operation(`actions:${hash(input)}`, () => (research.actions || buildAIProductActions)(parseActionInputs(input.inputs))) }),
+    actions: async (input) => {
+      // Local validation is not an uncertain provider call. In particular the
+      // shared engine can retain its deterministic fallback above 480 inputs.
+      const inputs = parseActionInputs(input.inputs);
+      return { ok: true, result: await store.operation(`actions:${hash(input)}`, () => (research.actions || buildAIProductActions)(inputs, { fetch: durableActionFetch(store), concurrency: 1 })) };
+    },
     loadCheckpoint: store.loadCheckpoints,
     saveCheckpoint: async (id, input) => { await store.saveCheckpoint(id, input); },
     persistFactChunk: store.persistFactChunk,

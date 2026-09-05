@@ -63,3 +63,11 @@ operation stop, report-wide publication constraints seeded into repair searches,
 final-decision fact projection, and narrow factless terminal-limit validation.
 Thirteen native regression tests pass. The first deployed version `.5` is not
 approved for acceptance; revised exact-head reviews and deployment are required.
+
+Re-review of `fe1b01d` confirmed those fixes and found two action-path edge
+cases: the planner's internal retry loop could repeat an uncertain provider
+request, and local validation of >480 actions could poison otherwise valid
+state. Each action-provider request now has its own durable receipt boundary
+with serial dispatch; local validation runs outside the uncertain-operation
+boundary, preserving the shared engine's deterministic oversized-batch fallback.
+Fifteen native regression tests cover these paths before another live test.

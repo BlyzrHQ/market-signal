@@ -1,11 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { WorkflowStore, initialState, encodeState, decodeState, hash, commitStatePointer } from "../src/trigger-direct/workflow-state.ts";
-import { createWorkflowPort } from "../src/trigger-direct/workflow-port.ts";
+import { createWorkflowPort, durableActionFetch } from "../src/trigger-direct/workflow-port.ts";
 import { workflowOutput } from "../src/trigger-direct/workflow-output.ts";
 import { orchestrateValidatedReport, orchestrateReport } from "../src/trigger/report-orchestration-core.ts";
 import { buildDirectProductSearchComparison } from "../app/lib/direct-product-search.ts";
-import { deterministicProductActionResult } from "../app/lib/ai-action-planner.ts";
+import { deterministicProductActionResult, buildAIProductActions } from "../app/lib/ai-action-planner.ts";
 import { buildReportFactBundle } from "../src/shared/report-facts.ts";
 
 // Synthetic fixtures only; no public website/provider requests in this suite.
@@ -171,4 +171,22 @@ test("quality repairs and merged facts retain a report-wide seller limit", async
 for (const status of ["parked", "unavailable"]) test(`${status} primary keeps its factless terminal limitation`, async () => {
   const output = await executeFixture({ crawl: async () => ({ ok: false, code: `${status}-domain`, primaryDomain: request.domain, error: "Synthetic source limitation", document: { version: "1", blocks: [{ type: "domain-status", id: "primary-domain-status", domain: request.domain, status, evidenceUrl: `https://${request.domain}/`, attemptedUrl: `https://${request.domain}/` }] } }) });
   assert.equal(output.status, "limited"); assert.equal(output.comparisons.length, 0); assert.ok(output.report);
+});
+
+test("action planner's internal retry cannot repeat an uncertain provider request", async () => {
+  const store = memoryStore().store; let calls = 0;
+  const inputs = [{ pairKey: "fixture", fallbackActionEn: "Compare honey", fallbackActionAr: "قارن العسل", fallbackRationaleEn: "Observed honey", fallbackRationaleAr: "عسل موثق", fallbackLeverType: "positioning", hasComparablePrice: true,
+    facts: [{ key: "primary.name", text: "Honey 500g", kind: "identity" }, { key: "primary.price", text: "GBP 10", kind: "price" }] }];
+  await buildAIProductActions(inputs, { apiKey: "synthetic-fixture-not-a-key", concurrency: 1, fetch: durableActionFetch(store, async () => { calls++; throw Error("response lost after provider accepted request"); }) });
+  assert.equal(calls, 1);
+  assert.throws(() => store.assertHealthy(), /DURABLE_STATE/);
+});
+
+test("oversized action requests preserve deterministic fallback without poisoning state", async () => {
+  const store = memoryStore().store; let calls = 0;
+  const port = createWorkflowPort(store, { actions: async () => { calls++; } });
+  await assert.rejects(port.actions({ inputs: Array.from({ length: 481 }, (_, i) => ({ pairKey: String(i) })) }), /Between 1 and 480/);
+  store.assertHealthy();
+  await store.saveCheckpoint(store.read().report.run.publicId, { attemptNumber: 1, batchIndex: 1, inputHash: hash("fallback"), result: { fallback: true } });
+  assert.equal(calls, 0); assert.equal(store.read().checkpoints.length, 1);
 });
