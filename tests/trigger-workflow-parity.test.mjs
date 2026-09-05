@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { WorkflowStore, initialState, encodeState, decodeState, hash, commitStatePointer } from "../src/trigger-direct/workflow-state.ts";
+import { WorkflowStore, initialState, encodeState, decodeState, hash, commitStatePointer, inlineStatePointer } from "../src/trigger-direct/workflow-state.ts";
 import { createWorkflowPort, durableActionFetch } from "../src/trigger-direct/workflow-port.ts";
 import { workflowOutput } from "../src/trigger-direct/workflow-output.ts";
 import { orchestrateValidatedReport, orchestrateReport } from "../src/trigger/report-orchestration-core.ts";
@@ -27,6 +27,30 @@ test("durable state restores, binds request/run, and rejects corruption", async 
   assert.throws(() => decodeState(memory.packet(), "run_other", request), /INVALID_STATE/);
   assert.throws(() => decodeState(memory.packet(), "run_fixture", { ...request, comparisons: 20 }), /INTEGRITY/);
   assert.throws(() => decodeState({ ...memory.packet(), hash: "0".repeat(64) }, "run_fixture", request), /INTEGRITY/);
+});
+
+test("small durable states fit inline while larger states or other metadata keep the snapshot path", () => {
+  const packet = encodeState(initialState("run_fixture",request));
+  const pointer = inlineStatePointer(packet,{});
+  assert.equal(pointer.runId,"run_fixture");
+  assert.deepEqual(decodeState(pointer.inline,"run_fixture",request),decodeState(packet,"run_fixture",request));
+  assert.equal(inlineStatePointer({...packet,gzip:"x".repeat(224*1024)},{}),null);
+  assert.equal(inlineStatePointer(packet,{unrelated:"x".repeat(224*1024)}),null);
+  assert.ok(inlineStatePointer(packet,{marketSignalWorkflowStateV1:{inline:{gzip:"x".repeat(256*1024)}}}));
+});
+
+test("inline read-back must confirm the full packet before any paid operation", async () => {
+  let committed, calls=0;
+  const persist = packet => commitStatePointer(inlineStatePointer(packet,{}),{
+    set:pointer=>{committed=structuredClone(pointer);},flush:async()=>{},read:async()=>committed,
+  });
+  const store = new WorkflowStore(initialState("run_fixture",request),persist);
+  await store.operation("search:inline",async()=>{calls++;assert.equal(Object.values(decodeState(committed.inline,"run_fixture",request).operations)[0].status,"started");return {fixture:true};});
+  const restored=new WorkflowStore(decodeState(committed.inline,"run_fixture",request),persist);
+  assert.deepEqual(await restored.operation("search:inline",async()=>{calls++;}),{fixture:true});
+  assert.equal(calls,1);
+  const pointer=inlineStatePointer(encodeState(initialState("run_fixture",request)),{});
+  await assert.rejects(commitStatePointer(pointer,{set:()=>{},flush:async()=>{},read:async()=>({...pointer,inline:{...pointer.inline,gzip:"corrupted"}})}),/NOT_CONFIRMED/);
 });
 test("concurrent writes serialize and checkpoints enforce compare-and-swap", async () => {
   const memory = memoryStore(), store = memory.store, id = store.read().report.run.publicId;

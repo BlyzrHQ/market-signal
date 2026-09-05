@@ -2,7 +2,7 @@ import { AbortTaskRunError, metadata, runs, task } from "@trigger.dev/sdk";
 import { orchestrateValidatedReport } from "../trigger/report-orchestration-core.ts";
 import { PermanentOrchestrationError } from "../shared/report-orchestration-contract.ts";
 import { requestSchema, type DirectRequest } from "./core.ts";
-import { commitStatePointer, decodeState, encodeState, initialState, WorkflowStore, type StatePacket, type StatePointer } from "./workflow-state.ts";
+import { commitStatePointer, decodeState, encodeState, initialState, inlineStatePointer, WorkflowStore, type StatePacket, type StatePointer } from "./workflow-state.ts";
 import { createWorkflowPort } from "./workflow-port.ts";
 import { workflowOutput } from "./workflow-output.ts";
 
@@ -26,16 +26,34 @@ async function openStore(ownerRunId: string, request: DirectRequest, workerVersi
   let state;
   if (pointer) {
     if (pointer.ownerRunId !== ownerRunId || !/^run_[A-Za-z0-9_-]+$/.test(pointer.runId)) throw new AbortTaskRunError("INVALID_STATE_POINTER");
-    const snapshot = await runs.retrieve(pointer.runId);
-    if (snapshot.taskIdentifier !== "market-signal-direct-workflow-snapshot" || snapshot.status !== "COMPLETED") throw new AbortTaskRunError("STATE_SNAPSHOT_UNAVAILABLE");
-    state = decodeState(snapshot.output as StatePacket, ownerRunId, request);
-    if (state.revision !== pointer.revision || (snapshot.output as StatePacket).hash !== pointer.hash) throw new AbortTaskRunError("STATE_POINTER_CONFLICT");
+    let packet: StatePacket;
+    if (pointer.inline) {
+      if (pointer.runId !== ownerRunId) throw new AbortTaskRunError("INVALID_INLINE_STATE_POINTER");
+      packet = pointer.inline;
+    } else {
+      const snapshot = await runs.retrieve(pointer.runId);
+      if (snapshot.taskIdentifier !== "market-signal-direct-workflow-snapshot" || snapshot.status !== "COMPLETED") throw new AbortTaskRunError("STATE_SNAPSHOT_UNAVAILABLE");
+      packet = snapshot.output as StatePacket;
+    }
+    state = decodeState(packet, ownerRunId, request);
+    if (state.revision !== pointer.revision || packet.hash !== pointer.hash) throw new AbortTaskRunError("STATE_POINTER_CONFLICT");
   } else {
     // A retry with no durable root must not silently repeat the original work.
     if (attemptNumber > 1) throw new AbortTaskRunError("MISSING_RETRY_STATE: manual inspection required");
     state = initialState(ownerRunId, request);
   }
   const persist = async (packet: StatePacket) => {
+    const commit = (pointer: StatePointer) => commitStatePointer(pointer, {
+      set: (value) => { metadata.set(STATE_KEY, value); }, flush: () => metadata.flush(),
+      read: async () => (await runs.retrieve(ownerRunId)).metadata?.[STATE_KEY],
+    });
+    const inline = inlineStatePointer(packet, metadata.current() || {});
+    if (inline) {
+      // An uncertain inline commit stops the store. Never fall back/retry paid
+      // work after ambiguity; a retry must read and validate the durable root.
+      await commit(inline);
+      return;
+    }
     const saved = await directWorkflowSnapshot.triggerAndWait(packet, {
       // SDK triggerAndWait always pins children to their parent's worker version.
       idempotencyKey: `${ownerRunId}:state:${packet.revision}:${packet.hash}`, idempotencyKeyTTL: "7d",
@@ -43,10 +61,7 @@ async function openStore(ownerRunId: string, request: DirectRequest, workerVersi
     if (!saved.ok || saved.output.hash !== packet.hash || saved.output.ownerRunId !== ownerRunId) throw new Error("SNAPSHOT_SAVE_FAILED");
     // SDK flush can swallow transport failures or return while another flush
     // is active. Only the management API read-back is our commit receipt.
-    await commitStatePointer({ runId: saved.id, ownerRunId, revision: packet.revision, hash: packet.hash }, {
-      set: (pointer) => { metadata.set(STATE_KEY, pointer); }, flush: () => metadata.flush(),
-      read: async () => (await runs.retrieve(ownerRunId)).metadata?.[STATE_KEY],
-    });
+    await commit({ runId: saved.id, ownerRunId, revision: packet.revision, hash: packet.hash });
   };
   if (!pointer) await persist(encodeState(state));
   return new WorkflowStore(state, persist);

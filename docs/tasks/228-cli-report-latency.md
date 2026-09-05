@@ -97,3 +97,17 @@ and use a compact URL/title response schema with an explicit multi-result prompt
 No unpublished source URL becomes a verified fact without live page/price checks.
 The automatic CLI polling interval is reduced from 15 to 5 seconds; progress
 messages remain throttled and stdout remains a single final JSON object.
+
+Corrective head `f0faf70aede55894f87e0109c07c4dac6f4c16a8`: verified Fable
+`claude-fable-5-1` session `2b9faeea-a452-40b0-9dc0-d9b0358a5e6d` returned
+strict code-safety PASS for a pinned unpromoted acceptance run. Independent
+suite: 1,373 passing tests, Go tests/vet and source lint passed.
+
+Further critical-path improvement under review: for small state, persist the
+whole compressed state in one run-metadata value and verify the exact packet
+through management-API read-back. The first pilot's final packet was 213,882
+bytes. Trigger documents a 256 KiB metadata limit; use a 224 KiB total-object
+threshold including unrelated metadata, with the unchanged child snapshot
+path for larger state. Never fall back after an ambiguous inline commit.
+Legacy child pointers remain readable; every paid start stays durable before
+the provider is called. Reference: https://trigger.dev/docs/runs/metadata.

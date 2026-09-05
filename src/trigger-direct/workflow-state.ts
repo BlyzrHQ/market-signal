@@ -21,7 +21,13 @@ export type WorkflowState = {
   operations: Record<string, { status: "started" | "complete"; result?: unknown; kind?: string; startedAt?: string; completedAt?: string; durationMs?: number }>;
 };
 export type StatePacket = { version: 1; ownerRunId: string; revision: number; hash: string; gzip: string };
-export type StatePointer = { runId: string; ownerRunId: string; revision: number; hash: string };
+export type StatePointer = { runId: string; ownerRunId: string; revision: number; hash: string; inline?: StatePacket };
+// Trigger Cloud permits 256 KiB for the complete metadata object. Leave 32 KiB
+// of headroom and use the existing artifact snapshot path for larger states.
+export function inlineStatePointer(packet: StatePacket, metadata: Record<string, unknown>): StatePointer | null {
+  const pointer = { runId: packet.ownerRunId, ownerRunId: packet.ownerRunId, revision: packet.revision, hash: packet.hash, inline: packet };
+  return Buffer.byteLength(JSON.stringify({ ...metadata, marketSignalWorkflowStateV1: pointer })) <= 224 * 1024 ? pointer : null;
+}
 export async function commitStatePointer(pointer: StatePointer, transport: {
   set: (pointer: StatePointer) => void; flush: () => Promise<void>; read: () => Promise<unknown>;
 }) {
@@ -29,7 +35,8 @@ export async function commitStatePointer(pointer: StatePointer, transport: {
   await transport.flush();
   const confirmed = await transport.read() as StatePointer | undefined;
   if (!confirmed || confirmed.runId !== pointer.runId || confirmed.ownerRunId !== pointer.ownerRunId
-    || confirmed.revision !== pointer.revision || confirmed.hash !== pointer.hash) throw new Error("STATE_POINTER_NOT_CONFIRMED");
+    || confirmed.revision !== pointer.revision || confirmed.hash !== pointer.hash
+    || JSON.stringify(confirmed.inline || null) !== JSON.stringify(pointer.inline || null)) throw new Error("STATE_POINTER_NOT_CONFIRMED");
 }
 export function encodeState(state: WorkflowState): StatePacket {
   const raw = Buffer.from(JSON.stringify(state));
