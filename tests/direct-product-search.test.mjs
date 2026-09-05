@@ -22,6 +22,18 @@ test("direct currency preference keeps query-scoped evidence in published pairs"
   assert.equal(result.rows[0].matches[0].product.sourceUrl, "https://seller.test/products/honey?currency=GBP");
 });
 
+test("repair exclusions recognize the currency preference without erasing other markets", async () => {
+  const primary = product("shop.test", "p", "Honey 500g", 10);
+  let enriched = 0;
+  await buildDirectProductSearchComparison("shop.test", [{ domain: "shop.test", products: [primary] }], {
+    resultTarget: 1, requestPrimaryCurrency: true, referenceTimeMs: Date.parse(observedAt),
+    repairFeedback: { version: 1, round: 1, reasonCodes: ["comparison_target_shortfall"], primaryProductIds: [primary.id], excludedRivalSourceUrls: ["https://seller.test/products/honey?currency=GBP"], feedbackHash: "fixture" },
+    search: async () => ({ completed: true, queries: [], candidates: [{ domain: "seller.test", sourceUrl: "https://seller.test/products/honey", title: primary.name }] }),
+    enrich: async () => { enriched++; throw Error("Excluded source should not be fetched again"); },
+  });
+  assert.equal(enriched, 0);
+});
+
 test("bounded parallel waves retain deterministic output and stop after the target", async () => {
   const primaries = Array.from({ length: 12 }, (_, i) => product("shop.test", `p${i.toString().padStart(2, "0")}`, `Product ${i}`, 10));
   let active = 0, peak = 0, searches = 0;

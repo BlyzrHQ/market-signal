@@ -381,7 +381,9 @@ export async function buildDirectProductSearchComparison(primaryDomainValue: str
         primarySourceUrl: primary.sourceUrl,
         completed: result.completed,
         queries: result.queries,
-        candidates: result.candidates.filter((candidate) => !excludedRivalSourceUrls.has(canonicalProductUrl(candidate.sourceUrl, candidate.domain))),
+        candidates: result.candidates.filter((candidate) => !excludedRivalSourceUrls.has(canonicalProductUrl(candidate.sourceUrl, candidate.domain))
+          && (!options.requestPrimaryCurrency || !excludedRivalSourceUrls.has(canonicalProductUrl(
+            productCurrencyRequestUrl(candidate.sourceUrl, primary.priceSignals[0]?.currency || ""), candidate.domain)))),
         ...(result.gap ? { gap: result.gap } : {}),
       }, primary, referenceTimeMs);
       if (!checkpoint) throw new Error("Direct product search returned an invalid bounded result.");
