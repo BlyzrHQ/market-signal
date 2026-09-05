@@ -1325,6 +1325,8 @@ export type ReportAttemptContext = { attemptNumber: number; taskAttemptNumber?: 
 type CrawlPortInput = { primary: string; domains: string[]; productLimit: number; comparisonPairsNeeded: number; catalogProductLimit: number; discoverySearchOffset: number; discoveryPriorCoverageComplete: boolean; discoveryExpectedAnchorSetHash: string; discoverySearchLedger?: unknown; directProductSearch?: boolean; benchmarkOnly?: boolean };
 
 export interface ReportOrchestrationPort {
+  /** Explicit internal CLI request; omitted preserves the website workflow. */
+  skipRivalBenchmark?: boolean;
   /** Direct CLI can overlap independent rival audits; web default stays two. */
   rivalBenchmarkConcurrency?: number;
   constrainPublishedComparison?: (comparison: ProductComparison) => ProductComparison;
@@ -2352,13 +2354,14 @@ export async function orchestrateValidatedReport(
                   evidence: compactPublishedProductComparisonCheckpoint(isolatedState.evidence),
                 },
               };
-            } catch {
+            } catch (error) {
+              const safeStageCode = error instanceof Error ? error.message.match(/^RESEARCH_STAGE_FAILED: ([a-z0-9-]{1,64}|[0-9]{3})$/)?.[1] : undefined;
               outcomeToSave = {
                 version: 1,
                 round: repairFeedback.round,
                 feedbackHash: repairFeedback.feedbackHash,
                 status: "transport-failed",
-                reason: "The bounded repair transport did not return a usable response.",
+                reason: safeStageCode ? `The bounded repair failed before a usable response (stage code: ${safeStageCode}).` : "The bounded repair transport did not return a usable response.",
                 published: null,
               };
             }
@@ -2393,7 +2396,7 @@ export async function orchestrateValidatedReport(
             ? "The bounded comparison repair completed and its valid rows were merged into the draft."
             : repairOutcome.status === "incomplete"
               ? "The bounded comparison repair returned partial progress; this round is spent and the gate will decide whether another round is needed."
-              : "The bounded comparison repair transport failed; this round is spent and the gate will decide whether another round is needed.", { repairRound: repairFeedback.round, outcome: repairOutcome.status }));
+              : "The bounded comparison repair failed; this round is spent and the gate will decide whether another round is needed.", { repairRound: repairFeedback.round, outcome: repairOutcome.status, reason: repairOutcome.reason }));
           qualityVerdict = evaluateReportDraftQuality({
             comparison,
             comparisonTarget: payload.productLimit,
@@ -2531,7 +2534,7 @@ export async function orchestrateValidatedReport(
         completedPhases.push("actions");
         await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "actions-complete"), "actions", actionResult.metadata.method === "ai-grounded"
           ? "Next moves were drafted and checked against saved product evidence."
-          : "AI action drafting was unavailable, so the report retained its deterministic next moves.", {
+          : "The report retained deterministic next moves; no AI-authored recommendation is claimed.", {
           requested: actionResult.metadata.actionsRequested,
           aiAccepted: actionResult.metadata.aiActionsAccepted,
           deterministicFallbacks: actionResult.metadata.fallbackActions,
@@ -2570,7 +2573,8 @@ export async function orchestrateValidatedReport(
   })();
 
   await matchWork;
-  if (directProductSearch) document = await collectRivalBenchmark(payload, attempt, document, comparison, port, now().toISOString());
+  if (directProductSearch && !port.skipRivalBenchmark) document = await collectRivalBenchmark(payload, attempt, document, comparison, port, now().toISOString());
+  else if (directProductSearch) await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "rival-benchmark-not-requested"), "competitors", "Optional rival website scoring was not requested. Competitors and their observed product comparisons are included; rival experience scores are not assessed."));
   const finishedAt = now().toISOString();
   const reportStatus = limitedPhases.length ? "limited" : "complete";
   let persistedCounts: Record<"companies" | "products" | "matches" | "ads", number> | null = null;

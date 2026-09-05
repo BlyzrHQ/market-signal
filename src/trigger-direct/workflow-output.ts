@@ -38,6 +38,9 @@ export function workflowOutput(store: WorkflowStore) {
       completedProviderOperations: Object.values(state.operations).filter((operation) => operation.status === "complete").length },
     evaluation: { basis: "deterministic-report-quality-gate", result: evaluation, events: qualityEvents },
     benchmarks: blocks.filter((block) => block.type === "experience-benchmark"),
+    optionalAnalysis: state.request.includeAnalysis === false
+      ? { requested: false, aiRecommendations: "not-requested", rivalExperienceScores: "not-assessed", recommendations: "deterministic" }
+      : { requested: true, aiRecommendations: "see-recommendation-evidence", rivalExperienceScores: "see-benchmark-coverage" },
     report: state.document, facts: { manifest, companies: facts("companies"), products, matches: facts("matches") },
     progress: state.report.events,
     diagnostics: {

@@ -202,6 +202,34 @@ async function executeFixture(research, input = { ...request, comparisons: 2 }) 
   return workflowOutput(store);
 }
 
+test("explicit core-only reports preserve facts without optional paid actions or rival crawls", async () => {
+  const primary = product(request.domain,"p"), rival = product("rival.example","r");
+  let crawls=0, actions=0;
+  const research={
+    crawl:async(input)=>{crawls++;return {ok:true,primaryDomain:input.primary,results:[{domain:input.primary,products:[primary],homepage:{regionCountryCode:"GB"},fetchedAt:primary.observedAt}],document:{version:"1",blocks:[]}};},
+    search:async()=>({completed:true,queries:[],candidates:[{domain:rival.domain,sourceUrl:rival.sourceUrl,title:rival.name}]}),
+    enrich:async(targets)=>({products:targets.map(t=>({...rival,id:t.productId})),coverage:{pagesRequested:targets.length,pagesFetched:targets.length,maxPages:targets.length,gaps:[]}}),
+    actions:async()=>{actions++;throw Error("must not call optional provider");},
+  };
+  const input={...request,includeAnalysis:false};
+  let packet=encodeState(initialState("run_fixture",input));
+  const save=async(value)=>{packet=structuredClone(value);};
+  const execute=async()=>{
+    const store=new WorkflowStore(decodeState(packet,"run_fixture",input),save);
+    const port=createWorkflowPort(store,research);port.preflight=async()=>{};
+    await orchestrateValidatedReport({contractVersion:"6",publicId:store.read().report.run.publicId,primaryDomain:input.domain,locale:"en",reportAttempt:1,productPlan:"starter",productLimit:1},{attemptNumber:1,taskAttemptNumber:1,isFinalAttempt:true},port);
+    return workflowOutput(store);
+  };
+  const result=await execute();
+  assert.equal(result.comparisons.length,1);assert.equal(result.competitors.length,1);
+  assert.equal(result.optionalAnalysis.rivalExperienceScores,"not-assessed");
+  assert.ok(result.comparisons[0].recommendation.actionEn);
+  assert.equal(crawls,1);assert.equal(actions,0);
+  assert.ok(!result.diagnostics.operations.some(o=>o.kind.startsWith("action")));
+  await execute();assert.equal(crawls,1);assert.equal(actions,0);
+  assert.throws(()=>decodeState(packet,"run_fixture",{...input,includeAnalysis:true}),/INTEGRITY/);
+});
+
 test("quality repairs and merged facts retain a report-wide seller limit", async () => {
   const primary = product(request.domain, "p"); let repairs = 0;
   const result = await executeFixture({

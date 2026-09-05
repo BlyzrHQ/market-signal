@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { handleCrawlRequest } from "../../app/api/crawl/route.ts";
 import { createMatchHandler } from "../../app/api/match/route.ts";
 import { handleProductEnrichmentRequest } from "../../app/api/enrich-products/route.ts";
-import { buildAIProductActions } from "../../app/lib/ai-action-planner.ts";
+import { buildAIProductActions, deterministicProductActionResult } from "../../app/lib/ai-action-planner.ts";
 import { parseActionInputs } from "../../app/api/actions/route.ts";
 import { buildDirectProductSearchComparison } from "../../app/lib/direct-product-search.ts";
 import { searchDirectProductPages } from "../../app/lib/competitor-discovery.ts";
@@ -69,6 +69,7 @@ export function createWorkflowPort(store: WorkflowStore, research: {
     releaseLease: async (id, input) => { store.identity(id, input.attemptNumber); if (leaseOwner === input.owner) leaseOwner = ""; },
     buildDirect: (domain, catalogs, options) => buildDirectProductSearchComparison(domain, catalogs, { ...options,
       concurrency: 8,
+      enforceCompatibility: true,
       maxRivalDomains: store.read().request.rivals,
       admittedRivalDomains: retainedRivalDomains,
       search: (...args) => {
@@ -90,6 +91,7 @@ export function createWorkflowPort(store: WorkflowStore, research: {
     return store.operation(`crawl:${hash(input)}`, async () => research.crawl ? research.crawl(input) : crawlResponse(await handleCrawlRequest(localRequest(input), { rememberedCompetitors: false }), input.primary));
   };
   return {
+    skipRivalBenchmark: store.read().request.includeAnalysis === false,
     rivalBenchmarkConcurrency: 5,
     constrainPublishedComparison: (comparison) => {
       const counts = new Map<string, number>();
@@ -111,6 +113,7 @@ export function createWorkflowPort(store: WorkflowStore, research: {
       // Local validation is not an uncertain provider call. In particular the
       // shared engine can retain its deterministic fallback above 480 inputs.
       const inputs = parseActionInputs(input.inputs);
+      if (store.read().request.includeAnalysis === false) return { ok: true, result: deterministicProductActionResult(inputs, undefined, ["AI action planning was not requested; deterministic guidance only."]) };
       return { ok: true, result: await store.operation(`actions:${hash(input)}`, () => (research.actions || buildAIProductActions)(inputs, { fetch: durableActionFetch(store), concurrency: 4 })) };
     },
     loadCheckpoint: store.loadCheckpoints,

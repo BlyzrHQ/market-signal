@@ -182,7 +182,21 @@ function repairProducts(
 ) {
   const acceptedByPrimary = new Map<string, number>();
   for (const row of comparison.rows) acceptedByPrimary.set(row.primary.id, row.matches.filter((match) => match.product && match.publication?.priceEligible === true).length);
-  const candidates = [...products]
+  // Crawl sources can repeat one product (e.g. sitemap + structured page).
+  // Repair requests require unique identities; ambiguous IDs must not select
+  // either conflicting page. Match-route catalog parsing uses the same rule.
+  const byId = new Map<string, ProductRecord>();
+  const conflicted = new Set<string>();
+  for (const product of products) {
+    const source = canonicalProductUrl(product.sourceUrl, primaryDomain);
+    if (!source || canonicalDomain(product.domain) !== primaryDomain || conflicted.has(product.id)) continue;
+    const previous = byId.get(product.id);
+    if (previous && canonicalProductUrl(previous.sourceUrl, primaryDomain) !== source) {
+      conflicted.add(product.id);
+      byId.delete(product.id);
+    } else if (!previous) byId.set(product.id, product);
+  }
+  const candidates = [...byId.values()]
     .filter((product) => canonicalDomain(product.domain) === primaryDomain
       && Boolean(canonicalProductUrl(product.sourceUrl, primaryDomain))
       && hasComparablePublicPrice(product, referenceTimeMs))
