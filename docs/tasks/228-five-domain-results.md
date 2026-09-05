@@ -115,5 +115,3 @@ Integrity: 0/0 pairs have finite positive prices on both sides; 0/0 use the same
 | # | Primary product | Primary price | Rival product | Rival price | Rival source |
 |---:|---|---:|---|---:|---|
 | — | No priced comparisons delivered | — | — | — | — |
-
-
