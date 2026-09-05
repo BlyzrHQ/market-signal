@@ -1352,7 +1352,7 @@ export function publicProductTarget(value: unknown): ProductEnrichmentTarget | n
     const url = new URL(text(item.sourceUrl, 1_000));
     sourceUrl = /^https?:$/.test(url.protocol)
       && canonicalDomain(url.hostname) === domain
-      && /\/(?:products?|shop|store)\//i.test(url.pathname)
+      && /\/(?:products?|p|shop|store)\//i.test(url.pathname)
       ? url.toString()
       : "";
   } catch {
