@@ -8,6 +8,47 @@ import { evaluateReportDraftQuality } from "../src/shared/report-quality-gate.ts
 
 const observedAt = "2026-08-23T10:00:00.000Z";
 
+test("bounded parallel waves retain deterministic output and stop after the target", async () => {
+  const primaries = Array.from({ length: 12 }, (_, i) => product("shop.test", `p${i.toString().padStart(2, "0")}`, `Product ${i}`, 10));
+  let active = 0, peak = 0, searches = 0;
+  const result = await buildDirectProductSearchComparison("shop.test", [{ domain: "shop.test", products: primaries }], {
+    resultTarget: 4, concurrency: 4, referenceTimeMs: Date.parse(observedAt),
+    search: async (_domain, p) => {
+      searches++; active++; peak = Math.max(active, peak);
+      await new Promise(resolve => setTimeout(resolve, 5)); active--;
+      return { completed: true, queries: [p.name], candidates: [{ domain: "seller.test", sourceUrl: `https://seller.test/products/${p.id}`, title: p.name }] };
+    },
+    enrich: async targets => ({ products: targets.map(t => product(t.domain, t.productId, t.expectedName, 11, "GBP", t.sourceUrl)), coverage: { pagesRequested: targets.length, pagesFetched: targets.length, maxPages: targets.length, gaps: [] } }),
+  });
+  assert.equal(peak, 4);
+  assert.equal(searches, 4);
+  assert.equal(result.coverage.assignedPairCount, 4);
+  assert.deepEqual(result.rows.map(r => r.primary.name), ["Product 0", "Product 1", "Product 10", "Product 11"]);
+});
+
+test("wrong-currency sellers never consume the target or rival cap", async () => {
+  const p = product("shop.test", "p", "Honey 500g", 10);
+  const wrong = product("aaa.test", "wrong", "Honey 500g", 12, "USD");
+  const good = product("zzz.test", "good", "Honey 500g", 12);
+  const result = await buildDirectProductSearchComparison("shop.test", [{ domain: "shop.test", products: [p] }], {
+    resultTarget: 1, maxRivalDomains: 1, referenceTimeMs: Date.parse(observedAt),
+    search: async () => ({ completed: true, queries: [p.name], candidates: [wrong, good].map(p=>({domain:p.domain,sourceUrl:p.sourceUrl,title:p.name})) }),
+    enrich: async () => ({ products: [wrong, good], coverage: { pagesRequested: 2, pagesFetched: 2, maxPages: 2, gaps: [] } }),
+  });
+  assert.equal(result.rows[0].matches[0].domain, "zzz.test");
+});
+
+test("seller allocation can replace an early low-yield seller with later coverage", async () => {
+  const primaries = [product("shop.test", "p1", "A", 10), product("shop.test", "p2", "B", 10)];
+  const result = await buildDirectProductSearchComparison("shop.test", [{ domain: "shop.test", products: primaries }], {
+    resultTarget: 2, maxRivalDomains: 1, referenceTimeMs: Date.parse(observedAt),
+    search: async (_domain, p) => ({ completed:true, queries:[p.name], candidates: (p.id === "p1" ? [product("early.test","a","A",12)] : [product("later.test","b","B pack",12),product("later.test","c","B large",15)]).map(p=>({domain:p.domain,sourceUrl:p.sourceUrl,title:p.name})) }),
+    enrich: async targets => ({ products:targets.map(t=>product(t.domain,t.productId,t.expectedName,12,"GBP",t.sourceUrl)),coverage:{pagesRequested:targets.length,pagesFetched:targets.length,maxPages:targets.length,gaps:[]} }),
+  });
+  assert.equal(result.coverage.assignedPairCount, 2);
+  assert.deepEqual(result.comparisonDomains, ["later.test"]);
+});
+
 function product(domain, id, name, amount, currency = "GBP", sourceUrl = `https://${domain}/products/${id}`) {
   return {
     id,

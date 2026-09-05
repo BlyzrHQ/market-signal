@@ -1325,6 +1325,8 @@ export type ReportAttemptContext = { attemptNumber: number; taskAttemptNumber?: 
 type CrawlPortInput = { primary: string; domains: string[]; productLimit: number; comparisonPairsNeeded: number; catalogProductLimit: number; discoverySearchOffset: number; discoveryPriorCoverageComplete: boolean; discoveryExpectedAnchorSetHash: string; discoverySearchLedger?: unknown; directProductSearch?: boolean; benchmarkOnly?: boolean };
 
 export interface ReportOrchestrationPort {
+  /** Direct CLI can overlap independent rival audits; web default stays two. */
+  rivalBenchmarkConcurrency?: number;
   constrainPublishedComparison?: (comparison: ProductComparison) => ProductComparison;
   preflight(): Promise<void>;
   loadReport(publicId: string): Promise<StoredReport | null>;
@@ -1376,8 +1378,9 @@ async function collectRivalBenchmark(
 
   await port.appendEvent(payload.publicId, event(progressEventKey(attempt, "rival-benchmark-started"), "competitors", "Assessing the public shopping experience of the rivals found in accepted product comparisons.", { domains: domains.length }));
   const benchmarkDomains: Array<Record<string, unknown>> = [];
-  for (let start = 0; start < domains.length; start += RIVAL_BENCHMARK_CONCURRENCY) {
-    const wave = domains.slice(start, start + RIVAL_BENCHMARK_CONCURRENCY);
+  const concurrency = Math.max(1, Math.min(MAX_RIVAL_BENCHMARK_DOMAINS, Math.floor(port.rivalBenchmarkConcurrency || RIVAL_BENCHMARK_CONCURRENCY)));
+  for (let start = 0; start < domains.length; start += concurrency) {
+    const wave = domains.slice(start, start + concurrency);
     const settled = await Promise.allSettled(wave.map(async (domain) => {
       const outcome = await port.benchmark({
         primary: domain,

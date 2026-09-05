@@ -91,8 +91,12 @@ size; the rival count is a maximum of distinct sellers in the returned pairs.
 marketsignal-trigger report "<domain>" --comparisons 20 --rivals 5 --request-id "<unique-request-id>"
 ```
 
-The command submits to Trigger, prints the run ID on stderr, polls, and writes
-the final JSON on stdout. The report task runs the existing crawler/recovery,
+The command submits to Trigger, immediately says **Report incoming**, prints
+elapsed-time progress on stderr, and writes the final JSON on stdout. Leave this
+one command open: **no separate `wait` command is needed**. Redirecting stdout to
+a JSON file still leaves progress visible in your terminal.
+
+The report task runs the existing crawler/recovery,
 direct product search, final price recovery, quality repair, AI-grounded actions
 with deterministic fallback, and rival experience benchmarks inside Trigger.
 It calls the same report orchestration engine as the website. No VPS callbacks,
@@ -110,7 +114,7 @@ marketsignal-trigger compare "<domain>" --comparisons 20 --rivals 5 --request-id
 comparisons, competitor roll-ups and recommendations.
 These are independent new runs; calling all three repeats research work.
 
-## Resume and retrieve; do not start another paid run
+## Optional background mode and interrupted-session recovery
 
 ```powershell
 marketsignal-trigger report "<domain>" --comparisons 20 --rivals 5 --request-id "<unique-request-id>" --no-wait
@@ -118,7 +122,8 @@ marketsignal-trigger wait "<run-id>"
 marketsignal-trigger result "<run-id>"
 ```
 
-`wait` and `result` only read Trigger. An interrupted wait does not cancel the
+Use `--no-wait` only when you explicitly want a background submission. It is not
+part of the normal report command. `wait` and `result` only read Trigger. An interrupted wait does not cancel the
 task. Use the returned run ID. Submissions are not automatically retried. If a
 submission's outcome is unknown, inspect Trigger first; do not generate another
 request ID. Trigger's requested deduplication TTL is 24 hours, not permanent.

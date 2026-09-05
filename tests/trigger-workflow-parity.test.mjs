@@ -37,6 +37,29 @@ test("concurrent writes serialize and checkpoints enforce compare-and-swap", asy
   await store.saveCheckpoint(id, { ...before, resultHash: undefined, expectedResultHash: before.resultHash, result: { changed: true } });
   assert.equal(memory.store.read().checkpoints[0].result.changed, true);
 });
+
+test("parallel operation starts share a confirmed snapshot before any paid call", async () => {
+  let saves = 0, calls = 0, lastPacket;
+  const store = new WorkflowStore(initialState("run_fixture", request), async packet => { saves++; lastPacket = packet; });
+  await Promise.all(Array.from({length:8},(_,i)=>store.operation(`search-${i}`,async()=>{
+    assert.equal(saves,1);
+    const saved = decodeState(lastPacket,"run_fixture",request);
+    assert.equal(Object.values(saved.operations).filter(o=>o.status==="started").length,8);
+    calls++; return {id:i};
+  })));
+  assert.equal(calls,8);
+  assert.equal(saves,2);
+  assert.equal(Object.values(store.read().operations).filter(o=>o.status==="complete").length,8);
+});
+
+test("a failed batch commit rejects all callers without starting paid work", async () => {
+  let calls = 0;
+  const store = new WorkflowStore(initialState("run_fixture",request),async()=>{throw Error("receipt lost");});
+  const results = await Promise.allSettled(Array.from({length:8},(_,i)=>store.operation(`search-${i}`,async()=>{calls++;})));
+  assert.equal(calls,0);
+  assert.ok(results.every(r=>r.status==="rejected"));
+  assert.throws(()=>store.read(),/DURABLE_STATE/);
+});
 test("ambiguous durable writes stop the attempt before more paid research", async () => {
   const store = new WorkflowStore(initialState("run_fixture", request), async () => { throw Error("simulated lost commit receipt"); });
   let calls = 0;
@@ -134,15 +157,15 @@ test("swallowed metadata flush failure cannot acknowledge a checkpoint or start 
   await commitStatePointer(pointer, { set: () => {}, flush: async () => {}, read: async () => pointer });
 });
 
-test("an incomplete provider response stops before the next product search", async () => {
+test("an incomplete provider response drains its bounded wave and stops before the next wave", async () => {
   const store = memoryStore().store, run = store.read().report.run;
   let calls = 0;
   const port = createWorkflowPort(store, { search: async () => { calls++; return { completed: false, queries: [], candidates: [], gap: "Synthetic response loss" }; } });
   await assert.rejects(port.match({ publicId: run.publicId, reportAttempt: 1, taskAttemptNumber: 1, reportObservedAt: run.createdAt, primaryDomain: request.domain, marketCountryCode: "GB", productLimit: 1,
-    catalogs: [{ domain: request.domain, products: [product(request.domain, "a"), product(request.domain, "b")] }], matchingMode: "direct-product-search" }), /RESEARCH_STAGE/);
-  assert.equal(calls, 1);
+    catalogs: [{ domain: request.domain, products: Array.from({length:16},(_,i)=>product(request.domain,String(i))) }], matchingMode: "direct-product-search" }), /RESEARCH_STAGE/);
+  assert.equal(calls, 8);
   await assert.rejects(store.operation("another-paid-operation", async () => { calls++; }), /DURABLE_STATE/);
-  assert.equal(calls, 1);
+  assert.equal(calls, 8);
 });
 
 async function executeFixture(research, input = { ...request, comparisons: 2 }) {
